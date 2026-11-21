@@ -108,6 +108,8 @@ class StateTests(unittest.TestCase):
         selected, outcome = next_task(self.g, self.state, snap)
         self.assertEqual(selected["id"], "test")
         self.assertEqual(outcome["blocked"], [{"assignment": "docs", "action": "reconcile_ownership"}])
+        self.g["tasks"] = [self.g["tasks"][0], self.g["tasks"][2]]
+        self.assertIsNone(next_task(self.g, self.state, snap)[0])  # old obligation still owns worktree-a
 
     def test_park_new_owner_and_error_archive_obligations_are_not_dropped(self):
         self.g["tasks"] = [task("docs", parked=1)]

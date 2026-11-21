@@ -189,6 +189,8 @@ def next_task(grant, state, snapshot):
             blocked.append({"assignment": row["spec"]["id"], "action": reason})
     used = {a["task"] for a in attempts} | {r["spec"]["id"] for r in snapshot["rows"]}
     resources = {r for a in attempts if a["state"] != "complete" for r in a["resources"]}
+    existing = {r["spec"]["id"] for r in snapshot["rows"] if r["spec"]["id"] not in state["completed"]}
+    resources.update(r for t in grant["tasks"] if t["id"] in existing for r in t["resources"])
     candidates = [t for t in grant["tasks"] if t["id"] not in used and not t["personGate"] and grant["direction"] > t["parkedAt"] and all(d in state["completed"] for d in t["dependsOn"]) and not resources.intersection(t["resources"])]
     base = {"blocked": blocked, "independentReady": [t["id"] for t in candidates], "completed": len(state["completed"]), "attempted": len(attempts)}
     # Unknown includes lost mapping publication, never just lost spawn replies.
