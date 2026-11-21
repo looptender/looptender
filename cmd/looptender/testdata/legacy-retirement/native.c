@@ -17,6 +17,28 @@
 #include <limits.h>
 
 static int reply_fd = -1;
+// Fixed-size diagnostic record; no paths, environment, token bytes or raw output.
+static struct {
+    int poll_rc, poll_errno, read_rc, read_errno, observed_byte;
+    int write_rc, write_errno, queue_rc, queue_errno;
+    int acquire_rc, info_rc, release_rc;
+    unsigned info_count;
+    int event_rc, event_errno;
+    unsigned event_flags, event_fflags;
+    long event_data;
+} diagnostic;
+static int request(audit_token_t *t, int (*send_token)(audit_token_t *, int), int *saved_errno) {
+    errno = 0;
+    int rc = send_token(t, SIGTERM);
+    *saved_errno = errno;
+    return rc;
+}
+static int put(int fd, char value) {
+    errno = 0;
+    diagnostic.write_rc = (int)write(fd, &value, 1);
+    diagnostic.write_errno = errno;
+    return diagnostic.write_rc == 1;
+}
 static void term(int sig) {
     (void)sig;
     if (write(reply_fd, "T", 1) != 1) _exit(71);
@@ -25,14 +47,24 @@ static void term(int sig) {
 static int byte(int fd, char expected) {
     struct pollfd p = {fd, POLLIN, 0};
     char b = 0;
-    return poll(&p, 1, 1500) == 1 && read(fd, &b, 1) == 1 && b == expected;
+    errno = 0;
+    diagnostic.poll_rc = poll(&p, 1, 1500); diagnostic.poll_errno = errno;
+    diagnostic.read_rc = -2; diagnostic.read_errno = 0;
+    if (diagnostic.poll_rc == 1) {
+        errno = 0;
+        diagnostic.read_rc = (int)read(fd, &b, 1); diagnostic.read_errno = errno;
+    }
+    diagnostic.observed_byte = (unsigned char)b;
+    return diagnostic.poll_rc == 1 && diagnostic.read_rc == 1 && b == expected;
 }
 static int token(pid_t pid, audit_token_t *out) {
     mach_port_t port = MACH_PORT_NULL;
-    if (task_name_for_pid(mach_task_self(), pid, &port) != KERN_SUCCESS) return 0;
+    diagnostic.acquire_rc = task_name_for_pid(mach_task_self(), pid, &port);
+    if (diagnostic.acquire_rc != KERN_SUCCESS) return 0;
     mach_msg_type_number_t n = TASK_AUDIT_TOKEN_COUNT;
     kern_return_t kr = task_info(port, TASK_AUDIT_TOKEN, (task_info_t)out, &n);
     kern_return_t released = mach_port_deallocate(mach_task_self(), port);
+    diagnostic.info_rc = kr; diagnostic.info_count = n; diagnostic.release_rc = released;
     return kr == KERN_SUCCESS && released == KERN_SUCCESS && n == TASK_AUDIT_TOKEN_COUNT &&
         audit_token_to_pid(*out) == pid && audit_token_to_euid(*out) == geteuid();
 }
@@ -41,13 +73,19 @@ static int token(pid_t pid, audit_token_t *out) {
 static int arm(pid_t pid, audit_token_t *bound) {
     audit_token_t after;
     if (!token(pid, bound)) return -1;
+    errno = 0;
     int kq = kqueue();
+    diagnostic.queue_rc = kq; diagnostic.queue_errno = errno;
     if (kq < 0) return -1;
     struct kevent change, receipt;
     EV_SET(&change, (uintptr_t)pid, EVFILT_PROC, EV_ADD | EV_RECEIPT,
         NOTE_EXIT | NOTE_EXEC, 0, NULL);
     struct timespec zero = {0, 0};
-    if (kevent(kq, &change, 1, &receipt, 1, &zero) != 1 ||
+    memset(&receipt, 0, sizeof(receipt)); errno = 0;
+    diagnostic.event_rc = kevent(kq, &change, 1, &receipt, 1, &zero);
+    diagnostic.event_errno = errno; diagnostic.event_flags = receipt.flags;
+    diagnostic.event_fflags = receipt.fflags; diagnostic.event_data = receipt.data;
+    if (diagnostic.event_rc != 1 ||
         !(receipt.flags & EV_ERROR) || receipt.data != 0 ||
         !token(pid, &after) || memcmp(bound, &after, sizeof(after))) {
         close(kq); return -1;
@@ -57,7 +95,11 @@ static int arm(pid_t pid, audit_token_t *bound) {
 static int event(int kq, pid_t pid, unsigned wanted, int milliseconds) {
     struct kevent ev;
     struct timespec limit = {milliseconds / 1000, (milliseconds % 1000) * 1000000L};
+    memset(&ev, 0, sizeof(ev)); errno = 0;
     int n = kevent(kq, NULL, 0, &ev, 1, &limit);
+    diagnostic.event_rc = n; diagnostic.event_errno = errno;
+    diagnostic.event_flags = ev.flags; diagnostic.event_fflags = ev.fflags;
+    diagnostic.event_data = ev.data;
     if (!wanted) return n == 0;
     return n == 1 && ev.ident == (uintptr_t)pid && ev.filter == EVFILT_PROC &&
         !(ev.flags & EV_ERROR) && (ev.fflags & wanted) &&
@@ -88,32 +130,66 @@ static int run(int ignore, int (*send_token)(audit_token_t *, int)) {
     }
     close(input[0]); close(output[1]);
     audit_token_t selected, mismatch;
-    if (!byte(output[0], 'R') || (kq = arm(pid, &selected)) < 0) goto cleanup;
+    const char *stage = "ready";
+    int mismatch_rc = -999, mismatch_errno = 0, signal_rc = -999, signal_errno = 0;
+    int stale_rc = -999, stale_errno = 0;
+    if (!byte(output[0], 'R')) goto cleanup;
+    stage = "arm";
+    if ((kq = arm(pid, &selected)) < 0) goto cleanup;
     mismatch = selected;
     mismatch.val[7] ^= 1; // Deliberately wrong native incarnation, same owned PID.
-    errno = 0;
-    if (send_token(&mismatch, SIGTERM) != -1 || errno != ESRCH) goto cleanup;
-    if (write(input[1], "p", 1) != 1 || !byte(output[0], 'P')) goto cleanup;
+    stage = "mismatch-request";
+    mismatch_rc = request(&mismatch, send_token, &mismatch_errno);
+    if (mismatch_rc != -1 || mismatch_errno != ESRCH) goto cleanup;
+    stage = "mismatch-responsive";
+    if (!put(input[1], 'p') || !byte(output[0], 'P')) goto cleanup;
+    stage = "pre-signal-no-exit";
     if (!event(kq, pid, 0, 50)) goto cleanup;
-    if (send_token(&selected, SIGTERM) != 0) goto cleanup;
+    stage = "correct-request";
+    signal_rc = request(&selected, send_token, &signal_errno);
+    if (signal_rc != 0) goto cleanup;
     if (ignore) {
         // Accepted request is not death; never escalate or authorize replacement.
+        stage = "ignored-no-exit";
         if (!event(kq, pid, 0, 150)) goto cleanup;
-        if (write(input[1], "p", 1) != 1 || !byte(output[0], 'P')) goto cleanup;
-        if (write(input[1], "q", 1) != 1) goto cleanup;
-    } else if (!byte(output[0], 'T')) goto cleanup;
+        stage = "ignored-responsive";
+        if (!put(input[1], 'p') || !byte(output[0], 'P')) goto cleanup;
+        stage = "owned-quit";
+        if (!put(input[1], 'q')) goto cleanup;
+    } else {
+        stage = "graceful-marker";
+        if (!byte(output[0], 'T')) goto cleanup;
+    }
+    stage = "exit-event";
     if (!event(kq, pid, NOTE_EXIT, 1500)) goto cleanup;
     // Keep our exited child unreaped: its PID cannot be reused while testing
     // the stale-token refusal. Fixture isolation must not depend on that check.
-    errno = 0;
-    if (send_token(&selected, SIGTERM) != -1 || errno != ESRCH) goto cleanup;
+    stage = "exited-unreaped-request";
+    stale_rc = request(&selected, send_token, &stale_errno);
+    if (stale_rc != -1 || stale_errno != ESRCH) goto cleanup;
     ok = 1;
 cleanup:
     // Closing our pipe requests cooperative exit. Child alarm bounds wait even
     // on failed assertions; waitpid is only for our unreaped direct child.
     close(input[1]); close(output[0]);
     if (kq >= 0) close(kq);
-    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status)) ok = 0;
+    errno = 0;
+    pid_t waited = waitpid(pid, &status, 0);
+    int wait_errno = errno;
+    if (waited != pid || !WIFEXITED(status) || WEXITSTATUS(status)) {
+        if (ok) stage = "wait-child";
+        ok = 0;
+    }
+    if (!ok) fprintf(stderr,
+        "stage=%s mismatch_rc=%d mismatch_errno=%d signal_rc=%d signal_errno=%d stale_rc=%d stale_errno=%d "
+        "acquire=%d info=%d count=%u release=%d event_rc=%d event_errno=%d flags=%u fflags=%u data=%ld "
+        "queue_rc=%d queue_errno=%d write_rc=%d write_errno=%d poll_rc=%d poll_errno=%d read_rc=%d read_errno=%d byte=%d wait_matches=%d wait_errno=%d wait_status=%d\n",
+        stage, mismatch_rc, mismatch_errno, signal_rc, signal_errno, stale_rc, stale_errno,
+        diagnostic.acquire_rc, diagnostic.info_rc, diagnostic.info_count, diagnostic.release_rc,
+        diagnostic.event_rc, diagnostic.event_errno, diagnostic.event_flags, diagnostic.event_fflags, diagnostic.event_data,
+        diagnostic.queue_rc, diagnostic.queue_errno, diagnostic.write_rc, diagnostic.write_errno,
+        diagnostic.poll_rc, diagnostic.poll_errno, diagnostic.read_rc, diagnostic.read_errno, diagnostic.observed_byte,
+        waited == pid, wait_errno, status);
     printf("%s: %s\n", ignore ? "accepted-but-alive" : "graceful-exit", ok ? "PASS" : "FAIL");
     return ok;
 }
