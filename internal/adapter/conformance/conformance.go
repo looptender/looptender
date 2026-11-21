@@ -39,6 +39,8 @@ const (
 	Oversized   Situation = "oversized"    // far more output than any real status
 	// ExitNonZero is output that looks healthy from a command that failed.
 	ExitNonZero Situation = "exit_nonzero"
+	// MissingTerminal is a valid stream prefix followed by exit zero without a terminal event.
+	MissingTerminal Situation = "missing_terminal"
 	// Crashed is a turn that ended without leaving any result.
 	Crashed Situation = "crashed"
 	// FailedUnmapped is a failure whose machine-readable code maps to no class.
@@ -501,14 +503,15 @@ func caseErrors(r *run) error {
 
 func caseNotHealthy(r *run) error {
 	ran := false
-	// Complete a structured result before the crash so exact-resume fixtures
-	// have an established identity. Crashing an unidentified first turn instead
-	// requires explicit recovery, covered independently by the runner tests.
+	// Establish identity with a structured result before the incomplete stream
+	// and crash. Exact-resume fixtures must not implicitly start fresh after
+	// an unidentified attempt; runner tests cover that recovery hold separately.
 	for _, c := range []struct {
 		situation Situation
 		what      string
 	}{
 		{ExitNonZero, "output that looks healthy from a command that exited with a failure"},
+		{MissingTerminal, "a valid stream that exited zero without a terminal event"},
 		{Crashed, "a turn that ended without leaving a result"},
 	} {
 		situation, what := c.situation, c.what
