@@ -97,6 +97,7 @@ type frozenLog struct {
 	mu        sync.Mutex
 	file      *os.File
 	remaining int
+	truncated bool
 	captured  bytes.Buffer
 }
 
@@ -105,6 +106,7 @@ func (l *frozenLog) Write(p []byte) (int, error) {
 	defer l.mu.Unlock()
 	n := len(p)
 	if len(p) > l.remaining {
+		l.truncated = true
 		p = p[:l.remaining]
 	}
 	l.remaining -= len(p)
@@ -112,7 +114,8 @@ func (l *frozenLog) Write(p []byte) (int, error) {
 	_, err := l.file.Write(p)
 	return n, err
 }
-func (l *frozenLog) text() string { l.mu.Lock(); defer l.mu.Unlock(); return l.captured.String() }
+func (l *frozenLog) text() string       { l.mu.Lock(); defer l.mu.Unlock(); return l.captured.String() }
+func (l *frozenLog) wasTruncated() bool { l.mu.Lock(); defer l.mu.Unlock(); return l.truncated }
 func (l *frozenLog) close(t *testing.T) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -397,5 +400,23 @@ func TestFrozenHarnessArtifactSeparation(t *testing.T) {
 	os.Chmod(artifacts, 0500)
 	if err := ids.recheck(); err == nil {
 		t.Fatal("same-byte artifact replacement accepted")
+	}
+}
+
+func TestFrozenLogTruncation(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "bounded-log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &frozenLog{file: file, remaining: 3}
+	defer sink.close(t)
+	if n, err := sink.Write([]byte("ok\n")); err != nil || n != 3 || sink.wasTruncated() {
+		t.Fatal("exact bound misclassified")
+	}
+	if n, err := sink.Write([]byte("warning: omitted\n")); err != nil || n != 17 || !sink.wasTruncated() {
+		t.Fatal("discarded diagnostic not detected")
+	}
+	if frozenSuccessfulOutput("validate", 0, sink.text(), sink.wasTruncated()) {
+		t.Fatal("truncated success accepted")
 	}
 }

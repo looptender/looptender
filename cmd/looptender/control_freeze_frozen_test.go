@@ -31,8 +31,12 @@ func oldReader(t *testing.T, f *fixture, args ...string) int {
 		}
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.ToLower(output.text()), "warning") {
-		t.Fatal("exit zero with publication warning; see retained log")
+	command := ""
+	if len(args) > 0 {
+		command = args[0]
+	}
+	if !frozenSuccessfulOutput(command, 0, output.text(), output.wasTruncated()) {
+		t.Fatal("exit zero with unexpected warning/error or truncated output; see retained log")
 	}
 	if len(args) > 0 && args[0] == "enable" {
 		published := false
@@ -47,6 +51,63 @@ func oldReader(t *testing.T, f *fixture, args ...string) int {
 	}
 	return 0
 }
+
+// Exact frozen v0.2.0 config.UnboundedWarning, emitted by validate. Do not
+// derive this allowance from current production wording or allow a substring.
+const frozenUnboundedDiagnostic = "warning: no loop-wide limit is configured (loop.limits deadline, max_sends or no_progress_timeout); automatic sends repeat until complete, stop, pause or a hold\n"
+
+func frozenSuccessfulOutput(command string, code int, output string, truncated bool) bool {
+	if code != 0 || truncated {
+		return false
+	}
+	ordinarySeen := false
+	for _, line := range strings.SplitAfter(output, "\n") {
+		if command == "validate" && line == frozenUnboundedDiagnostic && !ordinarySeen {
+			ordinarySeen = true
+			continue
+		}
+		lower := strings.ToLower(line)
+		for _, problem := range []string{"warning", "error:", "fatal:", "panic:", "permission denied", "operation not permitted", "unavailable"} {
+			if strings.Contains(lower, problem) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func TestFrozenWarningClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name, command, output string
+		code                  int
+		truncated, want       bool
+	}{
+		{name: "ordinary validate", command: "validate", output: "ok: fictional config\n" + frozenUnboundedDiagnostic + "report: standard\n", want: true},
+		{name: "quiet enable", command: "enable", output: "enabled\n", want: true},
+		{name: "wrong command", command: "enable", output: frozenUnboundedDiagnostic},
+		{name: "nonzero", command: "validate", output: frozenUnboundedDiagnostic, code: 1},
+		{name: "truncated capture", command: "validate", output: frozenUnboundedDiagnostic, truncated: true},
+		{name: "incomplete line", command: "validate", output: strings.TrimSuffix(frozenUnboundedDiagnostic, "\n")},
+		{name: "case variant", command: "validate", output: strings.ToUpper(frozenUnboundedDiagnostic)},
+		{name: "prefix", command: "validate", output: "unexpected " + frozenUnboundedDiagnostic},
+		{name: "suffix", command: "validate", output: strings.TrimSuffix(frozenUnboundedDiagnostic, "\n") + "; publication failed\n"},
+		{name: "duplicate", command: "validate", output: frozenUnboundedDiagnostic + frozenUnboundedDiagnostic},
+		{name: "unknown warning", command: "validate", output: "warning: fictional unknown diagnostic\n"},
+		{name: "session publication", command: "enable", output: "warning: session metadata publication failed\n"},
+		{name: "mixed publication", command: "validate", output: frozenUnboundedDiagnostic + "warning: session metadata publication failed\n"},
+		{name: "history", command: "validate", output: frozenUnboundedDiagnostic + "incident history unavailable\n"},
+		{name: "claim", command: "validate", output: frozenUnboundedDiagnostic + "session claim: permission denied\n"},
+		{name: "containment", command: "validate", output: frozenUnboundedDiagnostic + "sandbox: operation not permitted\n"},
+		{name: "error", command: "validate", output: frozenUnboundedDiagnostic + "error: fictional failure\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := frozenSuccessfulOutput(tc.command, tc.code, tc.output, tc.truncated); got != tc.want {
+				t.Fatalf("success classification=%v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func freezeEnvelope(t *testing.T, raw []byte) []byte {
 	t.Helper()
 	b, err := json.Marshal([]any{map[string]any{"format": "fictional-emergency-freeze-v1", "raw": raw, "identity": "fictional-state", "action": "pause"}})
