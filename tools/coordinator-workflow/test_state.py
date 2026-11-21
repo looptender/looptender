@@ -70,7 +70,7 @@ class StateTests(unittest.TestCase):
     def test_complete_requires_current_verified_artifact_then_dispatches_independent_next(self):
         a = self.own()
         snap = snapshot()
-        snap["children"][a["child"]] = {"execution": "idle", "archived": False, "pending": False}
+        snap["children"][a["child"]] = {"execution": "idle", "archived": False, "pending": False, "queued": 0}
         snap["rows"] = [{"spec": {"id": "docs", "lane": a["child"]}, "revision": 1, "handoffRevision": 1, "acknowledged": 1, "handoff": {"outcome": "complete", "assignmentRevision": 1, "evidenceRefs": ["example-result"], "remainingRefs": []}}]
         result = Path(self.tmp.name) / "result.txt"
         receipt = {"task": "docs", "recordId": snap["recordId"], "assignmentRevision": 1, "handoffRevision": 1, "accepted": True, "artifacts": [{"path": str(result), "sha256": hashlib.sha256(b"verified example\n").hexdigest()}]}
@@ -97,6 +97,17 @@ class StateTests(unittest.TestCase):
         settle(self.state, snap, [receipt], verify)
         self.assertEqual(next_task(self.g, self.state, snap)[1]["action"], "reconcile_unknown_attempt")
         self.assertEqual(len(self.state["completed"]), 1)
+        # An external re-review cannot reuse old acceptance or released resources.
+        snap["rows"][0]["revision"] = 2
+        with self.assertRaisesRegex(Refused, "verified_obligation_changed_reconcile"):
+            settle(self.state, snap, [receipt], verify)
+
+    def test_existing_obligation_is_never_implicitly_replaced(self):
+        snap = snapshot()
+        snap["rows"] = [{"spec": {"id": "docs", "lane": "thr_example_old"}, "handoff": None}]
+        selected, outcome = next_task(self.g, self.state, snap)
+        self.assertEqual(selected["id"], "test")
+        self.assertEqual(outcome["blocked"], [{"assignment": "docs", "action": "reconcile_ownership"}])
 
     def test_park_new_owner_and_error_archive_obligations_are_not_dropped(self):
         self.g["tasks"] = [task("docs", parked=1)]

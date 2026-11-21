@@ -187,7 +187,7 @@ def next_task(grant, state, snapshot):
             reason = {"superseded": "reconcile_successor", "waiting": "review_gate", "unfinished": "review_existing_obligation"}[h["outcome"]]
         if reason:
             blocked.append({"assignment": row["spec"]["id"], "action": reason})
-    used = {a["task"] for a in attempts}
+    used = {a["task"] for a in attempts} | {r["spec"]["id"] for r in snapshot["rows"]}
     resources = {r for a in attempts if a["state"] != "complete" for r in a["resources"]}
     candidates = [t for t in grant["tasks"] if t["id"] not in used and not t["personGate"] and grant["direction"] > t["parkedAt"] and all(d in state["completed"] for d in t["dependsOn"]) and not resources.intersection(t["resources"])]
     base = {"blocked": blocked, "independentReady": [t["id"] for t in candidates], "completed": len(state["completed"]), "attempted": len(attempts)}
@@ -205,6 +205,18 @@ def next_task(grant, state, snapshot):
 
 def settle(state, snapshot, receipts, verify_artifacts):
     rows = {r["spec"]["id"]: r for r in snapshot["rows"]}
+    for attempt in state["attempts"]:
+        if attempt["state"] == "owned":
+            row = rows.get(attempt["task"])
+            require(row and row["spec"]["lane"] == attempt["child"], "owned_mapping_changed_reconcile")
+    # A verified historical receipt is not permission to ignore a reopened row.
+    # This release has no automatic reopen/reassignment migration: preserve the
+    # ledger and require explicit coordinator reconciliation before more writes.
+    for task, verified in state["completed"].items():
+        row = rows.get(task)
+        h = row.get("handoff") if row else None
+        attempt = next(a for a in state["attempts"] if a["task"] == task)
+        require(row and row["spec"]["lane"] == attempt["child"] and row["revision"] == verified["assignmentRevision"] and row["handoffRevision"] == row.get("acknowledged") == verified["handoffRevision"] and h and h["outcome"] == "complete" and h["assignmentRevision"] == row["revision"] and not h["remainingRefs"], "verified_obligation_changed_reconcile")
     for receipt in receipts:
         require(isinstance(receipt, dict) and set(receipt) == {"task", "recordId", "assignmentRevision", "handoffRevision", "accepted", "artifacts"}, "verification_schema")
         task = receipt["task"]
@@ -218,7 +230,7 @@ def settle(state, snapshot, receipts, verify_artifacts):
         h = row.get("handoff")
         child = snapshot["children"].get(a["child"])
         require(receipt["accepted"] is True and receipt["recordId"] == snapshot["recordId"] and receipt["assignmentRevision"] == row["revision"] and receipt["handoffRevision"] == row["handoffRevision"] == row.get("acknowledged") and h and h["outcome"] == "complete" and h["assignmentRevision"] == row["revision"] and h["evidenceRefs"] and not h["remainingRefs"] and row["spec"]["lane"] == a["child"], "verification_not_current")
-        require(child and not child["archived"] and child["execution"] == "idle" and not child["pending"], "verification_child_not_settled")
+        require(child and not child["archived"] and child["execution"] == "idle" and not child["pending"] and child["queued"] == 0, "verification_child_not_settled")
         verify_artifacts(receipt["artifacts"])
         a["state"] = "complete"
         state["completed"][task] = {"digest": digest(receipt), "assignmentRevision": row["revision"], "handoffRevision": row["handoffRevision"]}
