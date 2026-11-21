@@ -22,7 +22,8 @@ Proposed observations (not yet executed):
   acknowledges its handler and exits, producing the pre-armed exit event.
 - A child ignoring SIGTERM remains responsive and produces no exit event during
   the bounded observation. Accepted termination is not permission to replace it.
-- A token retained after the direct child has been reaped must return ESRCH.
+- A token retained after the exit event, while the direct child remains unreaped
+  and its PID reserved, must return ESRCH. No signal is attempted after reaping.
 
 The source rationale is Apple's XNU commit
 `f6217f891ac0bb64f3d375211650a4c1ff8ca1ea`, `bsd/kern/kern_event.c`:

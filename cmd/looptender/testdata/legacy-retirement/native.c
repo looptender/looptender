@@ -103,6 +103,10 @@ static int run(int ignore, int (*send_token)(audit_token_t *, int)) {
         if (write(input[1], "q", 1) != 1) goto cleanup;
     } else if (!byte(output[0], 'T')) goto cleanup;
     if (!event(kq, pid, NOTE_EXIT, 1500)) goto cleanup;
+    // Keep our exited child unreaped: its PID cannot be reused while testing
+    // the stale-token refusal. Fixture isolation must not depend on that check.
+    errno = 0;
+    if (send_token(&selected, SIGTERM) != -1 || errno != ESRCH) goto cleanup;
     ok = 1;
 cleanup:
     // Closing our pipe requests cooperative exit. Child alarm bounds wait even
@@ -110,10 +114,6 @@ cleanup:
     close(input[1]); close(output[0]);
     if (kq >= 0) close(kq);
     if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status)) ok = 0;
-    if (ok) {
-        errno = 0;
-        if (send_token(&selected, SIGTERM) != -1 || errno != ESRCH) ok = 0;
-    }
     printf("%s: %s\n", ignore ? "accepted-but-alive" : "graceful-exit", ok ? "PASS" : "FAIL");
     return ok;
 }
