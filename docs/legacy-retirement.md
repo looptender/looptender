@@ -139,7 +139,10 @@ saved PID, endpoint disappearance or daemon-lock availability.
 Manager one-use intent, disable/bootout outcomes, application endpoint/lock/control
 verification, and replacement startup remain separate orchestration obligations.
 The manual retirement command retains its own send-before-wait contract. This
-additional API has injected state-machine tests and compilation evidence only;
-its owned pipe-exit/alive fixture is prepared but has not been executed. Linux,
+additional API has injected state-machine tests and one independently reviewed
+native macOS owned-process run at `e486c5c3`: pipe-driven exit was observed, while
+an acknowledged request with a living child remained unknown and consumed the
+handle. The run exited successfully without stderr, timeout or output truncation;
+pinned artifacts were unchanged. This is not manager or application evidence. Linux,
 Darwin without cgo, and other native-platform acceptance remain unsupported or
 unverified as described above. No manager or live retirement is certified here.

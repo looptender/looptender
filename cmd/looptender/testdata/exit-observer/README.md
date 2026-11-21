@@ -1,4 +1,4 @@
-# No-signal exit observation fixture — not executed
+# No-signal exit observation fixture
 
 The fixture compiles a new owned Go program. It accepts no external target PID,
 manager label, state path or executable. Each child is a direct self-image child
@@ -26,3 +26,10 @@ are over. There is no forced PID reuse test. No provider, legacy executable,
 launchctl, control file or replacement supervisor is involved. Compilation and
 injected tests are not native execution evidence. Independent source/harness
 review and explicit release of exact pins are required before running.
+
+One reviewed native macOS run at `e486c5c3` passed both scenarios: external pipe
+exit and accepted-but-alive unknown. The driver exited zero with empty stderr,
+no timeout or truncation, and unchanged pinned artifacts. Independent retained
+evidence review accepted only this owned-process scope. This does not establish
+manager retirement, application ownership, external intent durability, replacement
+readiness or live acceptance. No duplicate run is implied by this record.

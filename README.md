@@ -293,8 +293,9 @@ Unreleased source includes a separate Darwin [manual legacy supervisor retiremen
 command with one-use retirement tickets and unchanged controls. Its reviewed
 adapter/native integration has bounded fictional-process evidence on macOS; live
 migration remains unverified. It never starts a replacement. A separate internal
-no-signal exit observer is under review for manager orchestration; it neither
-runs manager commands nor grants replacement authority.
+no-signal exit observer has bounded owned-process evidence on macOS for external
+pipe exit and alive/unknown outcomes. It neither runs manager commands nor grants
+replacement authority.
 
 ## Limitations
 
