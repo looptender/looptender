@@ -133,3 +133,24 @@ explicit whole-objective attestation bound to the current goal/review. For a
 zero-child objective the attestation remains required; child inventory cannot
 verify acceptance. This safeguard does not schedule independent work, manufacture
 approval, enforce host turn-end handoffs or resume a held coordinator.
+
+## Bounded coordinator-owned dispatch (unreleased)
+
+For an existing owner instruction authorizing new visible child lanes, the
+packaged keepgoing skill supplies a
+[spawn-only coordinator workflow](../integrations/bb-plugin-keepgoing/skills/keepgoing/references/coordinator-workflow.md).
+Its private grant records scope and local bounds; an agent-written declaration
+is not person authentication. Current controls, owner/goal/source bindings,
+complete assignment inventory and typed BB metadata must agree. Unknown requests
+retain task/resource/attempt/slot reservations across restarts and grant updates.
+Verified current artifact settlement can dispatch the next independent task;
+repeated receipts do not replace progress. Error/archive/supersession keeps the
+old obligation visible, and independent new work can proceed when permitted.
+
+The helper is invoked by the coordinator agent, never a tick or daemon. It does
+not reuse/tell/retry children, clear holds or guarantee global concurrency/spend.
+A hold arriving after host submission can race creation; the helper preserves
+that uncertainty rather than claiming rollback. Python 3/Unix locking and private
+local state are prerequisites. Offline behavioral execution remains separate from
+actual agent continuation and installed acceptance. Those acceptance criteria,
+including broader automatic delegation, remain open.
