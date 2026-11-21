@@ -695,13 +695,41 @@ process exit immediately before/after rename checks no permissive crash
 intermediate; this is not power-loss/filesystem hardware testing.
 
 `TestFrozen*` additionally requires `FROZEN_CONTROL_READER` naming a separately
-built old executable. It exercises the actual new Pause envelope, old reader
+built old executable. Replay also requires a canonical durable
+`FROZEN_CONTROL_EVIDENCE_ROOT`, its dedicated `FROZEN_CONTROL_LOG_DIR`,
+`FROZEN_CONTROL_SHA256`, `FROZEN_CONTROL_SANDBOX_POLICY` and
+`FROZEN_CONTROL_POLICY_SHA256`. Binary and policy must be regular read-only
+artifacts in read-only directories disjoint from every writable fixture/log
+root. Canonical paths and native identities are rechecked before command
+construction; this does not atomically bind execution against an external owner
+replacing artifacts afterward. Logs must be outside temporary cleanup storage;
+sync/close failures fail the fixture. The Darwin harness launches each frozen
+child and descendants through the separately reviewed default-deny policy,
+with writes confined to fixture/log roots and network denied. Other native
+platform replay requires its own reviewed containment and currently refuses.
+First replay requires independent policy/probe review and explicit release of
+the execution hold; providing environment variables is not that approval. Every child uses an explicit environment allowlist with both
+legacy/current storage names and fictional platform homes, temp directories and
+stand-in PATH; provider credentials and caller environment are not inherited.
+Bounded logs persist for review even on success. Exit zero with a warning or
+missing expected session metadata is not publication success. The fixtures exercise
+the actual new Pause envelope, old reader
 refusal, transferred/retired raw evidence, and valid external restore/removal
 bypass. Set `FROZEN_LEGACY_BINDINGS=1` for v0.2.0, which predates retirement metadata.
 The deliberately undrained old daemon fixture demonstrates a send after publication;
 it proves drain is necessary, not that publication cancels work. Without an old
-executable these tests skip explicitly. Recorded local executions use frozen
-v0.2.0 (`d6bcd054`) and f35a0a94; neither establishes every installed old version.
+executable these tests skip explicitly. The candidate readers are v0.2.0 (`d6bcd054`) and f35a0a94. Earlier inherited-
+environment runs are withdrawn as isolated compatibility evidence; replay awaits
+independent harness-isolation review. No installed old-version acceptance follows.
+A shell-only negative isolation sentinel checks poisoned parent credentials,
+legacy/current bindings and confined writes without executing an old reader.
+The stale-loaded fixture releases its bounded stand-in gate on every exit,
+cancels/waits only its owned child and preserves early-exit output.
+
+Built CLI malformed-Pause journeys additionally require status and offline
+doctor to preserve unavailable control and give no unsupported restore remedy.
+Read-only fixtures distinguish a bound freeze from unknown, truncated and
+wrong-binding arrays, with no raw evidence disclosure or record mutation.
 
 Lifecycle/platform review: no new lock, installer, provider, scheduler or process
 shutdown mechanism. macOS native offline fixtures and target compilation are

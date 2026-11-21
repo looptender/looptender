@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/lock"
+	"github.com/looptender/looptender/internal/session"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,12 +24,26 @@ func oldReader(t *testing.T, f *fixture, args ...string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Getenv("FROZEN_CONTROL_READER"), append(args, "-c", f.cfg)...)
+	cmd, output := frozenCommand(t, ctx, f, append(args, "-c", f.cfg)...)
 	if err := cmd.Run(); err != nil {
 		if e, ok := err.(*exec.ExitError); ok {
 			return e.ExitCode()
 		}
 		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(output.text()), "warning") {
+		t.Fatal("exit zero with publication warning; see retained log")
+	}
+	if len(args) > 0 && args[0] == "enable" {
+		published := false
+		for _, entry := range session.Known(filepath.Join(f.dir, "sessions"), session.Identity{Kind: "bb", ID: "thr_primary"}) {
+			if entry.Config == f.cfg && entry.StateDir == filepath.Join(f.dir, "state") {
+				published = true
+			}
+		}
+		if !published {
+			t.Fatal("exit zero without confined session metadata publication; see retained log")
+		}
 	}
 	return 0
 }
@@ -43,7 +58,7 @@ func freezeEnvelope(t *testing.T, raw []byte) []byte {
 func TestFrozenReaderCanonicalAndSidecar(t *testing.T) {
 	for _, prior := range []string{"enabled", "transferred", "retired"} {
 		t.Run(prior, func(t *testing.T) {
-			f := newFixture(t)
+			f := newFrozenFixture(t)
 			dir := filepath.Join(f.dir, "state")
 			path := filepath.Join(dir, control.FileName)
 			ctl := control.File{Enabled: true, Ownership: &control.Ownership{ThreadID: "thr_owner", Generation: 4}}
@@ -122,7 +137,7 @@ func TestFrozenReaderCanonicalAndSidecar(t *testing.T) {
 	}
 }
 func TestFrozenReaderHonorsExistingTickLock(t *testing.T) {
-	f := newFixture(t)
+	f := newFrozenFixture(t)
 	dir := filepath.Join(f.dir, "state")
 	if err := control.Save(dir, control.File{Enabled: true}); err != nil {
 		t.Fatal(err)
@@ -143,7 +158,7 @@ func TestFrozenDaemonAlreadyLoadedControl(t *testing.T) {
 	if os.Getenv("FROZEN_CONTROL_READER") == "" {
 		t.Skip("requires frozen executable")
 	}
-	f := newFixture(t)
+	f := newFrozenFixture(t)
 	if code, _, e := f.run("enable"); code != 0 {
 		t.Fatal(e)
 	}
@@ -152,19 +167,49 @@ func TestFrozenDaemonAlreadyLoadedControl(t *testing.T) {
 	released := filepath.Join(f.dir, "released")
 	wrapper := filepath.Join(f.dir, "blocked-bb")
 	originalCLI := filepath.Join(f.dir, "bin", "bb")
-	script := "#!/bin/sh\nif [ \"$1\" = thread ] && [ \"$2\" = show ] && [ \"$3\" = thr_primary ]; then\n  touch " + commandQuote(reached) + "\n  while [ ! -e " + commandQuote(released) + " ]; do sleep 0.01; done\nfi\nexec " + commandQuote(originalCLI) + " \"$@\"\n"
+	script := "#!/bin/sh\nif [ \"$1\" = thread ] && [ \"$2\" = show ] && [ \"$3\" = thr_primary ]; then\n  touch " + commandQuote(reached) + "\n  attempt=0\n  while [ ! -e " + commandQuote(released) + " ]; do\n    attempt=$((attempt + 1))\n    [ \"$attempt\" -lt 600 ] || exit 124\n    sleep 0.01\n  done\nfi\nexec " + commandQuote(originalCLI) + " \"$@\"\n"
 	write(t, wrapper, script, 0700)
 	cfg, _ := os.ReadFile(f.cfg)
 	write(t, f.cfg, strings.Replace(string(cfg), originalCLI, wrapper, 1), 0600)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Getenv("FROZEN_CONTROL_READER"), "daemon", "-c", f.cfg)
+	cmd, log := frozenCommand(t, ctx, f, "daemon", "-c", f.cfg)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	waitFor(t, func() bool { _, err := os.Stat(reached); return err == nil }, "frozen daemon loaded control and entered Observe")
+	done := make(chan struct{})
+	var runErr error
+	go func() { runErr = cmd.Wait(); close(done) }()
+	// Release the owned wrapper even when an assertion fails before Observe.
+	// Its independent loop bound also survives loss of this test process.
+	t.Cleanup(func() {
+		os.WriteFile(released, nil, 0600)
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Error("owned frozen CLI cleanup did not finish")
+		}
+	})
+	diagnostic := log.text
+	deadline := time.NewTimer(6 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	reachedObserve := false
+	for !reachedObserve {
+		if _, err := os.Stat(reached); err == nil {
+			reachedObserve = true
+			break
+		}
+		select {
+		case <-done:
+			t.Fatalf("frozen daemon exited before Observe: %v; output: %s", runErr, diagnostic())
+		case <-deadline.C:
+			t.Fatalf("frozen daemon never reached Observe before deadline; output: %s", diagnostic())
+		case <-poll.C:
+		}
+	}
 	dir := filepath.Join(f.dir, "state")
 	l, err := lock.Acquire(dir)
 	if err == nil {
@@ -179,7 +224,7 @@ func TestFrozenDaemonAlreadyLoadedControl(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(6 * time.Second):
-		t.Fatal("frozen daemon did not finish")
+		t.Fatalf("frozen daemon did not finish; output: %s", diagnostic())
 	}
 	sent, _ := os.ReadFile(filepath.Join(f.bbDir, "thr_primary.told"))
 	if len(sent) == 0 {
