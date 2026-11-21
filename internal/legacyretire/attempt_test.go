@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func canonicalTemp(t *testing.T) string {
@@ -371,5 +373,61 @@ func TestRemovedSpentDoesNotRecreatePrepared(t *testing.T) {
 	next := &fakeGuard{b: g.b}
 	if e := run(t, ticket, next, hooks{}); e == nil || next.sent != 0 {
 		t.Fatal(e, next.sent)
+	}
+}
+
+func TestFIFORefusesWithinDeadline(t *testing.T) {
+	for _, name := range []string{"ready", "intent", "reservation"} {
+		t.Run(name, func(t *testing.T) {
+			ticket, g := ready(t)
+			path := filepath.Join(ticket.Root, name)
+			if e := os.Remove(path); e != nil {
+				t.Fatal(e)
+			}
+			if e := unix.Mkfifo(path, 0600); e != nil {
+				t.Fatal(e)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				done <- Retire(ctx, ticket, func(context.Context, Binding) (Guard, error) { g.held = true; return g, nil })
+			}()
+			select {
+			case e := <-done:
+				if e == nil || g.sent != 0 {
+					t.Fatal(e, g.sent)
+				}
+			case <-time.After(200 * time.Millisecond):
+				// Failure cleanup unblocks only our FIFO; no process or target operation.
+				fd, e := unix.Open(path, unix.O_RDWR|unix.O_NONBLOCK, 0)
+				if e != nil {
+					t.Fatal(e)
+				}
+				defer unix.Close(fd)
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("FIFO did not release")
+				}
+				t.Fatal("FIFO ignored bounded context")
+			}
+		})
+	}
+}
+func TestCancelledAttemptDoesNotAcquireOrConsume(t *testing.T) {
+	ticket, _ := ready(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	e := Retire(ctx, ticket, func(context.Context, Binding) (Guard, error) { called = true; return nil, ErrUnavailable })
+	if !errors.Is(e, context.Canceled) || called {
+		t.Fatal(e, called)
+	}
+	if _, e = os.Stat(filepath.Join(ticket.Root, "ready")); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = os.Stat(filepath.Join(ticket.Root, "spent")); !errors.Is(e, os.ErrNotExist) {
+		t.Fatal(e)
 	}
 }

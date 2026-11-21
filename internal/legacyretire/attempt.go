@@ -149,7 +149,7 @@ func openRoot(path string) (int, Identity, error) {
 	return fd, id, nil
 }
 func openRecord(dir int, name string, flags int) (int, Identity, error) {
-	fd, e := unix.Openat(dir, name, flags|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, e := unix.Openat(dir, name, flags|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
 	if e != nil {
 		return -1, Identity{}, ErrUnavailable
 	}
@@ -302,6 +302,9 @@ func Retire(ctx context.Context, t Ticket, acquire Acquire) error {
 	return retire(ctx, t, acquire, hooks{})
 }
 func retire(ctx context.Context, t Ticket, acquire Acquire, h hooks) error {
+	if e := ctx.Err(); e != nil {
+		return e
+	}
 	if _, ok := ctx.Deadline(); !ok {
 		return fmt.Errorf("bounded retirement context required")
 	}
