@@ -65,7 +65,7 @@ files; config/runtime bindings must be canonical. Digests are SHA-256 hex.
 | `instructionRef` | Source reference recording the existing owner delegation instruction. Agent declaration is cooperative evidence, not person proof. |
 | `binding` | Exact current assignment binding: `loop`, `config`, `runtime`, `coordinator`, `owner`, `generation`, `goal`, `goalRevision`. Coordinator and current owner/caller must agree. |
 | `recordId` | Current private assignment record identity. Expected record revision is supplied separately on every invocation. |
-| `project`, `environment`, `host` | Explicit parent and child BB context, independently checked through typed metadata. |
+| `project`, `environment`, `host` | Explicit parent and child BB context, independently checked through typed metadata. Spawn uses the existing environment ID alone; it already selects the host and cannot combine with `--host`/`--machine`. The host remains bound and verified. |
 | `provider`, `model`, `effort` | Exact authorized spawn arguments. No discovery/probe or fallback is performed. Requested model/effort are not proof of a provider's eventual execution choice. |
 | `bb`, `effectiveBB`, `keepgoing` | Each has `path`, `sha256`; pin requested BB, effective `BB_CLI` re-exec target and CLI. Executable/source changes refuse. |
 | `sources` | Up to 64 `{ref,path,sha256}` entries, including config, owner instruction and task briefs; each at most 1 MiB (brief at most 64 KiB). |

@@ -231,7 +231,9 @@ class Commands:
         source = next(s for s in g["sources"] if s["ref"] == task["briefRef"])
         hashed, raw = file_hash(source["path"], 64 * 1024, collect=True)
         require(hashed == source["sha256"], "source_changed")
-        args = ["thread", "spawn", "--json", "--parent-thread", g["binding"]["coordinator"], "--project", g["project"], "--environment", g["environment"], "--host", g["host"], "--provider", g["provider"], "--model", g["model"], "--reasoning-level", g["effort"], "--visibility", "visible", "--parent-notifications", "auto", "--title", "Delegated " + task["id"], "--prompt-file", "-"]
+        # Existing environment IDs already select their host. BB rejects a
+        # separate --host/--machine selector; retain host checks in metadata.
+        args = ["thread", "spawn", "--json", "--parent-thread", g["binding"]["coordinator"], "--project", g["project"], "--environment", g["environment"], "--provider", g["provider"], "--model", g["model"], "--reasoning-level", g["effort"], "--visibility", "visible", "--parent-notifications", "auto", "--title", "Delegated " + task["id"], "--prompt-file", "-"]
         reply = self.call("bb", args, stdin=raw, timeout=15)
         require(isinstance(reply, dict) and text(reply.get("id"), 132) and reply["id"].startswith("thr_"), "spawn_reply_unconfirmed")
         return reply["id"]

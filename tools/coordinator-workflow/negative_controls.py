@@ -10,6 +10,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = Path('integrations/bb-plugin-keepgoing/skills/keepgoing/scripts')
 TESTS = Path('tools/coordinator-workflow')
 CASES = [
+    ('existing environment selector', 'coordinator.py',
+     'g["environment"], "--provider"', 'g["environment"], "--host", g["host"], "--provider"',
+     'test_commands.CommandTests.test_existing_environment_selects_host_and_rejects_conflicting_selectors'),
     ('unknown reservation', 'coordinator_state.py',
      '    if any(a["state"] in {"unknown", "mapping_pending"} for a in attempts):\n        return None, dict(base, action="reconcile_unknown_attempt")\n', '',
      'test_state.StateTests.test_unknown_survives_restart_and_new_grant_with_all_reservations'),

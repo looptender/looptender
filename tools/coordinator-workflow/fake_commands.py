@@ -12,6 +12,13 @@ if "--warm" in sys.argv[1:]:
 path = Path(os.environ["COORDINATOR_FAKE_WORLD"])
 w = json.loads(path.read_text())
 kind, args = sys.argv[1], sys.argv[2:]
+# BB's existing-environment selector already chooses a host. Reject the
+# incompatible combination before stdin consumption or any world publication.
+if kind == "bb" and args[:2] == ["thread", "spawn"] and "--environment" in args:
+    environment = args[args.index("--environment") + 1]
+    if environment.startswith("env_") and any(flag in args for flag in ("--host", "--machine")):
+        print(json.dumps({"ok": False, "error": {"code": "conflicting_environment_machine"}}))
+        sys.exit(2)
 raw = sys.stdin.buffer.read()
 w["events"].append({"kind": kind, "args": args, "stdinDigest": hashlib.sha256(raw).hexdigest(), "stdinLength": len(raw), "caller": os.environ.get("BB_THREAD_ID"), "bbCli": os.environ.get("BB_CLI")})
 
@@ -39,7 +46,10 @@ if kind == "bb":
         child = "thr_example_lane" + str(len(w["children"]) + 1)
         p = copy.deepcopy(w["parent"])
         p["thread"].update(id=child, parentThreadId=option("--parent-thread"), status="active", providerId=option("--provider"), visibility=option("--visibility"), projectId=option("--project"), environmentId=option("--environment"))
-        p["environment"].update(id=option("--environment"), hostId=option("--host"))
+        # Resolve the existing fixture environment; never derive its host
+        # from the request (which cannot contain a machine selector).
+        p["environment"].update(id=option("--environment"))
+        if w.get("mode") == "wrong_host": p["environment"]["hostId"] = "host_example_other"
         if w.get("mode") == "wrong_parent": p["thread"]["parentThreadId"] = "thr_example_other_owner"
         w["children"][child] = p
         if w.get("mode") == "hold_after_submit": w["status"]["control"]["paused"] = True; w["status"]["controlState"] = "paused"

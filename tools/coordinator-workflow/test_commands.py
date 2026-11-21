@@ -118,6 +118,31 @@ class CommandTests(unittest.TestCase):
             self.assertNotIn("--permission-mode", args); self.assertGreater(event["stdinLength"], 0)
         self.assertFalse(any(e["args"][:2] in (["thread", "tell"], ["thread", "retry"], ["thread", "archive"]) for e in self.read_world()["events"]))
 
+    def test_existing_environment_selects_host_and_rejects_conflicting_selectors(self):
+        sys.path.insert(0, str(SCRIPTS)); from coordinator import Commands
+        from coordinator_state import Refused
+        self.assertEqual(self.run_flow()["action"], "dispatched_new_child")
+        event = self.spawn_events()[0]
+        args = event["args"]
+        self.assertEqual(args[args.index("--environment") + 1], "env_example")
+        self.assertNotIn("--host", args); self.assertNotIn("--machine", args)
+        child = next(iter(self.read_world()["children"].values()))
+        self.assertEqual(child["environment"]["hostId"], self.grant["host"])
+        before = self.world_file.read_bytes()
+        for alias in ("--host", "--machine"):
+            with self.subTest(alias=alias), patch.dict(os.environ, self.env, clear=True):
+                with self.assertRaisesRegex(Refused, "command_failed"):
+                    Commands(self.grant).call("bb", args + [alias, self.grant["host"]])
+            self.assertEqual(self.world_file.read_bytes(), before)
+        # Omission of a redundant selector must not weaken returned-host checks.
+        self.world = self.read_world(); self.world["mode"] = "wrong_host"; self.save_world()
+        self.assertEqual(self.run_flow()["action"], "reconcile_unknown_attempt")
+        self.assertEqual(self.read_journal()["attempts"][-1]["state"], "unknown")
+        self.assertEqual(self.grant["host"], "host_example")
+        self.assertEqual(len(self.read_world()["children"]), 2)
+        self.assertEqual(self.run_flow()["action"], "reconcile_unknown_attempt")
+        self.assertEqual(len(self.read_world()["children"]), 2)
+
     def test_lost_spawn_new_process_new_grant_and_explicit_reconciliation(self):
         self.world["mode"] = "lost_spawn"; self.save_world()
         self.assertEqual(self.run_flow()["action"], "reconcile_unknown_attempt")
