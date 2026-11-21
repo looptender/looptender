@@ -40,3 +40,13 @@ source/config/control binding, remote accepted effects, manager lifecycle,
 durable replay exclusion, recovery, or safe replacement. No production command
 is exposed. Durable intent and final locked application validation remain separate
 unimplemented prerequisites. No README product behavior changes are needed.
+
+The user-space contract is pinned separately from the kernel dispatch path:
+[`libproc.c`](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/libsyscall/wrappers/libproc/libproc.c)
+returns the syscall error number directly, or zero on success. Wrong-incarnation
+and exited-unreaped assertions require exactly `ESRCH`, not arbitrary nonzero;
+correct-token dispatch requires zero. `errno` is retained only as diagnostic data.
+An earlier fixture incorrectly expected `-1` with `errno=ESRCH`. Its failed runs
+remain failed evidence: they did not reach correct-token dispatch, post-rejection
+responsiveness, stale-token testing or the ignoring-child case. Correcting the
+API expectation does not retroactively verify those unexecuted paths.

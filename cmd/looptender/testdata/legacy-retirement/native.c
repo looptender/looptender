@@ -140,7 +140,8 @@ static int run(int ignore, int (*send_token)(audit_token_t *, int)) {
     mismatch.val[7] ^= 1; // Deliberately wrong native incarnation, same owned PID.
     stage = "mismatch-request";
     mismatch_rc = request(&mismatch, send_token, &mismatch_errno);
-    if (mismatch_rc != -1 || mismatch_errno != ESRCH) goto cleanup;
+    // libproc returns the error number directly; errno is diagnostic only.
+    if (mismatch_rc != ESRCH) goto cleanup;
     stage = "mismatch-responsive";
     if (!put(input[1], 'p') || !byte(output[0], 'P')) goto cleanup;
     stage = "pre-signal-no-exit";
@@ -166,7 +167,7 @@ static int run(int ignore, int (*send_token)(audit_token_t *, int)) {
     // the stale-token refusal. Fixture isolation must not depend on that check.
     stage = "exited-unreaped-request";
     stale_rc = request(&selected, send_token, &stale_errno);
-    if (stale_rc != -1 || stale_errno != ESRCH) goto cleanup;
+    if (stale_rc != ESRCH) goto cleanup;
     ok = 1;
 cleanup:
     // Closing our pipe requests cooperative exit. Child alarm bounds wait even
