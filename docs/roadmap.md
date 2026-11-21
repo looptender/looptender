@@ -447,6 +447,8 @@ What the original research supports for a phone, conditional on verified receive
 
 ### 7. Release and recovery verification
 
+- [ ] Damaged-control recovery remains incomplete. Unreleased macOS/Linux CLI Pause can persist an evidence-preserving restrictive freeze after tick drain; empty/truncated/garbage offline journeys require success. Stop, repair/release, readable status and Windows Pause remain open. Windows explicitly refuses without rewriting evidence; platform compilation is not native acceptance. No live or installed restart/restore safety is established. See [freeze limits](operations.md#damaged-control-pause-freeze-unreleased).
+
 - [x] Separate child-completion behavior from timer-budget tests after a native CI timeout: exercise completed/failed/interrupted notices and persisted no-replay behavior through the real fixture adapter with an ordinary test deadline, and verify early timer returns with an injected poll result. Slow-poll cancellation, runtime locks, holds and child-input precedence remain separately tested. Production intervals/timeouts and notification semantics are unchanged. Offline fixtures only; not a live latency guarantee.
 
 - [x] Make the detached-process control fixture exercise diagnostic lock contention deliberately: assert the saved-control warning and persisted pause/stop/owner state, then verify that the same daemon executes stop without a prompt. This replaces timing-dependent zero-exit assumptions exposed by native Windows CI. Offline local-process fixture only; no production behavior or timeouts changed.

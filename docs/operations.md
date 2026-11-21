@@ -1447,3 +1447,45 @@ marker. Prefer upgrading again to inspect that history. An intentionally fresh
 state directory loses diagnostic and episode continuity and must not be treated
 as permission to replay an uncertain delivery. No automatic migration, downcast
 or deletion occurs.
+
+## Damaged-control Pause freeze (unreleased)
+
+On macOS and Linux, CLI `pause` can persist a restrictive freeze when an existing
+regular `control.json` contains syntactically malformed JSON (including empty,
+truncated and garbage bytes, at most 1 MiB). This is not a repaired control or a
+normal paused record. Ownership, prior holds and target bindings remain unknown;
+all original bytes are retained privately in the canonical record. The command
+preserves the existing policy that any calling thread may add a restrictive
+Pause; it records the unchanged caller as provenance without granting ownership.
+Windows and other platforms explicitly refuse this freeze without changing the
+record. Their damaged-control Pause acceptance remains open.
+
+Pause waits at most two seconds to drain the existing tick lock, then takes the
+control lock without waiting. A busy/refused drain does not acknowledge Pause.
+After checking the exact bytes, native file/directory identity and loaded source
+bindings again, it writes private staging, syncs and closes it, atomically renames
+it over the canonical record, and syncs the containing directory before reporting
+success. No missing-file/default-control intermediate is published. A failure
+can leave either the damaged original or a published freeze with unconfirmed
+durability; it never restores a permissive record. A repeated Pause accepts only
+the same strictly validated incident and bindings, without rewriting or nesting
+its evidence. Ordinary output contains neither the raw bytes nor their private
+identities. Valid JSON with unsupported schema, permission/read errors, ordinary
+Pause write/history errors and nonregular inputs are not repaired or frozen.
+
+The top-level array format deliberately makes ordinary control readers refuse.
+Frozen v0.2.0 and source f35a0a94 fixtures reject it for tick, daemon, pause, stop,
+enable, resume and validate while it remains intact. This does not certify other
+installed versions. A check that already loaded the previous control may still
+act until drained; previously queued or accepted actions are not retracted.
+Freeze neither stops the target or its lanes nor shuts down the supervisor.
+Registered-client, panel and Telegram controls retain their existing behavior.
+
+There is no repair, release or resume operation for this record. Valid external
+restoration, deletion followed by enable, or replacement of the state directory
+can bypass the freeze; a sidecar would not protect old readers from those actions.
+Do not treat a backup or incident journal as authenticated ownership. A future
+recovery protocol needs separate complete authority/evidence review, proven old
+scheduler/writer retirement or compatible enforcement, and explicit preservation
+of unrelated holds. Releasing a future fence must not imply resume. No such
+recovery or installed upgrade acceptance is claimed here.

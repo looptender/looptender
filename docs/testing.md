@@ -672,3 +672,36 @@ survive successful completion. These fixtures do not establish live acceptance.
 ### Antigravity manual permission recovery
 
 The [2026-11-21 local walkthrough](antigravity.md#manual-recovery-of-permission-held-local-tests) verified two real permission holds with no repeated send, followed by person-driven continuation of the exact saved sessions and report completion. It used macOS and agy 1.5.13. Direct saved-control read-back confirmed completion and awaiting-user clearance. The tasks only read project documentation and wrote reports; listed project test commands were not executed. Original permission details were discarded, so this is not unattended approval/replay evidence. Owned stop was not exercised in this walkthrough, and remote-project attachment and installed Linux/Windows acceptance remain open.
+
+## Damaged-control freeze fixtures (unreleased)
+
+The original empty/truncated/garbage `TestFaultDamagedRecord/control.json` journey
+now requires CLI Pause success and exact embedded evidence on macOS/Linux;
+Windows retains its explicit known failure. This narrows acceptance to a
+restrictive freeze, not Stop, recovery, readable status or resume. The dedicated
+`TestControlFreeze` cases check any-thread restrictive policy, unchanged caller,
+strict canonical repeat, malformed envelopes, copied bindings, raw/native file
+and directory replacement, stale source, nonregular/unreadable/oversized input,
+healthy Pause history failure, lock/drain refusal, and continued permissive-command
+refusal. Sync, close, write/short-write, recheck, rename and directory-sync fault
+injection checks unchanged original versus published/unconfirmed outcomes. Child
+process exit immediately before/after rename checks no permissive crash
+intermediate; this is not power-loss/filesystem hardware testing.
+
+`TestFrozen*` additionally requires `FROZEN_CONTROL_READER` naming a separately
+built old executable. It exercises the actual new Pause envelope, old reader
+refusal, transferred/retired raw evidence, and valid external restore/removal
+bypass. Set `FROZEN_LEGACY_BINDINGS=1` for v0.2.0, which predates retirement metadata.
+The deliberately undrained old daemon fixture demonstrates a send after publication;
+it proves drain is necessary, not that publication cancels work. Without an old
+executable these tests skip explicitly. Recorded local executions use frozen
+v0.2.0 (`d6bcd054`) and f35a0a94; neither establishes every installed old version.
+
+Lifecycle/platform review: no new lock, installer, provider, scheduler or process
+shutdown mechanism. macOS native offline fixtures and target compilation are
+separate from Linux/Windows execution, installed upgrade and live acceptance.
+The Unix publisher uses file Sync, atomic same-directory rename and directory Sync;
+unsupported filesystem errors cannot report success. Windows publication/marker
+and directory durability remain unimplemented; its explicit refusal fixture must
+run natively before claiming Windows behavior. README, operations and roadmap
+retain these limitations. No repair/release protocol or control UI changed.

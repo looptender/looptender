@@ -70,6 +70,8 @@ Generic process adapters retain at most 1 MiB of command stdout in unreleased so
 
 Unreleased source adds `looptender session reset` to deliberately forget a saved Claude Code, Codex or resumable defined-agent session. It sends nothing and clears no hold; see [reset behavior and refusals](docs/operations.md#starting-a-new-conversation-on-purpose). This command is not in v0.2.0.
 
+Unreleased CLI `pause` can preserve malformed control bytes in a restrictive freeze on macOS/Linux. Ownership remains unknown and no repair or resume is available. Windows refuses this operation. See [damaged-control limits](docs/operations.md#damaged-control-pause-freeze-unreleased).
+
 Unreleased headless runner completion requires wrapper protocol 3 (previously 2). Before upgrading, stop supervision and let old detached turns finish, or use owned stop and confirm actual exit, then replace/restart. The handshake protects new launches only; see [completion and upgrade limits](docs/operations.md#owned-headless-cancellation).
 
 | Surface | What you can use | Verification boundary |

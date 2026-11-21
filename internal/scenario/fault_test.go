@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -341,7 +342,7 @@ func TestFaultDamagedRecord(t *testing.T) {
 		known map[string][]Waiting
 	}
 	cases := []expect{
-		{file: "control.json", tickExit: 1, named: "control.json", known: map[string][]Waiting{
+		{file: "control.json", tickExit: 1, named: "control.json", pauseWorks: runtime.GOOS == "darwin" || runtime.GOOS == "linux", known: map[string][]Waiting{
 			pauseStillWorks: Waits(WaitStopDamagedControl),
 		}},
 		{file: "state.json", tickExit: 1, named: "state.json", pauseWorks: true},
@@ -425,6 +426,19 @@ func TestFaultDamagedRecord(t *testing.T) {
 				p := w.Run("pause", "-c", w.Config)
 				if c.pauseWorks {
 					w.Check(s, "pause works", check(p.Code == 0, "pause: exit %d %s", p.Code, p.Stderr))
+					if c.file == "control.json" {
+						frozen, _ := os.ReadFile(path)
+						var records []struct {
+							Raw       []byte `json:"raw"`
+							Authority string `json:"authority"`
+						}
+						decodeErr := json.Unmarshal(frozen, &records)
+						preserved := decodeErr == nil && len(records) == 1 && bytes.Equal(records[0].Raw, damaged) && records[0].Authority == "unknown"
+						w.Check(s, "freeze retains exact damaged evidence with unknown authority", check(preserved, "evidence not preserved"))
+						again := w.Run("pause", "-c", w.Config)
+						after, _ := os.ReadFile(path)
+						w.Check(s, "repeat freeze preserves incident", check(again.Code == 0 && bytes.Equal(after, frozen), "repeat freeze changed or failed"))
+					}
 				} else if c.file == "incidents.json" {
 					w.Check(s, "pause is saved, with a warning", check(p.Code == 1 && strings.Contains(p.Stderr, "warning: control saved"), "pause: exit %d %s", p.Code, p.Stderr))
 				} else {
