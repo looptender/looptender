@@ -1,10 +1,10 @@
 # Legacy retirement attempt foundation
 
-This package is not connected to a CLI or native backend yet. It cannot signal a
-process, change loop controls, start a supervisor, or manage a service by itself.
-The separate Darwin research fixture proves only selected owned-child primitives.
-Application attestation, the native adapter, final command wiring and independent
-review remain prerequisites for a usable migration command.
+The durable foundation is connected to a separate unreleased Darwin application
+adapter and `legacy-retire` command. See [the command boundary](../../docs/legacy-retirement.md).
+The adapter/native integration requires independent source review and owned-process
+execution before use. Injected tests do not execute its native functions. It never
+changes loop controls, starts a replacement, or manages a service.
 
 Preparation creates a new private directory with canonical immutable intent,
 existing reservation lock and ready record. The returned ticket pins directory
@@ -34,7 +34,8 @@ or lost completion acknowledgement all prohibit re-entry. Failure before link
 cannot have dispatched and leaves prepared evidence; it is not claimed to consume
 an attempt whose publication never occurred. Power-loss persistence is not proven
 by unit tests. A new helper cannot recover an old native observation capability;
-unknown outcomes require separate reconciliation, which is not implemented.
+unknown outcomes remain reserved. Read-only reconciliation reports retained journal
+evidence without resetting or dispatching; it cannot recover a lost native observer.
 
 One accepted request never means completed. Native exact-incarnation exit,
 expected endpoint absence, daemon-lock release and unchanged raw/native controls
@@ -42,7 +43,7 @@ are all required. The adapter's guards stay held through this observation and
 completion publication. No replacement is launched; replacement startup, manager
 retirement, retired-predecessor policy and rollback are separate operations.
 
-Tests use private files and injected fictional adapters only. They cover strict
+Application and journal tests use private files and injected fictional adapters only. They cover strict
 canonical records, copied/missing/replaced evidence, publication failures,
 consumption before final binding drift, concurrent helpers, lost reply and fresh
 helper refusal, accepted-but-alive and final-save failures. A private negative

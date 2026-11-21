@@ -25,7 +25,7 @@ func canonicalTemp(t *testing.T) string {
 }
 func fictional() Binding {
 	h := strings.Repeat("a", 64)
-	return Binding{ConfigPath: "/fictional/example/loop.yaml", StatePath: "/fictional/example/state", SourceDigest: h, ControlDigest: h,
+	return Binding{StateIdentity: Identity{1, 3}, ConfigIdentity: Identity{1, 4}, ExecutableIdentity: Identity{1, 5}, Target: "primary", Caller: "thr_example", ContextDigest: h, ConfigPath: "/fictional/example/loop.yaml", StatePath: "/fictional/example/state", SourceDigest: h, ControlDigest: h,
 		ControlIdentity: Identity{1, 2}, Owner: "thread_example", Generation: 2, PID: 123, Build: "fictional-build", StartedAt: "2026-01-01T00:00:00Z",
 		StateID: h, Executable: "/fictional/example/looptender", ExecutableDigest: h, Arguments: []string{"daemon", "-c", "/fictional/example/loop.yaml"}, Token: [8]uint32{1, 2, 3, 4, 5, 123, 7, 8}}
 }

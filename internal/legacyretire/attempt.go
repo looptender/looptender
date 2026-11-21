@@ -37,21 +37,28 @@ type Identity struct {
 // Binding is explicit application evidence, not authority derived from a PID.
 // SourceDigest binds current reviewed sources, not old in-memory configuration.
 type Binding struct {
-	ConfigPath       string    `json:"configPath"`
-	StatePath        string    `json:"statePath"`
-	SourceDigest     string    `json:"sourceDigest"`
-	ControlDigest    string    `json:"controlDigest"`
-	ControlIdentity  Identity  `json:"controlIdentity"`
-	Owner            string    `json:"owner"`
-	Generation       uint64    `json:"generation"`
-	PID              int       `json:"pid"`
-	Build            string    `json:"build"`
-	StartedAt        string    `json:"startedAt"`
-	StateID          string    `json:"stateID"`
-	Executable       string    `json:"executable"`
-	ExecutableDigest string    `json:"executableDigest"`
-	Arguments        []string  `json:"arguments"`
-	Token            [8]uint32 `json:"token"`
+	StateIdentity      Identity  `json:"stateIdentity"`
+	ConfigIdentity     Identity  `json:"configIdentity"`
+	ExecutableIdentity Identity  `json:"executableIdentity"`
+	Target             string    `json:"target"`
+	BBTarget           string    `json:"bbTarget"`
+	Caller             string    `json:"caller"`
+	ContextDigest      string    `json:"contextDigest"`
+	ConfigPath         string    `json:"configPath"`
+	StatePath          string    `json:"statePath"`
+	SourceDigest       string    `json:"sourceDigest"`
+	ControlDigest      string    `json:"controlDigest"`
+	ControlIdentity    Identity  `json:"controlIdentity"`
+	Owner              string    `json:"owner"`
+	Generation         uint64    `json:"generation"`
+	PID                int       `json:"pid"`
+	Build              string    `json:"build"`
+	StartedAt          string    `json:"startedAt"`
+	StateID            string    `json:"stateID"`
+	Executable         string    `json:"executable"`
+	ExecutableDigest   string    `json:"executableDigest"`
+	Arguments          []string  `json:"arguments"`
+	Token              [8]uint32 `json:"token"`
 }
 
 // cloneBinding prevents adapter-owned mutable buffers from changing the
@@ -74,6 +81,7 @@ type Ticket struct {
 	Root                           string
 	Directory, Intent, Lock, Ready Identity
 	Digest                         string
+	Vault, Anchor                  Identity
 }
 
 // Guard is acquired in tick->control order by the adapter. Verify returns fresh
@@ -117,7 +125,7 @@ func validHash(s string) bool {
 }
 func (b Binding) valid() bool {
 	_, startedErr := time.Parse(time.RFC3339Nano, b.StartedAt)
-	return startedErr == nil && filepath.IsAbs(b.ConfigPath) && filepath.IsAbs(b.StatePath) && filepath.IsAbs(b.Executable) &&
+	return startedErr == nil && b.StateIdentity.Inode != 0 && b.ConfigIdentity.Inode != 0 && b.ExecutableIdentity.Inode != 0 && b.Target != "" && validHash(b.ContextDigest) && filepath.IsAbs(b.ConfigPath) && filepath.IsAbs(b.StatePath) && filepath.IsAbs(b.Executable) &&
 		validHash(b.SourceDigest) && validHash(b.ControlDigest) && validHash(b.StateID) && validHash(b.ExecutableDigest) &&
 		b.ControlIdentity.Inode != 0 && b.Owner != "" && b.Generation > 0 && b.PID > 1 && b.Build != "" && b.StartedAt != "" &&
 		len(b.Arguments) > 0 && b.Token[5] == uint32(b.PID) && b.Token[7] != 0
@@ -383,6 +391,11 @@ func retire(ctx context.Context, t Ticket, acquire Acquire, h hooks) error {
 		}
 		if !reflect.DeepEqual(fresh, b) {
 			return ErrUnavailable
+		}
+		if t.Anchor.Inode != 0 {
+			if e := validateApplicationTicket(t, b); e != nil {
+				return e
+			}
 		}
 		return recheck()
 	}
