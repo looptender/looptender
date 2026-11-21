@@ -34,6 +34,40 @@ An earlier coordinator instruction to park a lane is not permanent when the owne
 For a fictional example, an idle docs lane was parked for merge approval. The owner subsequently authorizes its independent documentation fix. Review that newer authorization explicitly, retire the old person-wait declaration, obtain a current unfinished handoff and acknowledge it. The coordinator then performs or delegates the authorized fix under its existing authority. If the loop is actually paused, stopped or awaiting-user, that runtime hold remains until separately released by an authorized person. A metadata review alone neither dispatches the fix nor verifies progress.
 
 The CLI regression covers changed authorization, retained unfinished history, old-handoff replay refusal, current handoff acknowledgement, privacy and unchanged runtime holds. Actual agent reconciliation/dispatch and host-disconnect recovery acceptance remain open; prompt guidance is not a host-enforced turn-end hook or an automatic scheduler.
+## Use lanes to advance independent work
+
+Before substantial work, identify concrete deliverables and dependencies. When the
+person or project instructions authorize delegation, assign independent work now;
+do not keep all implementation, evidence gathering and review in the coordinator.
+Respect configured concurrency and spending bounds. Prefer reusing a suitable
+lane to creating another, and avoid delegation overhead for a small or sequential
+task.
+
+In BB, a request for child lanes means visible child conversations parented to the
+coordinator. Internal subagents and named research topics are not equivalent to
+that visible roster. Record the actual child ID, assignment and result pointer.
+Give each lane a bounded scope, expected output, verification and separate file or
+worktree ownership. Keep a shared signed-in browser or another exclusive resource
+with one owner; other lanes can independently review exported evidence.
+
+While a lane or CI is running, advance another authorized deliverable. When all
+remaining work depends on a pending result, wait for that result rather than
+repeatedly querying it. Review new evidence once; repeat a check only when changed
+source, a failed check or an unresolved concern warrants it. Required checks on a
+changed merge head or base still apply. An idle lane with an unfinished assignment
+needs reconciliation, not an automatic completion claim.
+
+New setup prompts contain this guidance. Updating a binary or restarting a daemon
+does not rewrite existing saved prompts. Existing coordinators need an explicit,
+reviewed prompt update preserving their task, limits and holds. Guidance does not
+make looptender create conversations, dispatch work, grant permission, infer
+completion from transcripts or clear a runtime hold.
+
+Acceptance remains open: observe a coordinator assign two authorized independent
+deliverables to visible child lanes, advance a third while they run, reconcile a
+completed lane once, and preserve a later person-only gate. Include a dependent
+single-task control where no extra lane is created. Record output and elapsed
+progress; a changed prompt alone does not establish faster completion.
 
 ## Report by pointer
 
