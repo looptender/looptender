@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/looptender/looptender/internal/registry"
 	"github.com/looptender/looptender/internal/telegram"
 )
 
@@ -46,6 +49,26 @@ func telegramCLIWorkflowAgainstStandIn(t *testing.T, showQR bool) {
 	dir := t.TempDir()
 	t.Setenv(telegram.TokenEnv, "")
 	t.Setenv(telegram.APIURLEnv, "")
+	// Model a populated inherited registry, as a full command suite can leave
+	// behind. This pairing fixture must explicitly select its own empty registry
+	// rather than try to create topics for unrelated loops.
+	ambientRegistry := filepath.Join(t.TempDir(), "registry")
+	for _, name := range []string{"example-first", "example-second"} {
+		if _, err := registry.Add(ambientRegistry, name, filepath.Join(ambientRegistry, name+".yaml"), filepath.Join(ambientRegistry, name+"-state")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv(registryDirEnv, ambientRegistry)
+	ambientBefore, err := os.ReadFile(filepath.Join(ambientRegistry, registry.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		after, err := os.ReadFile(filepath.Join(ambientRegistry, registry.FileName))
+		if err != nil || !bytes.Equal(after, ambientBefore) {
+			t.Error("pairing fixture changed the inherited registry")
+		}
+	})
 
 	var mu sync.Mutex
 	var pairCode string
@@ -131,7 +154,7 @@ func telegramCLIWorkflowAgainstStandIn(t *testing.T, showQR bool) {
 	// 2. Full zero-infra setup via stdin token + deep-link pairing.
 	errBuf.Reset()
 	setupArgs := []string{
-		"setup", "--dir", dir, "--token-stdin", "--api-url", srv.URL, "--timeout", "5s", "--poll-wait", "1s",
+		"setup", "--dir", dir, "--registry", filepath.Join(t.TempDir(), "registry"), "--token-stdin", "--api-url", srv.URL, "--timeout", "5s", "--poll-wait", "1s",
 	}
 	if showQR {
 		setupArgs = append(setupArgs, "--qr")
