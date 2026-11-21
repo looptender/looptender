@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+from fixture_environment import isolated_environment
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "integrations/bb-plugin-keepgoing/skills/keepgoing/scripts"
 ENTRY = SCRIPTS / "coordinator.py"
@@ -19,12 +20,13 @@ FAKE = Path(__file__).with_name("fake_commands.py")
 
 class CommandTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.tmp = tempfile.TemporaryDirectory(dir="/tmp"); self.addCleanup(self.tmp.cleanup)
         self.directory = Path(self.tmp.name).resolve(); self.directory.chmod(0o700)
         self.world_file = self.directory / "world.json"
         self.journal = self.directory / "journal.json"
         self.grant_file = self.directory / "grant.json"
-        self.env = dict(os.environ, BB_THREAD_ID="thr_example_coordinator", COORDINATOR_FAKE_WORLD=str(self.world_file), PYTHONDONTWRITEBYTECODE="1")
+        self.env = isolated_environment(self.directory / "environment")
+        self.env.update(BB_THREAD_ID="thr_example_coordinator", COORDINATOR_FAKE_WORLD=str(self.world_file))
         self.executables = {}
         for name in ("bb", "keepgoing"):
             p = self.directory / name
@@ -231,7 +233,7 @@ class CommandTests(unittest.TestCase):
         self.world["mode"] = "slow_spawn"; self.save_world()
         commands = Commands(self.grant)
         started = time.monotonic()
-        with patch.dict(os.environ, self.env):
+        with patch.dict(os.environ, self.env, clear=True):
             with self.assertRaisesRegex(Refused, "command_timeout"):
                 commands.call("bb", ["thread", "spawn"], timeout=0.2)
         self.assertLess(time.monotonic() - started, 3)
@@ -244,7 +246,6 @@ class CommandTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("KEEPGOING_TEST_BINARY"), "actual CLI fixture requires the explicitly built test binary")
     def test_actual_cli_assignment_writer_and_saved_controls(self):
         self.real_cli = str(Path(os.environ["KEEPGOING_TEST_BINARY"]).resolve())
-        self.env.update(LOOPTENDER_REGISTRY_DIR=str(self.directory / "registry"), LOOPTENDER_SESSION_DIR=str(self.directory / "sessions"), LOOPTENDER_ROUTES_FILE=str(self.directory / "routes.yaml"))
         config = Path(self.binding["config"])
         config.write_text("version: 1\nloop:\n  name: example-loop\n  state_dir: runtime\n  adapter: bb\n  provider: codex\n  group: example-account\n  bb: {thread: thr_example_coordinator, cli: " + json.dumps(self.executables["bb"]["path"]) + "}\n  prompt: Continue the fictional task.\n  assignment_lifecycle: true\n")
         config.chmod(0o600)

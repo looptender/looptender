@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from fixture_environment import isolated_environment
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "integrations/bb-plugin-keepgoing/skills/keepgoing/scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -27,7 +28,7 @@ def snapshot():
 
 class StateTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(dir="/tmp")
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / "journal.json"
         self.journal = Journal(self.path)
@@ -48,7 +49,7 @@ class StateTests(unittest.TestCase):
         self.g["revision"] = 2
         self.g["maxAttempts"] = 8
         script = "import json,sys;sys.path.insert(0,sys.argv[1]);from coordinator_state import *;g=json.loads(sys.argv[3]);j=Journal(sys.argv[2]);s=j.load(g);print(json.dumps([s,next_task(g,s,{'rows':[],'children':{}})[1]]))"
-        result = subprocess.run([sys.executable, "-c", script, str(SCRIPTS), str(self.path), json.dumps(self.g)], capture_output=True, text=True, timeout=5, check=True)
+        result = subprocess.run([sys.executable, "-c", script, str(SCRIPTS), str(self.path), json.dumps(self.g)], capture_output=True, text=True, timeout=5, check=True, env=isolated_environment(Path(self.tmp.name) / "environment"))
         state, outcome = json.loads(result.stdout)
         self.assertEqual(state["spent"], 1)
         self.assertEqual(state["attempts"][0]["resources"], ["example-worktree"])
