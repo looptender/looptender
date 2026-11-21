@@ -432,3 +432,45 @@ func TestControlFreezeOrdinaryNullableCompatibility(t *testing.T) {
 		t.Fatal("existing nullable encoding lost or refused")
 	}
 }
+
+func TestControlFreezeOrdinaryReplacementUnderLock(t *testing.T) {
+	for _, raw := range []string{
+		`{"enabled":true,"stop":true,"futureHold":true}`,
+		`{"enabled":true,"stop":true,"ſtop":false}`,
+		`{"ownership":{"threadId":"thr_owner","ThreadId":"thr_other"}}`,
+		`{"stop":null}`, `null`, `{`,
+	} {
+		t.Run(freezeDigest([]byte(raw))[:8], func(t *testing.T) {
+			f := newFixture(t)
+			f.run("enable")
+			cfg, err := config.Load(f.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out, errs bytes.Buffer
+			if handled, _ := pauseDamagedControl(env{context.Background(), &out, &errs}, cfg); handled {
+				t.Fatal("healthy preflight unexpectedly handled")
+			}
+			// A real cooperating writer replaces the record after preflight finishes.
+			guard, err := lock.AcquireNamed(cfg.Loop.StateDir, lock.Control)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(cfg.Loop.StateDir, control.FileName)
+			err = os.WriteFile(path, []byte(raw), 0600)
+			guard.Release()
+			if err != nil {
+				t.Fatal(err)
+			}
+			invoked := false
+			_, err = updateControlWithHistory(cfg.Loop.StateDir, "pause", func(c *control.File) error { invoked = true; c.Paused = true; return nil })
+			if err == nil || invoked {
+				t.Fatal("replacement passed locked validation")
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(after, []byte(raw)) {
+				t.Fatal("replacement evidence rewritten")
+			}
+		})
+	}
+}

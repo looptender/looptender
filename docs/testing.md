@@ -683,8 +683,13 @@ restrictive freeze, not Stop, recovery, readable status or resume. The dedicated
 strict canonical repeat, malformed envelopes, copied bindings, raw/native file
 and directory replacement, stale source, nonregular/unreadable/oversized input,
 healthy Pause history failure, exact nested tag spelling (including Unicode-fold
-aliases), scalar-null refusal with existing nullable-field compatibility, lock/drain refusal, and continued permissive-command
-refusal. Sync, close, write/short-write, recheck, rename and directory-sync fault
+aliases), scalar-null refusal with existing nullable-field compatibility, lock/drain refusal,
+and a cooperating writer replacing healthy control before ordinary Pause takes
+the control lock. The validator checks the exact current raw buffer under that
+lock before decoding the same bytes; malformed/unsupported replacements never
+reach the mutation callback. Portable control fixtures verify lock-held
+validation, bounds, unchanged rejected evidence and existing absent-control behavior.
+Other cases cover continued permissive-command refusal. Sync, close, write/short-write, recheck, rename and directory-sync fault
 injection checks unchanged original versus published/unconfirmed outcomes. Child
 process exit immediately before/after rename checks no permissive crash
 intermediate; this is not power-loss/filesystem hardware testing.

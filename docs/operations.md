@@ -1475,6 +1475,9 @@ Pause write/history errors and nonregular inputs are not repaired or frozen.
 Ordinary records must use exact schema tag spelling recursively: duplicate keys,
 case/Unicode-fold aliases and scalar nulls refuse unchanged. Existing nullable
 pointer and slice fields remain supported; this check grants no new authority.
+The ordinary command Pause transaction revalidates current raw bytes under the
+control lock and decodes that same buffer before saving. A healthy preflight
+does not authorize rewriting a later unsupported replacement.
 
 The top-level array format deliberately makes ordinary control readers refuse.
 Frozen v0.2.0 and source f35a0a94 fixtures reject it for tick, daemon, pause, stop,
@@ -1482,7 +1485,9 @@ enable, resume and validate while it remains intact. This does not certify other
 installed versions. A check that already loaded the previous control may still
 act until drained; previously queued or accepted actions are not retracted.
 Freeze neither stops the target or its lanes nor shuts down the supervisor.
-Registered-client, panel and Telegram controls retain their existing behavior.
+Registered-client, panel and Telegram controls do not gain a freeze path.
+Ordinary command Pause saves, including the registered CLI command, share the
+locked raw validation; panel and Telegram origins retain their existing behavior.
 
 There is no repair, release or resume operation for this record. Valid external
 restoration, deletion followed by enable, or replacement of the state directory

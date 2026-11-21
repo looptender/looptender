@@ -249,6 +249,13 @@ func publishControlFreezeWith(path string, wire []byte, verify func() error, ops
 	return nil
 }
 
+func validateOrdinaryPauseRecord(raw []byte) error {
+	if !ordinaryPauseRecord(raw) {
+		return errors.New("control.json schema unavailable; evidence unchanged; no freeze performed")
+	}
+	return nil
+}
+
 // Do not normalize unsupported valid JSON while classifying malformed input.
 // This checks encoding shape only; it never reconstructs ownership or holds.
 func ordinaryPauseRecord(raw []byte) bool {
