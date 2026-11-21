@@ -1480,14 +1480,21 @@ control lock and decodes that same buffer before saving. A healthy preflight
 does not authorize rewriting a later unsupported replacement.
 
 The top-level array format deliberately makes ordinary control readers refuse.
-Frozen v0.2.0 and source f35a0a94 fixtures reject it for tick, daemon, pause, stop,
-enable, resume and validate while it remains intact. This does not certify other
-installed versions. A check that already loaded the previous control may still
+Frozen v0.2.0 and source f35a0a94 fixtures exercise refusal for tick, daemon,
+pause, stop, enable, resume and validate while it remains intact. Their isolated
+replay is pending after correcting the fixture environment; earlier inherited-
+environment runs do not establish isolated compatibility or installed-version
+acceptance. A check that already loaded the previous control may still
 act until drained; previously queued or accepted actions are not retracted.
 Freeze neither stops the target or its lanes nor shuts down the supervisor.
 Registered-client, panel and Telegram controls do not gain a freeze path.
 Ordinary command Pause saves, including the registered CLI command, share the
 locked raw validation; panel and Telegram origins retain their existing behavior.
+
+Status and offline doctor retain unavailable control/ownership and give no
+backup-restoration remedy for a frozen or unsupported array envelope. An unknown
+or wrong-binding array is unsupported, not a confirmed freeze. Old executables
+cannot receive this corrected guidance and may still suggest unsafe restoration.
 
 There is no repair, release or resume operation for this record. Valid external
 restoration, deletion followed by enable, or replacement of the state directory

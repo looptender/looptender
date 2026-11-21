@@ -1049,7 +1049,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	var unreadable []unreadableRecord
 	ctl, err := control.Load(l.StateDir)
 	if err != nil {
-		unreadable = append(unreadable, unreadableControl(l.StateDir, err))
+		unreadable = append(unreadable, unreadableControl(cfg, err))
 		ctl = control.File{}
 	}
 	st, stateErr := state.Load(l.StateDir)
@@ -1816,10 +1816,12 @@ func (r unreadableRecord) damaged() bool {
 // describe is the reason in words, for the text output.
 func (r unreadableRecord) describe() string {
 	what := map[string]string{
-		"not_json":    "its content is not JSON",
-		"wrong_shape": "its content is JSON of the wrong shape",
-		"not_a_file":  "it is not a regular file",
-		"cannot_open": "it could not be opened",
+		"frozen_control":      "it contains a restrictive freeze with preserved evidence",
+		"unsupported_control": "it contains an unsupported or unverifiable control envelope",
+		"not_json":            "its content is not JSON",
+		"wrong_shape":         "its content is JSON of the wrong shape",
+		"not_a_file":          "it is not a regular file",
+		"cannot_open":         "it could not be opened",
 	}[r.Problem]
 	if r.Offset != nil {
 		what += fmt.Sprintf(", at byte %d", *r.Offset)
@@ -1835,7 +1837,11 @@ func cannotReadRemedy(r unreadableRecord) string {
 	return "The file may be intact: keepgoing could not open it. Fix its permissions so keepgoing can read it; do not move it aside or delete it."
 }
 
-func unreadableControl(dir string, err error) unreadableRecord {
+func unreadableControl(cfg *config.Config, err error) unreadableRecord {
+	if problem, remedy := controlFreezeDiagnostic(cfg); problem != "" {
+		return unreadableRecord{File: control.FileName, Problem: problem, Remedy: remedy}
+	}
+	dir := cfg.Loop.StateDir
 	r := classifyRecord(dir, control.FileName, err)
 	if !r.damaged() {
 		r.Remedy = "Checks send nothing, and pause, stop and resume cannot be saved, until it can be read. " + cannotReadRemedy(r)

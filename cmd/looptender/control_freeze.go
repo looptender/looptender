@@ -340,3 +340,17 @@ func freezeExactJSON(d *json.Decoder, typ reflect.Type, depth int) bool {
 	_, err = d.Token()
 	return err == nil
 }
+
+// Read-only guidance: reserved arrays are never a normal control.File. A
+// malformed or wrong-binding array is unsupported, not a confirmed freeze.
+func controlFreezeDiagnostic(cfg *config.Config) (string, string) {
+	s, err := readFreezeSnapshot(cfg.Loop.StateDir)
+	if err != nil || !bytes.HasPrefix(bytes.TrimSpace(s.raw), []byte("[")) {
+		return "", ""
+	}
+	problem := "unsupported_control"
+	if cfg.CheckSources() == nil && parseControlFreeze(s.raw, s.directory, freezeNativeID(s.dir), cfg.SourcesDigest()) == nil {
+		problem = "frozen_control"
+	}
+	return problem, "Control and ownership remain unavailable. Preserve this record and its evidence. No supported repair, release or resume exists; do not restore a copy, remove or replace control.json. Previously accepted actions are not retracted."
+}

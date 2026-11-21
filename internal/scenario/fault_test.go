@@ -435,6 +435,11 @@ func TestFaultDamagedRecord(t *testing.T) {
 						decodeErr := json.Unmarshal(frozen, &records)
 						preserved := decodeErr == nil && len(records) == 1 && bytes.Equal(records[0].Raw, damaged) && records[0].Authority == "unknown"
 						w.Check(s, "freeze retains exact damaged evidence with unknown authority", check(preserved, "evidence not preserved"))
+						for _, args := range [][]string{{"status", "-c", w.Config}, {"doctor", "--offline", "-c", w.Config}} {
+							diagnostic := w.Run(args...)
+							text := diagnostic.Stdout + diagnostic.Stderr
+							w.Check(s, "frozen diagnostics retain unavailable authority without backup recovery", check(diagnostic.Code != 0 && strings.Contains(text, "No supported repair, release or resume exists") && !strings.Contains(text, "restore control.json from a copy"), "unsafe diagnostic: %s", text))
+						}
 						again := w.Run("pause", "-c", w.Config)
 						after, _ := os.ReadFile(path)
 						w.Check(s, "repeat freeze preserves incident", check(again.Code == 0 && bytes.Equal(after, frozen), "repeat freeze changed or failed"))

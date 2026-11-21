@@ -474,3 +474,52 @@ func TestControlFreezeOrdinaryReplacementUnderLock(t *testing.T) {
 		})
 	}
 }
+
+func TestControlFreezeDiagnosticGuidance(t *testing.T) {
+	f := newFixture(t)
+	f.run("enable")
+	path := filepath.Join(f.dir, "state", control.FileName)
+	raw := []byte("{PRIVATE-FICTIONAL-EVIDENCE")
+	os.WriteFile(path, raw, 0600)
+	if code, _, err := f.run("pause"); code != 0 {
+		t.Fatal(err)
+	}
+	frozen, _ := os.ReadFile(path)
+	for _, entry := range []struct {
+		name    string
+		wire    []byte
+		problem string
+	}{
+		{"bound", frozen, "frozen_control"},
+		{"unknown", []byte(`[{"format":"fictional-unknown"}]`), "unsupported_control"},
+		{"truncated", frozen[:len(frozen)/2], "unsupported_control"},
+		{"wrong-binding", bytes.Replace(frozen, []byte(`"directory":"`), []byte(`"directory":"wrong`), 1), "unsupported_control"},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			os.WriteFile(path, entry.wire, 0600)
+			for _, args := range [][]string{{"status"}, {"status", "--json"}, {"doctor", "--offline"}, {"doctor", "--offline", "--json"}} {
+				code, out, errs := f.run(args...)
+				text := out + errs
+				if code == 0 || !strings.Contains(text, "No supported repair, release or resume exists") || strings.Contains(text, "restore control.json from a copy") || strings.Contains(text, string(raw)) {
+					t.Fatalf("unsafe diagnostic %v: code=%d output=%s", args, code, text)
+				}
+				if args[0] == "status" && len(args) > 1 {
+					var obj map[string]json.RawMessage
+					if json.Unmarshal([]byte(out), &obj) != nil {
+						t.Fatal("invalid status JSON")
+					}
+					if _, ok := obj["control"]; ok {
+						t.Fatal("synthetic control exposed")
+					}
+					if !strings.Contains(out, entry.problem) {
+						t.Fatal("envelope mislabeled", out)
+					}
+				}
+				after, _ := os.ReadFile(path)
+				if !bytes.Equal(after, entry.wire) {
+					t.Fatal("diagnostics mutated evidence")
+				}
+			}
+		})
+	}
+}
