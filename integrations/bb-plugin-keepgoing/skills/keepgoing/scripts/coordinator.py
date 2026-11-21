@@ -141,15 +141,20 @@ class Commands:
             raise Refused("command_unconfirmed") from None
         finally:
             selector.close()
-            # Local client cleanup says nothing about host-side creation outcome.
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                raise Refused("client_reap_unconfirmed") from None
+            # Keep the unreaped leader identity until signalling. wait() above
+            # can already have reaped it: never signal that numeric PID/PGID
+            # afterward, and do not poll() before this check (poll can reap).
+            # A successful client exit does not prove descendants drained; local
+            # cleanup cannot cancel/roll back a submitted host-side request.
+            if process.returncode is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    raise Refused("client_reap_unconfirmed") from None
             process.stdout.close()
             if not process.stdin.closed:
                 process.stdin.close()

@@ -103,7 +103,9 @@ with reconciliation actions, while independent new work may proceed.
   and direct-parent slot bounds are not global spend/concurrency guarantees;
   independent actors and host scheduling remain outside that transaction.
 - Bounded streaming reads, local process-group cancellation and reaping do not
-  cancel or prove failure of an already submitted host request. Journal capacity
+  cancel or prove failure of an already submitted host request. Cancellation signals
+  only before reaping the leader; success never signals a reaped numeric identity.
+  Neither group signalling nor pipe EOF proves all descendants drained. Journal capacity
   refuses; it never evicts unfinished work. See the repository `tools/coordinator-workflow/DESIGN.md`.
 - No transcript-based decisions, owner-text parsing, automatic account creation,
   login, provider probes or supervision authority changes are added.
