@@ -52,3 +52,17 @@ Even a pass will establish only this exact synthetic application/CLI/native path
 on the tested Darwin host. It will not establish real legacy loaded-config or
 launch-context provenance, all descendants, power-loss behavior, manager lifecycle,
 forced PID reuse, remote effect cancellation, or live rollout acceptance.
+
+Failure evidence correction: the shared `owned_process_evidence.py` recorder
+saves a started command entry before pin verification and spawn, then updates that
+same entry in `finally` with PID, exit, partial bounded streams, timeout/truncation
+and cleanup state. Failure stops the sequence; later cleanup/save failures do not
+replace the original failure. The outer packet uses that recorder and saves its
+own exceptional pin/import/spawn/read result in `finally`. Its exclusive evidence
+file must be opened before pin checks; failure to create that file launches nothing.
+The previous prepared artifacts remain retained and are not execution candidates.
+
+`test_owned_process_evidence.py` exercises only newly direct-owned Python children
+and nonexistent fictional commands: partial-output timeout, overflow, launch/pin
+refusal, success, and preservation of the original failure when final saving also
+fails. It neither imports the native runner nor invokes the Go bridge.

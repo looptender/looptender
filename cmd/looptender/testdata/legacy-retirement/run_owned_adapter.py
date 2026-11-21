@@ -11,6 +11,8 @@ import stat
 import subprocess
 import time
 
+from owned_process_evidence import run_logged
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--cli', required=True)
 parser.add_argument('--cli-sha256', required=True)
@@ -92,40 +94,11 @@ def read_ready(child):
     return value
 
 
-def invoke(command, env, cwd):
-    if pins() != before:
-        raise ValueError('artifact drift')
-    p = subprocess.Popen(command, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    output = dict(stdout=b'', stderr=b'')
-    end = min(deadline, time.monotonic() + 5)
-    try:
-        with selectors.DefaultSelector() as sel:
-            sel.register(p.stdout, selectors.EVENT_READ, 'stdout')
-            sel.register(p.stderr, selectors.EVENT_READ, 'stderr')
-            while sel.get_map():
-                left = end - time.monotonic()
-                if left <= 0:
-                    raise TimeoutError('CLI deadline')
-                for key, _ in sel.select(left):
-                    part = os.read(key.fileobj.fileno(), 4097)
-                    if not part:
-                        sel.unregister(key.fileobj)
-                        continue
-                    if len(output[key.data]) + len(part) > 4096:
-                        raise ValueError('CLI output bound')
-                    output[key.data] += part
-        code = p.wait(timeout=max(0.001, end - time.monotonic()))
-    except BaseException:
-        # Only this directly owned CLI child, never its selected target.
-        p.kill()
-        p.wait(timeout=1)
-        raise
-    finally:
-        p.stdout.close()
-        p.stderr.close()
-    return dict(command=command, exit=code,
-                stdout=output['stdout'].decode(), stderr=output['stderr'].decode())
+def invoke(command, env, cwd, entries):
+    def check():
+        if pins() != before:
+            raise ValueError('artifact drift')
+    return run_logged(command, env, cwd, entries, save, check, deadline)
 
 
 def control_snapshot(path):
@@ -172,12 +145,17 @@ try:
         row = dict(mode=mode, environment=env, commands=[], control_before=baseline)
         report['scenarios'].append(row)
         child = None
+        scenario_error = None
         try:
             if pins() != before:
                 raise ValueError('artifact drift before child')
+            row['child_state'] = 'started'
+            save()
             child = subprocess.Popen([args.child, 'daemon', '-c', str(config)],
                                      env=env, cwd=root, stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            row['owned_child_pid'] = child.pid
+            save()
             # No poll/wait/reap until all CLI operations on this child are over.
             # Its PID stays reserved even after graceful exit.
             ready = read_ready(child)
@@ -195,9 +173,7 @@ try:
                 command = [args.cli, 'legacy-retire', action, '--ticket', str(ticket_path), '--timeout', '1s']
                 if action != 'reconcile':
                     command += ['--selection', str(selection_path)]
-                result = invoke(command, env, root)
-                row['commands'].append(result)
-                save()
+                result = invoke(command, env, root, row['commands'])
                 return result
 
             prepared = call('prepare')
@@ -220,6 +196,10 @@ try:
             if row['control_after'] != baseline:
                 raise ValueError('controls changed')
             row['validated'] = True
+        except BaseException as exc:
+            scenario_error = exc
+            row['failure'] = type(exc).__name__ + ': ' + str(exc)
+            row['validated'] = False
         finally:
             if child is not None:
                 # First release retained pipe; finite child timer bounds failure.
@@ -232,10 +212,17 @@ try:
                     if row['child_exit'] != 0 or row['child_stdout_tail'] or row['child_stderr']:
                         row['validated'] = False
                         raise ValueError('owned child cleanup/early-exit diagnostic')
+                except BaseException as cleanup_error:
+                    row['cleanup_error'] = type(cleanup_error).__name__ + ': ' + str(cleanup_error)
+                    row['validated'] = False
+                    if scenario_error is None:
+                        scenario_error = cleanup_error
                 finally:
                     child.stdout.close()
                     child.stderr.close()
             save()
+        if scenario_error is not None:
+            raise scenario_error
         if not row.get('validated'):
             raise ValueError('scenario incomplete')
     report['artifacts_after'] = pins()
