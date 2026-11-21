@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -52,6 +53,14 @@ type Binding struct {
 	Arguments        []string  `json:"arguments"`
 	Token            [8]uint32 `json:"token"`
 }
+
+// cloneBinding prevents adapter-owned mutable buffers from changing the
+// immutable prepared expectation. Strings and native token arrays are values.
+func cloneBinding(b Binding) Binding {
+	b.Arguments = slices.Clone(b.Arguments)
+	return b
+}
+
 type intent struct {
 	Schema  int     `json:"schema"`
 	Nonce   string  `json:"nonce"`
@@ -362,7 +371,7 @@ func retire(ctx context.Context, t Ticket, acquire Acquire, h hooks) error {
 	if e != nil || string(lockBytes) != t.Digest {
 		return ErrUnavailable
 	}
-	g, e := acquire(ctx, b)
+	g, e := acquire(ctx, cloneBinding(b))
 	if e != nil {
 		return e
 	}
@@ -380,7 +389,7 @@ func retire(ctx context.Context, t Ticket, acquire Acquire, h hooks) error {
 	if e = verify(); e != nil {
 		return e
 	}
-	observer, e := g.Arm(ctx, b)
+	observer, e := g.Arm(ctx, cloneBinding(b))
 	if e != nil {
 		return e
 	}
@@ -427,7 +436,7 @@ func retire(ctx context.Context, t Ticket, acquire Acquire, h hooks) error {
 	if e != nil || !dead {
 		return ErrSpent
 	}
-	evidence, e := g.Retired(ctx, b)
+	evidence, e := g.Retired(ctx, cloneBinding(b))
 	if e != nil {
 		return e
 	}

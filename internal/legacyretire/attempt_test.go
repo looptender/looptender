@@ -431,3 +431,67 @@ func TestCancelledAttemptDoesNotAcquireOrConsume(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// This adapter models ordinary reuse of a mutable argument buffer, not a native
+// identity forgery. It must not rewrite the prepared comparison baseline.
+type aliasGuard struct {
+	*fakeGuard
+	mutateArm     bool
+	mutateRetired bool
+}
+
+func (g *aliasGuard) Arm(ctx context.Context, b Binding) (Observer, error) {
+	if g.mutateArm {
+		b.Arguments[0] = "different-invocation"
+		g.b = b
+	}
+	return g.fakeGuard.Arm(ctx, b)
+}
+func (g *aliasGuard) Retired(ctx context.Context, b Binding) (Evidence, error) {
+	if g.mutateRetired {
+		b.Arguments[0] = "adapter-scratch"
+	}
+	return g.fakeGuard.Retired(ctx, b)
+}
+func TestAdapterCannotMutatePreparedArguments(t *testing.T) {
+	for _, stage := range []string{"acquire", "arm"} {
+		t.Run(stage, func(t *testing.T) {
+			ticket, g := ready(t)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			e := Retire(ctx, ticket, func(_ context.Context, b Binding) (Guard, error) {
+				if stage == "acquire" {
+					b.Arguments[0] = "different-invocation"
+				}
+				g.b = b
+				g.held = true
+				return &aliasGuard{fakeGuard: g, mutateArm: stage == "arm"}, nil
+			})
+			if e == nil || g.sent != 0 {
+				t.Fatalf("prepared argv drift accepted: err=%v dispatches=%d", e, g.sent)
+			}
+			if _, e = os.Stat(filepath.Join(ticket.Root, "spent")); !errors.Is(e, os.ErrNotExist) {
+				t.Fatal("pre-consumption refusal spent attempt", e)
+			}
+		})
+	}
+}
+func TestCallbackArgumentsHaveIndependentStorage(t *testing.T) {
+	original := fictional()
+	copy := cloneBinding(original)
+	copy.Arguments[0] = "scratch"
+	if original.Arguments[0] != "daemon" {
+		t.Fatal("clone aliases original")
+	}
+	ticket, g := ready(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	e := Retire(ctx, ticket, func(_ context.Context, b Binding) (Guard, error) {
+		g.b = b
+		g.held = true
+		return &aliasGuard{fakeGuard: g, mutateRetired: true}, nil
+	})
+	if e != nil || g.sent != 1 || g.b.Arguments[0] != "daemon" {
+		t.Fatal(e, g.sent, g.b.Arguments)
+	}
+}
