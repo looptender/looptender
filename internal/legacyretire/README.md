@@ -2,8 +2,9 @@
 
 The durable foundation is connected to a separate unreleased Darwin application
 adapter and `legacy-retire` command. See [the command boundary](../../docs/legacy-retirement.md).
-The adapter/native integration requires independent source review and owned-process
-execution before use. Injected tests do not execute its native functions. It never
+The adapter/native integration has independent source review and one bounded
+owned-process Darwin fixture. Injected tests do not execute its native functions;
+the separate integrated fixture does. Real-instance rollout remains unverified. It never
 changes loop controls, starts a replacement, or manages a service.
 
 Preparation creates a new private directory with canonical immutable intent,

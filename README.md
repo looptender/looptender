@@ -290,9 +290,9 @@ Decisions use structured status: exit codes, JSON fields, HTTP status and provid
 - **Runs with your host.** Use `start`, a daemon, an existing scheduler, or managed macOS/Linux [services](docs/services.md). `ci-wait` and `net-retry` are separate command helpers. Unreleased: an opt-in [PR backlog safeguard](docs/pr-backlog.md) adds bounded GitHub WIP evidence to ordinary wakes; `pr-backlog` also checks it explicitly. It neither prevents arbitrary branch creation nor grants merge permission. Windows service management remains planned.
 
 Unreleased source includes a separate Darwin [manual legacy supervisor retirement](docs/legacy-retirement.md)
-command with one-use retirement tickets and unchanged controls. Its adapter/native
-integration awaits independent review and owned-process execution; it is not a
-released restart path and never starts a replacement.
+command with one-use retirement tickets and unchanged controls. Its reviewed
+adapter/native integration has bounded fictional-process evidence on macOS; live
+migration remains unverified. It never starts a replacement.
 
 ## Limitations
 

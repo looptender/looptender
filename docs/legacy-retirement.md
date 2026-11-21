@@ -6,10 +6,11 @@ cannot add an endpoint to an old running process. This command retires the
 supervisor; it does not perform the loop's Stop action, stop its BB conversation,
 resume a loop, install a binary, or start a replacement.
 
-This implementation is awaiting independent adapter/native review and integrated
-owned-process testing. Injected fixtures establish the application checks and
-journal behavior; they do not establish native CLI or live migration acceptance.
-Do not treat the command's presence as rollout readiness.
+The source has independent review and one bounded integrated owned-process fixture
+on native Darwin. That fixture exercised the actual CLI, authenticated fictional
+daemon and native bridge for graceful retirement and accepted-but-alive refusal.
+It does not establish real legacy provenance or live migration acceptance. Do not
+treat the command's presence as rollout readiness.
 
 ## Explicit selection and preparation
 
@@ -102,10 +103,13 @@ manager-specific retirement plan; a retired predecessor receives retirement only
   exit, exec distinction, and accepted-but-alive behavior. Earlier failed fixture
   runs remain failures; the corrected fresh result supports only its exact scope.
   It does not exercise this Go native adapter or authenticate a real daemon.
-- The new native adapter has compilation evidence only until separately reviewed
-  owned-process execution. No legacy executable replay, provider operation or live
-  retirement is part of these application fixtures. Both legacy/current storage
-  variables and HOME/XDG defaults are fictional in the injected fixture.
+- One separately reviewed integrated Darwin fixture completed nine CLI commands
+  across two newly direct-owned fictional daemons. It verified graceful completion,
+  accepted-but-alive consumed/unknown, spent replay and new-ticket refusal, unchanged
+  compound controls, and clean owned-child exit. It is not a lost-acknowledgement
+  test. No legacy executable, provider operation or live retirement was used. Both
+  legacy/current storage variables and HOME/XDG defaults were fictional. Retained
+  failure-evidence regressions cover timeout, output overflow and launch failure.
 - Linux and Darwin without cgo refuse native use; Windows and other platforms
   refuse the command. Cross-compilation is not native platform acceptance.
 - No power-loss certification, forced PID reuse, arbitrary manager behavior,

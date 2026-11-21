@@ -1,8 +1,9 @@
-# Integrated owned-process fixture: execution held
+# Integrated owned-process fixture: bounded evidence
 
-This is test-only preparation for independent source/harness review. Neither the
-new native bridge nor this fixture has been executed. Compilation does not grant
-execution clearance. Run only an exact separately reviewed pinned command packet.
+This test-only fixture received independent source/harness review and one bounded
+released execution on Darwin. Graceful and accepted-but-alive scenarios passed,
+with retained evidence independently reviewed. This does not grant another run or
+live authority. Run only an exact separately reviewed and released command packet.
 
 `fictional/main.go` is a newly built direct child with daemon-shaped argv. It is
 not the real supervisor and never reads the configured prompt, runs a provider,
@@ -48,7 +49,7 @@ saved after each invocation, with fsync; the final report and evidence directory
 are synced. Artifact paths/hashes and output are recorded privately, not committed.
 No cleanup of real metadata, legacy executable, production instance, installation,
 manager service, automatic replacement or platform parity is part of this scope.
-Even a pass will establish only this exact synthetic application/CLI/native path
+The accepted pass establishes only this exact synthetic application/CLI/native path
 on the tested Darwin host. It will not establish real legacy loaded-config or
 launch-context provenance, all descendants, power-loss behavior, manager lifecycle,
 forced PID reuse, remote effect cancellation, or live rollout acceptance.
