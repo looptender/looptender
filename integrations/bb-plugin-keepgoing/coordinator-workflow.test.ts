@@ -10,6 +10,7 @@ test('coordinator workflow preserves obligations and bounds dispatch', { skip: p
   const result = spawnSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', suite, '-p', 'test_*.py', '-v'], {
     env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' }, encoding: 'utf8', timeout: 170_000, maxBuffer: 512 * 1024,
   });
+  process.stdout.write(result.stdout + result.stderr);
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
