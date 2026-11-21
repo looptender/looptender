@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -261,9 +262,13 @@ func ordinaryPauseRecord(raw []byte) bool {
 		return false
 	}
 	d = json.NewDecoder(bytes.NewReader(raw))
-	return freezeUniqueJSON(d, 0)
+	return freezeExactJSON(d, reflect.TypeOf(control.File{}), 0)
 }
-func freezeUniqueJSON(d *json.Decoder, depth int) bool {
+
+// Match exact JSON tags recursively rather than approximating encoding/json's
+// Unicode case folding. Null is legitimate only for nullable pointer/slice
+// fields emitted by existing controls; scalar null must not erase a hold.
+func freezeExactJSON(d *json.Decoder, typ reflect.Type, depth int) bool {
 	if depth > 64 {
 		return false
 	}
@@ -271,12 +276,29 @@ func freezeUniqueJSON(d *json.Decoder, depth int) bool {
 	if err != nil {
 		return false
 	}
-	delim, ok := tok.(json.Delim)
-	if !ok {
-		return tok != nil
+	if tok == nil {
+		return typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice
+	}
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	delim, container := tok.(json.Delim)
+	if !container {
+		return typ.Kind() != reflect.Struct || typ == reflect.TypeOf(time.Time{})
 	}
 	switch delim {
 	case '{':
+		if typ.Kind() != reflect.Struct || typ == reflect.TypeOf(time.Time{}) {
+			return false
+		}
+		fields := map[string]reflect.Type{}
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			name := strings.Split(field.Tag.Get("json"), ",")[0]
+			if field.PkgPath == "" && name != "" && name != "-" {
+				fields[name] = field.Type
+			}
+		}
 		seen := map[string]bool{}
 		for d.More() {
 			key, err := d.Token()
@@ -284,21 +306,24 @@ func freezeUniqueJSON(d *json.Decoder, depth int) bool {
 				return false
 			}
 			name, ok := key.(string)
+			if !ok || seen[name] {
+				return false
+			}
+			field, ok := fields[name]
 			if !ok {
 				return false
 			}
-			name = strings.ToLower(name)
-			if seen[name] {
-				return false
-			}
 			seen[name] = true
-			if !freezeUniqueJSON(d, depth+1) {
+			if !freezeExactJSON(d, field, depth+1) {
 				return false
 			}
 		}
 	case '[':
+		if typ.Kind() != reflect.Slice {
+			return false
+		}
 		for d.More() {
-			if !freezeUniqueJSON(d, depth+1) {
+			if !freezeExactJSON(d, typ.Elem(), depth+1) {
 				return false
 			}
 		}

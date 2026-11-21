@@ -379,3 +379,56 @@ func TestControlFreezeRecheckAfterPreflight(t *testing.T) {
 		})
 	}
 }
+
+func TestControlFreezeExactOrdinaryKeys(t *testing.T) {
+	for _, raw := range []string{
+		`{"enabled":true,"stop":true,"ſtop":false}`,
+		`{"enabled":true,"ownership":{"threadId":"thr_owner","generation":7},"ownerſhip":{"threadId":"thr_other","generation":1}}`,
+		`{"stop":true,"Stop":false}`,
+		`{"ſtop":true}`,
+		`{"ownership":{"threadId":"thr_owner","ThreadId":"thr_other","generation":7}}`,
+		`{"question":{"options":[{"sends":true,"ſends":false}]}}`,
+		`{"stop":null}`,
+		`{"ownership":{"generation":null}}`,
+		`{"updatedAt":null}`,
+		`true`, `null`, `42`, `"control"`,
+	} {
+		t.Run(freezeDigest([]byte(raw))[:8], func(t *testing.T) {
+			f := newFixture(t)
+			f.run("enable")
+			path := filepath.Join(f.dir, "state", control.FileName)
+			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if code, _, _ := f.run("pause"); code == 0 {
+				t.Fatal("ambiguous/invalid ordinary record accepted")
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(after, []byte(raw)) {
+				t.Fatal("ordinary evidence normalized")
+			}
+		})
+	}
+}
+
+func TestControlFreezeOrdinaryNullableCompatibility(t *testing.T) {
+	f := newFixture(t)
+	f.run("enable")
+	dir := filepath.Join(f.dir, "state")
+	ctl, err := control.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctl.Stop = true
+	ctl.Question = &control.Question{} // existing writer emits null slice members
+	if err := control.Save(dir, ctl); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, err := f.run("pause"); code != 0 {
+		t.Fatal(err)
+	}
+	saved, err := control.Load(dir)
+	if err != nil || !saved.Paused || !saved.Stop || saved.Question == nil {
+		t.Fatal("existing nullable encoding lost or refused")
+	}
+}

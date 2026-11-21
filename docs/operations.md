@@ -1472,6 +1472,9 @@ the same strictly validated incident and bindings, without rewriting or nesting
 its evidence. Ordinary output contains neither the raw bytes nor their private
 identities. Valid JSON with unsupported schema, permission/read errors, ordinary
 Pause write/history errors and nonregular inputs are not repaired or frozen.
+Ordinary records must use exact schema tag spelling recursively: duplicate keys,
+case/Unicode-fold aliases and scalar nulls refuse unchanged. Existing nullable
+pointer and slice fields remain supported; this check grants no new authority.
 
 The top-level array format deliberately makes ordinary control readers refuse.
 Frozen v0.2.0 and source f35a0a94 fixtures reject it for tick, daemon, pause, stop,

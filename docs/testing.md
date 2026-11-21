@@ -682,7 +682,8 @@ restrictive freeze, not Stop, recovery, readable status or resume. The dedicated
 `TestControlFreeze` cases check any-thread restrictive policy, unchanged caller,
 strict canonical repeat, malformed envelopes, copied bindings, raw/native file
 and directory replacement, stale source, nonregular/unreadable/oversized input,
-healthy Pause history failure, lock/drain refusal, and continued permissive-command
+healthy Pause history failure, exact nested tag spelling (including Unicode-fold
+aliases), scalar-null refusal with existing nullable-field compatibility, lock/drain refusal, and continued permissive-command
 refusal. Sync, close, write/short-write, recheck, rename and directory-sync fault
 injection checks unchanged original versus published/unconfirmed outcomes. Child
 process exit immediately before/after rename checks no permissive crash
