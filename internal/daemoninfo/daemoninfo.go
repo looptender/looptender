@@ -36,16 +36,20 @@ type endpoint struct {
 
 // Snapshot is a response from a running daemon, not a persisted heartbeat.
 type Snapshot struct {
-	ShutdownID   string     `json:"shutdownID,omitempty"`
-	Shutdown     bool       `json:"shutdown,omitempty"`
-	ProcessID    int        `json:"processID,omitempty"`
-	InvocationID string     `json:"invocationID,omitempty"`
-	StateID      string     `json:"stateID"` // binds the response to its state directory without exposing the path
-	Version      string     `json:"version"`
-	StartedAt    time.Time  `json:"startedAt"`
-	ObservedAt   time.Time  `json:"observedAt"`
-	Phase        string     `json:"phase"`
-	NextCheckAt  *time.Time `json:"nextCheckAt,omitempty"`
+	ShutdownID   string `json:"shutdownID,omitempty"`
+	Shutdown     bool   `json:"shutdown,omitempty"`
+	ProcessID    int    `json:"processID,omitempty"`
+	InvocationID string `json:"invocationID,omitempty"`
+	StateID      string `json:"stateID"` // binds the response to its state directory without exposing the path
+	Version      string `json:"version"`
+	// StartedAt is when the daemon process started. A daemon that switched
+	// to a new build in place keeps the time the earlier build had
+	// (Continue); BuildStartedAt is then when the running build took over.
+	StartedAt      time.Time  `json:"startedAt"`
+	BuildStartedAt *time.Time `json:"buildStartedAt,omitempty"`
+	ObservedAt     time.Time  `json:"observedAt"`
+	Phase          string     `json:"phase"`
+	NextCheckAt    *time.Time `json:"nextCheckAt,omitempty"`
 	// LastPassAt is when the daemon's latest completed pass ended, and
 	// LastPassStartedAt when it began, whether or not it recorded a check.
 	// A pass that began after a check finished is not that check's pass.
@@ -127,6 +131,32 @@ func (s *Server) StartedAt() time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.snapshot.StartedAt
+}
+
+// Continue carries what an earlier build of the same daemon process knew of
+// itself across a switch to this build: when the process started and when
+// its last completed pass began and ended. Zero or future times are
+// ignored, as is a start later than this server's own; the time this build
+// took over is kept as BuildStartedAt.
+func (s *Server) Continue(startedAt, lastPassStartedAt, lastPassAt time.Time) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	own := s.snapshot.StartedAt
+	if startedAt.IsZero() || !startedAt.Before(own) {
+		return
+	}
+	s.snapshot.StartedAt, s.snapshot.BuildStartedAt = startedAt.UTC(), &own
+	if s.snapshot.LastPassAt == nil && !lastPassAt.IsZero() && !lastPassAt.Before(startedAt) && !lastPassAt.After(own) {
+		ended := lastPassAt.UTC()
+		s.snapshot.LastPassAt = &ended
+		if !lastPassStartedAt.IsZero() && !lastPassStartedAt.Before(startedAt) && !lastPassStartedAt.After(lastPassAt) {
+			began := lastPassStartedAt.UTC()
+			s.snapshot.LastPassStartedAt = &began
+		}
+	}
 }
 
 // LastPassAt is when this daemon's latest pass ended; zero before the first
