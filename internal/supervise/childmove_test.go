@@ -304,3 +304,38 @@ func TestChildArchivedMidMoveIsSkipped(t *testing.T) {
 		t.Fatalf("%+v", m)
 	}
 }
+
+// A move left by transfer apply is continued by the loop's checks once it is
+// resumed, only while the loop is bound to the move's destination with no
+// transfer pending; otherwise it is dropped.
+func TestTransferChildMoveContinuedOnlyWhileBound(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		binding string
+		pending bool
+		runs    bool
+	}{
+		{"bound to the destination", "thr_primary", false, true},
+		{"bound elsewhere", "thr_other", false, false},
+		{"another transfer pending", "thr_primary", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, p, f := newThreadWorld(t)
+			p.obs = decide.Observation{State: decide.Idle}
+			childrenOf(f, "thr_old_source", 2, 0)
+			control.Update(w.dir, func(c *control.File) {
+				c.BBTarget = tc.binding
+				if tc.pending {
+					c.PendingTransfer = &control.PendingBBTransfer{Version: 1, ID: "move_" + strings.Repeat("c", 32), From: "thr_primary", To: "thr_next",
+						Before: strings.Repeat("1", 64), After: strings.Repeat("2", 64)}
+				}
+			})
+			state.Save(w.dir, state.File{ChildMove: &state.ChildMove{From: "thr_old_source", To: "thr_primary", Transfer: "move_" + strings.Repeat("d", 32), At: t0}})
+			mustThreadTick(t, w, f, t0)
+			st, _ := state.Load(w.dir)
+			if tc.runs != (len(f.moves) == 2) || (!tc.runs && st.ChildMove != nil) || (tc.runs && (st.ChildMove == nil || !st.ChildMove.Done)) {
+				t.Fatalf("moves=%v record=%+v", f.moves, st.ChildMove)
+			}
+		})
+	}
+}

@@ -39,6 +39,12 @@ func transferResponse(id string) map[string]any {
 func transferRunner(t *testing.T, mutate func(string, map[string]any)) doctorRun {
 	t.Helper()
 	return func(ctx context.Context, cli string, args []string, env map[string]string, workdir string) ([]byte, error) {
+		if len(args) == 6 && (args[3] == "thr_source" || args[3] == "thr_destination") && reflect.DeepEqual(args, []string{"thread", "list", "--parent-thread", args[3], "--include-hidden", "--json"}) && env == nil && workdir == "" {
+			if _, ok := ctx.Deadline(); !ok {
+				t.Fatal("unbounded query")
+			}
+			return []byte("[]"), nil // the source has no child threads
+		}
 		if len(args) != 4 || args[0] != "thread" || args[1] != "show" || args[3] != "--json" || env != nil || workdir != "" {
 			t.Fatalf("unexpected query: %v", args)
 		}

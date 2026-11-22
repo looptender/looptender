@@ -42,7 +42,7 @@ func newAdoptWorld(t *testing.T) *adoptWorld {
 	if processExecutableImage == nil {
 		t.Skip("running image unidentified")
 	}
-	w := &adoptWorld{dir: t.TempDir(), probe: `{"protocol":1,"stateFormat":4,"version":"v9.0.0-dev.fictional2"}`}
+	w := &adoptWorld{dir: t.TempDir(), probe: `{"protocol":1,"stateFormat":5,"version":"v9.0.0-dev.fictional2"}`}
 	w.installed = filepath.Join(w.dir, "builds", "new", "looptender")
 	if err := os.MkdirAll(filepath.Dir(w.installed), 0o700); err != nil {
 		t.Fatal(err)
@@ -198,8 +198,8 @@ func TestAdoptionRefusals(t *testing.T) {
 		runs   int
 	}{
 		"no handover":        {func(_ *testing.T, w *adoptWorld) { w.probe = "" }, "cannot take over a running daemon", 1},
-		"other protocol":     {func(_ *testing.T, w *adoptWorld) { w.probe = `{"protocol":2,"stateFormat":4}` }, "cannot take over a running daemon", 1},
-		"older state format": {func(_ *testing.T, w *adoptWorld) { w.probe = `{"protocol":1,"stateFormat":3}` }, "older than this loop's state format", 1},
+		"other protocol":     {func(_ *testing.T, w *adoptWorld) { w.probe = `{"protocol":2,"stateFormat":5}` }, "cannot take over a running daemon", 1},
+		"older state format": {func(_ *testing.T, w *adoptWorld) { w.probe = `{"protocol":1,"stateFormat":4}` }, "older than this loop's state format", 1},
 		"does not validate":  {func(_ *testing.T, w *adoptWorld) { w.validateCode = 2 }, "does not validate", 2},
 		"writable by others": {func(_ *testing.T, w *adoptWorld) { os.Chmod(w.installed, 0o777) }, "changed by other users", 0},
 		"not executable":     {func(_ *testing.T, w *adoptWorld) { os.Chmod(w.installed, 0o600) }, "not executable", 0},

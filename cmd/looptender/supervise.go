@@ -660,6 +660,8 @@ type childMoveStatus struct {
 	Skipped int       `json:"skipped"`
 	Listed  bool      `json:"listed"`
 	Done    bool      `json:"done"`
+	// Transfer says transfer apply made the move, not a handoff.
+	Transfer bool `json:"transfer,omitempty"`
 }
 
 type newThreadStatus struct {
@@ -1260,8 +1262,8 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		}
 	}
 	out.NewThreads = newThreadStatus{Created: st.NewThreadsCreated, Max: l.Limits.MaxNewThreads, Pending: st.NewThreadIntent != nil}
-	if m := st.ChildMove; m != nil {
-		out.ChildMove = &childMoveStatus{At: m.At, Moved: m.Moved, Pending: len(m.Remaining), Failed: m.Failed, Skipped: m.Skipped, Listed: m.Listed, Done: m.Done}
+	if m := st.ChildMove; m != nil && !m.Left {
+		out.ChildMove = &childMoveStatus{At: m.At, Moved: m.Moved, Pending: len(m.Remaining), Failed: m.Failed, Skipped: m.Skipped, Listed: m.Listed, Done: m.Done, Transfer: m.Transfer != ""}
 	}
 	if !st.LastNewThreadAt.IsZero() {
 		next := st.LastNewThreadAt.Add(config.MinNewThreadInterval)
@@ -1948,19 +1950,23 @@ func activeBB(cfg *config.Config, target string) *config.BB {
 }
 
 func printChildMove(w io.Writer, m childMoveStatus) {
+	what, later := "handoff", "later checks continue unless the loop is held"
+	if m.Transfer {
+		what, later = "transfer", "transfer recover continues, as do the loop's checks once it is resumed"
+	}
 	if !m.Listed {
-		fmt.Fprintf(w, "child threads: the handoff of %s is to move the left conversation's direct children to the thread that took over; they could not be listed yet, and a later check tries again\n", when(m.At))
+		fmt.Fprintf(w, "child threads: the %s of %s is to move the left conversation's direct children to the thread that took over; they could not be listed yet (%s)\n", what, when(m.At), later)
 		return
 	}
-	fmt.Fprintf(w, "child threads: %d of the left conversation's direct children moved to the thread that took over at the handoff of %s", m.Moved, when(m.At))
+	fmt.Fprintf(w, "child threads: %d of the left conversation's direct children moved to the thread that took over at the %s of %s", m.Moved, what, when(m.At))
 	if m.Pending > 0 {
-		fmt.Fprintf(w, "; %d still to move (later checks continue unless the loop is held)", m.Pending)
+		fmt.Fprintf(w, "; %d still to move (%s)", m.Pending, later)
 	}
 	if m.Failed > 0 {
 		fmt.Fprintf(w, "; %d could not be moved after %d attempts each: move them by hand with bb thread update <child> --parent-thread <new thread>", m.Failed, state.MaxChildMoveAttempts)
 	}
 	if m.Skipped > 0 {
-		fmt.Fprintf(w, "; %d left where they were (archived, or beyond the %d moved per handoff)", m.Skipped, state.MaxMovedChildren)
+		fmt.Fprintf(w, "; %d left where they were (archived, gone, or beyond the %d moved per %s)", m.Skipped, state.MaxMovedChildren, what)
 	}
 	fmt.Fprintln(w, ". Only their parent changed; none was messaged, retried or stopped")
 }
