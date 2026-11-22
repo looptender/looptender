@@ -69,6 +69,10 @@ type ReplacePlan struct {
 	// Only, when not nil, is the set of children that may be replaced: for
 	// a handoff, those its child move moved. Nil means every child.
 	Only []string
+	// Now is the time the run judges by: the check's time, so a lane's
+	// reported reset is compared with the clock the observation used. Zero
+	// is the wall clock.
+	Now time.Time
 	// Reserve, when set, records each creation as a send against
 	// loop.limits.max_sends before it is made; state.ErrSendLimit stops the
 	// run with the rest counted in SendLimit.
@@ -136,6 +140,11 @@ func successorPrompt(loop, child string) string {
 // env.Save is called after every change, before any further bb command.
 func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state.ChildSuccessors, lifetime *int, p ReplacePlan, env ChildMoveEnv) (ReplaceResult, error) {
 	res := ReplaceResult{}
+	now := p.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.UTC()
 	r := *rec
 	if r == nil || r.Coordinator != p.Coordinator {
 		carried := map[string]state.ChildSuccessor{}
@@ -166,7 +175,7 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 		cancel()
 		switch {
 		case err == nil && len(ids) == 1:
-			r.Replaced[in.Child] = state.ChildSuccessor{Thread: ids[0], Title: in.Title, At: time.Now().UTC()}
+			r.Replaced[in.Child] = state.ChildSuccessor{Thread: ids[0], Title: in.Title, At: now}
 			r.Intent = nil
 			env.Save()
 		case err == nil && len(ids) == 0 && (!in.Asked || in.NotStarted):
@@ -268,7 +277,7 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 		if !p.AllOldProvider && !(f.Errored && f.ClassKnown && f.Class == decide.ErrRateLimit) {
 			continue
 		}
-		if !p.AllOldProvider && !f.ResetsAt.IsZero() && !f.ResetsAt.After(time.Now()) {
+		if !p.AllOldProvider && !f.ResetsAt.IsZero() && !f.ResetsAt.After(now) {
 			continue // its limit has reset: a retry, not a duplicate
 		}
 		perm := p.Permission
@@ -313,7 +322,7 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 		if err != nil {
 			return res, errors.New("could not generate a title")
 		}
-		r.Intent = &state.ChildSuccessorIntent{Child: c.id, Title: title, Project: c.place.Project, Environment: c.place.Environment, RequestedAt: time.Now().UTC()}
+		r.Intent = &state.ChildSuccessorIntent{Child: c.id, Title: title, Project: c.place.Project, Environment: c.place.Environment, RequestedAt: now}
 		r.Created++
 		*lifetime++
 		env.Save()
@@ -374,7 +383,7 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 				return res, ErrSuccessorUnsettled
 			}
 		}
-		r.Replaced[c.id] = state.ChildSuccessor{Thread: thread, Title: title, At: time.Now().UTC()}
+		r.Replaced[c.id] = state.ChildSuccessor{Thread: thread, Title: title, At: now}
 		r.Intent = nil
 		res.Created++
 		res.Replaced = len(r.Replaced)
@@ -420,7 +429,12 @@ func (t *tick) replaceBlockedChildren() (held bool) {
 		return state.Save(t.loop.StateDir, saved)
 	}
 	save := func() { _ = saveChecked() }
-	res, err := ReplaceChildren(t.ctx, t.opts.Successors(c.BB.CLI, coordinator), &t.st.ChildSuccessors, &t.st.ChildSuccessorsCreated, p,
+	maker := t.opts.Successors(c.BB.CLI, coordinator)
+	if at, ok := maker.(interface{ CheckAt(time.Time) }); ok {
+		at.CheckAt(t.now) // the lanes are read on the check's clock, as the session is
+	}
+	p.Now = t.now
+	res, err := ReplaceChildren(t.ctx, maker, &t.st.ChildSuccessors, &t.st.ChildSuccessorsCreated, p,
 		ChildMoveEnv{Left: t.left, Held: t.heldNow, Save: save, SaveChecked: saveChecked, Warn: func(s string) { t.warn("%s", s) }})
 	if res.Listed || res.Unsettled {
 		t.res.Successors = &res

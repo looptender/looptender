@@ -566,6 +566,11 @@ type Send struct {
 	Mode    string `json:"mode"`
 	Title   string `json:"title,omitempty"`
 	Message string `json:"message"`
+	// A spawned thread's parent, provider, model and reasoning level.
+	Parent    string `json:"parent,omitempty"`
+	Provider  string `json:"provider,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // Move is one child thread given a new parent with `bb thread update
@@ -739,7 +744,15 @@ func (w *World) record(label string, r Result, line map[string]any) *Step {
 	readLines(w.t, filepath.Join(w.world, "sends.jsonl"), &sends)
 	s.Sent = sends[w.sendsSeen:]
 	w.sendsSeen = len(sends)
-	w.sendsTotal += len(s.Sent)
+	for _, m := range s.Sent {
+		// A successor lane (a spawn with a parent) counts against
+		// max_sends but is not a run-graph attempt: `runs` does not list
+		// successor creations (a known gap; a new attempt kind would make
+		// older builds refuse graph.json).
+		if m.Kind != "spawn" || m.Parent == "" {
+			w.sendsTotal++
+		}
+	}
 	var calls [][]string
 	readLines(w.t, filepath.Join(w.world, "calls.jsonl"), &calls)
 	s.Calls = calls[w.callsSeen:]
@@ -763,7 +776,14 @@ func (w *World) record(label string, r Result, line map[string]any) *Step {
 	for _, m := range s.Sent {
 		if m.Kind == "spawn" {
 			// A created thread is already running its first turn.
-			w.adopt(m.Thread)
+			th := w.adopt(m.Thread)
+			th.Provider, th.Permission = m.Provider, m.Mode
+			if m.Parent != "" {
+				th.Parent = m.Parent
+				p := w.Thread(m.Parent)
+				p.children = append(p.children, m.Thread)
+			}
+			th.Set("active")
 			continue
 		}
 		if th := w.Threads[m.Thread]; th != nil {
@@ -956,12 +976,16 @@ func readLines[T any](t *testing.T, path string, out *[]T) {
 // `thread log` and `thread list` return; the stand-in records what the
 // thread is sent.
 type Thread struct {
-	w        *World
-	ID       string
-	Parent   string
-	status   string
-	events   []map[string]any
-	children []string
+	w      *World
+	ID     string
+	Parent string
+	// Provider and Permission, when set, are reported by `thread show`
+	// (providerId, permissionMode).
+	Provider   string
+	Permission string
+	status     string
+	events     []map[string]any
+	children   []string
 	// OnSend decides how the thread reacts to a message or retry. The
 	// default starts a turn that runs while the provider is reachable and
 	// fails with a network error while it is not.
@@ -1042,11 +1066,20 @@ func (w *World) moved(m Move) {
 // Set changes the status `bb thread show` reports.
 func (th *Thread) Set(status string) {
 	th.status = status
-	t := map[string]any{"id": th.ID, "status": status, "projectId": exampleProject, "environmentId": exampleEnvironment}
+	t := map[string]any{"id": th.ID, "status": status, "projectId": exampleProject, "environmentId": exampleEnvironment, "archivedAt": nil, "deletedAt": nil}
 	if th.Parent != "" {
 		t["parentThreadId"] = th.Parent
 	}
-	th.w.writeJSON(th.ID+".show", map[string]any{"thread": t})
+	if th.Provider != "" {
+		t["providerId"] = th.Provider
+	}
+	if th.Permission != "" {
+		t["permissionMode"] = th.Permission
+	}
+	// Where the thread works, as transfer reads it: one fictional host and
+	// the world's project directory.
+	env := map[string]any{"id": exampleEnvironment, "projectId": exampleProject, "hostId": "host_example", "path": th.w.Project}
+	th.w.writeJSON(th.ID+".show", map[string]any{"thread": t, "environment": env})
 }
 
 // Event appends a log event stamped with the world's clock.
