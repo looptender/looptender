@@ -13,7 +13,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
-import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable } from "./status-details";
+import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, buildFreshness, lastLabel, noteSaysRetired } from "./status-details";
 import { SetupPanel } from "./setup-panel";
 import { AttachPanel } from "./attach-panel";
 import { TransferPanel } from "./transfer-panel";
@@ -67,7 +67,8 @@ function useLoops(threadId: string) {
 // state off. A running build that differs from the installed one says so.
 function buildSuffix(loop: LoopView): string {
   const b = buildSummary(loop.details?.runtime);
-  return !b.running ? "" : b.differs ? ` ${b.running} (installed ${b.installed})` : ` ${b.running}`;
+  // Short on purpose: the chip sits beside other chips. The installed build and what to do are in the Build line below.
+  return !b.running ? "" : b.differs ? ` ${b.running} · build differs` : ` ${b.running}`;
 }
 
 function label(loop: LoopView): string {
@@ -86,12 +87,19 @@ function stateLabel(loop: LoopView): string {
   return `looptender: ${loop.controlState}`;
 }
 
+const sameBuild = (a: string, b: string) => a.startsWith(b) || b.startsWith(a);
+
 function describe(loop: LoopView): string[] {
   return [
     `Loop ${loop.loop}`,
     loop.referenceSource === "plugin_setting" ? "Reference: plugin setting; CLI menu registration checked separately" : loop.referenceSource === "registry_attachment" ? "Reference: explicitly attached from CLI registry" : loop.referenceSource === "plugin_setup" ? "Reference: saved BB setup" : "Reference source: unavailable",
     loop.publication?.state === "registered" ? "Last explicit CLI menu publication: registered; current health checked separately" : loop.referenceSource === "plugin_setup" ? "CLI menu publication: unverified; use explicit registry reconcile on the host" : null,
     ...diagnosticLines(loop.details, loop.target, loop.supervising),
+    // Which build is which: the supervisor's (above) and the plugin's own code.
+    ...(loop.pluginBuild && loop.details?.runtime?.installedBuild && !sameBuild(loop.pluginBuild, loop.details.runtime.installedBuild) ? [`Plugin build: ${loop.pluginBuild} (the code drawing this card); the builds above are each supervisor's, read from looptender status`] : []),
+    ...(() => { const f = buildFreshness(loop.details, loop.configPath); return f?.detail ? [`Build: ${f.detail}`] : []; })(),
+    // The word bb keepgoing status prints as last=, beside the recorded action it does not mean.
+    `Last check state: ${lastLabel(loop.lastState, loop.details)} (as in bb keepgoing status)`,
     loop.note ? `Note: ${loop.note}` : null,
     loop.details?.schedule?.overdue ? `Needs you: ${loop.details.schedule.message ?? "no check has run for longer than usual"}` : null,
     dateLabel(loop.lastWakeAt) !== "unavailable" ? `Last sent ${dateLabel(loop.lastWakeAt)}` : "Last sent: unavailable",
@@ -100,13 +108,15 @@ function describe(loop: LoopView): string[] {
   ].filter((line): line is string => line !== null);
 }
 
+// A target a finger or pointer can hit (at least 28 px high) and, through FocusStyle, a ring when reached by keyboard.
 const buttonStyle = {
   background: "none",
   color: "inherit",
   font: "inherit",
   fontSize: 12,
   lineHeight: "18px",
-  padding: "0 8px",
+  minHeight: 28,
+  padding: "3px 10px",
   border: "1px solid currentColor",
   borderRadius: 6,
   opacity: 0.85,
@@ -115,10 +125,16 @@ const buttonStyle = {
 
 // A loop a person can resume: held in any way but superseded, and its records readable.
 function needsResume(loop: LoopView): boolean {
-  if (loop.controlState === "enabled" || loop.controlState === "superseded" || recordsUnreadable(loop.details)) return false;
+  if (loop.controlState === "enabled" || loop.controlState === "superseded" || recordsUnreadable(loop.details) || noteSaysRetired(loop)) return false;
   return !(loop.managedId && ["disabled", "move requires inspection"].includes(loop.controlState));
 }
 const RESUME_SHARED = "A person resumes a held loop from an ordinary terminal, or from the looptender panel started there. Each held loop's own command is under its name.";
+
+/** The focus ring for this plugin's buttons; inline styles cannot say :focus-visible. */
+function FocusStyle() {
+  return <style>{"button[data-kg]:focus-visible, summary[data-kg]:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }"}</style>;
+}
+const kg = { "data-kg": "" } as const;
 
 function ToggleButton({ loop, threadId, onDone, compactResume = false }: { loop: LoopView; threadId: string; onDone: () => void; compactResume?: boolean }) {
   const rpc = useRpc<typeof rpcContract>();
@@ -155,10 +171,10 @@ function ToggleButton({ loop, threadId, onDone, compactResume = false }: { loop:
       : watching && confirming
         ? <span role="group" aria-label={`Confirm pausing ${loop.loop}`}>
             <span>Pause loop {loop.loop}? {loop.details?.targetThread ? `It supervises ${loop.details.targetThread}, not this thread.` : `Its current target is ${loop.details?.targetAdapter ?? loop.target}, not this thread.`}</span>{" "}
-            <button type="button" disabled={busy} onClick={act} style={buttonStyle}>Pause loop {loop.loop}</button>{" "}
-            <button type="button" disabled={busy} onClick={() => setConfirming(false)} style={buttonStyle}>Cancel</button>
+            <button type="button" {...kg} disabled={busy} onClick={act} style={buttonStyle}>Pause loop {loop.loop}</button>{" "}
+            <button type="button" {...kg} disabled={busy} onClick={() => setConfirming(false)} style={buttonStyle}>Cancel</button>
           </span>
-        : <button type="button" disabled={busy} onClick={watching ? () => setConfirming(true) : act} style={buttonStyle}>{watching ? "Pause…" : "Pause"}</button>}
+        : <button type="button" {...kg} aria-label={`${watching ? "Pause…" : "Pause"} ${loop.loop}`} disabled={busy} onClick={watching ? () => setConfirming(true) : act} style={buttonStyle}>{watching ? "Pause…" : "Pause"}</button>}
     {error && <span role="alert">{error}</span>}
   </>;
 }
@@ -170,6 +186,7 @@ function ResumeNote({ loop, compact }: { loop: LoopView; compact: boolean }) {
     const successor = loop.details?.supersededBy;
     return <span>Resume is refused for a superseded loop; its successor continues the work{successor ? ` (${successor})` : ""}.</span>;
   }
+  if (noteSaysRetired(loop)) return <span>Its note says it is retired or not to be resumed, so no resume command is shown here. A person who decides otherwise resumes it from the looptender panel or the command line.</span>;
   // With several held loops the sentence is said once for the card; each loop keeps only its command.
   if (compact) return <details><summary>Command to resume (run in a terminal)</summary><code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code></details>;
   return <span>A person resumes this from an ordinary terminal: <code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code>, or the looptender panel started there.</span>;
@@ -195,7 +212,7 @@ function ThreadSetup({ threadId, onChanged, hideStart = false }: { threadId: str
 }
 
 function StatusWarning({ refresh }: { refresh(): void }) {
-  return <div role="alert">Status could not be verified for every registered loop. Controls and setup are hidden until refreshed. <button type="button" style={buttonStyle} onClick={refresh}>Refresh status</button></div>;
+  return <div role="alert">Status could not be verified for every registered loop. Controls and setup are hidden until refreshed. <button type="button" {...kg} style={buttonStyle} onClick={refresh}>Refresh status</button></div>;
 }
 
 // What a thread created with Keep going on shows about that request.
@@ -231,6 +248,24 @@ function ReferenceDetails({ loop, name }: { loop: LoopView; name: string }) {
   return name === loop.loop ? null : <details><summary>Configuration reference</summary><code>{loop.configPath}</code><div>Reference numbers identify rows in this plugin session; they are not loop IDs.</div></details>;
 }
 
+// What the reasons already say is not said again in the details.
+function detailLines(l: LoopView, reasons: string[]): string[] {
+  const said = (prefix: string, reason: string) => reasons.some(r => r.startsWith(reason)) && prefix;
+  const dropped = ["Note: ", "Needs you: ", "Disk: ", "Send record: ", "Unreadable record: ", said("Deadline: ", "Deadline reached"), said("Sends: ", "Send limit reached")];
+  return describe(l).slice(1).filter(line => !dropped.some(prefix => prefix && line.startsWith(prefix)));
+}
+
+// The build line: how this loop's supervisor compares with the installed build, visible, never a tooltip.
+function BuildFreshness({ loop }: { loop: LoopView }) {
+  const f = buildFreshness(loop.details, loop.configPath);
+  if (!f || f.state === "current" || !f.text) return null;
+  return <div aria-label="Build" style={{ margin: 0, padding: "0 12px 4px 12px", fontSize: 12, overflowWrap: "anywhere" }}>
+    <span>{f.text}</span>{f.command && <> — <code>{f.command}</code></>}
+  </div>;
+}
+
+const plainList = { margin: 0, padding: 0, listStyle: "none" } as const;
+
 function Reasons({ loop }: { loop: LoopView }) {
   const lines = reasonLines(loop.controlState, loop.note, loop.details);
   return lines.length ? <ul aria-label="Why" style={{ margin: 0, padding: "0 12px 4px 28px", fontSize: 12, opacity: 0.85, overflowWrap: "anywhere" }}>{lines.map((l, i) => <li key={i}>{l}</li>)}</ul> : null;
@@ -243,7 +278,12 @@ function CardLoop({ loop, name, threadId, refresh, failed, created, showName, co
     <ContextRow icon="Repeat" label={failed ? "looptender: status unavailable (previous snapshot)" : created ?? label(loop)}
       title={boundedTitle(describe(loop).join("\n"), 800)} trailing={loop.handoffs > 0 ? `${loop.handoffs} handoffs` : undefined}
       action={<>{!failed && created !== KEEPING_GOING && <ToggleButton loop={loop} threadId={threadId} onDone={refresh} compactResume={compactResume} />}</>} />
+    {!failed && <BuildFreshness loop={loop} />}
     {!failed && <Reasons loop={loop} />}
+    {/* Everything the tooltip holds, in the card itself: reachable by keyboard and touch. */}
+    <details style={{ padding: "0 12px 6px", fontSize: 12 }}><summary {...kg}>Details</summary>
+      <ul aria-label="Details" style={plainList}>{detailLines(loop, reasonLines(loop.controlState, loop.note, loop.details)).map((line, i) => <li key={i}>{line}</li>)}</ul>
+    </details>
   </section>;
 }
 
@@ -254,11 +294,12 @@ function CardRow({ threadId }: { threadId: string }) {
   const [open, setOpen] = useState(false);
   const sharedResume = !failed && loops.filter(needsResume).length > 1;
   return <div>
+    <FocusStyle />
     {failed && <StatusWarning refresh={refresh} />}
     {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} showLabel={false} />}
     {sharedResume && <div style={{ padding: "0 12px", fontSize: 12 }}>{RESUME_SHARED}</div>}
-    {!loaded ? <ContextRow icon="Repeat" label="looptender: checking status" /> : !loops.length ? <ContextRow icon="Repeat" label="looptender" action={!failed && <button type="button" style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>Add to Looptender</button>} /> : loops.map(l => <CardLoop key={loopKey(l)} loop={l} name={referenceName(l, loops, references)} threadId={threadId} refresh={refresh} failed={failed} created={l === loop ? created : null} showName={loops.length > 1} compactResume={sharedResume} />)}
-    {!failed && loops.some(l => l.managedId) && <button type="button" style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>{loops.length > 1 ? "Thread setup" : "Setup"}</button>}
+    {!loaded ? <ContextRow icon="Repeat" label="looptender: checking status" /> : !loops.length ? <ContextRow icon="Repeat" label="looptender" action={!failed && <button type="button" {...kg} style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>Add to Looptender</button>} /> : loops.map(l => <CardLoop key={loopKey(l)} loop={l} name={referenceName(l, loops, references)} threadId={threadId} refresh={refresh} failed={failed} created={l === loop ? created : null} showName={loops.length > 1} compactResume={sharedResume} />)}
+    {!failed && loops.some(l => l.managedId) && <button type="button" {...kg} style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>{loops.length > 1 ? "Thread setup" : "Setup"}</button>}
     {open && <div hidden={failed}><ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={created === READY_NOT_STARTED} /></div>}
   </div>;
 }
@@ -280,7 +321,6 @@ function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; i
   </button>;
 }
 
-const plainList = { margin: 0, padding: 0, listStyle: "none" } as const;
 
 function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded: boolean }) {
   const { loops, references, refresh, failed, loaded } = useLoops(threadId);
@@ -289,21 +329,20 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
   if (!isExpanded) return null;
   const sharedResume = !failed && loops.filter(needsResume).length > 1;
   return <>
+    <FocusStyle />
     {failed && <StatusWarning refresh={refresh} />}
     {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} showLabel={false} />}
     {sharedResume && <div style={{ padding: "4px 12px", fontSize: 12 }}>{RESUME_SHARED}</div>}
     {loops.map(l => {
       const name = referenceName(l, loops, references);
       const reasons = reasonLines(l.controlState, l.note, l.details);
-      // What the reasons above already say is not said again; the rest follows as a list.
-      const said = (prefix: string, reason: string) => reasons.some(r => r.startsWith(reason)) && prefix;
-      const dropped = ["Note: ", "Needs you: ", "Disk: ", "Send record: ", "Unreadable record: ", said("Deadline: ", "Deadline reached"), said("Sends: ", "Send limit reached")];
-      const rest = describe(l).slice(1).filter(line => !dropped.some(prefix => prefix && line.startsWith(prefix)));
+      const rest = detailLines(l, reasons);
       return <section key={loopKey(l)} aria-label={`Loop ${name}`} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "4px 12px 6px", fontSize: 12, opacity: 0.8, overflowWrap: "anywhere", minWidth: 0 }}>
         <div style={{ minWidth: 0, flex: "1 1 220px" }}>
           {failed && <div>Previous snapshot</div>}
           <div><strong>Loop {name}</strong>: {l === loop ? created ?? label(l) : label(l)}</div>
           <ReferenceDetails loop={l} name={name} />
+          <BuildFreshness loop={l} />
           {reasons.length > 0 && <ul aria-label="Why" style={plainList}>{reasons.map((line, i) => <li key={i}>{line}</li>)}</ul>}
           <ul aria-label="Details" style={plainList}>{rest.map((line, i) => <li key={i}>{line}</li>)}</ul>
         </div>

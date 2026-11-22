@@ -107,7 +107,7 @@ test("the status label keeps the state word first and adds the running build, an
   try { assert.ok(await a.findByText("looptender: enabled v0.2.0-dev.ccd2310")); } finally { a.lifecycle.unmount(); cleanup(); }
   const b = render(withBuild({ recordedBuild: "v0.1.0", installedBuild: "v0.2.0", binaryComparison: "different" }), "thr_build_differs");
   try {
-    const label = await b.findByText("looptender: enabled v0.1.0 (installed v0.2.0)");
+    const label = await b.findByText("looptender: enabled v0.1.0 · build differs");
     assert.match(label.closest("[title]")?.getAttribute("title") ?? "", /Build: last check ran v0\.1\.0 · installed v0\.2\.0/);
   } finally { b.lifecycle.unmount(); cleanup(); }
   // An older looptender, or a build with no version, keeps the plain label.

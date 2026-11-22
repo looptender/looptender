@@ -71,6 +71,11 @@ export const detailsSchema = z.object({
   deadline: z.object({ at: z.string().max(64), reached: z.boolean().optional() }).optional(),
   // Names of the fields above that status sent in a form this plugin could not read.
   unparsed: z.array(z.string().max(32)).max(8).optional(),
+  // The no-progress flag, only while status says it is raised ("flagged"): status's own sentence.
+  noProgress: z.object({ text: z.string().max(400) }).optional(),
+  // status --json followsInstalls (yes, no, unknown, ticks) and buildAdoption: the daemon's last switch to an installed build.
+  followsInstalls: z.string().max(16).optional(),
+  buildAdoption: z.object({ outcome: z.string().max(24), at: z.string().max(40).optional(), from: z.string().max(80).optional(), to: z.string().max(80).optional() }).optional(),
   sends: z.object({ max: z.number().int().nonnegative(), used: z.number().int().nonnegative().optional(), remaining: z.number().int().nonnegative().optional(), reached: z.boolean(), unavailable: z.boolean().optional() }).optional(),
   sendRecord: z.string().max(600).optional(),
   disk: z.object({ level: z.enum(["low", "critical"]), message: z.string().max(400) }).optional(),
@@ -162,6 +167,53 @@ const resetAfterDeadline = (d: StatusDetails | undefined): boolean => {
 /** The send allowance as status prints it: `used/max attempts reserved; N remaining`. */
 const sendsText = (s: NonNullable<StatusDetails["sends"]>) => s.unavailable || s.used === undefined || s.remaining === undefined ? `${s.max} allowed; the count is unavailable` : `${s.used}/${s.max} attempts reserved; ${s.remaining} remaining`;
 
+// A held loop whose own note says it is retired or not to be resumed. Deliberately narrow: only an
+// awaiting-user hold, and only those words in the note; every other held loop keeps its command.
+export const noteSaysRetired = (loop: { controlState: string; note: string | null }): boolean =>
+  loop.controlState === "awaiting user" && !!loop.note && /\b(retired|do not resume|don't resume|not to be resumed)\b/i.test(loop.note);
+
+/** What status calls a hold, in the sentence it puts after a no-progress flag recorded before the hold. */
+const HELD_WORD: Record<string, string> = { "stop requested": "stopped", completed: "completed", "awaiting user": "awaiting a person", paused: "paused", disabled: "disabled" };
+/** status's own sentence for a raised no-progress flag, qualified as status qualifies it for a held loop. */
+export function noProgressLine(controlState: string, d: StatusDetails | undefined): string | undefined {
+  if (!d?.noProgress) return undefined;
+  const held = HELD_WORD[controlState];
+  return held ? `${d.noProgress.text} (recorded before the hold; the loop is held (${held}), so this is not current)` : d.noProgress.text;
+}
+
+// ---- Build freshness: how a loop's supervisor build compares with the installed one ----
+// The words are the ones the dock and the menu use (cmd/looptender/build_freshness.go, #468).
+const FRESH_RECENT_MS = 24 * 3600_000;
+export const olderCommand = (configPath: string) => `keepgoing daemon-shutdown -c ${JSON.stringify(configPath)}`;
+export type Freshness = { state: "current" | "updated" | "pending" | "older"; text?: string; detail?: string; command?: string };
+/** "1 min ago", "23 h ago": the unit a person would say. */
+export function agoLabel(now: Date, at: Date): string {
+  const s = Math.max(0, Math.floor((now.getTime() - at.getTime()) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  return `${Math.floor(s / 3600)} h ago`;
+}
+export function buildFreshness(d: StatusDetails | undefined, configPath: string, now = new Date()): Freshness | undefined {
+  const running = d?.runtime?.recordedBuild, installed = d?.runtime?.installedBuild, comparison = d?.daemon?.binaryComparison;
+  // Nothing is said when no daemon answered or a build is not reported; a missing field never makes a state.
+  if (d?.daemon?.state !== "responsive" || !running || !installed || (comparison !== "match" && comparison !== "different")) return undefined;
+  if (comparison === "different") {
+    if (d.followsInstalls === "yes") return { state: "pending", text: "Update pending · switches at next check", detail: `Runs ${running}; installed ${installed}.` };
+    const command = olderCommand(configPath);
+    return { state: "older", text: "Older build · restart the supervisor to update", command,
+      detail: `Runs ${running}; installed ${installed}. ${d.followsInstalls === "no" ? "It does not follow installs." : "It does not report following installs."} A person runs ${command}, then starts supervision again; holds and controls are kept.` };
+  }
+  const b = d.buildAdoption, at = b?.at ? new Date(b.at) : undefined;
+  if (b?.outcome === "adopted" && at && !Number.isNaN(at.getTime())) {
+    const age = now.getTime() - at.getTime();
+    if (age >= 0 && age < FRESH_RECENT_MS) {
+      const when = at.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      return { state: "updated", text: `Updated ${agoLabel(now, at)}`, detail: `Installed ${when} · was ${b.from ?? "unknown build"} · now ${b.to ?? installed}` };
+    }
+  }
+  return { state: "current" };
+}
+
 /** status reported unreadable records, whether or not their details could be read. */
 export const recordsUnreadable = (d: StatusDetails | undefined): boolean => !!d?.unreadable?.length || !!d?.unparsed?.includes("unreadable");
 const unparsedLine = (names: readonly string[]) => `Status could not be read for: ${names.join(", ")}`;
@@ -188,6 +240,8 @@ export function reasonLines(controlState: string, note: string | null, d: Status
       : `Long limit wait: no handoff possible; resets ${dateLabel(wait.resetsAt)}${wait.resetIn ? ` (in ${wait.resetIn})` : ""}; the loop sends nothing until then${resetAfterDeadline(d) ? `; ${AFTER_DEADLINE}` : ""}`);
   }
   if (d?.schedule?.overdue) out.push(`Needs you: ${d.schedule.message ?? "no check has run for longer than usual"}`);
+  const np = noProgressLine(controlState, d);
+  if (np) out.push(np);
   if (note && controlState !== "enabled") out.push(`Note: ${shortNote(note, 160)}`);
   return out;
 }
