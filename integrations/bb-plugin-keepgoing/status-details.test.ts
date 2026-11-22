@@ -102,3 +102,18 @@ test("a long limit wait says why no handoff is possible and whether anyone was t
     assert.ok(!diagnosticLines({ ...base, limitWait }, "primary", true).some((l) => l.startsWith("Long limit wait:")), JSON.stringify(limitWait));
   }
 });
+
+test("the build lines say what was recorded and never guess", async () => {
+  const { buildSummary } = await import("./status-details.ts");
+  const rt = { state: "recent", source: "state", freshness: "recent" };
+  assert.deepEqual(buildSummary({ ...rt, recordedBuild: "v0.2.0-dev.ccd2310", installedBuild: "v0.2.0-dev.ccd2310", binaryComparison: "match" }),
+    { running: "v0.2.0-dev.ccd2310", installed: "v0.2.0-dev.ccd2310", differs: false, text: "last check ran v0.2.0-dev.ccd2310" });
+  assert.equal(buildSummary({ ...rt, recordedBuild: "v0.1.0", installedBuild: "v0.2.0", binaryComparison: "different" }).text, "last check ran v0.1.0 · installed v0.2.0");
+  // An older looptender sends no labels; a dev build sends none either.
+  for (const runtime of [rt, { ...rt, installedBuild: "v0.2.0" }, null, undefined]) assert.equal(buildSummary(runtime).text, "version unknown");
+  assert.equal(buildSummary({ ...rt, recordedBuild: "v0.1.0", binaryComparison: "different" }).differs, false);
+  const lines = diagnosticLines({ readAt: "2026-01-01T00:00:00Z", completed: false, targetThread: null, targetAdapter: "bb", targetConfigured: true,
+    runtime: { ...rt, recordedBuild: "v0.1.0", installedBuild: "v0.2.0", binaryComparison: "different" }, daemon: null, lastCheck: null }, "primary", true).join("\n");
+  assert.match(lines, /Build: last check ran v0\.1\.0 · installed v0\.2\.0/);
+  assert.match(diagnosticLines({ readAt: "2026-01-01T00:00:00Z", completed: false, targetThread: null, targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null }, "primary", true).join("\n"), /Build: version unknown/);
+});

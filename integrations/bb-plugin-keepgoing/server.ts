@@ -295,6 +295,12 @@ export default async function plugin(bb: BbPluginApi) {
     init: (bin, target, name, task, dryRun, withGoal, bounds, followStandard) => host.call("init", { bin, target, name, task, dryRun, withGoal, ...(bounds ? { bounds } : {}), ...(followStandard ? { followStandard: true as const } : {}) }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) }),
     standardRoutes: async (bin, target) => (await host.call("standardRoutes", { bin, target }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) })).available,
     command: hostCommand,
+    // Only thread metadata, never content: a thread BB reports as pending has
+    // not started its first turn. Anything else, the plugin cannot tell.
+    conversation: async threadId => {
+      const t = await bb.sdk.threads.get({ threadId, signal: AbortSignal.timeout(10_000) });
+      return t.status === "pending" || t.runtime?.displayStatus === "pending" || t.runtime?.displayStatus === "provisioning" ? "none" : "unknown";
+    },
     changed: () => bb.realtime.publish(CHANGED, { at: Date.now() }),
   });
   const transfer = createTransferController({

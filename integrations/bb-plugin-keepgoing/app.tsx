@@ -13,7 +13,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
-import { diagnosticLines, dateLabel } from "./status-details";
+import { diagnosticLines, dateLabel, buildSummary } from "./status-details";
 import { SetupPanel } from "./setup-panel";
 import { AttachPanel } from "./attach-panel";
 import { TransferPanel } from "./transfer-panel";
@@ -63,7 +63,19 @@ function useLoops(threadId: string) {
   return { loops: entry?.loops ?? [], references: entry?.references ?? new Map<string, number>(), refresh, failed: entry?.failed ?? false, loaded: !!entry?.at };
 }
 
+// The running build after the state word, so a narrow card never cuts the
+// state off. A running build that differs from the installed one says so.
+function buildSuffix(loop: LoopView): string {
+  const b = buildSummary(loop.details?.runtime);
+  return !b.running ? "" : b.differs ? ` ${b.running} (installed ${b.installed})` : ` ${b.running}`;
+}
+
 function label(loop: LoopView): string {
+  const base = stateLabel(loop);
+  return base === `looptender: ${loop.controlState}` || base === "looptender: enabled" ? base + buildSuffix(loop) : base;
+}
+
+function stateLabel(loop: LoopView): string {
   if (loop.imported && loop.controlState === "enabled" && ((loop.details?.failedChecks ?? 0) > 0 || ["failed", "error"].includes(loop.details?.lastCheck?.outcome ?? ""))) return "looptender: checks failing";
   if (loop.imported && loop.controlState === "enabled" && !loop.details?.lastCheck) return "looptender: no check recorded";
   if (loop.controlState === "enabled" && loop.details?.schedule?.overdue) return "looptender: checks have stopped";

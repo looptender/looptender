@@ -296,8 +296,8 @@ func TestStdinCannotBeTakenAwayByEnvironment(t *testing.T) {
 
 // Output over the definition's limit is not read at all: nothing is
 // concluded from part of it, however healthy the part that fits looks. The
-// turn is an unclassified failed turn, so the ordinary bounded re-prompts
-// follow, and no session is taken from it.
+// turn is an unclassified failed turn; no session is taken from it, so an
+// explicit reset is needed before another fresh attempt.
 func TestDefinedAgentOutputBound(t *testing.T) {
 	h, _ := exampleRunner(t, `cat > /dev/null; head -c 3000 /dev/zero | tr '\0' 'x'; echo; echo '`+exampleLine("ok", "")+`'`, func(c *config.Custom) { c.Definition.Output.MaxBytes = config.MinCustomOutput })
 	if err := h.Send(context.Background(), "go", adapter.ModeAuto); err != nil {
@@ -331,9 +331,17 @@ func TestDefinedAgentOutputBound(t *testing.T) {
 	if st, err := h.dir.statusWithOutputLimit(skipOutput); err != nil || st.Phase != Finished || st.Stdout != nil {
 		t.Fatalf("%+v %v", st, err)
 	}
-	// The next turn can be started; it does not need the file removed. The
-	// part of the unread output that fits holds a session line; it is not
-	// taken by the send either.
+	// Unread output grants no identity or authority for a fresh retry. An
+	// explicit reset permits it without deleting or parsing the output.
+	if !obs.SessionLost {
+		t.Fatal("unread identity did not require recovery")
+	}
+	if err := h.Send(context.Background(), "refuse replay", adapter.ModeAuto); !errors.Is(err, errSessionLost) {
+		t.Fatal(err)
+	}
+	if _, err := h.ResetSession(); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.Send(context.Background(), "again", adapter.ModeAuto); err != nil {
 		t.Fatalf("could not send after oversize output: %v", err)
 	}
@@ -385,13 +393,13 @@ func TestDefinedAgentLostSessionHoldsInsteadOfStartingAnother(t *testing.T) {
 	if turns, _ := os.ReadFile(filepath.Join(dir, "turns")); strings.Count(string(turns), "x") != 1 {
 		t.Fatalf("turns started: %q", turns)
 	}
-	// A person restores it (or removes the file to start over on purpose).
+	// A person restores the actual identifier. Deletion alone grants no reset.
 	damage(h, exampleSessionToken)
 	if obs, _ := h.Observe(ctx); obs.SessionLost || !strings.Contains(strings.Join(h.Args(), "\n"), exampleSessionToken) {
 		t.Fatalf("restored: %+v %q", obs, h.Args())
 	}
 	os.Remove(filepath.Join(string(h.dir), "session"))
-	if obs, _ := h.Observe(ctx); obs.SessionLost || strings.Contains(strings.Join(h.Args(), "\n"), "--session") {
+	if obs, _ := h.Observe(ctx); !obs.SessionLost || strings.Contains(strings.Join(h.Args(), "\n"), "--session") {
 		t.Fatalf("removed: %+v %q", obs, h.Args())
 	}
 

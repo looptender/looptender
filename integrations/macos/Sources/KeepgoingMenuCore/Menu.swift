@@ -21,8 +21,15 @@ public struct PanelLoop: Decodable, Equatable {
     /// The time of the loop's last check, when it needs a person because its
     /// checks have stopped. See OverdueNotices.
     public let overdueSince: String?
+    /// The build the loop's supervisor last recorded running, shortened by
+    /// the CLI. Absent when none is recorded, when it has no version, and
+    /// from a CLI that predates it; the menu then says nothing about it.
+    public var recordedBuild: String? = nil
+    /// Set when that build is a different one from the installed CLI. It
+    /// never says which is newer.
+    public var buildDiffers: Bool? = nil
 
-    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil) {
+    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil) {
         self.key = key
         self.name = name
         self.state = state
@@ -31,6 +38,8 @@ public struct PanelLoop: Decodable, Equatable {
         self.noProgress = noProgress
         self.can = can
         self.overdueSince = overdueSince
+        self.recordedBuild = recordedBuild
+        self.buildDiffers = buildDiffers
     }
 }
 
@@ -47,6 +56,9 @@ public struct PanelList: Decodable, Equatable {
     /// Changes that can be made to every loop at once (`client review|apply
     /// --all`). Absent from a CLI that cannot.
     public var canAll: [String]? = nil
+    /// The installed CLI's build, shortened by the CLI; absent when it has no
+    /// version or from a CLI that predates it.
+    public var installedBuild: String? = nil
 }
 
 /// What `keepgoing panel status --json` says about the panel's background
@@ -304,8 +316,12 @@ public enum MenuBuilder {
                 // panel's picker row says it when that flag is raised.
                 let phrase = shortened(Contract.text(loop.phrase) + (flag.isEmpty ? "" : " · no progress"), to: maxPhrase)
                 let choices = loopChoices(loop)
-                rows.append(MenuRow(kind: .loop, title: short, detail: phrase, symbol: symbols[loop.state] ?? "questionmark.circle",
-                                    accessibilityLabel: flag.isEmpty ? "\(name), \(phrase)" : "\(name), \(Contract.text(loop.phrase)). \(flag)",
+                // The build after the state, outside the cut-down phrase, so
+                // a long phrase never hides which build it is.
+                let build = buildText(loop, installed: list.installedBuild)
+                let shown = build.isEmpty ? phrase : phrase + " · " + build
+                rows.append(MenuRow(kind: .loop, title: short, detail: shown, symbol: symbols[loop.state] ?? "questionmark.circle",
+                                    accessibilityLabel: flag.isEmpty ? "\(name), \(shown)" : "\(name), \(Contract.text(loop.phrase)). \(flag)" + (build.isEmpty ? "" : ". " + build),
                                     accessibilityHelp: choices.count > 1 ? "Shows what you can do with this loop." : "Opens this loop in the panel.",
                                     toolTip: short == name ? "" : name, command: choices.count > 1 ? nil : .openLoop(key: loop.key), submenu: choices.count > 1 ? choices : []))
             }
@@ -334,6 +350,8 @@ public enum MenuBuilder {
             // Alone, the age reads as a label; after a sentence it is one too.
             let read = age(now.timeIntervalSince(at))
             line = facts.isEmpty ? read : (facts + [read + "."]).joined(separator: " ")
+            // The installed build, once, at the foot. Nothing when the CLI did not say.
+            if let installed = list.installedBuild.map(Contract.text), !installed.isEmpty { line += " · looptender " + installed }
         }
         rows.append(separator)
         if let panel, panel.exposure != nil {
@@ -349,6 +367,16 @@ public enum MenuBuilder {
         rows.append(separator)
         rows.append(status(notice ?? (refreshing ? "Reading…" : line)))
         return MenuModel(rows: rows, badge: badge, iconAccessibilityLabel: iconLabel)
+    }
+
+    /// What the loop's supervisor last recorded running, and the installed
+    /// build when it is a different one. Empty when the CLI gave no build.
+    static func buildText(_ loop: PanelLoop, installed: String?) -> String {
+        guard let running = loop.recordedBuild.map(Contract.text), !running.isEmpty else { return "" }
+        if loop.buildDiffers == true, let installed = installed.map(Contract.text), !installed.isEmpty {
+            return "last check ran \(running) · installed \(installed)"
+        }
+        return running
     }
 
     /// A loop's submenu: open it in the panel and, when the CLI says which

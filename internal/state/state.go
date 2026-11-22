@@ -256,6 +256,10 @@ type File struct {
 	NewThreadsCreated int                      `json:"newThreadsCreated,omitempty"`
 	LastNewThreadAt   time.Time                `json:"lastNewThreadAt,omitempty"`
 	NewThreadIntent   *NewThreadIntent         `json:"newThreadIntent,omitempty"`
+	// PendingOwnerMove is loop ownership that is to follow a move the
+	// supervisor made, saved here before control.json is changed so a
+	// crash in between is completed by the next check.
+	PendingOwnerMove *OwnerMove `json:"pendingOwnerMove,omitempty"`
 	// ChildErrorReport is set while any child of the supervised thread is in
 	// error, so its report is not repeated by later checks or after a restart.
 	ChildErrorReport *ChildErrorReport `json:"childErrorReport,omitempty"`
@@ -480,6 +484,18 @@ type CreatedThread struct {
 	// thread, when it has one.
 	From      string `json:"from"`
 	Continues string `json:"continues,omitempty"`
+}
+
+// OwnerMove is ownership following a move the supervisor made: from the
+// thread it left, at the generation read before the move, to the thread it
+// moved to. It is applied only while control.json still shows From at
+// FromGeneration.
+type OwnerMove struct {
+	From           string    `json:"from"`
+	FromGeneration uint64    `json:"fromGeneration"`
+	To             string    `json:"to"`
+	Reason         string    `json:"reason"`
+	At             time.Time `json:"at"`
 }
 
 // NewThreadIntent is saved before a thread is created and cleared once the

@@ -174,7 +174,11 @@ func doctor(e env, args []string, run doctorRun) int {
 	doctorDeliveries(&r, notifications)
 	ctl, ctlErr := control.Load(cfg.Loop.StateDir)
 	if ctlErr != nil {
-		r.add("control", "error", "Control state could not be read.", "Repair control.json before enabling supervision; do not discard an existing stop or pause.")
+		fix := "Repair control.json before enabling supervision; do not discard an existing stop or pause."
+		if _, remedy := controlFreezeDiagnostic(cfg); remedy != "" {
+			fix = remedy
+		}
+		r.add("control", "error", "Control state could not be read.", fix)
 	} else {
 		if ctl.PendingTransfer != nil {
 			r.add("transfer", "error", "BB transfer is pending; automatic work and resume are held.", "Inspect status for the transfer ID, then use transfer recover. Do not discard the recovery record.")

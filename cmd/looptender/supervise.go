@@ -197,7 +197,7 @@ func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, l
 	// Everything this check starts is the supervised session's, not a
 	// person's: it inherits the marker that keeps it from clearing a hold.
 	defer markSupervised(cfg.Loop.StateDir)()
-	if err := checkOwnership(cfg.Loop.StateDir, firstLease(leases)); err != nil {
+	if err := checkSupervision(cfg.Loop.StateDir, firstLease(leases)); err != nil {
 		return ownershipError(e, err)
 	}
 	if err := checkTransferSources(cfg, true); err != nil {
@@ -267,6 +267,10 @@ func daemon(e env, cfg *config.Config, cfgPath string, dryRun bool, takeOver ...
 
 // The caller owns daemon.lock and the diagnostic endpoint for this entire loop.
 func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *ownerLease, monitor *daemoninfo.Server) int {
+	ctx, cancel := context.WithCancel(e.ctx)
+	e.ctx = ctx
+	defer cancel()
+	defer enableDaemonShutdown(monitor, cfg, cfgPath, lease, cancel)()
 	state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "started"})
 	defer state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "stopped"})
 	// stopDone is the control signature of the last saved stop this daemon
@@ -458,7 +462,7 @@ func pollWake(ctx context.Context, cfg *config.Config, leases ...*ownerLease) bo
 		return false
 	}
 	defer l.Release()
-	if err := checkOwnership(cfg.Loop.StateDir, firstLease(leases)); err != nil {
+	if err := checkSupervision(cfg.Loop.StateDir, firstLease(leases)); err != nil {
 		return len(leases) > 0
 	} // Return to the daemon's exit check.
 	if checkTransferSources(cfg, false) != nil {
@@ -1049,7 +1053,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	var unreadable []unreadableRecord
 	ctl, err := control.Load(l.StateDir)
 	if err != nil {
-		unreadable = append(unreadable, unreadableControl(l.StateDir, err))
+		unreadable = append(unreadable, unreadableControl(cfg, err))
 		ctl = control.File{}
 	}
 	st, stateErr := state.Load(l.StateDir)
@@ -1407,6 +1411,11 @@ func controlCmd(e env, cfg *config.Config, cmd, note string, takeOver ...bool) i
 // cover the lanes as well, and dropQueued (with lanes) for the messages
 // queued in lanes that have not started to be deleted.
 func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQueued bool, takeOver ...bool) int {
+	if cmd == "pause" {
+		if handled, code := pauseDamagedControl(e, cfg); handled {
+			return code
+		}
+	}
 	if cmd == "enable" || cmd == "resume" || (cmd == "await-user" && cfg.Loop.AssignmentLifecycle) || (cmd == "complete" && cfg.Loop.AssignmentCompletion) {
 		acquire := lock.Acquire
 		takingOver := cmd == "enable" && len(takeOver) > 0 && takeOver[0]
@@ -1811,10 +1820,12 @@ func (r unreadableRecord) damaged() bool {
 // describe is the reason in words, for the text output.
 func (r unreadableRecord) describe() string {
 	what := map[string]string{
-		"not_json":    "its content is not JSON",
-		"wrong_shape": "its content is JSON of the wrong shape",
-		"not_a_file":  "it is not a regular file",
-		"cannot_open": "it could not be opened",
+		"frozen_control":      "it contains a restrictive freeze with preserved evidence",
+		"unsupported_control": "it contains an unsupported or unverifiable control envelope",
+		"not_json":            "its content is not JSON",
+		"wrong_shape":         "its content is JSON of the wrong shape",
+		"not_a_file":          "it is not a regular file",
+		"cannot_open":         "it could not be opened",
 	}[r.Problem]
 	if r.Offset != nil {
 		what += fmt.Sprintf(", at byte %d", *r.Offset)
@@ -1830,7 +1841,11 @@ func cannotReadRemedy(r unreadableRecord) string {
 	return "The file may be intact: keepgoing could not open it. Fix its permissions so keepgoing can read it; do not move it aside or delete it."
 }
 
-func unreadableControl(dir string, err error) unreadableRecord {
+func unreadableControl(cfg *config.Config, err error) unreadableRecord {
+	if problem, remedy := controlFreezeDiagnostic(cfg); problem != "" {
+		return unreadableRecord{File: control.FileName, Problem: problem, Remedy: remedy}
+	}
+	dir := cfg.Loop.StateDir
 	r := classifyRecord(dir, control.FileName, err)
 	if !r.damaged() {
 		r.Remedy = "Checks send nothing, and pause, stop and resume cannot be saved, until it can be read. " + cannotReadRemedy(r)
