@@ -255,3 +255,45 @@ func TestTransferPreviewCountsChildThreads(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+// Review follow-up: once the transfer has finished, only the loop's current
+// owner (or a terminal) may continue its child move; --take-over from the
+// destination gives no authority on that path.
+func TestFinishedTransferChildMoveNeedsTheCurrentOwner(t *testing.T) {
+	path, dir := transferApplyFixture(t)
+	b := newChildBB(t, 2, 0)
+	b.onUpdate = func(string) { control.Update(dir, func(c *control.File) { c.Paused = true }) } // end the moves at once
+	if code, out := applyWithChildren(t, path, b, nil, "apply", "--from", "thr_source", "--thread", "thr_destination"); code != exitOK {
+		t.Fatal(code, out)
+	}
+	b.onUpdate = nil
+	st, _ := state.Load(dir)
+	id := st.ChildMove.Transfer
+	// Someone else takes the loop over after the transfer.
+	control.Update(dir, func(c *control.File) { control.ClaimOwner(c, "thr_someone_else", true) })
+	t.Setenv("BB_THREAD_ID", "thr_destination")
+	code, out := applyWithChildren(t, path, b, nil, "recover", "--id", id, "--take-over")
+	if code == exitOK || !strings.Contains(out, "needs the loop's current owner") || len(b.under("thr_destination")) != 1 {
+		t.Fatal(code, out, b.under("thr_destination"))
+	}
+	t.Setenv("BB_THREAD_ID", "thr_someone_else")
+	if code, out := applyWithChildren(t, path, b, nil, "recover", "--id", id); code != exitOK || len(b.under("thr_destination")) != 2 {
+		t.Fatal(code, out)
+	}
+}
+
+// Review follow-up: the preview's child reads share one time limit; what is
+// not read in time counts as provider unknown.
+func TestTransferPreviewChildReadsAreBounded(t *testing.T) {
+	path, dir := transferFixture(t)
+	control.Save(dir, control.File{Enabled: true, Ownership: &control.Ownership{ThreadID: "thr_source", Generation: 1}})
+	state.Save(dir, state.File{ActiveTarget: state.Primary})
+	old := previewChildrenBudget
+	previewChildrenBudget = time.Nanosecond
+	t.Cleanup(func() { previewChildrenBudget = old })
+	b := newChildBB(t, 3, 0)
+	_, r, _ := runTransfer(t, path, b.run())
+	if r.Children == nil || !r.Children.Listed || r.Children.WouldMove != 3 || r.Children.ProviderUnknown != 3 {
+		t.Fatalf("%+v", r.Children)
+	}
+}
