@@ -514,7 +514,7 @@
       var name = el("span", "work-name", l.name);
       // The glossary's role: its last verified listing has lanes.
       if (l.lanes && l.lanes.role === "coordinator") name.appendChild(el("span", "work-role", "coordinator"));
-      if (l.provider) { var tag = el("span", "work-role", l.provider + (l.model ? " \u00B7 " + l.model : "")); tag.title = "Configured provider and model"; name.appendChild(tag); }
+      if (l.provider) { var chip = el("span", "work-role", l.provider + (l.model ? " \u00B7 " + l.model : "")); chip.title = "Configured provider and model"; name.appendChild(chip); }
       summary.appendChild(name);
       var status = el("span", "work-status");
       var tone = TONES[l.state] || "unknown";
