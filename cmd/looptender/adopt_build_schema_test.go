@@ -36,6 +36,9 @@ var adoptSchemaFingerprints = map[int]string{
 	// 2: owner hand-off moves: state.json gained pendingOwnerMove and
 	// control.json's owner gained followed.
 	2: "66e6b2bc08152cee8471ad61274cad7b1ffdfb449f1716a2f62d4660e6ceb534",
+	// 3: state.json gained childMove (moving a left conversation's child
+	// threads) and limitWaitReport's reason and reportSection.
+	3: "9a7aa1130ff38ab6bbcb65b4d0d80e1b52e4ce42304954aa922f44d685fe30f5",
 }
 
 // schemaFingerprint lists every JSON field reachable from t, by path, with

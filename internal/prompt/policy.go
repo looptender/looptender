@@ -16,7 +16,7 @@ import (
 // The standing wake policy is the guidance setup writes above the task in a
 // new loop's prompt file. A loop follows policy updates only while its
 // prompt file is byte for byte the file setup, or prompt-policy apply, last
-// wrote and recorded in the loop's state (RecordPolicy): each wake then sends
+// wrote and recorded beside it (RecordPolicy): each wake then sends
 // the running build's wording, followed by the file's own task. Any edit at
 // all, including deleting a paragraph so that the file reads like an older
 // wording, ends the updates; the file is then sent exactly as written. A
