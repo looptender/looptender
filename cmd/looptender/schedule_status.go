@@ -41,6 +41,15 @@ type scheduleStatus struct {
 	// when one was supplied (tick --routine source/routine).
 	StartedBy *state.Routine `json:"startedBy,omitempty"`
 	Message   string         `json:"message,omitempty"`
+	// Since is when the time without a check is measured from, for a loop
+	// with no recorded check (basis never_checked): when it was enabled,
+	// resumed or moved.
+	Since *time.Time `json:"since,omitempty"`
+	// CheckedBy is "ticks" when no daemon answers yet checks have been
+	// arriving: an external scheduler, or ticks run by hand, checks this
+	// loop. Cadence is how far apart recent checks were.
+	CheckedBy string `json:"checkedBy,omitempty"`
+	Cadence   string `json:"cadence,omitempty"`
 	sch       state.Schedule
 }
 
@@ -67,6 +76,14 @@ func describeSchedule(l *config.Loop, st state.File, ctl control.File, d *daemon
 		at := s.LastCheckAt
 		out.LastCheckAt = &at
 	}
+	if s.Basis == "never_checked" {
+		since := s.From
+		out.Since = &since
+	}
+	if s.Recent > 0 && (d == nil || d.State != "responsive") && !s.LastCheckAt.IsZero() && !s.LastCheckAt.After(now.Add(time.Minute)) &&
+		now.Sub(s.LastCheckAt) <= max(state.MinOverdue, state.OverdueFactor*s.Recent) {
+		out.CheckedBy, out.Cadence = "ticks", state.ShortDuration(s.Recent)
+	}
 	if out.Judging {
 		out.For, out.Threshold = state.ShortDuration(s.For), state.ShortDuration(s.Threshold)
 		if s.Usual > 0 {
@@ -83,6 +100,13 @@ func describeSchedule(l *config.Loop, st state.File, ctl control.File, d *daemon
 // only when the last check said it was started by one, never by guessing
 // from the configuration.
 func overdueSentence(s state.Schedule) string {
+	if s.Basis == "never_checked" {
+		since := fmt.Sprintf("since it was enabled, resumed or moved at %s (%s ago)", s.From.UTC().Format(time.RFC3339), state.ShortDuration(s.For))
+		if s.NotRecorded {
+			return "it is on, and its daemon is running passes but no check has been recorded " + since
+		}
+		return "it is on and not held, but nothing has checked it " + since + ", and no supervisor is running it: start supervision (`looptender start -c CONFIG`, or a service), or it will send nothing. If an external scheduler runs its ticks less often than that, its first tick clears this"
+	}
 	measure := fmt.Sprintf("checks normally run every %s", state.ShortDuration(s.Usual))
 	if s.Basis == "fallback" {
 		measure = fmt.Sprintf("its usual interval is not known yet, so it is called stopped after %s", state.ShortDuration(s.Threshold))
@@ -105,6 +129,8 @@ func overdueSentence(s state.Schedule) string {
 func scheduleDoctorLine(s scheduleStatus) (level, text, fix string, ok bool) {
 	sch := s.sch
 	switch {
+	case s.Overdue && sch.Basis == "never_checked":
+		return "error", "Unsupervised: " + s.Message + ".", "Start supervision for this loop: `looptender start --background -c CONFIG`, or `looptender service install`. A loop that is moved or transferred starts with no check record, so its supervisor has to be started again.", true
 	case s.Overdue && sch.NotRecorded:
 		return "warning", "Checks are not being recorded: " + s.Message + ".", "The daemon is running passes that end without recording a check. Its error output (the terminal running keepgoing start, or the service's log) says why: an unwritable state directory, a held lock or a failed source check.", true
 	case s.Overdue && sch.Blocked:
@@ -115,6 +141,8 @@ func scheduleDoctorLine(s scheduleStatus) (level, text, fix string, ok bool) {
 		return "ok", "Not judged while the loop is held (paused, waiting for a person or complete): its scheduler may have been stopped on purpose.", "", true
 	case !s.Judging:
 		return "", "", "", false
+	case sch.Basis == "never_checked":
+		return "ok", "No check is recorded since the loop was enabled, resumed or moved " + s.For + " ago; it is called unsupervised after " + s.Threshold + ".", "", true
 	case sch.Slept:
 		return "ok", "The last check was " + s.For + " ago, but the daemon that runs this loop has been running since before it: the computer probably slept.", "", true
 	case s.Basis == "fallback":
@@ -122,4 +150,17 @@ func scheduleDoctorLine(s scheduleStatus) (level, text, fix string, ok bool) {
 	default:
 		return "ok", "Checks are running: the last one was " + s.For + " ago, and they normally run every " + s.Usual + ".", "", true
 	}
+}
+
+// tickCadenceSentence says how a loop with no daemon is being checked, for
+// status's next-check line, or "" when nothing says so.
+func tickCadenceSentence(s scheduleStatus, now time.Time) string {
+	if s.CheckedBy != "ticks" || s.LastCheckAt == nil {
+		return ""
+	}
+	by := "an external scheduler or ticks run by hand"
+	if r := s.StartedBy; r != nil && r.Source == state.RoutineBBAutomation && r.Routine != "" {
+		by = "a BB automation (" + r.Routine + ")"
+	}
+	return fmt.Sprintf("not scheduled by a daemon: checks are run by %s; recent checks ran about every %s, the last %s ago (past checks, not a forecast)", by, s.Cadence, state.ShortDuration(now.Sub(*s.LastCheckAt)))
 }

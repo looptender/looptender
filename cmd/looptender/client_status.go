@@ -80,6 +80,10 @@ type clientRuntime struct {
 	// what to say about it.
 	Overdue        bool   `json:"overdue"`
 	OverdueMessage string `json:"overdueMessage,omitempty"`
+	// OverdueSince, for an overdue loop with no recorded check, is when it
+	// was enabled, resumed or moved: what its time without a check is
+	// measured from.
+	OverdueSince *time.Time `json:"overdueSince,omitempty"`
 }
 type clientCheck struct {
 	At      *time.Time `json:"at,omitempty"`
@@ -345,6 +349,9 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 	if scheduleOf != nil && s.Runtime != nil {
 		sch := scheduleOf(&s.Daemon)
 		s.Runtime.Overdue, s.Runtime.OverdueMessage = sch.Overdue, sch.Message
+		if sch.Overdue && sch.Since != nil {
+			s.Runtime.OverdueSince = sch.Since
+		}
 	}
 	cancel()
 	if ctx.Err() != nil {

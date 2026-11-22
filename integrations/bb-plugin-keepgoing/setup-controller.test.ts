@@ -11,18 +11,19 @@ export function fixture() {
   const agent = { adapter: "bb", bbThread: target.threadId, provider: target.provider };
   const state = { target: "primary", primaryAgent: agent, targetAgent: agent, controlState: "disabled", daemon: { state: "not_recorded" } };
   const doctor = { schemaVersion: 1, targetAgent: agent, checks: [{ id: "agent.primary.target", status: "ok", message: "Verified fixture target" }] };
+  const exit = { doctor: 0 };
   const d: SetupDependencies = {
     target: async () => ({ ...target }), binary: async () => "keepgoing",
     records: async () => saved, save: async r => { saved = r; }, guard: async () => {},
     init: async (_bin, _target, name, task, dry) => { assert.equal(name, "example-loop"); assert.equal(task, "Fictional private task"); calls.push(dry ? "preview" : "create"); return { plan: structuredClone(plan) }; },
-    command: async (_bin, record, op) => { assert.equal(record.hostId, "host_example"); calls.push(op); return { code: 0, data: op === "doctor" ? doctor : op === "status" ? state : null }; },
+    command: async (_bin, record, op) => { assert.equal(record.hostId, "host_example"); calls.push(op); return { code: op === "doctor" ? exit.doctor : 0, data: op === "doctor" ? doctor : op === "status" ? state : null }; },
     changed: () => calls.push("changed"),
     standardRoutes: async () => false,
   };
   const controller = createSetupController(d);
   const preview = () => controller.call({ action: "preview", threadId: target.threadId, name: "example-loop", task: "Fictional private task" });
   const create = (ticket?: string) => controller.call({ action: "create", threadId: "thr_example", ticket, task: "Fictional private task" });
-  return { controller, d, target, plan, calls, state, doctor, preview, create, records: () => saved };
+  return { controller, d, target, plan, calls, state, doctor, exit, preview, create, records: () => saved };
 }
 
 test("preview, disabled create, diagnostics, and explicit start remain separate", async () => {
@@ -368,4 +369,20 @@ test("the note is one trimmed line of at most 300 characters", async () => {
   const preview = (note: string) => f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", mode: "conversation", note });
   for (const bad of ["a b", "a\u0085b", "a b", "x".repeat(301)]) assert.equal((await preview(bad)).ok, false, JSON.stringify(bad));
   assert.equal((await preview("x".repeat(300) + "   ")).ok, true);
+});
+
+test("an enabled loop nothing supervises can still be started: that error is what Start fixes", async () => {
+  const f = fixture(); await f.create((await f.preview()).ticket); f.calls.length = 0;
+  f.state.controlState = "enabled";
+  f.doctor.checks.push({ id: "supervisor.schedule", status: "error", message: "Unsupervised: it is on and not held, but nothing has checked it" });
+  f.exit.doctor = 1;
+  const started = await f.controller.call({ action: "start", threadId: "thr_example" });
+  assert.equal(started.ok, true); assert.equal(started.started, true); assert.equal(f.calls.filter(x => x === "start").length, 1);
+  // Any other error still blocks it.
+  const g = fixture(); await g.create((await g.preview()).ticket); g.calls.length = 0;
+  g.state.controlState = "enabled";
+  g.doctor.checks.push({ id: "supervisor.schedule", status: "error", message: "Unsupervised" }, { id: "config", status: "error", message: "Fixture failure" });
+  g.exit.doctor = 1;
+  const r = await g.controller.call({ action: "start", threadId: "thr_example" });
+  assert.notEqual(r.canStart, true); assert.ok(!g.calls.includes("start"));
 });

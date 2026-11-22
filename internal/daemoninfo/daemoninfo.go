@@ -53,6 +53,11 @@ type Snapshot struct {
 	LastPassStartedAt      *time.Time `json:"lastPassStartedAt,omitempty"`
 	DryRun                 bool       `json:"dryRun"`
 	ConfigUnavailableSince *time.Time `json:"configUnavailableSince,omitempty"`
+	// Adoption says whether this daemon will switch to a new build
+	// installed at the path it was started from: moved_link, any_install,
+	// off, or unavailable followed by ": " and why. Empty from a daemon
+	// built before it could switch.
+	Adoption string `json:"adoption,omitempty"`
 }
 
 type response struct {
@@ -352,4 +357,14 @@ func (s *Server) SetConfigUnavailable(since *time.Time) {
 		at := since.UTC()
 		s.snapshot.ConfigUnavailableSince = &at
 	}
+}
+
+// SetAdoption publishes whether the daemon will follow new installs.
+func (s *Server) SetAdoption(mode string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snapshot.Adoption = mode
 }

@@ -2581,7 +2581,11 @@ func (t *tick) gapToReport() *state.Gap {
 	if !sch.Overdue {
 		return nil
 	}
-	return &state.Gap{From: sch.LastCheckAt, To: t.now, For: sch.For, Usual: sch.Usual, Threshold: sch.Threshold, Windowed: t.schedule.InWindow != nil,
+	from := sch.LastCheckAt
+	if from.IsZero() {
+		from = sch.From // never checked: since it was enabled, resumed or moved
+	}
+	return &state.Gap{From: from, To: t.now, For: sch.For, Usual: sch.Usual, Threshold: sch.Threshold, Windowed: t.schedule.InWindow != nil,
 		StartedBy: sch.StartedBy, Blocked: sch.Blocked, NotRecorded: sch.NotRecorded}
 }
 

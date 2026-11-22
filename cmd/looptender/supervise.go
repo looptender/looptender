@@ -227,6 +227,9 @@ func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, l
 		opts.Now = now
 	}
 	res, err := supervise.Tick(e.ctx, cfg, opts)
+	if res.Recorded && !dryRun {
+		clearStartRefused(cfg.Loop.StateDir) // a check ran: something supervises the loop
+	}
 	out, _ := json.Marshal(res)
 	fmt.Fprintln(e.stdout, string(out))
 	if err != nil {
@@ -263,7 +266,7 @@ func daemon(e env, cfg *config.Config, cfgPath string, dryRun bool, takeOver ...
 // service's bound state directory.
 func daemonAs(e env, cfg *config.Config, cfgPath string, dryRun, takeOver bool, mode, expectedStateDir string) int {
 	if err := checkTransferSources(cfg, false); err != nil {
-		return ownershipError(e, err)
+		return refusedStart(e, cfg.Loop.StateDir, mode, err)
 	}
 	l, err := lock.AcquireNamed(cfg.Loop.StateDir, lock.Daemon)
 	if errors.Is(err, lock.ErrHeld) {
@@ -278,7 +281,7 @@ func daemonAs(e env, cfg *config.Config, cfgPath string, dryRun, takeOver bool, 
 	defer markSupervised(cfg.Loop.StateDir)()
 	lease, err := bindDaemonOwner(cfg.Loop.StateDir, takeOver)
 	if err != nil {
-		return ownershipError(e, err)
+		return refusedStart(e, cfg.Loop.StateDir, mode, err)
 	}
 	monitor, monitorErr := daemoninfo.Start(cfg.Loop.StateDir, version, dryRun)
 	if monitorErr != nil {
@@ -302,6 +305,8 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 	defer cancel()
 	defer enableDaemonShutdown(monitor, cfg, cfgPath, lease, cancel)()
 	state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "started"})
+	clearStartRefused(cfg.Loop.StateDir) // a supervisor is running now
+	monitor.SetAdoption(adopter.followMode(cfg))
 	defer state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "stopped"})
 	// stopDone is the control signature of the last saved stop this daemon
 	// saw carried out, so the fast retry below is for a stop still to do.
@@ -366,6 +371,7 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 		}
 		// A safe point: the check has finished and been saved.
 		adopter.atSafePoint(e.ctx, cfg, lease)
+		monitor.SetAdoption(adopter.followMode(cfg))
 		if !waitForNext(e.ctx, cfg, sig, monitor, lease) {
 			return exitOK
 		}
@@ -627,6 +633,15 @@ type statusOut struct {
 	// BuildAdoption is the daemon's last switch to an installed build, or
 	// refusal of one; absent when none is recorded.
 	BuildAdoption *buildAdoptionStatus `json:"buildAdoption,omitempty"`
+	// SupervisorStartRefused is the last supervisor start refused for
+	// ownership or a pending transfer, until a supervisor starts.
+	SupervisorStartRefused *startRefusal `json:"supervisorStartRefused,omitempty"`
+	// Builds names the build of the last check, this command's and the
+	// daemon's, from what is recorded; FollowsInstalls is yes, no or unknown:
+	// whether the daemon will move to a new installed build by itself.
+	Builds          string `json:"builds"`
+	FollowsInstalls string `json:"followsInstalls"`
+	followsText     string
 
 	// controlUnreadable and stateUnreadable: the record could not be read, so
 	// nothing taken from it is shown. Its fields hold an empty record, which
@@ -1047,13 +1062,23 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if st.FailedChecks > 0 {
 		fmt.Fprintf(w, "failed checks: %d in a row since %s; checks are running but could not observe or act (see the decision reason and the run log)\n", st.FailedChecks, st.FailedSince.Format(time.RFC3339))
 	}
-	fmt.Fprintf(w, "build:     %s (last recorded check versus this process)\n", out.Runtime.BinaryComparison)
+	builds := out.Builds
+	if builds == "" {
+		builds = "unknown"
+	}
+	fmt.Fprintf(w, "build:     %s (last check's build versus this command's: %s)\n", builds, out.Runtime.BinaryComparison)
 	fmt.Fprintf(w, "daemon:    %s; %s\n", out.Daemon.State, out.Daemon.Message)
 	if out.Daemon.State == "responsive" {
-		fmt.Fprintf(w, "daemon phase: %s; build %s; dry run %t\n", out.Daemon.Phase, out.Daemon.BinaryComparison, out.Daemon.DryRun)
+		fmt.Fprintf(w, "daemon phase: %s; build %s (the daemon's versus this command's); dry run %t\n", out.Daemon.Phase, out.Daemon.BinaryComparison, out.Daemon.DryRun)
+	}
+	if out.followsText != "" {
+		fmt.Fprintf(w, "daemon follows new installs: %s\n", out.followsText)
 	}
 	if b := out.BuildAdoption; b != nil {
 		fmt.Fprintf(w, "daemon build change: %s\n", b.Message)
+	}
+	if r := out.SupervisorStartRefused; r != nil {
+		fmt.Fprintf(w, "supervisor start: %s\n", r.sentence())
 	}
 	fmt.Fprintf(w, "next check: %s\n", out.Runtime.NextCheck)
 	if out.stateUnreadable {
@@ -1325,7 +1350,13 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.Daemon = query(queryCtx, l.StateDir, version, false)
 	cancel()
 	out.Schedule = describeSchedule(&l, st, ctl, &out.Daemon, now)
+	if t := tickCadenceSentence(out.Schedule, now); t != "" && out.Daemon.State != "responsive" {
+		out.Runtime.NextCheck = t
+	}
 	out.BuildAdoption = describeBuildAdoption(l.StateDir, out.Daemon, now)
+	out.SupervisorStartRefused = currentStartRefusal(l.StateDir, st.CheckedAt, out.Daemon)
+	out.Builds = buildNames(st, out.Daemon)
+	out.FollowsInstalls, out.followsText = followsInstalls(out.Daemon)
 	if out.Daemon.State == "responsive" {
 		out.Runtime.NextCheck = out.Daemon.NextCheck
 	}

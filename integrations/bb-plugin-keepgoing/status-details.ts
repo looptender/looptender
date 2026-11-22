@@ -16,6 +16,9 @@ export const scheduleSchema = z.object({
   // Present from the CLI that judges held loops and a fallback: "usual"
   // only when the loop's usual interval is known.
   judging: z.boolean().optional(), basis: z.string().optional(), slept: z.boolean().optional(),
+  // From a later looptender: checkedBy "ticks" when no daemon answers yet
+  // checks keep arriving, with how far apart recent ones were.
+  checkedBy: z.string().max(32).optional(), cadence: z.string().max(32).optional(),
 });
 export const daemonSchema = z.object({
   state: z.string(), phase: z.string().optional(), observedAt: z.string().optional(),
@@ -127,6 +130,7 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
   }
   if (d.schedule?.overdue) lines.push(`Schedule: ${d.schedule.message ?? "no check has run for longer than usual; the loop's scheduler may have stopped"}`);
   // Only a judged loop whose usual interval is known is said to be on time.
+  else if (d.schedule?.checkedBy === "ticks") lines.push(`Schedule: checked by ticks run without a daemon (an external scheduler or by hand), about every ${d.schedule.cadence ?? "unknown interval"}`);
   else if (d.schedule?.judging && d.schedule.basis === "usual" && !d.schedule.slept) lines.push("Schedule: checks are running at their usual interval");
   else if (!d.schedule) lines.push("External scheduler health: not inspected; a daemon reply does not establish agent health");
   const wait = d.limitWait;

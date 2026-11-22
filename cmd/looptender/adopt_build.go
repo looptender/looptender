@@ -805,3 +805,22 @@ func launchExecutable() (string, error) {
 	}
 	return p, nil
 }
+
+// followMode is what the daemon publishes about following new installs
+// (daemoninfo.Snapshot.Adoption).
+func (a *buildAdopter) followMode(cfg *config.Config) string {
+	switch {
+	case a == nil:
+		return "unavailable: this daemon runs in dry-run mode"
+	case a.off != "":
+		return "unavailable: " + a.off
+	}
+	switch setting := cfg.Loop.Daemon.AdoptInstalledBuild; {
+	case setting == nil:
+		return "moved_link"
+	case *setting:
+		return "any_install"
+	default:
+		return "off"
+	}
+}
