@@ -155,8 +155,8 @@ func dockNoteIPv6(m string) bool {
 // ordinary prose after a path are not taken, so a lower-case word inside a
 // path ("Documents and Settings") ends it. Group 1 is the character before.
 var dockNoteAbsolutePath = func() *regexp.Regexp {
-	stop := "\\s\"'`)\\]}>"                  // characters that end a token
-	tok := "[^" + stop + "]+"                // the rest of a path word
+	stop := "\\s\"'`)\\]}>"                                                 // characters that end a token
+	tok := "[^" + stop + "]+"                                               // the rest of a path word
 	word := "(?:[A-Z0-9][^" + stop + "/\\\\]*|\\([^" + stop + "/\\\\]*\\))" // a plain word that may continue a path
 	sepWord := "(?:[A-Z0-9]|\\([^" + stop + "]*\\))[^" + stop + "]*[/\\\\][^" + stop + "]*"
 	base := "~?/" + tok + "|[A-Za-z]:[\\\\/]" + tok + "|\\\\[A-Za-z0-9._-]+[\\\\/]" + tok
