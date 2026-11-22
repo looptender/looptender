@@ -112,6 +112,17 @@ func TestScenarioIncidentAdoptsInstalledBuild(t *testing.T) {
 	proc, _ := os.FindProcess(started.PID)
 	t.Cleanup(func() { proc.Kill(); proc.Wait() })
 	stateDir := w.runtimeDir()
+	// A background daemon's own output goes to the null device; what it
+	// did is in its records. A failure prints them.
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		for _, f := range []string{filepath.Join(stateDir, state.LogName), filepath.Join(stateDir, "build-adoption.json"), filepath.Join(w.world, "moves.jsonl")} {
+			b, err := os.ReadFile(f)
+			t.Logf("%s (%v):\n%s", filepath.Base(f), err, b)
+		}
+	})
 
 	checks := 0
 	// checked waits for the daemon's next recorded check after the given
