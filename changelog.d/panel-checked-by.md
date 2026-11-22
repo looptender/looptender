@@ -1,0 +1,1 @@
+- Panel: every loop page, and the loop's row in the Overview, now says how the loop is checked (by its daemon, by its daemon as a service, by ticks from a scheduler not on record, by nothing on record, or unknown), whatever its holds, as information. A paused loop checked by ticks showed no line about this anywhere.

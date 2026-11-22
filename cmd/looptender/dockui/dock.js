@@ -538,6 +538,7 @@
       var facts = el("dl", "work-facts");
       facts.appendChild(fact("Last decision", l.decision ? say(l.decision.phrase) : "Unknown"));
       facts.appendChild(fact("Next check", nextCheck(l.nextCheck || { availability: "unknown" })));
+      if (l.checkedBy && l.checkedBy.text) facts.appendChild(fact("Checked", l.checkedBy.text));
       body.appendChild(facts);
       body.appendChild(laneBox(l, true));
       var more = body.querySelector("details.lane-more"), moreKey = l.key + "/lanes";
@@ -729,6 +730,9 @@
     // The provider and model the loop now targets, from its configuration, so
     // its name is not the only cue. Nothing when an older server sends none.
     if (l.provider) pane.appendChild(el("p", "sub build-line", "Configured provider: " + l.provider + " \u00B7 " + (l.model ? "model " + l.model : "model not configured")));
+    // How the loop is checked (daemon, service, ticks, nothing), whatever its
+    // holds; nothing from an older server that sends none.
+    if (l.checkedBy && l.checkedBy.text) pane.appendChild(el("p", "sub build-line checked-by", l.checkedBy.text));
     // The build its last check ran; "version unknown" when none is recorded.
     // An older server sends no line, and then nothing is shown.
     if (l.build && l.build.line) pane.appendChild(el("p", "sub build-line", l.build.line));

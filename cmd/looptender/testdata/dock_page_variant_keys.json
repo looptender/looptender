@@ -1,6 +1,9 @@
 [
  "state",
  "alsoWaiting",
+ "checkedBy",
+ "checkedBy.kind",
+ "checkedBy.text",
  "phrase",
  "detail",
  "lanesFailed",

@@ -263,3 +263,41 @@ func TestDockPausedAndWaitingSortsWithTheLoopsThatNeedYou(t *testing.T) {
 		t.Fatalf("%q first, %d needs", r.Loops[0].Name, len(r.NeedsYou))
 	}
 }
+
+// How a loop is checked is said on every loop, held or not: a daemon, a
+// service, ticks from a scheduler that is not recorded, nothing, or unknown.
+func TestDockSaysHowALoopIsCheckedWhateverItsHolds(t *testing.T) {
+	recent := dockNow.Add(-9 * time.Minute)
+	old := dockNow.Add(-5 * time.Hour)
+	at := func(c *clientControls, daemon daemonStatus, last *time.Time, service string) dockCheckedBy {
+		in := dockEvidence{controls: c, status: func(s *statusOut) { s.Schedule = scheduleStatus{LastCheckAt: last} }}.input()
+		in.Client.Snapshot.Daemon = daemon
+		in.ServiceFile = service
+		l, _ := projectDockLoop(in, dockNow, defaultStaleAfter, false)
+		return l.CheckedBy
+	}
+	for name, held := range map[string]*clientControls{"paused": {Enabled: true, Paused: true}, "awaiting": {Enabled: true, AwaitingUser: true}, "stopped": {Enabled: true, Stop: true}, "finished": {Enabled: true, Completed: true}, "off": {Enabled: false}, "running": {Enabled: true}} {
+		// Ticks: no daemon on record, and a check within the stale window.
+		if got := at(held, daemonStatus{State: "not_recorded"}, &recent, ""); got.Kind != "ticks" || !strings.Contains(got.Text, "Checked by ticks from a scheduler not on record") {
+			t.Errorf("%s with ticks: %+v", name, got)
+		}
+		if got := at(held, daemonStatus{State: "responsive"}, &recent, ""); got.Kind != "daemon" {
+			t.Errorf("%s with a daemon: %+v", name, got)
+		}
+		if got := at(held, daemonStatus{State: "responsive"}, &recent, "same_file"); got.Kind != "service" {
+			t.Errorf("%s with a service: %+v", name, got)
+		}
+		if got := at(held, daemonStatus{State: "not_recorded"}, &old, ""); got.Kind != "none" || !strings.Contains(got.Text, "Nothing on record checks it") {
+			t.Errorf("%s with nothing: %+v", name, got)
+		}
+		if got := at(held, daemonStatus{State: "not_recorded"}, nil, ""); got.Kind != "none" {
+			t.Errorf("%s never checked: %+v", name, got)
+		}
+		if got := at(held, daemonStatus{State: "unavailable"}, &recent, ""); got.Kind != "unknown" {
+			t.Errorf("%s with a scheduler that did not answer: %+v", name, got)
+		}
+	}
+	if l, _ := projectDockLoop(dockEvidence{controls: &clientControls{Enabled: true}, noSnap: true}.input(), dockNow, defaultStaleAfter, false); l.CheckedBy.Kind != "unknown" {
+		t.Errorf("an unread loop: %+v", l.CheckedBy)
+	}
+}
