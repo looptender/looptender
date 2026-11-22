@@ -318,3 +318,73 @@ func TestPendingOwnerMoveForAnotherTargetIsDropped(t *testing.T) {
 		t.Fatalf("%+v %v", o, res.Warnings)
 	}
 }
+
+// Review follow-up: a pending move X->Z never applied, then a handoff Z->W
+// the supervisor makes itself, chains to X->W: ownership ends with the
+// thread the loop is on, not with X.
+func TestPendingOwnerMoveChainsThroughASecondHandoff(t *testing.T) {
+	w, _, f := newThreadWorld(t)
+	for i := range w.cfg.FallbackSet.Candidates {
+		if c := &w.cfg.FallbackSet.Candidates[i]; c.ID == "codex-main" {
+			c.BB = &config.BB{NewThread: true}
+		}
+	}
+	ownedBy(t, w.dir, "thr_primary")
+	held, _ := lock.AcquireNamed(w.dir, lock.Control)
+	if res := mustThreadTick(t, w, f, t0); res.Target != "claude-other" {
+		t.Fatalf("%+v", res)
+	}
+	// The created thread hits its limit too, and the loop moves to a second
+	// created thread while control.json still cannot be written.
+	w.cfg.FallbackSet.Redundancy.MinHealthy = 1
+	w.adapters["claude-other"] = &fakeAdapter{obs: limited}
+	delete(w.probeOK, "claude-other")
+	res := mustThreadTick(t, w, f, t0.Add(2*time.Hour))
+	if res.Target != "codex-main" || res.Handoff == nil || res.Handoff.NewThread != "thr_created_2" {
+		t.Fatalf("%+v %+v", res, res.Handoff)
+	}
+	if st, _ := state.Load(w.dir); st.PendingOwnerMove == nil || st.PendingOwnerMove.From != "thr_primary" || st.PendingOwnerMove.To != "thr_created_2" {
+		t.Fatalf("not chained: %+v", st.PendingOwnerMove)
+	}
+	held.Release()
+	w.adapters["codex-main"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	mustThreadTick(t, w, f, t0.Add(2*time.Hour+time.Minute))
+	o := ownership(t, w.dir)
+	if o.ThreadID != "thr_created_2" || o.Generation != 2 || o.Followed == nil || strings.Join(o.Followed.From, ",") != "thr_primary" {
+		t.Fatalf("%+v %+v", o, o.Followed)
+	}
+	if st, _ := state.Load(w.dir); st.PendingOwnerMove != nil {
+		t.Fatalf("%+v", st.PendingOwnerMove)
+	}
+}
+
+// Review follow-up: a pending BB transfer that completes to another thread
+// is an explicit move. The pending supervisor move then finds a different
+// owner and is dropped; the transfer's owner stands.
+func TestPendingOwnerMoveYieldsToACompletedTransfer(t *testing.T) {
+	w, _, f := newThreadWorld(t)
+	ownedBy(t, w.dir, "thr_primary")
+	held, _ := lock.AcquireNamed(w.dir, lock.Control)
+	mustThreadTick(t, w, f, t0)
+	held.Release()
+	transfer := &control.PendingBBTransfer{Version: 1, ID: "move_" + strings.Repeat("b", 32), From: "thr_primary", To: "thr_transfer_dest",
+		Before: strings.Repeat("1", 64), After: strings.Repeat("2", 64)}
+	control.Update(w.dir, func(c *control.File) { c.PendingTransfer = transfer })
+	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	mustThreadTick(t, w, f, t0.Add(time.Minute))
+	// The transfer finishes as transfer apply does.
+	if _, err := control.UpdateChecked(w.dir, func(c *control.File) error {
+		c.PendingTransfer = nil
+		return control.BindBBTarget(c, "thr_transfer_dest")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res := mustThreadTick(t, w, f, t0.Add(2*time.Minute))
+	o := ownership(t, w.dir)
+	if o.ThreadID != "thr_transfer_dest" || o.Generation != 2 || o.Followed != nil || res.OwnerMovedTo != "" {
+		t.Fatalf("%+v %+v", o, res)
+	}
+	if st, _ := state.Load(w.dir); st.PendingOwnerMove != nil || !strings.Contains(strings.Join(res.Warnings, "\n"), "changed explicitly") {
+		t.Fatalf("%+v %v", st.PendingOwnerMove, res.Warnings)
+	}
+}

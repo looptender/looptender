@@ -682,6 +682,7 @@
         "project": false,
         "environment": false,
         "permission_mode": false,
+        "move_children": false,
         "cli": {
           "type": "string",
           "default": "bb"

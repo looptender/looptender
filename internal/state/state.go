@@ -260,6 +260,11 @@ type File struct {
 	// supervisor made, saved here before control.json is changed so a
 	// crash in between is completed by the next check.
 	PendingOwnerMove *OwnerMove `json:"pendingOwnerMove,omitempty"`
+	// ChildMove is the move of the left conversation's direct children to
+	// the thread that took over, for a handoff the supervisor made. It is
+	// saved before the first child is moved and after each one, and kept
+	// once done so status can show it, until the next such handoff.
+	ChildMove *ChildMove `json:"childMove,omitempty"`
 	// ChildErrorReport is set while any child of the supervised thread is in
 	// error, so its report is not repeated by later checks or after a restart.
 	ChildErrorReport *ChildErrorReport `json:"childErrorReport,omitempty"`
@@ -461,6 +466,14 @@ type LimitWaitReport struct {
 	ResetsAt   time.Time `json:"resetsAt"`
 	DetectedAt time.Time `json:"detectedAt"`
 	Outcome    string    `json:"outcome"`
+	// Reason is why no handoff was possible: limit_failover_disabled,
+	// limit_no_fallback or limit_refusal_unrecovered. Empty in a record
+	// saved by an earlier build.
+	Reason string `json:"reason,omitempty"`
+	// ReportSection is "none" when the loop had no report section when the
+	// wait was recorded, "present" when it had one, and empty in a record
+	// saved by an earlier build.
+	ReportSection string `json:"reportSection,omitempty"`
 	// Reports counts report attempts in this wait, including this one.
 	Reports int `json:"reports,omitempty"`
 }
@@ -489,6 +502,32 @@ type OwnerMove struct {
 	Reason         string    `json:"reason"`
 	At             time.Time `json:"at"`
 }
+
+// ChildMove records moving the direct children of From to To. Remaining
+// lists the children still to move; Listed says From's children were listed
+// (Remaining is then authoritative). Moved, Failed and Skipped count
+// children moved and confirmed, given up on after MaxChildMoveAttempts, and
+// left because they were archived or beyond MaxMovedChildren.
+type ChildMove struct {
+	From      string         `json:"from"`
+	To        string         `json:"to"`
+	Candidate string         `json:"candidate"`
+	At        time.Time      `json:"at"`
+	Listed    bool           `json:"listed,omitempty"`
+	Remaining []string       `json:"remaining,omitempty"`
+	Attempts  map[string]int `json:"attempts,omitempty"`
+	Moved     int            `json:"moved,omitempty"`
+	Failed    int            `json:"failed,omitempty"`
+	Skipped   int            `json:"skipped,omitempty"`
+	Done      bool           `json:"done,omitempty"`
+}
+
+// MaxMovedChildren bounds the children moved for one handoff, and
+// MaxChildMoveAttempts the attempts for one child.
+const (
+	MaxMovedChildren     = 50
+	MaxChildMoveAttempts = 3
+)
 
 // NewThreadIntent is saved before a thread is created and cleared once the
 // outcome is known, so a crash or a restart in between can find the thread by

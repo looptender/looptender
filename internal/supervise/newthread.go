@@ -27,6 +27,8 @@ type ThreadCreator interface {
 	PlaceOf(ctx context.Context, thread string) (bb.Place, error)
 	FindByTitle(ctx context.Context, p bb.Place, title string) ([]string, error)
 	Spawn(ctx context.Context, r bb.SpawnRequest) (string, error)
+	ListChildren(ctx context.Context, parent string) ([]bb.ListedChild, error)
+	SetParent(ctx context.Context, child, parent string) error
 }
 
 func bbThreads(cli string) ThreadCreator { return bb.New(config.BB{CLI: cli}) }
@@ -156,6 +158,9 @@ func (t *tick) createThread(from string, fromAgent config.Agent, c config.Candid
 		text += "\n\nContinue from @thread:" + continues + ". keepgoing started this conversation for the handoff; the earlier one was left as it was.\n"
 	}
 	text += ownershipNote(t.loop.Name, t.ownerWillFollow(continues))
+	if _, follow := childrenFollow(c); follow && continues != "" {
+		text += childrenNote(t.handoffObs)
+	}
 	var sentContext *state.ContextSent
 	if t.loop.PromptContext {
 		// After everything else, as on any other send. A created thread has
@@ -228,6 +233,7 @@ func (t *tick) moveToCreated(in *state.NewThreadIntent, thread string, note *Han
 	t.st.Reprompts, t.st.LastRepromptAt = 0, time.Time{}
 	t.res.Target = in.Candidate
 	t.followOwner(in.Continues, thread, "new_thread")
+	t.planChildMove(in.Candidate, in.Continues, thread)
 	t.report("handoff", fmt.Sprintf("%s: handed off from %s to %s, a new BB thread keepgoing created for this handoff, after a %s error", t.loop.Name, in.From, in.Candidate, in.Reason),
 		map[string]any{"from": in.From, "to": in.Candidate, "reason": in.Reason, "tried": note.Tried, "newThread": true})
 }

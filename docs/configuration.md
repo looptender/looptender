@@ -66,6 +66,7 @@ loop:
 | `new_thread` | `false` | Fallback candidates only, v0.2.0. Instead of `thread`: a handoff to this candidate creates a new BB thread on the candidate's `provider`, with `model` and `reasoning`. Requires `provider`. See [hand off to a new conversation](fallbacks.md#hand-off-to-a-new-conversation). |
 | `project`, `environment` | the continued conversation's | With `new_thread` only: where the new thread is created. |
 | `permission_mode` | `accept-edits` | With `new_thread` only: `accept-edits`, `auto` or `full`. Always passed to `bb thread spawn`, so the new thread never takes a project default. `accept-edits` asks before anything but file edits. |
+| `move_children` | `true` | With `new_thread` only: after the handoff, move the direct child threads of the conversation being left to the created thread, and back on an automatic switch-back. See [child threads](fallbacks.md#child-threads-follow-the-handoff). |
 | `children.retry_errored` | `false` | v0.2.0. Opt in to [lane recovery](operations.md#lane-recovery): ask BB to retry the failed turn of a lane that was seen working and then failed with a connection, overload or unknown error. Nothing else is ever done to a lane. Per lane it uses `errors.max_reprompts` attempts spaced by `errors.backoff`. |
 | `children.max_per_check` | `5` | With `retry_errored`: lanes worked on in one check. `1` to `20`; `0` means the default. |
 | `children.max_per_episode` | `20` | With `retry_errored`: retries for one failure across all lanes. `1` to `100`; `0` means the default. |

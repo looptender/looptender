@@ -534,8 +534,12 @@ type statusOut struct {
 	// primary session right now, or one that is stuck holding it.
 	SessionClaim string           `json:"sessionClaim,omitempty"`
 	PromptSend   promptSendStatus `json:"promptSend"`
-	LimitWait    limitWaitStatus  `json:"limitWait"`
-	TurnRetry    turnRetryStatus  `json:"turnRetry"`
+	// WakePolicy says whether the standing wake policy comes from this
+	// build or from the loop's own prompt text; absent when the prompt
+	// cannot be read.
+	WakePolicy *wakePolicyStatus `json:"wakePolicy,omitempty"`
+	LimitWait  limitWaitStatus   `json:"limitWait"`
+	TurnRetry  turnRetryStatus   `json:"turnRetry"`
 	// ContextWindow is the active target's latest context window reading.
 	ContextWindow contextStatus `json:"contextWindow"`
 	// ContextWindowReset previews the context-threshold reset.
@@ -553,6 +557,7 @@ type statusOut struct {
 	Lanes             lanesStatus              `json:"laneRecovery"`
 	ChildErrorReport  childReportStatus        `json:"childErrorReport"`
 	NewThreads        newThreadStatus          `json:"newThreads"`
+	ChildMove         *childMoveStatus         `json:"childMove,omitempty"`
 	Goal              *control.GoalSummary     `json:"goal,omitempty"`
 	GoalError         string                   `json:"goalError,omitempty"`
 	Notifications     report.DeliveryStatus    `json:"notifications"`
@@ -642,6 +647,18 @@ func (s statusOut) MarshalJSON() ([]byte, error) {
 // fallbacks with bb.new_thread. Active is when the active target's thread was
 // created, if keepgoing created it. Pending means a creation's outcome is not
 // yet known.
+// childMoveStatus is the move of the left conversation's direct children to
+// the thread that took over, in counts: no thread IDs.
+type childMoveStatus struct {
+	At      time.Time `json:"at"`
+	Moved   int       `json:"moved"`
+	Pending int       `json:"pending"`
+	Failed  int       `json:"failed"`
+	Skipped int       `json:"skipped"`
+	Listed  bool      `json:"listed"`
+	Done    bool      `json:"done"`
+}
+
 type newThreadStatus struct {
 	Created int        `json:"created"`
 	Max     int        `json:"max"`
@@ -801,6 +818,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if !out.stateUnreadable {
 		printPromptSend(w, out.PromptSend)
 	}
+	printWakePolicy(w, out.WakePolicy)
 	if n := out.NewThreads; !out.stateUnreadable && (n.Created > 0 || n.Pending) {
 		fmt.Fprintf(w, "new threads: keepgoing has used %d of at most %d BB thread creation(s) for handoffs", n.Created, n.Max)
 		if n.Active != nil {
@@ -810,6 +828,9 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 			fmt.Fprint(w, "; one creation could not be confirmed: nothing is created or handed off until a person settles it with retarget")
 		}
 		fmt.Fprintln(w)
+	}
+	if m := out.ChildMove; m != nil && !out.stateUnreadable {
+		printChildMove(w, *m)
 	}
 	if !out.stateUnreadable {
 		printLimitWait(w, out.LimitWait)
@@ -1154,10 +1175,11 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	}
 	out.Assignments = assignmentStatus(cfg, ctl)
 	out.PromptSend = describePromptSend(st.LastPromptSend, out.Goal)
+	out.WakePolicy = describeWakePolicy(l)
 	if st.GoalCopy != nil && st.GoalCopy.Valid() {
 		out.PromptSend.GoalCopy = st.GoalCopy
 	}
-	out.LimitWait = describeLimitWait(st.LimitWaitReport, l, now)
+	out.LimitWait = describeLimitWait(st.LimitWaitReport, l, loopHeld(ctl, out.controlUnreadable), now)
 	out.IdleSpacing = describeIdleSpacing(st, l.Progress)
 	out.TurnRetry = describeTurnRetry(st.LastTurnRetry)
 	out.ContextWindow = describeContext(st.Context, st.Target(), activeBB(cfg, st.Target()) != nil, now)
@@ -1230,6 +1252,9 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		}
 	}
 	out.NewThreads = newThreadStatus{Created: st.NewThreadsCreated, Max: l.Limits.MaxNewThreads, Pending: st.NewThreadIntent != nil}
+	if m := st.ChildMove; m != nil {
+		out.ChildMove = &childMoveStatus{At: m.At, Moved: m.Moved, Pending: len(m.Remaining), Failed: m.Failed, Skipped: m.Skipped, Listed: m.Listed, Done: m.Done}
+	}
 	if !st.LastNewThreadAt.IsZero() {
 		next := st.LastNewThreadAt.Add(config.MinNewThreadInterval)
 		out.NewThreads.NextAllowedAt = &next
@@ -1906,4 +1931,22 @@ func activeBB(cfg *config.Config, target string) *config.BB {
 		return c.Agent.BB
 	}
 	return nil
+}
+
+func printChildMove(w io.Writer, m childMoveStatus) {
+	if !m.Listed {
+		fmt.Fprintf(w, "child threads: the handoff of %s is to move the left conversation's direct children to the thread that took over; they could not be listed yet, and a later check tries again\n", when(m.At))
+		return
+	}
+	fmt.Fprintf(w, "child threads: %d of the left conversation's direct children moved to the thread that took over at the handoff of %s", m.Moved, when(m.At))
+	if m.Pending > 0 {
+		fmt.Fprintf(w, "; %d still to move (later checks continue unless the loop is held)", m.Pending)
+	}
+	if m.Failed > 0 {
+		fmt.Fprintf(w, "; %d could not be moved after %d attempts each: move them by hand with bb thread update <child> --parent-thread <new thread>", m.Failed, state.MaxChildMoveAttempts)
+	}
+	if m.Skipped > 0 {
+		fmt.Fprintf(w, "; %d left where they were (archived, or beyond the %d moved per handoff)", m.Skipped, state.MaxMovedChildren)
+	}
+	fmt.Fprintln(w, ". Only their parent changed; none was messaged, retried or stopped")
 }

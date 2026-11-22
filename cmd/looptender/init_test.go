@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	promptpkg "github.com/looptender/looptender/internal/prompt"
 	"io"
 	"os"
 	"os/exec"
@@ -80,6 +81,10 @@ func TestInitCreatesDisabledPrivateSetup(t *testing.T) {
 	}
 	if _, err := os.Stat(cfg.Loop.StateDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("setup must not start runtime state")
+	}
+	// The prompt file setup wrote follows policy updates until edited.
+	if s, err := promptpkg.DescribePolicy(cfg.Loop); err != nil || s.Source != promptpkg.PolicyFollowing || s.FileVersion != promptpkg.CurrentPolicyVersion() {
+		t.Fatalf("new loop's wake policy: %+v %v", s, err)
 	}
 	prompt, err := cfg.Loop.PromptText()
 	if err != nil {

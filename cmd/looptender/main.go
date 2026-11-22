@@ -77,6 +77,7 @@ Local client discovery:
 Goal metadata:
   assignment inventory|review|handoff|acknowledge|ready|reconcile-wake|show  Explicit BB assignment evidence (opt-in; no dispatch)
   goal create|revise|show   Record private, revisioned goal metadata
+  prompt-policy show|apply  Show whether the standing wake policy comes from this build; apply makes the prompt file follow it
 
 Control:
   enable | disable         Turn supervision on or off (nothing is sent while off)
@@ -190,6 +191,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return assignmentCommand(e, rest, doctorExecLimit(inventoryListLimit))
 	case "goal":
 		return goalCommand(e, rest)
+	case "prompt-policy":
+		return promptPolicyCommand(e, rest)
 	case "service":
 		return serviceCommand(e, rest, localServiceHost())
 	case "__service-daemon":

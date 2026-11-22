@@ -25,6 +25,7 @@ import (
 	"github.com/looptender/looptender/internal/envvar"
 	"github.com/looptender/looptender/internal/health"
 	"github.com/looptender/looptender/internal/netretry"
+	"github.com/looptender/looptender/internal/prompt"
 	"github.com/looptender/looptender/internal/report"
 	"github.com/looptender/looptender/internal/snapshot"
 	"github.com/looptender/looptender/internal/state"
@@ -160,6 +161,13 @@ func doctor(e env, args []string, run doctorRun) int {
 		doctorFile(&r, "task", cfg.Loop.PromptFile, false)
 	} else {
 		r.add("task", "ok", "Task is configured inline; its text is not displayed.", "")
+	}
+	if s := describeWakePolicy(cfg.Loop); s != nil {
+		status := "ok"
+		if s.Source == prompt.PolicyCustom || s.Source == prompt.PolicyGenerated {
+			status = "warning"
+		}
+		r.add("wake_policy", status, s.Message, "")
 	}
 	doctorFile(&r, "state.directory", cfg.Loop.StateDir, true)
 	doctorStateAccess(&r, cfg.Loop.StateDir, doctorOSAccess)
@@ -316,6 +324,7 @@ func doctor(e env, args []string, run doctorRun) int {
 	}
 	doctorCheckVersion(&r, st.LastCheck, stateErr == nil)
 	doctorFailedChecks(&r, st, stateErr == nil)
+	doctorRoutes(&r, cfg, st, stateErr == nil, loopHeld(ctl, ctlErr != nil), r.CheckedAt)
 	if stateErr == nil {
 		if ctl, err := control.Load(cfg.Loop.StateDir); err == nil {
 			if level, text, fix, ok := scheduleDoctorLine(describeSchedule(&cfg.Loop, st, ctl, &d, r.CheckedAt)); ok {

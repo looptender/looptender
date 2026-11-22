@@ -28,6 +28,21 @@ Runtime state will live in that directory's `state` subdirectory. `--directory` 
 
 **Task files are imported once.** Setup copies the entered task, stdin, or `--task-file` contents into the generated `prompt.md`. Later edits to the original task file do not update that snapshot. Supervision rereads the saved `loop.prompt_file` (generated as `prompt.md`) when preparing task prompts; edit that saved file to revise future prompts while preserving its control instructions. Already-sent messages are unchanged. looptender does not follow referenced documents or detect whether the task wording has become stale.
 
+### Standing wake policy
+
+The guidance above the `Task:` line in a generated `prompt.md` (how to plan, delegate, finish, and ask for a person) is the standing wake policy. It can come from the looptender build instead of the file: then each wake sends the running build's current wording, followed by the text after the file's `Task:` line, and a loop gets newer guidance from its next wake after an upgrade without anyone editing its files. A wake never rewrites the file.
+
+A loop follows policy updates only while its `prompt.md` is, byte for byte, the file setup or `prompt-policy apply` last wrote. They record it in `prompt.md.wake-policy.json` beside it, a SHA-256 of the file and the wording version. Any edit to the file, even to the task, and even deleting a paragraph so that it reads like an older wording, ends the updates: the file is then sent exactly as written. A prompt set inline with `loop.prompt` is always sent as written.
+
+Loops set up before this have no record and are not changed. `status` and `doctor` say which case a loop is in (`wakePolicy` in `status --json`): it follows policy updates; it matches the wording some version of setup wrote (version N) but does not follow them; it was edited after it was recorded; or it is hand-edited and matches no generated wording.
+
+```sh
+looptender prompt-policy show -c CONFIG
+looptender prompt-policy apply -c CONFIG
+```
+
+`apply` is how a loop starts following policy updates. It rewrites the prompt file to the current wording followed by the file's task, then records it. A file that reads as a generated wording keeps its own command path and configuration path. For any other file, the task is the text after its first line that reads exactly `Task:`, and the commands get the path of the looptender that ran `apply`, which it prints. The previous file is kept beside it as `prompt.md.before-policy-<time>`. It refuses a file with no `Task:` line, a caller other than the BB thread that owns the loop, and a moment when a check is running. Moving a loop from an older wording adds the guidance that wording lacked (see the changelog). Nothing else rewrites the file.
+
 Review the generated task and configuration, then run the exact `start --foreground` command printed by setup. Commands include the resolved config path; Windows output uses PowerShell syntax. Start validates local files and executable availability, enables the loop, and runs the daemon in the terminal. Choose `--background` to detach it instead; the command waits for a startup acknowledgement and prints the daemon PID. Existing holds remain in effect until `resume`. See [starting supervision](operations.md#starting-supervision) for validation limits, controls, and background lifecycle. `enable` alone still does not start a supervisor. Background mode installs no service and does not restart after a crash or reboot. On macOS and Linux, a [service](services.md#the-recommended-way-to-keep-checks-running) is the recommended way to keep checks running across restarts, and `init` prints its install command; external schedulers remain available on every platform. Whatever runs the checks, `status` says when they have [stopped](operations.md#external-schedulers-can-stop-on-their-own).
 
 The generated prompt tells the agent to honor newer user instructions, finish and verify the entire task before calling `complete`, and call `await-user` when only human-dependent work remains. The agent needs permission to run these control commands and write the private state directory. Setup preserves the provider's current sandbox and permission settings; it does not bypass a permission request. Completion holds across supervisor restarts until an explicit `resume`.
