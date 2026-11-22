@@ -150,7 +150,9 @@ func TestHeldLoopAndFailedReportAreWordedTruthfully(t *testing.T) {
 		}
 		_, r, _ := f.run(t, successfulDoctorRun, "--offline")
 		for _, c := range r.Checks {
-			if c.ID == "limit_wait" {
+			// A held loop's recorded wait may be mentioned, only as information
+			// that it was recorded before the hold; never as a current warning.
+			if c.ID == "limit_wait" && (c.Status != "ok" || !strings.Contains(c.Message, "recorded before the hold") || !strings.Contains(c.Message, "may be out of date") || strings.Contains(c.Message, "sends nothing until then")) {
 				t.Fatalf("%s: held loop reported a current wait: %+v", hold, c)
 			}
 			if strings.Contains(c.Message, "not held") {
