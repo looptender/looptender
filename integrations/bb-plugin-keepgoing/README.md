@@ -183,6 +183,8 @@ Unreleased source shows **all matching loops**, including retired references and
 
 The rebuilt plugin also shows recorded goal identity/revision in setup diagnostics and expanded status. Goal titles, task text and references are withheld; metadata is not verified completion. Missing fields say “not reported” (no record or an older CLI), malformed records are unavailable, and unavailable goal metadata prevents a new start through setup. Editing the goal choice invalidates its preview. The original task source and edits to referenced files are not revision-tracked; see [goal setup](../../docs/setup.md#optional-goal-during-setup). This flow and display are fixture-tested; live deployment and first-loop verification remain open.
 
+Under each state word the card lists, as a short "Why" list, what is not visible from the word alone, in the words `looptender status` prints: a held loop's note (cut to 160 characters), a long limit wait with how long, an overdue check, a deadline reached, a send limit reached, an unreadable send record, and a low or critical disk (`diskSpace`). A loop whose `control.json` or `state.json` cannot be read shows `looptender: records unreadable` with the reason and offers no Pause or resume command. With more than one held loop the resume sentence appears once for the card, each loop keeping its own command.
+
 Both read:
 
 - `looptender: enabled`: the loop is enabled and this thread is its current target. This label alone does not prove a supervisor is running.

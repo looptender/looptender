@@ -26,8 +26,10 @@ const statusSchema = z.object({
   loop: z.string(),
   target: z.string(),
   controlState: z.string(),
-  control: z.object({ note: z.string().optional(), completed: z.boolean().optional(), supersededBy: z.string().optional() }).passthrough(),
+  // Left out of status --json when control.json cannot be read.
+  control: z.object({ note: z.string().optional(), completed: z.boolean().optional(), supersededBy: z.string().optional() }).passthrough().optional(),
   window: z.string(),
+  // Left out of status --json when state.json cannot be read.
   state: z
     .object({
       lastCheck: checkSchema.optional(),
@@ -37,7 +39,7 @@ const statusSchema = z.object({
       checkedAt: z.string().optional(),
       handoffs: z.number().optional(),
     })
-    .passthrough(),
+    .passthrough().optional(),
   redundancy: z.object({ healthy: z.array(z.string()), distinct: z.number(), min: z.number(), meets: z.boolean() }).optional(),
   runtime: runtimeSchema.optional(),
   moved: movedSchema.optional(),
@@ -46,7 +48,12 @@ const statusSchema = z.object({
   daemon: daemonSchema.optional(),
   targetConfigured: z.boolean().optional(),
   primaryAgent: agentRef,
-  targetAgent: agentRef,
+  targetAgent: agentRef.optional(),
+  deadline: z.string().optional(), deadlineReached: z.boolean().optional(),
+  sendAllowance: z.object({ max: z.number(), used: z.number().optional(), remaining: z.number().optional(), reached: z.boolean(), error: z.string().optional() }).optional(),
+  sendRecord: z.string().optional(),
+  diskSpace: z.object({ level: z.string(), message: z.string().optional() }).optional(),
+  unreadable: z.array(z.object({ file: z.string(), problem: z.string(), offset: z.number().optional(), remedy: z.string() })).optional(),
 });
 
 const loopSchema = z.object({
@@ -71,6 +78,14 @@ const loopSchema = z.object({
 export type LoopView = z.infer<typeof loopSchema>;
 
 const actionSchema = z.enum(["pause", "resume", "stop"]);
+
+// Whether status output, parsed or not, reports a record it could not read.
+function hasUnreadable(output: unknown): boolean {
+  let data = output;
+  if (typeof output === "string") { try { data = JSON.parse(output); } catch { return false; } }
+  const u = typeof data === "object" && data !== null ? Reflect.get(data, "unreadable") : undefined;
+  return Array.isArray(u) && u.length > 0;
+}
 
 // What a control says when the thread it was asked from is neither the loop's primary nor its current target.
 export const NOT_THIS_THREAD = "This loop does not belong to this thread (it is neither the loop's primary nor its current target), so nothing was changed.";
@@ -169,7 +184,9 @@ export default async function plugin(bb: BbPluginApi) {
 
   const status = async (bin: string, configPath: string) => {
     const result = await withClientFlag(bin, (extra) => run(bin, ["status", "--json", ...extra, "-c", configPath]), (r) => ({ code: r.code, emptyStdout: r.stdout === "", timedOut: r.timedOut }));
-    if (result.code !== 0) throw new Error(`${configPath}: looptender status exited ${result.code}`);
+    // status exits 1 and still prints what it could read when a record cannot
+    // be read; that is shown, not hidden behind an unavailable status.
+    if (result.code !== 0 && !(result.code === 1 && hasUnreadable(result.stdout))) throw new Error(`${configPath}: looptender status exited ${result.code}`);
     let raw: unknown;
     try {
       raw = JSON.parse(result.stdout);
@@ -184,33 +201,43 @@ export default async function plugin(bb: BbPluginApi) {
     return parsed.data;
   };
 
-  const view = (s: z.infer<typeof statusSchema>, configPath: string, threadId: string | null): LoopView => ({
+  const view = (s: z.infer<typeof statusSchema>, configPath: string, threadId: string | null): LoopView => {
+    const control = s.control ?? {}, state = s.state ?? {}, target = s.targetAgent ?? s.primaryAgent;
+    const sa = s.sendAllowance;
+    return {
     details: {
       ...goalDetails(s.goal, s.goalError),
-      readAt: new Date().toISOString(), completed: s.control.completed ?? false,
-      targetThread: s.targetAgent.bbThread ?? null, targetAdapter: s.targetAgent.adapter,
+      readAt: new Date().toISOString(), completed: control.completed ?? false,
+      targetThread: target.bbThread ?? null, targetAdapter: target.adapter,
       targetConfigured: s.targetConfigured ?? null, runtime: s.runtime ?? null,
-      failedChecks: s.state.failedChecks ?? 0,
-      daemon: s.daemon ?? null, lastCheck: s.state.lastCheck ?? null,
+      failedChecks: state.failedChecks ?? 0,
+      daemon: s.daemon ?? null, lastCheck: state.lastCheck ?? null,
       schedule: s.schedule ?? null,
-      ...(s.targetAgent.provider ? { targetProvider: s.targetAgent.provider.slice(0, 128) } : {}),
-      ...(s.targetAgent.model ? { targetModel: s.targetAgent.model.slice(0, 128) } : {}),
+      ...(target.provider ? { targetProvider: target.provider.slice(0, 128) } : {}),
+      ...(target.model ? { targetModel: target.model.slice(0, 128) } : {}),
       ...(s.moved ? { moved: s.moved } : {}),
-      ...(s.control.supersededBy ? { supersededBy: s.control.supersededBy.slice(0, 128) } : {}),
+      ...(control.supersededBy ? { supersededBy: control.supersededBy.slice(0, 128) } : {}),
       limitWait: s.limitWait ?? null,
+      // What status prints only when there is something to say.
+      ...(s.deadline ? { deadline: { at: s.deadline.slice(0, 64), reached: s.deadlineReached === true } } : {}),
+      ...(sa ? { sends: { max: sa.max, ...(sa.used !== undefined ? { used: sa.used } : {}), ...(sa.remaining !== undefined ? { remaining: sa.remaining } : {}), reached: sa.reached, ...(sa.error ? { unavailable: true } : {}) } } : {}),
+      ...(s.sendRecord ? { sendRecord: s.sendRecord.slice(0, 600) } : {}),
+      ...((s.diskSpace?.level === "low" || s.diskSpace?.level === "critical") && s.diskSpace.message ? { disk: { level: s.diskSpace.level, message: s.diskSpace.message.slice(0, 400) } } : {}),
+      ...(s.unreadable?.length ? { unreadable: s.unreadable.slice(0, 8).map(u => ({ file: u.file.slice(0, 64), problem: u.problem.slice(0, 40), ...(u.offset !== undefined ? { offset: u.offset } : {}), remedy: u.remedy.slice(0, 1200) })) } : {}),
     },
     loop: s.loop,
     configPath,
     controlState: s.controlState,
-    note: s.control.note ?? null,
+    note: control.note ?? null,
     target: s.target,
-    supervising: threadId !== null && s.targetAgent.bbThread === threadId,
-    lastState: s.state.lastState ?? null,
-    lastWakeAt: s.state.lastWakeAt ?? null,
-    checkedAt: s.state.checkedAt ?? null,
-    handoffs: s.state.handoffs ?? 0,
+    supervising: threadId !== null && target.bbThread === threadId,
+    lastState: state.lastState ?? null,
+    lastWakeAt: state.lastWakeAt ?? null,
+    checkedAt: state.checkedAt ?? null,
+    handoffs: state.handoffs ?? 0,
     fallbacks: s.redundancy ? `${s.redundancy.healthy.length} healthy, need ${s.redundancy.min}` : null,
-  });
+    };
+  };
 
   const verifyImported = async (bin: string, record: z.infer<typeof recordSchema>) => {
     if (!record.registryId) return;
@@ -226,7 +253,7 @@ export default async function plugin(bb: BbPluginApi) {
     for (const configPath of paths) {
       try {
         const s = await status(bin, configPath);
-        const matches = threadId === null || s.primaryAgent.bbThread === threadId || s.targetAgent.bbThread === threadId;
+        const matches = threadId === null || s.primaryAgent.bbThread === threadId || s.targetAgent?.bbThread === threadId;
         if (matches) loops.push({ ...view(s, configPath, threadId), referenceSource: "plugin_setting" });
       } catch {
         errors.push("A configured loop reference is unavailable; inspect the private Loop configs setting on its host.");
@@ -239,7 +266,7 @@ export default async function plugin(bb: BbPluginApi) {
       try {
         await verifyImported(bin, record);
         const result = await hostCommand(bin, record, "status");
-        if (result.code !== 0) throw new Error("status failed");
+        if (result.code !== 0 && !(result.code === 1 && hasUnreadable(result.data))) throw new Error("status failed");
         const displayed = view(statusSchema.parse(result.data), record.configPath, threadId);
         // A partial move is not a normal Resume action, even if the host has
         // already committed but the plugin reference is not reconciled yet.
@@ -276,7 +303,7 @@ export default async function plugin(bb: BbPluginApi) {
       // The loop's own status says which threads it belongs to: its primary and its current target.
       let s: z.infer<typeof statusSchema>;
       try { s = await status(bin, configPath); } catch { return { ok: false, message: "The loop's status could not be read, so it was not changed." }; }
-      if (s.primaryAgent.bbThread !== expectedThreadId && s.targetAgent.bbThread !== expectedThreadId) return { ok: false, message: NOT_THIS_THREAD };
+      if (s.primaryAgent.bbThread !== expectedThreadId && s.targetAgent?.bbThread !== expectedThreadId) return { ok: false, message: NOT_THIS_THREAD };
     }
     const result = await run(bin, [action, "-c", configPath]);
     bb.realtime.publish(CHANGED, { at: Date.now() });

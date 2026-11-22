@@ -66,6 +66,13 @@ export const detailsSchema = z.object({
   // status --json control.supersededBy: the thread a person declared to
   // continue this loop's work in another loop. Present only on a superseded loop.
   supersededBy: z.string().max(128).optional(),
+  // status --json deadline/deadlineReached, sendAllowance, sendRecord, diskSpace
+  // and unreadable. Each is present only when there is something to say.
+  deadline: z.object({ at: z.string().max(64), reached: z.boolean() }).optional(),
+  sends: z.object({ max: z.number().int().nonnegative(), used: z.number().int().nonnegative().optional(), remaining: z.number().int().nonnegative().optional(), reached: z.boolean(), unavailable: z.boolean().optional() }).optional(),
+  sendRecord: z.string().max(600).optional(),
+  disk: z.object({ level: z.enum(["low", "critical"]), message: z.string().max(400) }).optional(),
+  unreadable: z.array(z.object({ file: z.string().max(64), problem: z.string().max(40), offset: z.number().int().nonnegative().optional(), remedy: z.string().max(1200) })).max(8).optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
 
@@ -129,6 +136,59 @@ export function dateLabel(value: string | null | undefined): string {
   return Number.isNaN(time.getTime()) ? "unavailable" : time.toLocaleString();
 }
 
+// The reason `looptender status` gives for a record it could not read.
+const UNREADABLE_WHAT: Record<string, string> = {
+  frozen_control: "it contains a restrictive freeze with preserved evidence",
+  unsupported_control: "it contains an unsupported or unverifiable control envelope",
+  not_json: "its content is not JSON",
+  wrong_shape: "its content is JSON of the wrong shape",
+  not_a_file: "it is not a regular file",
+  cannot_open: "it could not be opened",
+};
+type Unreadable = NonNullable<StatusDetails["unreadable"]>[number];
+/** `<file> could not be read (<why>)`, as status prints it. */
+export const unreadableHead = (u: Unreadable): string => `${u.file} could not be read (${UNREADABLE_WHAT[u.problem] ?? "reason not recorded"}${u.offset !== undefined ? `, at byte ${u.offset}` : ""})`;
+const firstSentence = (text: string): string => { const m = /^.*?[.!?](?=\s|$)/s.exec(text.trim()); return m ? m[0] : text.trim(); };
+
+/** status: "the reset falls after this loop's deadline: the loop will be held by the deadline on its first check after it, before this wait can end". */
+const AFTER_DEADLINE = "the reset falls after this loop's deadline: the loop will be held by the deadline on its first check after it, before this wait can end";
+const resetAfterDeadline = (d: StatusDetails | undefined): boolean => {
+  const reset = Date.parse(d?.limitWait?.resetsAt ?? ""), deadline = Date.parse(d?.deadline?.at ?? "");
+  return !!d?.deadline && !d.deadline.reached && Number.isFinite(reset) && Number.isFinite(deadline) && reset > deadline;
+};
+
+/** The send allowance as status prints it: `used/max attempts reserved; N remaining`. */
+const sendsText = (s: NonNullable<StatusDetails["sends"]>) => s.unavailable || s.used === undefined || s.remaining === undefined ? `${s.max} allowed; the count is unavailable` : `${s.used}/${s.max} attempts reserved; ${s.remaining} remaining`;
+
+/**
+ * Short, visible reasons a loop is not simply "enabled", most important first,
+ * in the words `looptender status` uses. The card shows these under the state
+ * word so nothing that matters is only in a tooltip. Empty for a loop with
+ * nothing to say.
+ */
+export function reasonLines(controlState: string, note: string | null, d: StatusDetails | undefined): string[] {
+  const out: string[] = [];
+  for (const u of d?.unreadable ?? []) out.push(`${unreadableHead(u)}. ${firstSentence(u.remedy)}`);
+  if (d?.sendRecord) out.push(`Send record: ${firstSentence(d.sendRecord)}`);
+  if (d?.deadline?.reached) out.push(`Deadline reached (${dateLabel(d.deadline.at)}); evaluated on the next check`);
+  if (d?.sends?.reached) out.push(`Send limit reached: ${sendsText(d.sends)}`);
+  if (d?.disk) out.push(`Disk: ${d.disk.message}`);
+  const wait = d?.limitWait;
+  if (wait && wait.state !== "none" && !wait.resetPassed) {
+    out.push(wait.held
+      ? `Long limit wait recorded before the loop was held (${wait.held}); it may be out of date`
+      : `Long limit wait: no handoff possible; resets ${dateLabel(wait.resetsAt)}${wait.resetIn ? ` (in ${wait.resetIn})` : ""}; the loop sends nothing until then${resetAfterDeadline(d) ? `; ${AFTER_DEADLINE}` : ""}`);
+  }
+  if (d?.schedule?.overdue) out.push(`Needs you: ${d.schedule.message ?? "no check has run for longer than usual"}`);
+  if (note && controlState !== "enabled") out.push(`Note: ${shortNote(note, 160)}`);
+  return out;
+}
+
+/** A tooltip cut to a length a person can read; the full text stays in the expanded view. */
+export function boundedTitle(text: string, max = 600): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
 export function diagnosticLines(d: StatusDetails | undefined, target: string, supervising: boolean): string[] {
   if (!d) return ["Detailed status unavailable from this build"];
   const lines = [
@@ -168,8 +228,13 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
       : wait.state === "report_failed" ? "the report failed (delivery not confirmed)"
       : wait.reportConfigured === false ? "nobody was told: no report section when it was recorded"
       : wait.reportConfigured === true ? "nobody was told: limit_wait was not in report.events" : "no report was sent";
-    lines.push(`Long limit wait: no handoff possible (${why[wait.reason ?? ""] ?? "reason not recorded"}); resets ${dateLabel(wait.resetsAt)}${wait.resetIn ? ` (in ${wait.resetIn})` : ""}; ${told}. The loop is not held and sends nothing until then.`);
+    lines.push(`Long limit wait: no handoff possible (${why[wait.reason ?? ""] ?? "reason not recorded"}); resets ${dateLabel(wait.resetsAt)}${wait.resetIn ? ` (in ${wait.resetIn})` : ""}; ${told}. The loop is not held and sends nothing until then.${resetAfterDeadline(d) ? ` ${AFTER_DEADLINE[0]!.toUpperCase()}${AFTER_DEADLINE.slice(1)}.` : ""}`);
   }
+  for (const u of d.unreadable ?? []) lines.push(`Unreadable record: ${unreadableHead(u)}. ${u.remedy}`);
+  if (d.sendRecord) lines.push(`Send record: ${d.sendRecord}`);
+  if (d.deadline) lines.push(`Deadline: ${dateLabel(d.deadline.at)} (reached: ${d.deadline.reached}; evaluated on next check)`);
+  if (d.sends) lines.push(`Sends: ${sendsText(d.sends)} (reached: ${d.sends.reached})`);
+  if (d.disk) lines.push(`Disk: ${d.disk.message}`);
   if ((d.failedChecks ?? 0) > 0) lines.push(`Checks failing: ${d.failedChecks} failed checks recorded; a responsive daemon does not establish operational supervision`);
   const check = d.lastCheck;
   lines.push(check

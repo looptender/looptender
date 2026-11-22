@@ -37,8 +37,9 @@ export function outcomeLabel(outcome: Outcome, controlState: string | undefined,
 
 export type ControlCall = (action: "pause" | "stop") => Promise<{ ok: boolean; message: string }>;
 
-export function NewThreadOutcome({ threadId, outcome, controlState, supervising, start, control, onChanged }: {
-  threadId: string; outcome: Outcome; controlState: string | undefined; supervising: boolean | undefined; start: StartCall; control?: ControlCall; onChanged(): void;
+// `showLabel` is false where the row or banner button beside it already says the state word.
+export function NewThreadOutcome({ threadId, outcome, controlState, supervising, start, control, onChanged, showLabel = true }: {
+  threadId: string; outcome: Outcome; controlState: string | undefined; supervising: boolean | undefined; start: StartCall; control?: ControlCall; onChanged(): void; showLabel?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string }>();
@@ -69,7 +70,7 @@ export function NewThreadOutcome({ threadId, outcome, controlState, supervising,
   };
   const started = controlState === "enabled";
   return <section aria-label="Keep going for this thread" style={box}>
-    <strong>{label}</strong>
+    {showLabel && <strong>{label}</strong>}
     <span>Loop {outcome.loop}. {started ? (outcome.startedAutomatically ? "Started when this thread was created." : "Started from this thread.") : outcome.message}</span>
     {outcome.bounds && <span>{boundsPhrase(outcome.bounds)}</span>}
     {!started && <span><button type="button" disabled={busy} onClick={act} style={button}>Start keeping this going</button></span>}

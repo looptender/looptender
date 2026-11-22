@@ -13,7 +13,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
-import { diagnosticLines, dateLabel, buildSummary } from "./status-details";
+import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle } from "./status-details";
 import { SetupPanel } from "./setup-panel";
 import { AttachPanel } from "./attach-panel";
 import { TransferPanel } from "./transfer-panel";
@@ -76,6 +76,8 @@ function label(loop: LoopView): string {
 }
 
 function stateLabel(loop: LoopView): string {
+  // status exits 1 and says which record it could not read; the control state beside it cannot be trusted.
+  if (loop.details?.unreadable?.length) return "looptender: records unreadable";
   if (loop.imported && loop.controlState === "enabled" && ((loop.details?.failedChecks ?? 0) > 0 || ["failed", "error"].includes(loop.details?.lastCheck?.outcome ?? ""))) return "looptender: checks failing";
   if (loop.imported && loop.controlState === "enabled" && !loop.details?.lastCheck) return "looptender: no check recorded";
   if (loop.controlState === "enabled" && loop.details?.schedule?.overdue) return "looptender: checks have stopped";
@@ -111,13 +113,22 @@ const buttonStyle = {
   cursor: "pointer",
 } as const;
 
-function ToggleButton({ loop, threadId, onDone }: { loop: LoopView; threadId: string; onDone: () => void }) {
+// A loop a person can resume: held in any way but superseded, and its records readable.
+function needsResume(loop: LoopView): boolean {
+  if (loop.controlState === "enabled" || loop.controlState === "superseded" || loop.details?.unreadable?.length) return false;
+  return !(loop.managedId && ["disabled", "move requires inspection"].includes(loop.controlState));
+}
+const RESUME_SHARED = "A person resumes a held loop from an ordinary terminal, or from the looptender panel started there. Each held loop's own command is under its name.";
+
+function ToggleButton({ loop, threadId, onDone, compactResume = false }: { loop: LoopView; threadId: string; onDone: () => void; compactResume?: boolean }) {
   const rpc = useRpc<typeof rpcContract>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirming, setConfirming] = useState(false);
   const paused = loop.controlState !== "enabled";
   if (loop.managedId && ["disabled", "move requires inspection"].includes(loop.controlState)) return null;
+  // Pause, stop and resume cannot be saved while the control record cannot be read.
+  if (loop.details?.unreadable?.length) return null;
   // An enabled loop whose current target is another thread: this card belongs
   // to its primary, so pausing it is allowed, but only after it is said which
   // loop and which thread are meant.
@@ -141,7 +152,7 @@ function ToggleButton({ loop, threadId, onDone }: { loop: LoopView; threadId: st
     {/* Resume is a person's, from the panel or a terminal: the plugin
         cannot tell a click from the supervised session. */}
     {paused
-      ? <ResumeNote loop={loop} />
+      ? <ResumeNote loop={loop} compact={compactResume} />
       : watching && confirming
         ? <span role="group" aria-label={`Confirm pausing ${loop.loop}`}>
             <span>Pause loop {loop.loop}? It supervises {targetThread}, not this thread.</span>{" "}
@@ -155,11 +166,13 @@ function ToggleButton({ loop, threadId, onDone }: { loop: LoopView; threadId: st
 
 // Where a held loop is resumed, in the words `looptender status` uses for the
 // same state. A superseded loop is never resumed: its successor continues.
-function ResumeNote({ loop }: { loop: LoopView }) {
+function ResumeNote({ loop, compact }: { loop: LoopView; compact: boolean }) {
   if (loop.controlState === "superseded") {
     const successor = loop.details?.supersededBy;
     return <span>Resume is refused for a superseded loop; its successor continues the work{successor ? ` (${successor})` : ""}.</span>;
   }
+  // With several held loops the sentence is said once for the card; each loop keeps only its command.
+  if (compact) return <details><summary>Resume command</summary><code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code></details>;
   return <span>A person resumes this from an ordinary terminal: <code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code>, or the looptender panel started there.</span>;
 }
 
@@ -219,13 +232,19 @@ function ReferenceDetails({ loop, name }: { loop: LoopView; name: string }) {
   return name === loop.loop ? null : <details><summary>Configuration reference</summary><code>{loop.configPath}</code><div>Reference numbers identify rows in this plugin session; they are not loop IDs.</div></details>;
 }
 
-function CardLoop({ loop, name, threadId, refresh, failed, created, showName }: { loop: LoopView; name: string; threadId: string; refresh(): void; failed: boolean; created: string | null; showName: boolean }) {
+function Reasons({ loop }: { loop: LoopView }) {
+  const lines = reasonLines(loop.controlState, loop.note, loop.details);
+  return lines.length ? <ul aria-label="Why" style={{ margin: 0, padding: "0 12px 4px 28px", fontSize: 12, opacity: 0.85, overflowWrap: "anywhere" }}>{lines.map((l, i) => <li key={i}>{l}</li>)}</ul> : null;
+}
+
+function CardLoop({ loop, name, threadId, refresh, failed, created, showName, compactResume }: { loop: LoopView; name: string; threadId: string; refresh(): void; failed: boolean; created: string | null; showName: boolean; compactResume: boolean }) {
   return <section aria-label={`Loop ${name}`} style={{ overflowWrap: "anywhere", minWidth: 0 }}>
     {showName && <strong style={{ fontSize: 12 }}>{name}</strong>}
     <ReferenceDetails loop={loop} name={name} />
     <ContextRow icon="Repeat" label={failed ? "looptender: status unavailable (previous snapshot)" : created ?? label(loop)}
-      title={describe(loop).join("\n")} trailing={loop.handoffs > 0 ? `${loop.handoffs} handoffs` : undefined}
-      action={<>{!failed && created !== KEEPING_GOING && <ToggleButton loop={loop} threadId={threadId} onDone={refresh} />}</>} />
+      title={boundedTitle(describe(loop).join("\n"), 800)} trailing={loop.handoffs > 0 ? `${loop.handoffs} handoffs` : undefined}
+      action={<>{!failed && created !== KEEPING_GOING && <ToggleButton loop={loop} threadId={threadId} onDone={refresh} compactResume={compactResume} />}</>} />
+    {!failed && <Reasons loop={loop} />}
   </section>;
 }
 
@@ -234,13 +253,21 @@ function CardRow({ threadId }: { threadId: string }) {
   const { outcome, start, control, loop } = useThreadOutcome(threadId, loops);
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
   const [open, setOpen] = useState(false);
+  const sharedResume = !failed && loops.filter(needsResume).length > 1;
   return <div>
     {failed && <StatusWarning refresh={refresh} />}
-    {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} />}
-    {!loaded ? <ContextRow icon="Repeat" label="looptender: checking status" /> : !loops.length ? <ContextRow icon="Repeat" label="looptender" action={!failed && <button type="button" style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>Add to Looptender</button>} /> : loops.map(l => <CardLoop key={loopKey(l)} loop={l} name={referenceName(l, loops, references)} threadId={threadId} refresh={refresh} failed={failed} created={l === loop ? created : null} showName={loops.length > 1} />)}
+    {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} showLabel={false} />}
+    {sharedResume && <div style={{ padding: "0 12px", fontSize: 12 }}>{RESUME_SHARED}</div>}
+    {!loaded ? <ContextRow icon="Repeat" label="looptender: checking status" /> : !loops.length ? <ContextRow icon="Repeat" label="looptender" action={!failed && <button type="button" style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>Add to Looptender</button>} /> : loops.map(l => <CardLoop key={loopKey(l)} loop={l} name={referenceName(l, loops, references)} threadId={threadId} refresh={refresh} failed={failed} created={l === loop ? created : null} showName={loops.length > 1} compactResume={sharedResume} />)}
     {!failed && loops.some(l => l.managedId) && <button type="button" style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>{loops.length > 1 ? "Thread setup" : "Setup"}</button>}
     {open && <div hidden={failed}><ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={created === READY_NOT_STARTED} /></div>}
   </div>;
+}
+
+// The collapsed banner's tooltip: each loop's state and its reasons, cut to a
+// length a person reads. The expanded view holds the rest.
+function summaryTitle(loops: LoopView[]): string {
+  return boundedTitle(loops.map(l => [label(l), ...reasonLines(l.controlState, l.note, l.details)].join("\n")).join("\n\n"), 600);
 }
 
 function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; isExpanded: boolean; onToggle(): void }) {
@@ -248,24 +275,42 @@ function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; i
   const { outcome, loop } = useThreadOutcome(threadId, loops);
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
   const only = loops.length === 1 ? loops[0] : undefined;
-  return <button type="button" onClick={onToggle} aria-expanded={isExpanded} title={failed ? "Status could not be refreshed. Open details to retry." : loops.length ? loops.map(l => describe(l).join("\n")).join("\n\n") : "Set up a loop for this thread"}
+  return <button type="button" onClick={onToggle} aria-expanded={isExpanded} title={failed ? "Status could not be refreshed. Open details to retry." : loops.length ? summaryTitle(loops) : "Set up a loop for this thread"}
     style={{ background: "none", border: 0, padding: 0, font: "inherit", color: "inherit", cursor: "pointer" }}>
     {failed ? "looptender: status unavailable" : !loaded ? "looptender: checking status" : loops.length > 1 ? `looptender: ${loops.length} matching loops` : created ?? (only ? label(only) : "Add to Looptender")}
   </button>;
 }
+
+const plainList = { margin: 0, padding: 0, listStyle: "none" } as const;
 
 function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded: boolean }) {
   const { loops, references, refresh, failed, loaded } = useLoops(threadId);
   const { outcome, start, control, loop } = useThreadOutcome(threadId, loops);
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
   if (!isExpanded) return null;
+  const sharedResume = !failed && loops.filter(needsResume).length > 1;
   return <>
     {failed && <StatusWarning refresh={refresh} />}
-    {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} />}
-    {loops.map(l => <section key={loopKey(l)} aria-label={`Loop ${referenceName(l, loops, references)}`} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "4px 12px 6px", fontSize: 12, opacity: 0.8, overflowWrap: "anywhere", minWidth: 0 }}>
-      <div style={{ minWidth: 0, flex: "1 1 220px" }}>{failed && <div>Previous snapshot</div>}{describe(l).map((line, i) => <div key={i}>{i === 0 ? `Loop ${referenceName(l, loops, references)}` : line}</div>)}<ReferenceDetails loop={l} name={referenceName(l, loops, references)} /><div>{l === loop ? created ?? label(l) : label(l)}</div></div>
-      {!failed && !(l === loop && created === KEEPING_GOING) && <ToggleButton loop={l} threadId={threadId} onDone={refresh} />}
-    </section>)}
+    {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} showLabel={false} />}
+    {sharedResume && <div style={{ padding: "4px 12px", fontSize: 12 }}>{RESUME_SHARED}</div>}
+    {loops.map(l => {
+      const name = referenceName(l, loops, references);
+      const reasons = reasonLines(l.controlState, l.note, l.details);
+      // What the reasons above already say is not said again; the rest follows as a list.
+      const said = (prefix: string, reason: string) => reasons.some(r => r.startsWith(reason)) && prefix;
+      const dropped = ["Note: ", "Needs you: ", "Disk: ", "Send record: ", "Unreadable record: ", said("Deadline: ", "Deadline reached"), said("Sends: ", "Send limit reached")];
+      const rest = describe(l).slice(1).filter(line => !dropped.some(prefix => prefix && line.startsWith(prefix)));
+      return <section key={loopKey(l)} aria-label={`Loop ${name}`} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "4px 12px 6px", fontSize: 12, opacity: 0.8, overflowWrap: "anywhere", minWidth: 0 }}>
+        <div style={{ minWidth: 0, flex: "1 1 220px" }}>
+          {failed && <div>Previous snapshot</div>}
+          <div><strong>Loop {name}</strong>: {l === loop ? created ?? label(l) : label(l)}</div>
+          <ReferenceDetails loop={l} name={name} />
+          {reasons.length > 0 && <ul aria-label="Why" style={plainList}>{reasons.map((line, i) => <li key={i}>{line}</li>)}</ul>}
+          <ul aria-label="Details" style={plainList}>{rest.map((line, i) => <li key={i}>{line}</li>)}</ul>
+        </div>
+        {!failed && !(l === loop && created === KEEPING_GOING) && <ToggleButton loop={l} threadId={threadId} onDone={refresh} compactResume={sharedResume} />}
+      </section>;
+    })}
     {loaded && (!loops.length || loops.some(l => l.managedId)) && <div hidden={failed}><ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={created === READY_NOT_STARTED} /></div>}
   </>;
 }
