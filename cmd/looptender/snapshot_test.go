@@ -68,7 +68,13 @@ func TestProviderOperationsRejectSnapshotChangedUnderTickLock(t *testing.T) {
 						case "tick":
 							return tickOnce(e, cfg, time.Now(), false, false)
 						case "poll":
-							cfg.Loop.Daemon.ControlPoll.Duration = 2 * time.Second
+							// The poll's deadline also bounds the provider call it makes
+							// for a fresh snapshot. A stand-in script that takes more than
+							// two seconds to start under machine load was cut off before it
+							// recorded its call (fallbacks/poll/edit failed once in 240 loaded
+							// runs); rejected polls return at once, so a long bound costs
+							// nothing.
+							cfg.Loop.Daemon.ControlPoll.Duration = 30 * time.Second
 							if pollWake(context.Background(), cfg) {
 								t.Fatal("unexpected early wake")
 							}
