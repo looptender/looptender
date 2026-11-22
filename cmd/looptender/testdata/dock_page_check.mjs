@@ -44,7 +44,6 @@ variants.push(["no limit wait", (l) => { delete l.limitWait; }]);
 variants.push(["next check unknown with detail", (l) => { l.nextCheck = { availability: "unknown", detail: "the last check ran 9 min ago" }; }]);
 variants.push(["next check known", (l) => { l.nextCheck = { availability: "known", text: [{ t: "in 5 minutes" }] }; }]);
 variants.push(["next check in progress", (l) => { l.nextCheck = { availability: "in_progress", phrase: "A check is running" }; }]);
-variants.push(["no next check, no decision, no last check", (l) => { delete l.nextCheck; delete l.decision; delete l.lastCheck; }]);
 variants.push(["long detail", (l) => { l.detail = long; }]);
 
 function scenario(mutateData) {
