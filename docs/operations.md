@@ -582,6 +582,50 @@ To continue, revise or remove the deadline under the task's existing authorizati
 
 Available in v0.1.3 or newer. Verification uses decision tables, CLI and supervisor fixtures; no live provider or service deadline was exercised.
 
+## A running daemon moves to the installed build
+
+A daemon keeps running the program it was started with until something replaces it. So that installing a new build reaches loops that are already supervised, a daemon on macOS or Linux moves, by itself and between checks, to a new build installed at the path it was started from. The supervised conversation is the same conversation: no new thread, no session reset, no change to holds, owner, send counts, state or history.
+
+**When it looks.** After each check has finished and been saved, before waiting for the next one. Only this daemon's own check has finished then; it also takes `tick.lock` before switching, so no check of the loop runs in another process either. A busy lock puts the switch off to the next check.
+
+**What it switches to.** Only the file the path the daemon was started by leads to now: for `start --background` the command it was started with (a link stays a link), for a [service](services.md) the executable it was installed with. The daemon never looks for builds anywhere else. What counts as installed depends on `loop.daemon.adopt_installed_build`:
+
+| Setting | Adopted |
+| --- | --- |
+| not set (default) | a build installed by moving a link: the start path now leads to a different path than the running build's file, as when a `current` link moves to a new build's directory |
+| `true` | also a file written over in place at the same path (`go install`, `go build -o`) |
+| `false` | nothing; the daemon keeps the build it started with until it is restarted |
+
+With the default, a file written over in place is not adopted: `status` and `doctor` say that a different build is at the start path and that restarting supervision, or setting `adopt_installed_build: true`, uses it.
+
+**What the candidate must pass**, each time a new file appears there, before anything changes:
+
+- it is a regular file owned by this user, executable, and not writable by other users;
+- every directory the start path goes through (each one holding a link of the chain, a link to a directory included, and the one holding the file) and every directory above them belongs to this user or to root and is writable by no one else, sticky directories included, so that no other user can put a file or a link in the way. A build installed under a directory its group can write, such as Homebrew's `/opt/homebrew/bin`, is therefore never adopted, whatever the setting: restart supervision to use it;
+- it answers the handover probe (`__adopt-build --probe`) with the handover this build speaks, so a build from before this feature is never switched to;
+- it declares a state format no older than the running build's. An older build does not read a state directory a newer one has written safely (see [upgrading and rolling back](#upgrading-and-rolling-back)), so going back is never automatic: stop, restore and start as described there. The state format rises with every change to the fields of the records a build rewrites in the state directory: `state.json`, `control.json`, the incident journal, `sends.json`, `health.json`, `deliveries.json` and `goal.json` (a test fails otherwise). A new value of an existing field, such as a new hold reason, is not caught by that test and needs the rise by hand. Version labels are not compared;
+- its own `validate -c <config>` accepts this loop's configuration.
+
+A candidate that fails stays refused until a different file is installed; the daemon carries on with its build and records why.
+
+**When the loop is not ready.** The daemon also does not switch while the loop could not be handed over: its configuration does not load, names another `state_dir`, or has a transfer pending, or the loop has a new owner. It looks again after the next check; nothing is refused for good. A running daemon rides these out (a new owner ends it at its next check, as before), so a switch never turns one into the end of supervision. A `state_dir` change lasts until a restart and is said once in the record.
+
+**The file that runs is the file that was checked.** The daemon opens the file once, hashes it, and checks, probes and validates that open file. On Linux it runs that open file itself (through `/proc/self/fd`), so nothing put at the path afterwards can run instead; without `/proc` it does not switch and says why. macOS cannot run an open file: immediately before the switch the daemon checks again that the path still leads to the same file with the same contents, and runs it by path. A file swapped in between that check and the switch is the window that remains there; the directory checks above keep other users out of it.
+
+**How it switches.** The daemon replaces its program with the candidate in place (exec): the same process ID, so a service manager keeps tracking it, and it keeps holding `daemon.lock` throughout, so no second daemon can start in between. What the new build needs (configuration path, owner, the lock's descriptor) goes on an inherited pipe, not on the command line, so none of it shows in the process list. The new build checks that it is the file that was validated, that the configuration still loads and names the same state directory, that the loop's owner and its generation are what the old build held, and then carries on with the next check. It writes no control change: nothing is enabled, claimed or cleared.
+
+**When the new build cannot start.** If the program cannot be replaced, the daemon carries on with its build. If the new build fails any of its own start checks (the configuration does not load, `state_dir` changed, the file changed, a transfer is pending, the lock was not handed over), it returns to the build it came from, once, keeping the lock; the earlier build's file is checked first like any build (contents, owner, mode, directories), and that build does not try the failed one again. Coming back, the earlier build takes up its loop as it was: it waits up to 30 seconds for a configuration that does not load, and keeps its state directory, doing no provider work, if the configuration names another, until it is restarted. If the loop's owner changed during the switch, the daemon exits as it does when that happens at any check, and the record says it handed off. If returning fails, or the new build crashes before it comes up, no supervisor is running, and that is never silent: `status` says that no supervisor may be running and `doctor` reports it as an error, once two minutes have passed since a switch whose new build never answered (the daemon on record is still the one from before the switch). A daemon that came up after a switch and stopped later, or one ended on purpose, is not blamed on the switch. A service manager restarts its service as for any exit.
+
+**Where it is recorded.** Each step (`build_switching`, `build_adopted`, `build_refused`, `build_returned`, `build_failed`) is an event in `runs.jsonl`, with the first 12 hex digits of each build's SHA-256. The last one is kept in `build-adoption.json` in the state directory. `status` shows it as `daemon build change:` with the old and the new build's label and digest, `status --json` as `buildAdoption`, and `doctor` as `supervisor.build_change`. No path and no output of the other build is recorded. The incident journal (`timeline`) does not carry these events, because older builds refuse a journal holding a kind they do not know.
+
+**What it does not cover.**
+
+- Windows: a process cannot replace its own program there while keeping the daemon lock. A daemon keeps its build; restart supervision to use a new one.
+- External schedulers: each check already runs whatever is installed.
+- `daemon --dry-run` never switches.
+- A Linux service installed before this change names the build's own file, not a link, so the path never leads anywhere new; reinstall it with `service install` to follow installs. `start --background` started before this change on Linux is in the same position; start it again.
+- A daemon started by a relative command name, or one whose own file had already been replaced when it started, never switches.
+
 ## Upgrading and rolling back
 
 **Before every upgrade, stop supervision and copy the loop's state directory.** That copy is the only supported way back. Stop the daemon, service or scheduler first, so nothing writes while you copy, and copy the whole directory named by `loop.state_dir`. The files that matter in it:

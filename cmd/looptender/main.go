@@ -194,6 +194,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return serviceCommand(e, rest, localServiceHost())
 	case "__service-daemon":
 		return serviceDaemon(e, rest)
+	case adoptCommandName:
+		return adoptBuildCommand(e, rest)
 	case "daemon-shutdown":
 		return daemonShutdownCommand(e, rest)
 	case "start":

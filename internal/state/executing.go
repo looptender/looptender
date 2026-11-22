@@ -110,3 +110,12 @@ func (image *ExecutableImage) OpenReader() (*ExecutableReader, error) {
 	}
 	return &ExecutableReader{file: image.file}, nil
 }
+
+// Digest is the SHA-256 of the image, in hex, as read when it was captured;
+// "" for a nil image.
+func (image *ExecutableImage) Digest() string {
+	if image == nil {
+		return ""
+	}
+	return image.sha
+}

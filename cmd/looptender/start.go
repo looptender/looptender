@@ -118,7 +118,7 @@ func startResolved(e env, path string, background, allowShare bool, ready startR
 		if !checkSecondLoop(e, cfg, "start", allowShare, asJSON) {
 			return exitFailed
 		}
-		executable, err := os.Executable()
+		executable, err := launchExecutable()
 		if err != nil {
 			e.errf("start: cannot locate the keepgoing executable")
 			return exitFailed
@@ -193,7 +193,11 @@ func startForeground(e env, cfg *config.Config, path string, ready startReady, a
 	} else {
 		fmt.Fprintf(e.stdout, "started %s in foreground; control: %s (Ctrl-C ends the daemon)\n", cfg.Loop.Name, f.Summary())
 	}
-	return daemonLoop(e, cfg, path, false, leaseOf(f), monitor)
+	mode := "foreground"
+	if ready != nil {
+		mode = "background"
+	}
+	return daemonLoop(e, cfg, path, false, leaseOf(f), monitor, newBuildAdopter(path, cfg.Loop.StateDir, mode, "", l))
 }
 
 // Local checks only: no login commands, provider queries, probes, or task text

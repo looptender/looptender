@@ -452,6 +452,17 @@ const (
 type Daemon struct {
 	Interval    Duration `yaml:"interval,omitempty"`
 	ControlPoll Duration `yaml:"control_poll,omitempty"`
+	// AdoptInstalledBuild says whether a running daemon switches, between
+	// checks, to a different build at the path it was started from. Unset:
+	// only one installed by moving a link (such as a current link) to a new
+	// target. true: also a file overwritten in place. false: never.
+	AdoptInstalledBuild *bool `yaml:"adopt_installed_build,omitempty"`
+}
+
+// AdoptsInstalledBuild reports whether loop.daemon.adopt_installed_build
+// allows any switch: it does unless set to false.
+func (d Daemon) AdoptsInstalledBuild() bool {
+	return d.AdoptInstalledBuild == nil || *d.AdoptInstalledBuild
 }
 
 // Defaults applied when a field is omitted.

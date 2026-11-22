@@ -238,6 +238,12 @@ func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, l
 // SIGINT or SIGTERM ends the daemon at once; a tick in flight is cancelled
 // and its child commands are killed.
 func daemon(e env, cfg *config.Config, cfgPath string, dryRun bool, takeOver ...bool) int {
+	return daemonAs(e, cfg, cfgPath, dryRun, len(takeOver) > 0 && takeOver[0], "daemon", "")
+}
+
+// daemonAs is daemon for an entry named by mode; expectedStateDir is a
+// service's bound state directory.
+func daemonAs(e env, cfg *config.Config, cfgPath string, dryRun, takeOver bool, mode, expectedStateDir string) int {
 	if err := checkTransferSources(cfg, false); err != nil {
 		return ownershipError(e, err)
 	}
@@ -252,7 +258,7 @@ func daemon(e env, cfg *config.Config, cfgPath string, dryRun bool, takeOver ...
 	}
 	defer l.Release()
 	defer markSupervised(cfg.Loop.StateDir)()
-	lease, err := bindDaemonOwner(cfg.Loop.StateDir, len(takeOver) > 0 && takeOver[0])
+	lease, err := bindDaemonOwner(cfg.Loop.StateDir, takeOver)
 	if err != nil {
 		return ownershipError(e, err)
 	}
@@ -262,11 +268,17 @@ func daemon(e env, cfg *config.Config, cfgPath string, dryRun bool, takeOver ...
 	} else {
 		defer monitor.Close()
 	}
-	return daemonLoop(e, cfg, cfgPath, dryRun, lease, monitor)
+	var adopter *buildAdopter
+	if !dryRun {
+		adopter = newBuildAdopter(cfgPath, cfg.Loop.StateDir, mode, expectedStateDir, l)
+	}
+	return daemonLoop(e, cfg, cfgPath, dryRun, lease, monitor, adopter)
 }
 
 // The caller owns daemon.lock and the diagnostic endpoint for this entire loop.
-func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *ownerLease, monitor *daemoninfo.Server) int {
+// adopter, nil for none, may replace the process with the installed build
+// after a check (adopt_build.go).
+func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *ownerLease, monitor *daemoninfo.Server, adopter *buildAdopter) int {
 	ctx, cancel := context.WithCancel(e.ctx)
 	e.ctx = ctx
 	defer cancel()
@@ -334,6 +346,8 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 			}
 			continue
 		}
+		// A safe point: the check has finished and been saved.
+		adopter.atSafePoint(e.ctx, cfg, lease)
 		if !waitForNext(e.ctx, cfg, sig, monitor, lease) {
 			return exitOK
 		}
@@ -584,6 +598,9 @@ type statusOut struct {
 	Schedule         scheduleStatus `json:"schedule"`
 	TargetSession    *sessionStatus `json:"targetSession,omitempty"`
 	Daemon           daemonStatus   `json:"daemon"`
+	// BuildAdoption is the daemon's last switch to an installed build, or
+	// refusal of one; absent when none is recorded.
+	BuildAdoption *buildAdoptionStatus `json:"buildAdoption,omitempty"`
 
 	// controlUnreadable and stateUnreadable: the record could not be read, so
 	// nothing taken from it is shown. Its fields hold an empty record, which
@@ -976,6 +993,9 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if out.Daemon.State == "responsive" {
 		fmt.Fprintf(w, "daemon phase: %s; build %s; dry run %t\n", out.Daemon.Phase, out.Daemon.BinaryComparison, out.Daemon.DryRun)
 	}
+	if b := out.BuildAdoption; b != nil {
+		fmt.Fprintf(w, "daemon build change: %s\n", b.Message)
+	}
 	fmt.Fprintf(w, "next check: %s\n", out.Runtime.NextCheck)
 	if out.stateUnreadable {
 		fmt.Fprintln(w, "last check: unavailable (state.json could not be read)")
@@ -1236,6 +1256,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.Daemon = query(queryCtx, l.StateDir, version, false)
 	cancel()
 	out.Schedule = describeSchedule(&l, st, ctl, &out.Daemon, now)
+	out.BuildAdoption = describeBuildAdoption(l.StateDir, out.Daemon, now)
 	if out.Daemon.State == "responsive" {
 		out.Runtime.NextCheck = out.Daemon.NextCheck
 	}

@@ -296,6 +296,19 @@ func doctor(e env, args []string, run doctorRun) int {
 	}
 	r.add("scheduler", schedulerStatus, d.Message, "Service installation and external schedulers are not verified; a responding daemon can still be waiting on a stuck check.")
 	r.add("supervisor.live_version", buildStatus, "Live daemon build comparison: "+d.BinaryComparison+".", "A different build label does not establish which is newer; empty and dev labels cannot identify a build.")
+	if b := describeBuildAdoption(cfg.Loop.StateDir, d, time.Now()); b != nil {
+		status, fix := "ok", ""
+		switch {
+		case !b.Supervised:
+			status, fix = "error", "Start supervision again; the installed build can be checked with its own validate command."
+		case b.Outcome == adoptRefused || b.Outcome == adoptReturned || b.Outcome == "unreadable":
+			status, fix = "warning", "Restarting supervision runs the installed build; set loop.daemon.adopt_installed_build: false to keep a daemon on the build it started with."
+		}
+		r.add("supervisor.build_change", status, b.Message, fix)
+	}
+	if !cfg.Loop.Daemon.AdoptsInstalledBuild() {
+		r.add("supervisor.adopt_installed_build", "ok", "loop.daemon.adopt_installed_build is false: a running daemon keeps the build it started with until it is restarted.", "")
+	}
 	if *bbAutomation != "" {
 		s := inspectBBAutomation(e.ctx, *bbCLI, *bbAutomation, *bbProject, *offline, *timeout, run)
 		r.BBAutomation = &s

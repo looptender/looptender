@@ -480,6 +480,7 @@ See [operations.md](operations.md).
 | `report.timeout` | `20s` |
 | `yield.busy_command`, `yield.timeout` | required, `10s` |
 | `daemon.interval`, `daemon.control_poll` | `5m`, `2s` |
+| `daemon.adopt_installed_build` | not set: a running daemon moves, after a check, to a new build installed at the path it was started from by moving a link (its path now leads to another file path); `true` also adopts a file written over in place; `false` never (macOS and Linux; see [a running daemon moves to the installed build](operations.md#a-running-daemon-moves-to-the-installed-build)) |
 | `tick_timeout` | `3m`, or `probe.timeout` plus `90s` when that is longer. A check ends within this plus 90 seconds. Minimum `2m40s`; the connectivity check needs `network.timeout` more than that to have its full time; with fallbacks an explicit value must be at least `probe.timeout` plus `90s`. See [check time budget](operations.md#check-time-budget) |
 
 ## Environment variables
