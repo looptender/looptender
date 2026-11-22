@@ -2457,10 +2457,14 @@
   // The footer's first line: whether this page can change anything.
   function renderServed() {
     var m = $("changes");
-    if (m && state.server && list(state.server.changesText).length) m.textContent = say(state.server.changesText);
-    // The build serving this page; nothing when an older server sends none.
-    var v = $("version");
-    if (v && state.server && typeof state.server.versionText === "string" && state.server.versionText) { v.textContent = state.server.versionText; v.hidden = false; }
+    if (!m || !state.server) return;
+    // The line's own words, kept from the first call so a repeat never stacks.
+    if (m.getAttribute("data-base") === null) m.setAttribute("data-base", m.textContent);
+    var base = list(state.server.changesText).length ? say(state.server.changesText) : m.getAttribute("data-base");
+    // The build serving this page leads the same line; nothing when an older
+    // server sends none.
+    var v = typeof state.server.versionText === "string" ? state.server.versionText : "";
+    m.textContent = v ? v + " " + base : base;
   }
 
   // How long one read may take: a little under the refresh interval, from 4

@@ -141,17 +141,14 @@ func TestDockBuildLineAndShortLabels(t *testing.T) {
 // The page draws the build line and the footer's build, and an older server
 // that sends neither shows nothing.
 func TestDockPageShowsBuilds(t *testing.T) {
-	js, html := dockUIText(t, "dock.js"), dockUIText(t, "index.html")
+	js := dockUIText(t, "dock.js")
 	for _, want := range []string{
 		`if (l.build && l.build.line) pane.appendChild(el("p", "sub build-line", l.build.line));`,
-		`state.server && typeof state.server.versionText === "string" && state.server.versionText`,
+		`m.textContent = v ? v + " " + base : base;`,
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("dock.js lacks %q", want)
 		}
-	}
-	if !strings.Contains(html, `<p id="version" hidden></p>`) {
-		t.Error("index.html lacks the footer's build line, hidden until a server sends it")
 	}
 }
 
