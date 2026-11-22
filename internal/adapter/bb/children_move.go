@@ -11,8 +11,10 @@ import (
 // It changes a child's parent and nothing else: no message, retry, stop,
 // archive or model change.
 
-// MaxListedChildren bounds a listing of direct children, as childWork does.
-const MaxListedChildren = 200
+// MaxListedChildren bounds the size of a listing that is read at all. It is
+// far above what one move uses (state.MaxMovedChildren): archived and hidden
+// children are listed too, and a long-lived coordinator gathers many.
+const MaxListedChildren = maxListed
 
 // ListedChild is a direct child as `bb thread list --parent-thread` gives it.
 type ListedChild struct {
@@ -38,8 +40,8 @@ func (a *Adapter) ListChildren(ctx context.Context, parent string) ([]ListedChil
 		DeletedAt  *int64 `json:"deletedAt"`
 	}
 	// A bare array is required: null and envelopes are not an empty listing.
-	if json.Unmarshal(out, &children) != nil || children == nil || len(children) >= MaxListedChildren {
-		return nil, errors.New("bb thread list: unexpected or incomplete JSON")
+	if json.Unmarshal(out, &children) != nil || children == nil || len(children) > MaxListedChildren {
+		return nil, errors.New("bb thread list: unexpected JSON")
 	}
 	listed := make([]ListedChild, 0, len(children))
 	seen := map[string]bool{}

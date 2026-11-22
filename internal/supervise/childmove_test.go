@@ -55,7 +55,7 @@ func TestChildrenFollowANewThreadHandoff(t *testing.T) {
 	if !m.Done || m.Moved != 14 || m.Skipped != 1 || m.Failed != 0 || len(m.Remaining) != 0 || m.From != "thr_primary" || m.To != "thr_created_1" {
 		t.Fatalf("%+v", m)
 	}
-	if len(f.moves) != 14 || len(f.children["thr_primary"]) != 1 || len(f.children["thr_created_1"]) != 14 || f.childLists != 2 {
+	if len(f.moves) != 14 || len(f.children["thr_primary"]) != 1 || len(f.children["thr_created_1"]) != 14 || f.childLists != 3 {
 		t.Fatalf("moves=%d left=%d new=%d listings=%d", len(f.moves), len(f.children["thr_primary"]), len(f.children["thr_created_1"]), f.childLists)
 	}
 	prompt := f.spawned[0].Prompt
@@ -65,7 +65,7 @@ func TestChildrenFollowANewThreadHandoff(t *testing.T) {
 	// Later checks do nothing more.
 	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
 	mustThreadTick(t, w, f, t0.Add(time.Minute))
-	if len(f.moves) != 14 || f.childLists != 2 {
+	if len(f.moves) != 14 || f.childLists != 3 {
 		t.Fatalf("moved again: %d %d", len(f.moves), f.childLists)
 	}
 }
@@ -232,5 +232,75 @@ func TestChildrenFollowSwitchBack(t *testing.T) {
 	m := childMove(t, w.dir)
 	if res.Action != "switch_back" || m.From != "thr_created_1" || m.To != "thr_primary" || m.Moved != 3 || len(f.children["thr_primary"]) != 3 || len(f.children["thr_created_1"]) != 0 {
 		t.Fatalf("%+v %+v", res, m)
+	}
+}
+
+// Review regression: a saved move that does not belong to how the loop got
+// to its current target is dropped, never run. Here a record names the
+// primary as From and some other thread as To while the loop is on the
+// primary.
+func TestUnrelatedChildMoveRecordIsDropped(t *testing.T) {
+	w, p, f := newThreadWorld(t)
+	childrenOf(f, "thr_primary", 3, 0)
+	p.obs = decide.Observation{State: decide.Idle}
+	state.Save(w.dir, state.File{ChildMove: &state.ChildMove{From: "thr_primary", To: "thr_somewhere_else", Candidate: "claude-other", At: t0, Listed: true, Remaining: []string{"thr_child_00", "thr_child_01", "thr_child_02"}}})
+	res := mustThreadTick(t, w, f, t0)
+	st, _ := state.Load(w.dir)
+	if len(f.moves) != 0 || f.childLists != 0 || st.ChildMove != nil || !strings.Contains(strings.Join(res.Warnings, "\n"), "no longer matches") {
+		t.Fatalf("moves=%v lists=%d record=%+v %v", f.moves, f.childLists, st.ChildMove, res.Warnings)
+	}
+}
+
+// Review regression: a move left pending after a failed first listing does
+// not run once the loop is back on the primary by other means.
+func TestPendingChildMoveStopsWhenTheTargetChanges(t *testing.T) {
+	w, p, f := newThreadWorld(t)
+	childrenOf(f, "thr_primary", 3, 0)
+	f.childListErr = fmt.Errorf("bb thread list: failed")
+	mustThreadTick(t, w, f, t0)
+	if m := childMove(t, w.dir); m.Listed || m.Done {
+		t.Fatalf("%+v", m)
+	}
+	// A person retargets to the primary.
+	st, _ := state.Load(w.dir)
+	st.ActiveTarget = state.Primary
+	state.Save(w.dir, st)
+	f.childListErr = nil
+	p.obs = decide.Observation{State: decide.Idle}
+	mustThreadTick(t, w, f, t0.Add(time.Minute))
+	if st, _ := state.Load(w.dir); len(f.moves) != 0 || st.ChildMove != nil {
+		t.Fatalf("moves=%v record=%+v", f.moves, st.ChildMove)
+	}
+}
+
+// Archived children do not count toward any bound: a thread with hundreds of
+// archived children still has its live ones moved.
+func TestManyArchivedChildrenDoNotBlockTheMove(t *testing.T) {
+	w, _, f := newThreadWorld(t)
+	childrenOf(f, "thr_primary", 253, 250)
+	mustThreadTick(t, w, f, t0)
+	if m := childMove(t, w.dir); !m.Done || m.Moved != 3 || m.Skipped != 250 {
+		t.Fatalf("%+v", m)
+	}
+}
+
+// A child archived between the listing and its update is counted as
+// skipped, not as moved.
+func TestChildArchivedMidMoveIsSkipped(t *testing.T) {
+	w, _, f := newThreadWorld(t)
+	childrenOf(f, "thr_primary", 3, 0)
+	f.failMoves = map[string]bool{"thr_child_02": true}
+	f.onMove = func(child string) {
+		if child == "thr_child_01" {
+			for i, c := range f.children["thr_primary"] {
+				if c.ID == "thr_child_02" {
+					f.children["thr_primary"][i].Archived = true
+				}
+			}
+		}
+	}
+	mustThreadTick(t, w, f, t0)
+	if m := childMove(t, w.dir); !m.Done || m.Moved != 2 || m.Skipped != 1 || m.Failed != 0 {
+		t.Fatalf("%+v", m)
 	}
 }

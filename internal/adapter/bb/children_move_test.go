@@ -3,13 +3,19 @@ package bb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 )
 
 func TestListChildrenReadsIDsAndArchivedOnly(t *testing.T) {
-	big := "[" + strings.TrimSuffix(strings.Repeat(`{"id":"thr_x"},`, MaxListedChildren), ",") + "]"
+	var many []string
+	for i := 0; i < 250; i++ {
+		many = append(many, fmt.Sprintf(`{"id":"thr_c%03d","archivedAt":1}`, i))
+	}
+	big := "[" + strings.Join(append(many, `{"id":"thr_live"}`), ",") + "]"
+	huge := "[" + strings.TrimSuffix(strings.Repeat(`{"id":"thr_x"},`, MaxListedChildren+1), ",") + "]"
 	for _, tc := range []struct {
 		name, out string
 		fail      bool
@@ -22,7 +28,8 @@ func TestListChildrenReadsIDsAndArchivedOnly(t *testing.T) {
 		{"the parent itself is not a child", `[{"id":"thr_parent"}]`, false, nil, true},
 		{"unusable id", `[{"id":"--all"}]`, false, nil, true},
 		{"null is not an empty listing", `null`, false, nil, true},
-		{"a full listing may be incomplete", big, false, nil, true},
+		{"too large to read", huge, false, nil, true},
+		{"many archived", big, false, nil, false},
 		{"error envelope", `{"ok":false,"error":{"code":"thread_not_found"}}`, true, nil, true},
 		{"command failure", `[]`, true, nil, true},
 	} {
@@ -37,6 +44,12 @@ func TestListChildrenReadsIDsAndArchivedOnly(t *testing.T) {
 			return []byte(tc.out), nil
 		}
 		got, err := a.ListChildren(context.Background(), "thr_parent")
+		if tc.name == "many archived" {
+			if err != nil || len(got) != 251 || got[250] != (ListedChild{ID: "thr_live"}) {
+				t.Errorf("%s: %d %v", tc.name, len(got), err)
+			}
+			continue
+		}
 		if (err != nil) != tc.wantErr || (!tc.wantErr && !reflect.DeepEqual(got, tc.want)) {
 			t.Errorf("%s: %v %v", tc.name, got, err)
 		}

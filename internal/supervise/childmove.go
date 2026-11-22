@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/looptender/looptender/internal/adapter/bb"
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/decide"
@@ -84,17 +85,69 @@ func (t *tick) heldNow() bool {
 }
 
 // completeChildMove continues a move left pending by an earlier check. It
-// runs only past the holds.
+// runs only past the holds, and only for the move the loop's current target
+// came from (childMoveCurrent); any other record is dropped.
 func (t *tick) completeChildMove() {
-	if m := t.st.ChildMove; m != nil && !m.Done && !t.opts.DryRun {
+	m := t.st.ChildMove
+	if m == nil || m.Done || t.opts.DryRun {
+		return
+	}
+	switch t.childMoveCurrent(m) {
+	case childMoveRun:
 		t.runChildMove()
+	case childMoveDrop:
+		t.warn("a pending move of child threads was dropped: it no longer matches the thread the loop is on; nothing was moved")
+		t.st.ChildMove = nil
+		t.saveChildMove()
 	}
 }
 
+type childMoveVerdict int
+
+const (
+	childMoveRun   childMoveVerdict = iota
+	childMoveDefer                  // its handoff is still being settled
+	childMoveDrop
+)
+
+// childMoveCurrent says whether a recorded move belongs to how the loop got
+// to its current target: To must be the active target's thread, and From the
+// conversation that handoff left. For a handoff to a created thread, From is
+// the conversation the created thread continues; for a switch-back to the
+// primary, From is the created thread that was left. A move recorded for a
+// creation not yet settled waits for the reconcile that completes it.
+func (t *tick) childMoveCurrent(m *state.ChildMove) childMoveVerdict {
+	created := t.st.NewThreads[m.Candidate]
+	active := t.activeThread()
+	switch {
+	case active != m.To || active == "":
+	case t.st.Target() == m.Candidate && created.Thread == m.To && created.Continues == m.From:
+		return childMoveRun
+	case t.st.Target() == state.Primary && created.Thread == m.From:
+		return childMoveRun
+	}
+	if in := t.st.NewThreadIntent; in != nil && in.Candidate == m.Candidate && in.Continues == m.From && in.From == t.st.Target() {
+		return childMoveDefer
+	}
+	return childMoveDrop
+}
+
+// childPlace is where a listed child is: still under the left thread, under
+// the thread that took over, or neither (archived, deleted, or moved
+// elsewhere by someone).
+type childPlace int
+
+const (
+	childStill childPlace = iota
+	childMoved
+	childGone
+)
+
 // runChildMove lists the children once, then moves as many as time allows,
-// then lists again to confirm: a child still under the left thread was not
-// moved, whatever bb answered, and is tried again up to
-// state.MaxChildMoveAttempts times.
+// then lists both threads to confirm: a child counts as moved only when it is
+// listed under the thread that took over, whatever bb answered. One still
+// under the left thread is tried again up to state.MaxChildMoveAttempts
+// times; one archived, deleted or moved elsewhere is counted as skipped.
 func (t *tick) runChildMove() {
 	m := t.st.ChildMove
 	cli := config.DefaultBBCLI
@@ -102,117 +155,129 @@ func (t *tick) runChildMove() {
 		cli = c.BB.CLI
 	}
 	threads := t.opts.Threads(cli)
-	list := func() (map[string]bool, bool) {
+	listOf := func(parent string) ([]bb.ListedChild, bool) {
 		if t.left() < childListTime {
 			return nil, false
 		}
 		ctx, cancel := context.WithTimeout(t.ctx, childListTime)
-		children, err := threads.ListChildren(ctx, m.From)
+		children, err := threads.ListChildren(ctx, parent)
 		cancel()
 		if err != nil {
 			t.warn("moving children to the new thread: could not list them; a later check tries again")
 			return nil, false
 		}
-		live := map[string]bool{}
-		for _, c := range children {
-			if c.ID == m.To {
-				continue
-			}
-			if c.Archived {
-				if !m.Listed {
-					m.Skipped++
-				}
-				continue
-			}
-			live[c.ID] = true
-		}
-		return live, true
+		return children, true
 	}
-	if !m.Listed {
-		live, ok := list()
+	// placeOf lists both threads and says where each child is.
+	placeOf := func() (func(string) childPlace, bool) {
+		from, ok := listOf(m.From)
 		if !ok {
-			return
+			return nil, false
 		}
-		for id := range live {
-			if len(m.Remaining) == state.MaxMovedChildren {
-				m.Skipped++
-				continue
+		to, ok := listOf(m.To)
+		if !ok {
+			return nil, false
+		}
+		still, moved := map[string]bool{}, map[string]bool{}
+		for _, c := range from {
+			still[c.ID] = !c.Archived
+		}
+		for _, c := range to {
+			moved[c.ID] = !c.Archived
+		}
+		return func(id string) childPlace {
+			switch {
+			case moved[id]:
+				return childMoved
+			case still[id]:
+				return childStill
 			}
-			m.Remaining = append(m.Remaining, id)
-		}
-		sort.Strings(m.Remaining)
-		m.Listed = true
-		t.saveChildMove()
-	} else if len(m.Remaining) > 0 {
-		// Continuing an earlier check's move, which may have ended between an
-		// update and its record: a child no longer under the left thread is
-		// not asked again.
-		live, ok := list()
-		if !ok {
-			return
+			return childGone
+		}, true
+	}
+	settle := func(place func(string) childPlace, tried int) {
+		if m.Attempts == nil {
+			m.Attempts = map[string]int{}
 		}
 		keep := []string{}
-		for _, id := range m.Remaining {
-			if live[id] {
-				keep = append(keep, id)
-			} else {
+		for i, id := range m.Remaining {
+			switch place(id) {
+			case childMoved:
 				m.Moved++
 				delete(m.Attempts, id)
+			case childGone:
+				m.Skipped++
+				delete(m.Attempts, id)
+			default:
+				if i < tried {
+					m.Attempts[id]++
+				}
+				if m.Attempts[id] >= state.MaxChildMoveAttempts {
+					m.Failed++
+					delete(m.Attempts, id)
+				} else {
+					keep = append(keep, id)
+				}
 			}
 		}
 		m.Remaining = keep
+	}
+	if !m.Listed {
+		from, ok := listOf(m.From)
+		if !ok {
+			return
+		}
+		live := []string{}
+		for _, c := range from {
+			switch {
+			case c.ID == m.To:
+			case c.Archived:
+				m.Skipped++
+			default:
+				live = append(live, c.ID)
+			}
+		}
+		sort.Strings(live)
+		if len(live) > state.MaxMovedChildren {
+			m.Skipped += len(live) - state.MaxMovedChildren
+			live = live[:state.MaxMovedChildren]
+		}
+		m.Remaining, m.Listed = live, true
+		t.saveChildMove()
+	} else if len(m.Remaining) > 0 {
+		// Continuing an earlier check's move, which may have ended between an
+		// update and its record: a child already moved is not asked again.
+		place, ok := placeOf()
+		if !ok {
+			return
+		}
+		settle(place, 0)
 		t.saveChildMove()
 	}
-	tried := []string{}
-	for len(m.Remaining) > len(tried) {
-		if t.left() < childMoveTime+childListTime || t.heldNow() {
+	tried := 0
+	for tried < len(m.Remaining) {
+		if t.left() < childMoveTime+2*childListTime || t.heldNow() {
 			break
 		}
-		id := m.Remaining[len(tried)]
 		ctx, cancel := context.WithTimeout(t.ctx, childMoveTime)
-		err := threads.SetParent(ctx, id, m.To)
+		err := threads.SetParent(ctx, m.Remaining[tried], m.To)
 		cancel()
 		if err != nil {
 			t.warn("moving a child to the new thread failed: %v", err)
 		}
-		tried = append(tried, id)
+		tried++
 	}
-	if len(tried) == 0 {
-		if len(m.Remaining) == 0 {
-			m.Done = true
-			t.saveChildMove()
+	if tried > 0 {
+		// Confirm against BB, not against what bb answered. Unconfirmed, the
+		// same children are tried again later.
+		place, ok := placeOf()
+		if !ok {
+			return
 		}
-		return
+		settle(place, tried)
 	}
-	// Confirm against BB, not against what bb answered.
-	live, ok := list()
-	if !ok {
-		return // unconfirmed: the same children are tried again later
-	}
-	if m.Attempts == nil {
-		m.Attempts = map[string]int{}
-	}
-	keep := []string{}
-	for i, id := range m.Remaining {
-		switch {
-		case i >= len(tried):
-			keep = append(keep, id)
-		case !live[id]:
-			m.Moved++
-			delete(m.Attempts, id)
-		default:
-			m.Attempts[id]++
-			if m.Attempts[id] >= state.MaxChildMoveAttempts {
-				m.Failed++
-				delete(m.Attempts, id)
-			} else {
-				keep = append(keep, id)
-			}
-		}
-	}
-	m.Remaining = keep
-	m.Done = len(keep) == 0
-	t.res.ChildrenMoved, t.res.ChildrenPending = m.Moved, len(keep)
+	m.Done = len(m.Remaining) == 0
+	t.res.ChildrenMoved, t.res.ChildrenPending = m.Moved, len(m.Remaining)
 	t.saveChildMove()
 }
 
