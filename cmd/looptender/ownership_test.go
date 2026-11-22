@@ -679,3 +679,27 @@ func TestDaemonFollowsSupervisorMadeOwnershipMove(t *testing.T) {
 		t.Fatal("check from a thread outside the current run was accepted")
 	}
 }
+
+// A thread that no longer owns the loop is refused by name even while the
+// supervisor holds the check lock, which enable takes first. (resume keeps its
+// own person-recovery wording, decided later.)
+func TestNonOwnerEnableIsRefusedByNameWhileCheckLockIsHeld(t *testing.T) {
+	f := newFixture(t)
+	t.Setenv("BB_THREAD_ID", "thr_first")
+	f.run("enable")
+	followSupervisorMove(t, f, "thr_first", "thr_successor")
+	held, err := lock.Acquire(filepath.Join(f.dir, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	code, _, e := f.run("enable")
+	if code == 0 || code == exitSkipped || !strings.Contains(e, "with the supervisor's handoff") || !strings.Contains(e, "thr_successor") {
+		t.Fatalf("old owner enable with the check lock held: %d %s", code, e)
+	}
+	// The owner itself still meets the held lock as a skipped command.
+	t.Setenv("BB_THREAD_ID", "thr_successor")
+	if code, _, e := f.run("enable"); code != exitSkipped {
+		t.Fatalf("owner enable with the check lock held: %d %s", code, e)
+	}
+}
