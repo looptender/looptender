@@ -387,7 +387,9 @@ func (w *World) BinPath(name string) string { return filepath.Join(w.bin, name+e
 func (w *World) Fallbacks(text string, loop func(map[string]any)) {
 	w.t.Helper()
 	path := filepath.Join(filepath.Dir(w.Config), "fallbacks.yaml")
-	if err := os.WriteFile(path, []byte(fmt.Sprintf(text, w.bin)), 0o600); err != nil {
+	// Forward slashes: the path sits in double-quoted YAML, where a Windows
+	// backslash would start an escape. Windows accepts either.
+	if err := os.WriteFile(path, []byte(fmt.Sprintf(text, filepath.ToSlash(w.bin))), 0o600); err != nil {
 		w.t.Fatal(err)
 	}
 	w.EditConfig(func(l map[string]any) {
