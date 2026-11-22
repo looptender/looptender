@@ -73,9 +73,13 @@ func TestInitWizardOffersTheTakeover(t *testing.T) {
 // Scripts: no flags means no takeover and a hint; the flags set it up; the
 // flags refuse what does not fit.
 func TestInitNewThreadFlags(t *testing.T) {
-	stubOffer(t, &newThreadOffer{Provider: "codex", Model: "example-codex-model"})
+	ran := stubOffer(t, &newThreadOffer{Provider: "codex", Model: "example-codex-model"})
 	f := newSetupFixture(t)
-	code, out, errOut := f.run(t, append(bbInitArgs(f), "--dry-run"), "")
+	// A script that does not ask runs no bb command, as before.
+	if code, out, _ := f.run(t, append(bbInitArgs(f), "--dry-run"), ""); code != 0 || *ran || strings.Contains(out, "Takeover:") {
+		t.Fatalf("detected without --detect-takeover: %d %t\n%s", code, *ran, out)
+	}
+	code, out, errOut := f.run(t, append(bbInitArgs(f), "--dry-run", "--detect-takeover"), "")
 	if code != 0 || !strings.Contains(out, "Takeover: not set up. codex is usable") || !strings.Contains(out, "--new-thread-provider codex --new-thread-model example-codex-model") || !strings.Contains(errOut, "keepgoing fallbacks arm -c") {
 		t.Fatalf("%d\n%s\n%s", code, out, errOut)
 	}
@@ -96,8 +100,8 @@ func TestInitNewThreadFlags(t *testing.T) {
 		}
 	}
 	// Headless loops are unchanged: no detection, and the flags are refused.
-	ran := stubOffer(t, &newThreadOffer{Provider: "codex", Model: "m"})
-	if code, _, _ := f.run(t, append(f.args(), "--dry-run"), ""); code != 0 || *ran {
+	ran = stubOffer(t, &newThreadOffer{Provider: "codex", Model: "m"})
+	if code, _, _ := f.run(t, append(f.args(), "--dry-run", "--detect-takeover"), ""); code != 0 || *ran {
 		t.Fatalf("headless: %d detection ran %t", code, *ran)
 	}
 	if code, _, _ := f.run(t, append(f.args(), "--dry-run", "--new-thread-provider", "claude-code", "--new-thread-model", "m"), ""); code == 0 {

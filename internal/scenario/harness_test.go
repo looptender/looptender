@@ -343,8 +343,9 @@ func (w *World) InitWith(flags ...string) Result {
 	return r
 }
 
-// initCalls marks the bb commands init made (the provider metadata it reads
-// to offer a takeover) as seen, so they are not charged to the next step.
+// initCalls marks the bb commands init made (only the provider metadata it
+// reads when asked to offer a takeover) as seen, so they are not charged to
+// the next step.
 func (w *World) initCalls() {
 	w.t.Helper()
 	var calls [][]string

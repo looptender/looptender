@@ -31,6 +31,7 @@ func initJSON(w *World, flags ...string) map[string]any {
 	w.t.Helper()
 	r := w.Must(append([]string{"init", "--non-interactive", "--json", "--dry-run", "--name", "example-loop", "--agent", "bb", "--thread", primaryThread,
 		"--provider", "claude-code", "--project", w.Project, "--directory", filepath.Join(w.Root, "preview"), "--task", scenarioTask}, flags...)...)
+	w.initCalls()
 	var v map[string]any
 	if err := json.Unmarshal([]byte(r.Stdout), &v); err != nil {
 		w.t.Fatalf("init --json: %v\n%s", err, r.Stdout)
@@ -68,10 +69,14 @@ func loopFallbacks(w *World) (failoverOn []any, candidates []map[string]any) {
 func TestScenarioInitWithoutAnotherProvider(t *testing.T) {
 	t.Parallel()
 	w := NewWorld(t, scenarioStart)
-	if v := initJSON(w); v["newThreadOffer"] != nil || len(v["fallbacks"].([]any)) != 0 {
+	if v := initJSON(w, "--detect-takeover"); v["newThreadOffer"] != nil || len(v["fallbacks"].([]any)) != 0 {
 		t.Fatalf("offer or fallback without a usable provider: %v", v)
 	}
+	before := w.callsSeen
 	r := w.InitWith()
+	if w.callsSeen != before {
+		t.Fatalf("a script's init ran bb")
+	}
 	on, cands := loopFallbacks(w)
 	if len(cands) != 0 || len(on) != 0 || !strings.Contains(r.Stderr, "single route") || !strings.Contains(r.Stderr, "keepgoing fallbacks arm -c") {
 		t.Fatalf("failover_on %v candidates %v\n%s", on, cands, r.Stderr)
@@ -84,12 +89,16 @@ func TestScenarioInitOffersTheTakeoverAndScriptsChoose(t *testing.T) {
 	t.Parallel()
 	w := NewWorld(t, scenarioStart)
 	codexUsable(w)
-	v := initJSON(w)
+	// A script that does not ask is told nothing and runs no bb command.
+	if v := initJSON(w); v["newThreadOffer"] != nil {
+		t.Fatalf("offered without --detect-takeover: %v", v)
+	}
+	v := initJSON(w, "--detect-takeover")
 	offer, _ := v["newThreadOffer"].(map[string]any)
 	if offer["provider"] != "codex" || offer["model"] != codexModel || len(v["fallbacks"].([]any)) != 0 {
 		t.Fatalf("offer: %v fallbacks %v", offer, v["fallbacks"])
 	}
-	if v := initJSON(w, "--new-thread-provider", "none"); v["newThreadOffer"] != nil || len(v["fallbacks"].([]any)) != 0 {
+	if v := initJSON(w, "--detect-takeover", "--new-thread-provider", "none"); v["newThreadOffer"] != nil || len(v["fallbacks"].([]any)) != 0 {
 		t.Fatalf("declined: %v", v)
 	}
 	v = initJSON(w, "--new-thread-provider", "codex", "--new-thread-model", codexModel)

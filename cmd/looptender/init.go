@@ -39,8 +39,11 @@ type initOptions struct {
 	fallbacks                                      []initFallback
 	// newThread is the takeover fallback asked for (Provider "none" when
 	// declined); offer is a usable provider found when none was asked for.
-	newThread                                    newThreadChoice
-	offer                                        *newThreadOffer
+	newThread newThreadChoice
+	offer     *newThreadOffer
+	// detectTakeover lets a script ask which provider is usable; without
+	// it, a script's init runs no bb command, as before.
+	detectTakeover                               bool
 	stall, wake, backoff, interval               time.Duration
 	nudges, reprompts, probeCap                  int
 	nonInteractive, dryRun, withGoal, allowShare bool
@@ -87,6 +90,7 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 	fs.StringVar(&o.newThread.Provider, "new-thread-provider", "", "bb: on a usage limit, start a new conversation on this provider (claude-code or codex) that takes over; none declines it")
 	fs.StringVar(&o.newThread.Model, "new-thread-model", "", "bb: the model of that new conversation (required with --new-thread-provider)")
 	fs.StringVar(&o.newThread.Reasoning, "new-thread-reasoning", "", "bb: the reasoning level of that new conversation")
+	fs.BoolVar(&o.detectTakeover, "detect-takeover", false, "bb, with --non-interactive: ask bb which other provider is usable for a takeover and name it (newThreadOffer in --json); runs bb provider list and models, nothing else")
 	fs.StringVar(&o.newThread.Permission, "new-thread-permission-mode", "", "bb: its permission mode: accept-edits (default), auto or full")
 	fs.DurationVar(&o.stall, "stall-after", config.DefaultStallAfter, "time without Git progress before nudging")
 	fs.DurationVar(&o.wake, "wake-every", config.DefaultMinWakeInterval, "minimum time since last send before a stall nudge; idle wakes follow check interval")
@@ -121,7 +125,7 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 	}
 	// A script gets a takeover only by asking for it. When it did not, and
 	// another provider is usable, it is told how.
-	if o.nonInteractive && o.agent == "bb" && !visited["new-thread-provider"] && len(o.fallbacks) == 0 && o.routes != config.RoutesStandard {
+	if o.nonInteractive && o.detectTakeover && o.agent == "bb" && !visited["new-thread-provider"] && len(o.fallbacks) == 0 && o.routes != config.RoutesStandard {
 		o.offer = detectNewThreadOffer(e.ctx, strings.TrimSpace(o.provider), lookPath)
 	}
 	if o.taskFile == "-" {

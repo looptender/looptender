@@ -125,11 +125,11 @@ export function createSetupController(d: SetupDependencies) {
       if (!input.name) throw new SetupPolicyError("Enter a loop name using lowercase letters, digits, and hyphens.");
       for (const [key, p] of previews) if (p.expires < Date.now()) previews.delete(key);
       if (previews.size >= 64) throw new SetupPolicyError("Too many pending previews. Wait five minutes and retry.");
-      // init is asked first, with no takeover flag (an older CLI knows none),
-      // what is usable. When it offers a takeover, it is previewed for real
-      // when on, or declined explicitly when off.
+      // init is asked first which provider is usable (an older CLI that does
+      // not know how is asked nothing). When it offers a takeover, it is
+      // previewed for real when on, or declined explicitly when off.
       let choice: TakeoverChoice | undefined;
-      let previewed = await d.init(bin, target, input.name, task, true, withGoal, bounds, followStandard);
+      let previewed = await d.init(bin, target, input.name, task, true, withGoal, bounds, followStandard, followStandard ? undefined : "detect");
       if ("noRoutes" in previewed) return { ok: false, message: "None of your standard route list's routes applies to this thread, so this setup cannot follow it. Clear the choice to set it up without other routes." };
       if ("refused" in previewed) return { ok: false, refused: previewed.refused, message: refusalMessage(previewed.refused, "init") };
       const offer = previewed.plan.takeoverOffer;

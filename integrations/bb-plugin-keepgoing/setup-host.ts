@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { z } from "zod";
-import { withClientFlag } from "./client-flag.ts";
+import { refusesFlag, withClientFlag } from "./client-flag.ts";
 import { goalSummarySchema } from "./status-details.ts";
 import { planSchema, refusedReportSchema, type Refusal, type SetupTarget, type SetupRecord } from "./setup-contract.ts";
 import { durationMs, type Bounds } from "./new-thread-contract.ts";
@@ -42,8 +42,9 @@ const takeoverPlan = cliPlan.extend({
   fallbacks: z.tuple([z.object({ id: z.string().min(1).max(64), newThread: z.object({ provider: z.string().min(1).max(64), model: z.string().min(1).max(256), permission: z.string().max(32), text: z.string().min(1).max(4096) }) })]),
   limits: planSchema.shape.limits.extend({ failoverOn: z.tuple([z.literal("rate_limit")]) }),
 });
-/** The takeover asked of init: a provider and model, or none to decline. */
-export type TakeoverChoice = { provider: string; model: string } | "none";
+/** The takeover asked of init: a provider and model, none to decline, or
+ * detect to ask init which provider is usable (it then names one). */
+export type TakeoverChoice = { provider: string; model: string } | "none" | "detect";
 // A setup that follows the standard route list: the routes that apply now,
 // and handoff on a rate limit. Only id, model and group are read from each.
 const followingPlan = cliPlan.extend({
@@ -99,9 +100,15 @@ export async function setupOnHost(input: { bin: string; target: SetupTarget; nam
   if (followStandard) args.push("--routes", "standard");
   // Provider and model labels only, from init's own offer.
   if (takeover === "none") args.push("--new-thread-provider", "none");
+  else if (takeover === "detect") args.push("--detect-takeover");
   else if (takeover) args.push("--new-thread-provider", takeover.provider, "--new-thread-model", takeover.model);
   if (dryRun) args.push("--dry-run");
-  const result = await run(bin, args, task, target.threadId, signal);
+  let result = await run(bin, args, task, target.threadId, signal);
+  // A CLI too old to know --detect-takeover refuses it as a usage error with
+  // nothing printed: asked again without it, it offers nothing, as before.
+  if (takeover === "detect" && refusesFlag({ code: result.code, emptyStdout: result.emptyStdout ?? false, timedOut: result.timedOut ?? false })) {
+    result = await run(bin, args.filter(a => a !== "--detect-takeover"), task, target.threadId, signal);
+  }
   // keepgoing's own refusal, when it reports one in a structured form. Only
   // the code and the other loop's name cross back; never its stderr.
   const refused = result.code !== 0 ? refusedReportSchema.safeParse(result.data) : undefined;

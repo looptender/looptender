@@ -352,3 +352,21 @@ test("a takeover travels as provider and model flags and must come back in the C
     assert.deepEqual(seen.slice(n, n + 2), ["--new-thread-provider", "none"]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("detection is asked for with --detect-takeover, and an older CLI that refuses it is asked again without", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "keepgoing-plugin-detect-")));
+  try {
+    const target = { threadId: "thr_example", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: root, provider: "codex" };
+    const reply = { schemaVersion: 1, outcome: "preview", loop: "example-loop", project: root, configPath: join(root, "outside", "looptender.yaml"), stateDir: join(root, "outside", "state"), primary: { agent: { adapter: "bb", bbThread: target.threadId, provider: target.provider } }, fallbacks: [], limits: { wakeEvery: "1h", interval: "5m", stallAfter: "30m", backoff: "10m", maxNudges: 3, maxReprompts: 3, failoverOn: [] } };
+    const seen: string[][] = [];
+    const old: Execute = async (_bin, args) => { seen.push(args); return args.includes("--detect-takeover") ? { code: 2, data: null, emptyStdout: true, timedOut: false } : { code: 0, data: reply }; };
+    const r = planned(await setupOnHost({ bin: "keepgoing", target, name: "example-loop", task: "Fictional private task", dryRun: true, takeover: "detect" }, undefined, old));
+    assert.equal(seen.length, 2); assert.ok(seen[0].includes("--detect-takeover")); assert.ok(!seen[1].includes("--detect-takeover"));
+    assert.equal(r.plan.takeoverOffer, undefined);
+    // Any other failure is not taken for a refusal of the flag.
+    seen.length = 0;
+    const failing: Execute = async (_bin, args) => { seen.push(args); return { code: 1, data: null, emptyStdout: true, timedOut: false }; };
+    await assert.rejects(setupOnHost({ bin: "keepgoing", target, name: "example-loop", task: "Fictional private task", dryRun: true, takeover: "detect" }, undefined, failing));
+    assert.equal(seen.length, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

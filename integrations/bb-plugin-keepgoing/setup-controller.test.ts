@@ -394,17 +394,17 @@ test("a takeover the CLI offers is previewed by default, can be turned off, and 
     const offer = { provider: "claude-code", model: "example-claude-model" };
     f.d.init = async (_bin, _target, _name, _task, dry, _goal, _bounds, _follow, choice) => {
       seen.push(choice ?? "none asked"); f.calls.push(dry ? "preview" : "create");
-      if (choice === undefined) return { plan: { ...structuredClone(f.plan), takeoverOffer: offer } };
-      if (choice === "none") return { plan: structuredClone(f.plan) };
+      if (choice === "detect") return { plan: { ...structuredClone(f.plan), takeoverOffer: offer } };
+      if (choice === "none" || choice === undefined) return { plan: structuredClone(f.plan) };
       return { plan: { ...structuredClone(f.plan), takeover: { provider: choice.provider, model: choice.model, permission: "accept-edits", text: "On a usage limit on codex: a new conversation on claude-code takes over." } } };
     };
     const p = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", ...(takeover === "off" ? { takeover } : {}) });
     assert.equal(p.ok, true, p.message);
     assert.deepEqual(p.plan?.takeoverOffer, offer, "the offer stays visible to turn it back on");
     if (takeover === "on") {
-      assert.deepEqual(seen, ["none asked", offer]); assert.equal(p.plan?.takeover?.provider, "claude-code"); assert.match(p.message, /a new conversation on claude-code takes over/);
+      assert.deepEqual(seen, ["detect", offer]); assert.equal(p.plan?.takeover?.provider, "claude-code"); assert.match(p.message, /a new conversation on claude-code takes over/);
     } else {
-      assert.deepEqual(seen, ["none asked", "none"]); assert.equal(p.plan?.takeover, undefined);
+      assert.deepEqual(seen, ["detect", "none"]); assert.equal(p.plan?.takeover, undefined);
     }
     // Created with the previewed choice, never re-detected; a changed choice is refused.
     assert.equal((await f.controller.call({ action: "create", threadId: "thr_example", ticket: p.ticket, task: "Fictional private task", takeover: takeover === "on" ? "off" : "on" })).ok, false);
@@ -424,5 +424,5 @@ test("a CLI that offers no takeover is asked nothing more", async () => {
     const p = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", takeover });
     assert.equal(p.ok, true); assert.equal(p.plan?.takeover, undefined); assert.equal(p.plan?.takeoverOffer, undefined);
   }
-  assert.deepEqual(seen, ["none asked", "none asked"], "an older CLI is never passed the takeover flags");
+  assert.deepEqual(seen, ["detect", "detect"], "only asked what is usable: no provider or model flags");
 });
