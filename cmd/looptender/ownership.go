@@ -40,11 +40,32 @@ func checkOwnership(stateDir string, lease *ownerLease) error {
 		}
 		current := leaseOf(f)
 		if *current != *lease {
-			return errors.New("loop ownership changed; this daemon has handed off and must exit")
+			if !f.Ownership.Follows(lease.thread, lease.generation) {
+				return errors.New("loop ownership changed; this daemon has handed off and must exit")
+			}
+			// Every move since this daemon bound was made by the supervisor
+			// itself: it follows the new owner instead of exiting.
+			*lease = *current
 		}
 		return nil
 	}
 	return control.CheckOwner(f, os.Getenv("BB_THREAD_ID"), false)
+}
+
+// checkSupervision is checkOwnership for a check, a wake poll or a daemon
+// start, which supervise and control nothing. A thread that lost ownership
+// to a move the supervisor made (a scheduled check that still carries its
+// identity) may still run them; its control commands stay refused.
+func checkSupervision(stateDir string, lease *ownerLease) error {
+	err := checkOwnership(stateDir, lease)
+	if err == nil || lease != nil || !errors.Is(err, control.ErrOwnerConflict) {
+		return err
+	}
+	f, lerr := control.Load(stateDir)
+	if lerr == nil && f.Ownership.FollowedFrom(os.Getenv("BB_THREAD_ID")) {
+		return nil
+	}
+	return err
 }
 
 func firstLease(leases []*ownerLease) *ownerLease {
@@ -98,7 +119,10 @@ func bindDaemonOwner(stateDir string, takeOver bool) (*ownerLease, error) {
 		return leaseOf(f), nil
 	}
 	if err := validateOwner(stateDir, false); err != nil {
-		return nil, err
+		f, lerr := control.Load(stateDir)
+		if !errors.Is(err, control.ErrOwnerConflict) || lerr != nil || !f.Ownership.FollowedFrom(os.Getenv("BB_THREAD_ID")) {
+			return nil, err
+		}
 	}
 	f, err := control.Load(stateDir)
 	if err != nil {

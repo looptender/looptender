@@ -44,6 +44,52 @@ type fakeThreads struct {
 	spawned []bb.SpawnRequest
 	places  []string
 	lists   int
+	// children are the direct children of each parent thread. Moves change
+	// them; childLists and moves count the listings and updates asked for.
+	children   map[string][]bb.ListedChild
+	childLists int
+	moves      []string
+	// childListErr fails every child listing; ignoredMoves are children bb
+	// says it moved and did not; failMoves are children whose update fails.
+	childListErr error
+	ignoredMoves map[string]bool
+	failMoves    map[string]bool
+	// onMove runs before each update, to change the world in between.
+	onMove func(child string)
+}
+
+func (f *fakeThreads) ListChildren(_ context.Context, parent string) ([]bb.ListedChild, error) {
+	f.childLists++
+	if f.childListErr != nil {
+		return nil, f.childListErr
+	}
+	return append([]bb.ListedChild{}, f.children[parent]...), nil
+}
+
+func (f *fakeThreads) SetParent(_ context.Context, child, parent string) error {
+	if f.onMove != nil {
+		f.onMove(child)
+	}
+	f.moves = append(f.moves, child)
+	if f.failMoves[child] {
+		return errors.New("bb thread update: failed")
+	}
+	if f.ignoredMoves[child] {
+		return nil
+	}
+	for p, list := range f.children {
+		for i, c := range list {
+			if c.ID == child {
+				f.children[p] = append(list[:i:i], list[i+1:]...)
+				if f.children == nil {
+					f.children = map[string][]bb.ListedChild{}
+				}
+				f.children[parent] = append(f.children[parent], c)
+				return nil
+			}
+		}
+	}
+	return errors.New("bb thread update: thread_not_found")
 }
 
 func (f *fakeThreads) PlaceOf(_ context.Context, thread string) (bb.Place, error) {

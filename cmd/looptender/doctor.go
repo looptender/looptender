@@ -25,6 +25,7 @@ import (
 	"github.com/looptender/looptender/internal/envvar"
 	"github.com/looptender/looptender/internal/health"
 	"github.com/looptender/looptender/internal/netretry"
+	"github.com/looptender/looptender/internal/prompt"
 	"github.com/looptender/looptender/internal/report"
 	"github.com/looptender/looptender/internal/snapshot"
 	"github.com/looptender/looptender/internal/state"
@@ -161,6 +162,13 @@ func doctor(e env, args []string, run doctorRun) int {
 	} else {
 		r.add("task", "ok", "Task is configured inline; its text is not displayed.", "")
 	}
+	if s := describeWakePolicy(cfg.Loop); s != nil {
+		status := "ok"
+		if s.Source == prompt.PolicyCustom || s.Source == prompt.PolicyGenerated {
+			status = "warning"
+		}
+		r.add("wake_policy", status, s.Message, "")
+	}
 	doctorFile(&r, "state.directory", cfg.Loop.StateDir, true)
 	doctorStateAccess(&r, cfg.Loop.StateDir, doctorOSAccess)
 	for _, name := range []string{control.FileName, state.FileName, "health.json", state.LogName, daemoninfo.FileName, report.DeliveryFile, "delivery.lock", report.SessionpipeGateFile, report.SessionpipeLock + ".lock"} {
@@ -296,6 +304,19 @@ func doctor(e env, args []string, run doctorRun) int {
 	}
 	r.add("scheduler", schedulerStatus, d.Message, "Service installation and external schedulers are not verified; a responding daemon can still be waiting on a stuck check.")
 	r.add("supervisor.live_version", buildStatus, "Live daemon build comparison: "+d.BinaryComparison+".", "A different build label does not establish which is newer; empty and dev labels cannot identify a build.")
+	if b := describeBuildAdoption(cfg.Loop.StateDir, d, time.Now()); b != nil {
+		status, fix := "ok", ""
+		switch {
+		case !b.Supervised:
+			status, fix = "error", "Start supervision again; the installed build can be checked with its own validate command."
+		case b.Outcome == adoptRefused || b.Outcome == adoptReturned || b.Outcome == "unreadable":
+			status, fix = "warning", "Restarting supervision runs the installed build; set loop.daemon.adopt_installed_build: false to keep a daemon on the build it started with."
+		}
+		r.add("supervisor.build_change", status, b.Message, fix)
+	}
+	if !cfg.Loop.Daemon.AdoptsInstalledBuild() {
+		r.add("supervisor.adopt_installed_build", "ok", "loop.daemon.adopt_installed_build is false: a running daemon keeps the build it started with until it is restarted.", "")
+	}
 	if *bbAutomation != "" {
 		s := inspectBBAutomation(e.ctx, *bbCLI, *bbAutomation, *bbProject, *offline, *timeout, run)
 		r.BBAutomation = &s
@@ -303,6 +324,7 @@ func doctor(e env, args []string, run doctorRun) int {
 	}
 	doctorCheckVersion(&r, st.LastCheck, stateErr == nil)
 	doctorFailedChecks(&r, st, stateErr == nil)
+	doctorRoutes(&r, cfg, st, stateErr == nil, loopHeld(ctl, ctlErr != nil), r.CheckedAt)
 	if stateErr == nil {
 		if ctl, err := control.Load(cfg.Loop.StateDir); err == nil {
 			if level, text, fix, ok := scheduleDoctorLine(describeSchedule(&cfg.Loop, st, ctl, &d, r.CheckedAt)); ok {

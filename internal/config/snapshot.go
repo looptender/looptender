@@ -172,3 +172,13 @@ func (c *Config) UnreadableSources() bool {
 	}
 	return false
 }
+
+// MarkSourcesStale makes CheckSources fail from now on, as for a
+// configuration that changed after it was loaded, so the loaded values are
+// kept for timing and diagnostics but authorize no provider work. A daemon
+// that must keep a state directory the file no longer names uses it.
+func (c *Config) MarkSourcesStale() {
+	if c.source.path != "" {
+		c.source.absent, c.source.size = false, -1
+	}
+}

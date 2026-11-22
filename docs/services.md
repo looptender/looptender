@@ -61,6 +61,10 @@ These properties can describe a previous run. They are not evidence that the cur
 
 The field meanings follow the [systemd service interface](https://github.com/systemd/systemd/blob/v255/man/org.freedesktop.systemd1.xml) and [result enumeration](https://github.com/systemd/systemd/blob/v255/src/core/service.c). Offline fixtures cover reported failures and exits, redaction, identity changes, unknown schemas, and unchanged controls/files/provider-call counts. Live installed-service failure and recovery checks remain unverified. macOS launch failure details and macOS service-to-daemon identity remain planned. Executable-file inspection is described below.
 
+## New builds reach a running service
+
+A service's daemon moves to a new build installed at the executable path it was installed with (by default, only one installed by moving a link to a new target), after a check and as the same process, so the service manager keeps tracking it; see [a running daemon moves to the installed build](operations.md#a-running-daemon-moves-to-the-installed-build). `service install` records the path it was run by, keeping a link to the installed build as a link. A Linux service installed by an earlier build recorded the link's target, the build's own file, and does not follow installs until it is installed again. `loop.daemon.adopt_installed_build: false` turns the move off; `true` also adopts a file written over in place.
+
 ## Recorded executable inspection
 
 For recorded macOS and Linux services, `service status` inspects the executable named in the private recovery record, even if registration is absent or unavailable. It never runs that path, including for a version query. JSON adds `executable` with `state`, `comparison`, and `message`; text shows the same observations. An unrecorded service has no executable assessment, and install/remove decisions do not use it.

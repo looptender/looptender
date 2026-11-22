@@ -180,11 +180,19 @@ type Result struct {
 	ChildErrorNote          bool            `json:"childErrorNote,omitempty"`
 	ChildErrorNoticeStopped bool            `json:"childErrorNoticeStopped,omitempty"`
 	Handoff                 *HandoffNote    `json:"handoff,omitempty"`
-	Redundancy              *health.Summary `json:"redundancy,omitempty"`
-	Probes                  []ProbeNote     `json:"probes,omitempty"`
-	Yielded                 bool            `json:"yielded,omitempty"`
-	DryRun                  bool            `json:"dryRun,omitempty"`
-	Warnings                []string        `json:"warnings,omitempty"`
+	// OwnerMovedTo is the BB thread loop ownership moved to with a move the
+	// supervisor made in this check.
+	OwnerMovedTo string `json:"ownerMovedTo,omitempty"`
+	// ChildrenMoved and ChildrenPending count the left conversation's
+	// children moved to the thread that took over, and those still to move,
+	// when this check moved any.
+	ChildrenMoved   int             `json:"childrenMoved,omitempty"`
+	ChildrenPending int             `json:"childrenPending,omitempty"`
+	Redundancy      *health.Summary `json:"redundancy,omitempty"`
+	Probes          []ProbeNote     `json:"probes,omitempty"`
+	Yielded         bool            `json:"yielded,omitempty"`
+	DryRun          bool            `json:"dryRun,omitempty"`
+	Warnings        []string        `json:"warnings,omitempty"`
 	// Outcome is the recorded result of the check: succeeded, failed or
 	// dry_run. It is empty when the check could not be recorded at all.
 	Outcome string `json:"outcome,omitempty"`
@@ -348,6 +356,8 @@ type tick struct {
 	lateProbed          bool
 	graphFailed         bool
 	graphClosed         bool
+	// handoffObs is the observation a handoff in this check was made on.
+	handoffObs decide.Observation
 	// waiting is the child picture this check observed, for the run graph.
 	waiting *graphWaiting
 }
@@ -800,6 +810,8 @@ func (t *tick) run() error {
 
 	// A thread creation whose outcome was never recorded is settled first: if
 	// the thread exists, the handoff it was created for is completed now.
+	t.completeOwnerMove()
+	t.completeChildMove()
 	moved, held := t.reconcileNewThread()
 	if held {
 		res.State, res.Window = "not observed", "not checked"
@@ -1549,6 +1561,7 @@ func childrenLeft(obs decide.Observation, from config.Agent, to config.Candidate
 
 func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observation, summary health.Summary) (bool, error) {
 	class := obs.ErrorClass
+	t.handoffObs = obs
 	note := &HandoffNote{From: from, Reason: string(class), DryRun: t.opts.DryRun}
 	t.res.Handoff = note
 	if t.opts.DryRun {
@@ -1840,6 +1853,10 @@ func (t *tick) switchBack(from string) (bool, error) {
 		return false, nil
 	}
 	t.res.Handoff = &HandoffNote{From: from, To: state.Primary, Reason: "switch_back"}
+	if _, fromAgent := t.resolve(from); fromAgent.Adapter == "bb" && fromAgent.BB != nil && t.loop.Agent.Adapter == "bb" && t.loop.Agent.BB != nil {
+		t.followOwner(fromAgent.BB.Thread, t.loop.Agent.BB.Thread, "switch_back")
+		t.planChildMove(from, fromAgent.BB.Thread, t.loop.Agent.BB.Thread)
+	}
 	t.res.Target = state.Primary
 	t.st.ActiveTarget, t.st.LastHandoffAt, t.st.LastWakeAt = state.Primary, t.now, t.now
 	t.st.TargetSetBy = state.SetBySwitchBack

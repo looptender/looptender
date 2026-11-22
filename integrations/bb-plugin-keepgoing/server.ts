@@ -2,7 +2,7 @@
 // supervises, and offers pause, resume, and stop. It only calls the keepgoing
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
-import { lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, scheduleSchema } from "./status-details.ts";
+import { lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
 import { execFile } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -41,6 +41,7 @@ const statusSchema = z.object({
   runtime: runtimeSchema.optional(),
   moved: movedSchema.optional(),
   schedule: scheduleSchema.optional(),
+  limitWait: limitWaitSchema.optional(),
   daemon: daemonSchema.optional(),
   targetConfigured: z.boolean().optional(),
   primaryAgent: agentRef,
@@ -191,6 +192,7 @@ export default async function plugin(bb: BbPluginApi) {
       ...(s.targetAgent.provider ? { targetProvider: s.targetAgent.provider.slice(0, 128) } : {}),
       ...(s.targetAgent.model ? { targetModel: s.targetAgent.model.slice(0, 128) } : {}),
       ...(s.moved ? { moved: s.moved } : {}),
+      limitWait: s.limitWait ?? null,
     },
     loop: s.loop,
     configPath,

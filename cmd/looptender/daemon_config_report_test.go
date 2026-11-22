@@ -269,7 +269,7 @@ func TestSavedStopPrecedesConfigurationErrorDelivery(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.ctx = ctx
 	done := make(chan int, 1)
-	go func() { done <- daemonLoop(e, cfg, f.cfg, false, nil, nil) }()
+	go func() { done <- daemonLoop(e, cfg, f.cfg, false, nil, nil, nil) }()
 	t.Cleanup(func() {
 		cancel()
 		select {

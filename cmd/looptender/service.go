@@ -506,7 +506,7 @@ func serviceDaemon(e env, args []string) int {
 		e.errf("service: state directory changed; remove and reinstall the service explicitly")
 		return exitFailed
 	}
-	return daemon(e, cfg, *path, false)
+	return daemonAs(e, cfg, *path, false, false, "service", *expected)
 }
 
 func waitServiceDaemonExit(parent context.Context, dir string) (*lock.Lock, error) {

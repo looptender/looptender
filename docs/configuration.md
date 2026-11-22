@@ -66,6 +66,7 @@ loop:
 | `new_thread` | `false` | Fallback candidates only, v0.2.0. Instead of `thread`: a handoff to this candidate creates a new BB thread on the candidate's `provider`, with `model` and `reasoning`. Requires `provider`. See [hand off to a new conversation](fallbacks.md#hand-off-to-a-new-conversation). |
 | `project`, `environment` | the continued conversation's | With `new_thread` only: where the new thread is created. |
 | `permission_mode` | `accept-edits` | With `new_thread` only: `accept-edits`, `auto` or `full`. Always passed to `bb thread spawn`, so the new thread never takes a project default. `accept-edits` asks before anything but file edits. |
+| `move_children` | `true` | With `new_thread` only: after the handoff, move the direct child threads of the conversation being left to the created thread, and back on an automatic switch-back. See [child threads](fallbacks.md#child-threads-follow-the-handoff). |
 | `children.retry_errored` | `false` | v0.2.0. Opt in to [lane recovery](operations.md#lane-recovery): ask BB to retry the failed turn of a lane that was seen working and then failed with a connection, overload or unknown error. Nothing else is ever done to a lane. Per lane it uses `errors.max_reprompts` attempts spaced by `errors.backoff`. |
 | `children.max_per_check` | `5` | With `retry_errored`: lanes worked on in one check. `1` to `20`; `0` means the default. |
 | `children.max_per_episode` | `20` | With `retry_errored`: retries for one failure across all lanes. `1` to `100`; `0` means the default. |
@@ -480,6 +481,7 @@ See [operations.md](operations.md).
 | `report.timeout` | `20s` |
 | `yield.busy_command`, `yield.timeout` | required, `10s` |
 | `daemon.interval`, `daemon.control_poll` | `5m`, `2s` |
+| `daemon.adopt_installed_build` | not set: a running daemon moves, after a check, to a new build installed at the path it was started from by moving a link (its path now leads to another file path); `true` also adopts a file written over in place; `false` never (macOS and Linux; see [a running daemon moves to the installed build](operations.md#a-running-daemon-moves-to-the-installed-build)) |
 | `tick_timeout` | `3m`, or `probe.timeout` plus `90s` when that is longer. A check ends within this plus 90 seconds. Minimum `2m40s`; the connectivity check needs `network.timeout` more than that to have its full time; with fallbacks an explicit value must be at least `probe.timeout` plus `90s`. See [check time budget](operations.md#check-time-budget) |
 
 ## Environment variables
