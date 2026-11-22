@@ -81,7 +81,12 @@ type wakePolicyStatus struct {
 	// CommandPrograms lists the other programs the prompt text names for the
 	// loop's commands, anywhere in it, when they are not the one running now.
 	CommandPrograms []promptCommandFinding `json:"commandPrograms,omitempty"`
-	Message         string                 `json:"message"`
+	// CommandProgramsMore counts programs found past the bounds of one scan
+	// (at most 16 are listed); CommandProgramsUnchecked says the scan was cut
+	// short or the prompt was longer than the 1 MiB read.
+	CommandProgramsMore      int    `json:"commandProgramsMore,omitempty"`
+	CommandProgramsUnchecked bool   `json:"commandProgramsUnchecked,omitempty"`
+	Message                  string `json:"message"`
 }
 
 const wakePolicyOptIn = "Run `looptender prompt-policy apply -c CONFIG` to follow them: it rewrites the text above the line `Task:` to the current wording, keeps the task, keeps the previous file beside it, and records the new file."
@@ -128,8 +133,8 @@ func describeWakePolicy(l config.Loop, cfgPath ...string) *wakePolicyStatus {
 	// Any prompt, generated or not: the programs its text names.
 	text, skip := l.Prompt, ""
 	if l.PromptFile != "" {
-		if raw, err := os.ReadFile(l.PromptFile); err == nil {
-			text = string(raw)
+		if raw, err := readPromptBounded(l.PromptFile); err == nil {
+			text = raw
 			if m, ok := prompt.MatchPolicy(text); ok {
 				skip = prefixProgram(m.Prefix)
 			}
@@ -139,8 +144,9 @@ func describeWakePolicy(l config.Loop, cfgPath ...string) *wakePolicyStatus {
 	if len(cfgPath) > 0 {
 		cfg = cfgPath[0]
 	}
-	s.CommandPrograms = promptCommandFindings(text, cfg, skip)
-	s.Message += prefixNote + promptCommandsSentence(s.CommandPrograms, skip != "")
+	res := promptCommandFindings(text, cfg, skip)
+	s.CommandPrograms, s.CommandProgramsMore, s.CommandProgramsUnchecked = res.Findings, res.More, res.Unchecked
+	s.Message += prefixNote + promptCommandsSentence(res, skip != "")
 	return s
 }
 
@@ -168,4 +174,16 @@ func prefixSentence(verdict, program string) string {
 func prefixProgram(prefix string) string {
 	p, _ := promptPrefixProgram(prefix)
 	return p
+}
+
+// readPromptBounded reads at most one byte more than the scan reads of a
+// prompt file, so a huge prompt cannot be held in memory by a status read.
+func readPromptBounded(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, promptReadLimit+1))
+	return string(b), err
 }

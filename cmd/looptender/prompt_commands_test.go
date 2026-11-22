@@ -193,3 +193,77 @@ func TestInlinePromptIsReadToo(t *testing.T) {
 		t.Fatalf("%+v", s)
 	}
 }
+
+// A directory named looptender or keepgoing (this project's own state
+// directories are named looptender) is not a program and is not reported.
+func TestADirectoryNamedLikeTheProgramIsNotReported(t *testing.T) {
+	l := newLayout(t)
+	defer func(f func() string) { promptExecutable = f }(promptExecutable)
+	promptExecutable = func() string { return l.current }
+	for _, name := range []string{"looptender", "keepgoing"} {
+		dir := filepath.Join(l.home, ".config", name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, body := range []string{"State is kept in " + dir + " and " + dir + "/", "Look at '" + dir + "' for the files."} {
+			if s := describeWakePolicy(l.promptFor(t, body), l.cfg); s == nil || len(s.CommandPrograms) != 0 || strings.Contains(s.Message, "other programs") {
+				t.Errorf("%q: %+v", body, s)
+			}
+		}
+	}
+}
+
+// A Windows drive path means nothing here and is not looked up.
+func TestDriveLettersAreIgnoredOffWindows(t *testing.T) {
+	l := newLayout(t)
+	s := describeWakePolicy(l.promptFor(t, `Run C:\tools\looptender complete -c `+l.cfg+" and 'D:/x/keepgoing' await-user"), l.cfg)
+	if s == nil || len(s.CommandPrograms) != 0 {
+		t.Fatalf("%+v", s)
+	}
+}
+
+// A prompt cannot make a status read unbounded: the bytes read, the programs
+// looked at, the findings listed and the files hashed are all capped.
+func TestTheScanIsBounded(t *testing.T) {
+	l := newLayout(t)
+	defer func(f func() string) { promptExecutable = f }(promptExecutable)
+	promptExecutable = func() string { return l.current }
+	var b strings.Builder
+	for i := 0; i < 200000; i++ {
+		b.WriteString("/nowhere/")
+		b.WriteString(strings.Repeat("x", 4))
+		b.WriteString(string(rune('a' + i%26)))
+		b.WriteString(strings.Repeat("y", i%7))
+		b.WriteString("/")
+		b.WriteString(strings.Repeat("z", 1+i%5))
+		b.WriteString("/looptender\n")
+	}
+	body := b.String()
+	if len(body) < 3<<20 {
+		t.Fatalf("the probe prompt is only %d bytes", len(body))
+	}
+	start := time.Now()
+	s := describeWakePolicy(l.promptFor(t, body), l.cfg)
+	if s == nil || len(s.CommandPrograms) > promptMaxFindings || s.CommandProgramsMore == 0 || !s.CommandProgramsUnchecked {
+		t.Fatalf("%d findings, more %d, unchecked %v", len(s.CommandPrograms), s.CommandProgramsMore, s.CommandProgramsUnchecked)
+	}
+	if len(s.Message) > 8<<10 {
+		t.Fatalf("the message is %d bytes", len(s.Message))
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("took %s", time.Since(start))
+	}
+	// Same-size copies are hashed only up to the budget; a same-size file past it
+	// is not called another program.
+	same, _ := os.ReadFile(l.current)
+	var copies strings.Builder
+	for i := 0; i < promptHashFiles+3; i++ {
+		p := filepath.Join(l.home, "copies", string(rune('a'+i)), "looptender")
+		os.MkdirAll(filepath.Dir(p), 0o700)
+		os.WriteFile(p, append([]byte{}, same...), 0o700)
+		copies.WriteString("run '" + p + "' status\n")
+	}
+	if s := describeWakePolicy(l.promptFor(t, copies.String()), l.cfg); len(s.CommandPrograms) != 0 {
+		t.Fatalf("copies of the same bytes were reported: %+v", s.CommandPrograms)
+	}
+}

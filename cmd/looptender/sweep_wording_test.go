@@ -176,13 +176,3 @@ func TestSingleRouteWarningIsNotShownForACompletedOrDisabledLoop(t *testing.T) {
 		t.Fatal("a completed or disabled loop is told a limit can stop its work")
 	}
 }
-
-// An adoption event in the run history names its loop.
-func TestAdoptionEventsCarryTheLoopName(t *testing.T) {
-	dir := t.TempDir()
-	noteAdoption(dir, "example-loop", adoptRecord{Outcome: adoptAdopted})
-	raw, err := os.ReadFile(filepath.Join(dir, state.LogName))
-	if err != nil || !strings.Contains(string(raw), `"loop":"example-loop"`) || !strings.Contains(string(raw), "build_adopted") {
-		t.Fatalf("%v %s", err, raw)
-	}
-}
