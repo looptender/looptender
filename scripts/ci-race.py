@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the native race suite, with two disjoint command partitions per runner."""
 import collections
+import datetime
 import json
 import os
 from pathlib import Path
@@ -12,10 +13,12 @@ import tempfile
 import time
 
 COMMAND = 'github.com/looptender/looptender/cmd/looptender'
-# Source-only checks: the timeout guard failed after 330s in run 44399774595.
-# Run these once, before the lifecycle suites, with the same race binary.
-EARLY = {'TestDockHiddenTabReadsNothingG1', 'TestDockReadsTimeOutG2',
-         'TestDockQuotaOnlyReadsAfterExplicitReview'}
+# The command package runs as PARTITIONS jobs, one per runner, each with its
+# own BUDGET seconds of execution. scripts/ci-workflow-test.py fails if the
+# workflow's matrix does not list exactly these indexes.
+PARTITIONS = 3
+BUDGET = 600
+WEIGHTS_FILE = Path(__file__).with_name('ci-race-weights.json')
 
 
 def inventory(output):
@@ -37,14 +40,75 @@ def validate_partition(names, groups):
         raise ValueError('empty partition')
 
 
-def partition(names):
-    if not EARLY <= set(names):
-        raise ValueError('early guard missing from native inventory')
-    early = sorted(EARLY)
-    rest = sorted(set(names) - EARLY)
-    groups = [early, rest[::2], rest[1::2]]
+def load_weights(path=WEIGHTS_FILE):
+    data = json.loads(Path(path).read_text())
+    return data['default'], data['tests']
+
+
+def partition(names, count=PARTITIONS, weights=None):
+    """Split names into count groups, balanced by weight, deterministically.
+
+    Weights only decide balance. Every name lands in exactly one group, and
+    validate_partition proves it before anything runs.
+    """
+    default, known = weights if weights is not None else load_weights()
+    groups = [[] for _ in range(count)]
+    loads = [0.0] * count
+    for name in sorted(names, key=lambda n: (-known.get(n, default), n)):
+        lightest = min(range(count), key=lambda i: (loads[i], i))
+        groups[lightest].append(name)
+        loads[lightest] += known.get(name, default)
+    groups = [sorted(g) for g in groups]
     validate_partition(names, groups)
     return groups
+
+
+def read_events(path):
+    events = []
+    with open(path) as stream:
+        for line in stream:
+            try:
+                events.append(json.loads(line))
+            except ValueError:
+                pass  # a line cut short by the stop
+    return events
+
+
+def seconds_between(start, end):
+    def parse(text):
+        text = re.sub(r'(\.\d{6})\d*', r'\1', text.replace('Z', '+00:00'))
+        return datetime.datetime.fromisoformat(text)
+    return (parse(end) - parse(start)).total_seconds()
+
+
+def timings(path):
+    """Finished top-level tests with their seconds, and those still running."""
+    finished, running, last = {}, {}, None
+    for event in read_events(path):
+        last = event.get('Time', last)
+        name = event.get('Test', '')
+        if not name or '/' in name:
+            continue
+        if event['Action'] == 'run':
+            running[name] = event.get('Time')
+        elif event['Action'] in ('pass', 'fail', 'skip'):
+            running.pop(name, None)
+            finished[name] = event.get('Elapsed', 0.0)
+    open_for = {n: seconds_between(t, last) for n, t in running.items() if t and last}
+    return finished, open_for
+
+
+def describe(path, index, count, budget, elapsed):
+    finished, open_for = timings(path)
+    slowest = sorted(finished.items(), key=lambda kv: -kv[1])[:5]
+    text = (f'command partition {index + 1} of {count}: {elapsed:.0f}s of its {budget}s budget '
+            f'({100 * elapsed / budget:.0f}%); {len(finished)} tests finished')
+    if open_for:
+        text += '; still running: ' + ', '.join(
+            f'{n} ({s:.0f}s so far)' for n, s in sorted(open_for.items(), key=lambda kv: -kv[1])[:5])
+    if slowest:
+        text += '; slowest finished: ' + ', '.join(f'{n} {s:.1f}s' for n, s in slowest)
+    return text
 
 
 def expression(names):
@@ -131,7 +195,7 @@ class Job:
             signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
 
 
-def wait_jobs(jobs, deadline):
+def wait_jobs(jobs, deadline, overrun=None):
     pending = list(jobs)
     errors = []
     while pending:
@@ -146,10 +210,10 @@ def wait_jobs(jobs, deadline):
                     # Release ownership now; a later idempotent cleanup must not
                     # signal a recycled group identifier from an earlier guard.
                     job.stop()
-        # Only the command partitions share the package's original 10m budget.
-        # Other packages retain go test's own default per-package timeout.
+        # Only a command partition has a budget; other packages keep go test's
+        # own default per-package timeout.
         if any(j.names is not None for j in pending) and time.monotonic() >= deadline:
-            raise TimeoutError('command package exhausted its 10-minute budget')
+            raise TimeoutError(overrun() if overrun else 'command partition exhausted its budget')
         if pending:
             time.sleep(0.1)
     if errors:
@@ -182,58 +246,113 @@ def cleanup_jobs(jobs):
         raise RuntimeError('; '.join(errors))
 
 
-def main():
-    root = Path(__file__).resolve().parents[1]
-    # Retain JSON inventory and complete logs, including on cancellation/failure.
+def summary(text):
+    print(text, flush=True)
+    path = os.environ.get('GITHUB_STEP_SUMMARY')
+    if path:
+        with open(path, 'a') as stream:
+            stream.write(text + '\n\n')
+
+
+def output_dir():
+    # Retain the inventory and complete logs, including on cancellation or failure.
     output = Path(os.environ.get('RUNNER_TEMP', tempfile.gettempdir())) / 'ci-race'
     output.mkdir(exist_ok=True)
+    return output
+
+
+def run_guarded(jobs, wait):
+    def interrupted(signum, frame):
+        raise InterruptedError(f'received signal {signum}')
+
+    previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        wait()
+    finally:
+        try:
+            cleanup_jobs(jobs)
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+
+
+def run_command_partition(index):
+    if not 0 <= index < PARTITIONS:
+        raise ValueError(f'partition {index} is outside 0..{PARTITIONS - 1}')
+    root = Path(__file__).resolve().parents[1]
+    output = output_dir()
     with tempfile.TemporaryDirectory(prefix='ci-race-build-') as build:
         binary = str(Path(build) / 'command.test')
         subprocess.run(['go', 'test', '-race', '-c', '-o', binary, './cmd/looptender'],
                        cwd=root, check=True)
         listing = subprocess.check_output([binary, '-test.list=.'],
-                                         cwd=root / 'cmd/looptender', text=True)
-        groups = partition(inventory(listing))
-        (output / 'inventory.json').write_text(json.dumps(groups, indent=2) + '\n')
-        packages = subprocess.check_output(['go', 'list', './...'], cwd=root, text=True).splitlines()
-        if packages.count(COMMAND) != 1:
-            raise ValueError('command package missing or duplicated')
-        others = [p for p in packages if p != COMMAND]
-        # One shared 10-minute execution budget, not ten minutes per partition.
-        deadline = time.monotonic() + 600
+                                          cwd=root / 'cmd/looptender', text=True)
+        names = inventory(listing)
+        # Every leg computes the whole plan and proves it covers the inventory
+        # exactly once before running its own share of it.
+        groups = partition(names)
+        (output / f'inventory-{index}.json').write_text(json.dumps(groups, indent=2) + '\n')
+        mine = groups[index]
+        log = output / f'command-{index}.jsonl'
+        started = time.monotonic()
+        deadline = started + BUDGET
+        # go's own timeout is a little later, so the message below wins the race.
+        argv = ['go', 'tool', 'test2json', '-t', '-p', COMMAND, binary,
+                '-test.v=test2json', '-test.count=1', f'-test.timeout={BUDGET + 30}s',
+                '-test.run=' + expression(mine)]
+        jobs = [Job(argv, root / 'cmd/looptender', log, mine)]
 
-        jobs = []
+        def overrun():
+            return describe(log, index, PARTITIONS, BUDGET, time.monotonic() - started)
 
-        def command(index):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError('command package exhausted its 10-minute budget')
-            log = output / f'command-{index}.jsonl'
-            argv = ['go', 'tool', 'test2json', '-t', '-p', COMMAND, binary,
-                    '-test.v=test2json', '-test.count=1',
-                    f'-test.timeout={remaining:.3f}s', '-test.run=' + expression(groups[index])]
-            job = Job(argv, root / 'cmd/looptender', log, groups[index])
-            jobs.append(job)
-            return job
-
-        def interrupted(signum, frame):
-            raise InterruptedError(f'received signal {signum}')
-
-        previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
         try:
-            wait_jobs([command(0)], deadline)
-            command(1)
-            command(2)
-            jobs.append(Job(['go', 'test', '-race', *others], root, output / 'packages.log'))
-            wait_jobs(jobs[1:], deadline)
-        finally:
-            try:
-                cleanup_jobs(jobs)
-            finally:
-                for sig, handler in previous.items():
-                    signal.signal(sig, handler)
-        print('Native race inventory executed exactly once across command partitions.', flush=True)
+            run_guarded(jobs, lambda: wait_jobs(jobs, deadline, overrun))
+        except TimeoutError as error:
+            summary(f'**Over budget: {error}**')
+            raise
+        except Exception:
+            if log.exists():
+                summary(f'**Failed: {describe(log, index, PARTITIONS, BUDGET, time.monotonic() - started)}**')
+            raise
+        text = describe(log, index, PARTITIONS, BUDGET, time.monotonic() - started)
+        summary(f'Command partition ran {len(mine)} of {len(names)} tests: {text}')
+    print('Native race inventory for this partition executed exactly once.', flush=True)
+
+
+def run_other_packages():
+    root = Path(__file__).resolve().parents[1]
+    output = output_dir()
+    packages = subprocess.check_output(['go', 'list', './...'], cwd=root, text=True).splitlines()
+    if packages.count(COMMAND) != 1:
+        raise ValueError('command package missing or duplicated')
+    others = [p for p in packages if p != COMMAND]
+    jobs = [Job(['go', 'test', '-race', *others], root, output / 'packages.log')]
+    run_guarded(jobs, lambda: wait_jobs(jobs, float('inf')))
+
+
+def weights(paths):
+    seen = collections.defaultdict(list)
+    for path in paths:
+        finished, _ = timings(path)
+        for name, seconds in finished.items():
+            seen[name].append(seconds)
+    default = 0.25
+    heavy = {n: round(sorted(v)[len(v) // 2], 1) for n, v in seen.items()
+             if sorted(v)[len(v) // 2] >= 2}
+    print(json.dumps({'_note': json.loads(WEIGHTS_FILE.read_text())['_note'],
+                      'default': default, 'tests': dict(sorted(heavy.items()))}, indent=1))
+
+
+def main(argv):
+    if argv[:1] == ['command'] and len(argv) == 2:
+        run_command_partition(int(argv[1]))
+    elif argv == ['packages']:
+        run_other_packages()
+    elif argv[:1] == ['weights'] and len(argv) > 1:
+        weights(argv[1:])
+    else:
+        sys.exit('usage: ci-race.py command <partition> | packages | weights <command-N.jsonl>...')
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv[1:])
