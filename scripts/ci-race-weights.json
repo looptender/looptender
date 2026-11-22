@@ -1,5 +1,5 @@
 {
- "_note": "Seconds per top-level command test on the macOS runner (median of 6 green runs on 2026-11-22). Only tests of 2s or more are listed; every other test is weighted DEFAULT_WEIGHT. Used only to balance partitions: a stale or missing entry changes balance, never coverage. Regenerate with: python3 scripts/ci-race.py weights command-*.jsonl",
+ "_note": "Seconds per top-level command test on the macOS runner (median of 6 green runs on 2026-11-22). Only tests of 2s or more are listed; every other test is weighted DEFAULT_WEIGHT. Used only to balance partitions: a stale or missing entry changes balance, never coverage. Regenerate with: python3 scripts/ci-race.py weights command-*.jsonl The packages map is seconds per package on the Ubuntu runner; unlisted packages count default_package. Packages are spread over the same legs, after the command tests, so no leg carries them all.",
  "default": 0.25,
  "tests": {
   "TestACarriedOutStopIsNotRetriedAtTheControlPoll": 12.2,
@@ -100,5 +100,15 @@
   "TestTransferProcessCrashStopRecoveryAndNewTargetOnly": 6.7,
   "TestTransferReconcilePreservesRecordOnRefusal": 25.6,
   "TestTransferReconcileSupersessionBoundaries": 4.9
- }
+ },
+ "packages": {
+  "internal/incident": 175,
+  "internal/supervise": 150,
+  "internal/adapter/runner": 147,
+  "internal/scenario": 133,
+  "internal/window": 70,
+  "internal/adapter/conformance": 52,
+  "internal/rungraph": 30
+ },
+ "default_package": 10
 }

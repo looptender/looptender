@@ -19,10 +19,8 @@ def validate(text):
             condition = re.search(r'^        if: (.+)$', step, re.M)
             assert condition and condition[1] in (SCOPE, f'always() && ({SCOPE})'), step
     steps = re.split(r'^      - ', text, flags=re.M)[1:]
-    for prefix, command in (('name: Run one disjoint partition of the command package under the race detector\n',
-                             r'python3 -u scripts/ci-race.py command \$\{\{ matrix.part \}\}'),
-                            ('name: Run native race suite for every package but the command package\n',
-                             r'python3 -u scripts/ci-race.py packages')):
+    for prefix, command in (('name: Run one disjoint partition of the command package, and a share of the other packages, under the race detector\n',
+                             r'python3 -u scripts/ci-race.py command \$\{\{ matrix.part \}\}'),):
         race = [s for s in steps if s.startswith(prefix)]
         assert len(race) == 1, f'missing or duplicate native race step: {prefix}'
         assert re.search(r'^        run: ' + command + r'$', race[0], re.M), 'native runner failure must propagate'

@@ -12,7 +12,8 @@ import sys
 import tempfile
 import time
 
-COMMAND = 'github.com/looptender/looptender/cmd/looptender'
+MODULE = 'github.com/looptender/looptender/'
+COMMAND = MODULE + 'cmd/looptender'
 # The command package runs as PARTITIONS jobs, one per runner, each with its
 # own BUDGET seconds of execution. scripts/ci-workflow-test.py fails if the
 # workflow's matrix does not list exactly these indexes.
@@ -60,6 +61,27 @@ def partition(names, count=PARTITIONS, weights=None):
         loads[lightest] += known.get(name, default)
     groups = [sorted(g) for g in groups]
     validate_partition(names, groups)
+    return groups
+
+
+def package_groups(packages, command_loads, count=PARTITIONS, weights=None):
+    """Spread the packages other than the command package over the legs.
+
+    Each goes to the leg with the least work so far, counting its command
+    share. Every package lands in exactly one group.
+    """
+    if weights is None:
+        data = json.loads(WEIGHTS_FILE.read_text())
+        weights = (data['default_package'], data['packages'])
+    default, known = weights
+    groups = [[] for _ in range(count)]
+    loads = list(command_loads)
+    for name in sorted(packages, key=lambda p: (-known.get(p.removeprefix(MODULE), default), p)):
+        lightest = min(range(count), key=lambda i: (loads[i], i))
+        groups[lightest].append(name)
+        loads[lightest] += known.get(name.removeprefix(MODULE), default)
+    if sorted(p for g in groups for p in g) != sorted(packages):
+        raise ValueError('package split omits or duplicates a package')
     return groups
 
 
@@ -316,18 +338,24 @@ def run_command_partition(index):
             raise
         text = describe(log, index, PARTITIONS, BUDGET, time.monotonic() - started)
         summary(f'Command partition ran {len(mine)} of {len(names)} tests: {text}')
-    print('Native race inventory for this partition executed exactly once.', flush=True)
+        print('Native race inventory for this partition executed exactly once.', flush=True)
+        default, known = load_weights()
+        loads = [sum(known.get(n, default) for n in g) for g in groups]
+        run_packages(root, output, index, loads)
 
 
-def run_other_packages():
-    root = Path(__file__).resolve().parents[1]
-    output = output_dir()
+def run_packages(root, output, index, loads):
     packages = subprocess.check_output(['go', 'list', './...'], cwd=root, text=True).splitlines()
     if packages.count(COMMAND) != 1:
         raise ValueError('command package missing or duplicated')
-    others = [p for p in packages if p != COMMAND]
-    jobs = [Job(['go', 'test', '-race', *others], root, output / 'packages.log')]
+    mine = package_groups([p for p in packages if p != COMMAND], loads)[index]
+    if not mine:
+        return
+    started = time.monotonic()
+    jobs = [Job(['go', 'test', '-race', *mine], root, output / f'packages-{index}.log')]
     run_guarded(jobs, lambda: wait_jobs(jobs, float('inf')))
+    summary(f'Packages in this leg: {", ".join(p.removeprefix(MODULE) for p in mine)}; '
+            f'{time.monotonic() - started:.0f}s.')
 
 
 def weights(paths):
@@ -336,22 +364,20 @@ def weights(paths):
         finished, _ = timings(path)
         for name, seconds in finished.items():
             seen[name].append(seconds)
-    default = 0.25
+    data = json.loads(WEIGHTS_FILE.read_text())
     heavy = {n: round(sorted(v)[len(v) // 2], 1) for n, v in seen.items()
              if sorted(v)[len(v) // 2] >= 2}
-    print(json.dumps({'_note': json.loads(WEIGHTS_FILE.read_text())['_note'],
-                      'default': default, 'tests': dict(sorted(heavy.items()))}, indent=1))
+    data['tests'] = dict(sorted(heavy.items()))
+    print(json.dumps(data, indent=1))
 
 
 def main(argv):
     if argv[:1] == ['command'] and len(argv) == 2:
         run_command_partition(int(argv[1]))
-    elif argv == ['packages']:
-        run_other_packages()
     elif argv[:1] == ['weights'] and len(argv) > 1:
         weights(argv[1:])
     else:
-        sys.exit('usage: ci-race.py command <partition> | packages | weights <command-N.jsonl>...')
+        sys.exit('usage: ci-race.py command <partition> | weights <command-N.jsonl>...')
 
 
 if __name__ == '__main__':

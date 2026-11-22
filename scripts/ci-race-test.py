@@ -48,6 +48,15 @@ class PartitionTests(unittest.TestCase):
         loads = [sum(known.get(n, default) for n in g) for g in groups]
         self.assertLess(max(loads) - min(loads), max(known.values()))
 
+    def test_every_package_but_the_command_package_runs_in_exactly_one_leg(self):
+        packages = [race.MODULE + n for n in ['internal/incident', 'internal/supervise', 'internal/new', 'internal/other']]
+        for loads in ([0, 0, 0], [500, 0, 10]):
+            groups = race.package_groups(packages, loads)
+            self.assertEqual(sorted(p for g in groups for p in g), sorted(packages))
+        self.assertTrue(all(len(g) <= 2 for g in race.package_groups(packages, [0, 0, 0])))
+        real = race.package_groups([race.MODULE + n for n in json.loads(race.WEIGHTS_FILE.read_text())['packages']], [330, 330, 330])
+        self.assertTrue(all(real), 'each leg should get a heavy package')
+
     def test_workflow_matrix_runs_every_partition(self):
         text = (Path(__file__).resolve().parents[1] / '.github/workflows/checks.yml').read_text()
         job = re.search(r'^  race:\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', text, re.M | re.S)[1]

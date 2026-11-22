@@ -280,8 +280,9 @@ jobs:
   # carries the whole package: on one macOS runner the two partitions and the
   # other packages together used 91 to 99 percent of the 600-second budget and
   # the merge queue run 45007959493 ran out of it with no failing test. Each
-  # leg has its own 600-second budget and says which partition ran over and
-  # which tests were slowest or unfinished. The other jobs here keep the rest.
+  # leg has its own 600-second budget for its command tests, then runs a share
+  # of the other packages, and says which partition ran over and which tests
+  # were slowest or unfinished. `checks` keeps everything else.
   race:
     name: "${{ inputs.base && 'Scope preview - ' || '' }}Race partition ${{ matrix.part }} (${{ matrix.os }})"
     strategy:
@@ -311,10 +312,10 @@ jobs:
         if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
         with:
           go-version: "1.26.11"
-      - name: Run one disjoint partition of the command package under the race detector
+      - name: Run one disjoint partition of the command package, and a share of the other packages, under the race detector
         run: python3 -u scripts/ci-race.py command ${{ matrix.part }}
         if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
-      - name: Retain this partition's inventory and log
+      - name: Retain this partition's inventory and logs
         if: always() && (steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -412,17 +413,6 @@ jobs:
       - name: Check race partition coverage and failure handling
         if: runner.os == 'Linux'
         run: python3 scripts/ci-race-test.py
-      - name: Run native race suite for every package but the command package
-        run: python3 -u scripts/ci-race.py packages
-        if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
-      - name: Retain the other packages' race log
-        if: always() && (steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: native-race-packages-${{ matrix.os }}
-          path: ${{ runner.temp }}/ci-race/
-          if-no-files-found: warn
-          retention-days: 7
       - name: Smoke check setup and recovery with local fixtures
         if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
         run: |
