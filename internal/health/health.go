@@ -96,13 +96,13 @@ func (r *Registry) Save(stateDir string) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(stateDir, ".tmp-*")
+	tmp, err := os.CreateTemp(stateDir, "."+FileName+"-*")
 	if err != nil {
 		return err
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
-	if _, err := tmp.Write(append(b, '\n')); err != nil {
+	if err := snapshot.Write(tmp, append(b, '\n')); err != nil {
 		tmp.Close()
 		return err
 	}

@@ -63,16 +63,25 @@ func (t *tick) planChildMove(candidate, from, to string) {
 		return
 	}
 	t.st.ChildMove = &state.ChildMove{From: from, To: to, Candidate: candidate, At: t.now}
-	t.saveChildMove()
+	if !t.saveChildMove() {
+		// Moves made with no record could not be continued after a crash:
+		// none is made until the record is saved, by the end of this check
+		// or a later one.
+		t.warn("the move of child threads could not be recorded in state.json; no child was moved")
+		return
+	}
 	t.runChildMove()
 }
 
-// saveChildMove writes the move to state.json on its own, so a crash keeps it.
-func (t *tick) saveChildMove() {
-	if saved, err := state.Load(t.loop.StateDir); err == nil {
-		saved.ChildMove = t.st.ChildMove
-		_ = state.Save(t.loop.StateDir, saved)
+// saveChildMove writes the move to state.json on its own, so a crash keeps
+// it. It says whether the record was saved.
+func (t *tick) saveChildMove() bool {
+	saved, err := state.Load(t.loop.StateDir)
+	if err != nil {
+		return false
 	}
+	saved.ChildMove = t.st.ChildMove
+	return state.Save(t.loop.StateDir, saved) == nil
 }
 
 // heldNow reports a hold saved since the check began.
@@ -190,7 +199,7 @@ func (t *tick) runChildMove() {
 	if m.Candidate == "" && t.loop.Agent.BB != nil && t.loop.Agent.BB.CLI != "" {
 		cli = t.loop.Agent.BB.CLI // a transfer's move: the primary's bb
 	}
-	MoveChildren(t.ctx, t.opts.Threads(cli), m, ChildMoveEnv{Left: t.left, Held: t.heldNow, Save: t.saveChildMove, Warn: func(s string) { t.warn("%s", s) }})
+	MoveChildren(t.ctx, t.opts.Threads(cli), m, ChildMoveEnv{Left: t.left, Held: t.heldNow, Save: func() { t.saveChildMove() }, Warn: func(s string) { t.warn("%s", s) }})
 	t.res.ChildrenMoved, t.res.ChildrenPending = m.Moved, len(m.Remaining)
 }
 

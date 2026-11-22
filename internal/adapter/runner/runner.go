@@ -405,7 +405,9 @@ func (d Dir) SaveSession(id string) error {
 	if err := os.MkdirAll(string(d), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(d.path("session"), []byte(id+"\n"), 0o600)
+	// Replaced whole: a full disk must never leave a cut-short session ID
+	// that a later turn would try to resume.
+	return snapshot.WriteFileAtomic(d.path("session"), []byte(id+"\n"), 0o600, true)
 }
 
 // Start launches argv in workdir with prompt on stdin, detached from the
@@ -687,7 +689,7 @@ func (d Dir) startTurnGuarded(argv []string, workdir, prompt string, env []strin
 		}
 		return "", notSpawned{err}
 	}
-	if err := os.WriteFile(d.path("prompt"), []byte(prompt), 0o600); err != nil {
+	if err := snapshot.WriteFileAtomic(d.path("prompt"), []byte(prompt), 0o600, false); err != nil {
 		return fail(errors.New("runner: the prompt could not be written" + errnoText(err)))
 	}
 	if key == "" {
@@ -750,7 +752,7 @@ func (d Dir) waitAdopted(rec Record) bool {
 }
 
 func (d Dir) adoptWait(rec Record) error {
-	return os.WriteFile(d.path(waitAdoptedFile), []byte(waitKey(rec)+"\n"), 0o600)
+	return snapshot.WriteFileAtomic(d.path(waitAdoptedFile), []byte(waitKey(rec)+"\n"), 0o600, false)
 }
 
 // errOutputOverLimit says a turn printed more than its adapter reads.

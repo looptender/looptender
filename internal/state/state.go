@@ -1009,13 +1009,13 @@ func Save(stateDir string, f File) error {
 		return err
 	}
 	path := filepath.Join(stateDir, FileName)
-	tmp, err := os.CreateTemp(stateDir, ".tmp-*")
+	tmp, err := os.CreateTemp(stateDir, "."+FileName+"-*")
 	if err != nil {
 		return err
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
-	if _, err := tmp.Write(append(b, '\n')); err != nil {
+	if err := snapshot.Write(tmp, append(b, '\n')); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -1062,13 +1062,9 @@ func Append(stateDir string, e Event) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(stateDir, LogName), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = f.Write(append(b, '\n'))
-	return err
+	// Whole lines only: a failed or short write is cut back, so a full disk
+	// never leaves a torn line for the next event to join.
+	return snapshot.AppendLine(filepath.Join(stateDir, LogName), append(b, '\n'), 0o600)
 }
 
 // Brief names a brief to another conversation: Action is handoff or

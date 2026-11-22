@@ -267,12 +267,12 @@ func saveAllowance(dir, name string, b []byte) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".allowance-*")
+	f, err := os.CreateTemp(dir, "."+name+"-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(f.Name())
-	if _, err = f.Write(append(b, '\n')); err == nil {
+	if err = snapshot.Write(f, append(b, '\n')); err == nil {
 		err = snapshot.Sync(f)
 	}
 	closeErr := f.Close()

@@ -558,6 +558,31 @@ Restart, progress, turn completion, target changes, ownership takeover and resum
 
 Malformed, unreadable or unwritable accounting fails closed with a diagnostic error; no unverified allowance is assumed. Repair runtime access or restore the last trustworthy ledger before continuing. The tick lock serializes reservations, and synced temporary-file replacement preserves them across process restarts independently of `state.json`. This does not guarantee survival of power loss, storage corruption, manual deletion/rollback, external writers ignoring the lock, or an older binary that does not implement this limit. Verification uses offline CLI, decision and supervisor fixtures, including simulated exit before recording a check; no live provider was used. A separate [no-progress timeout](#no-progress-timeout) is available in v0.1.3 or newer.
 
+## A full disk
+
+A loop's records are small, but every one has to be saved, and every send's record before the send. When the volume that holds the state directory fills (an install, a build or a log on the same volume does that much faster than looptender), this is what happens and what is said.
+
+**What a failed write does.** Every record (`state.json`, `control.json`, `sends.json`, `incidents.json`, `deliveries.json`, `health.json`, the build adoption and refused-start records, a headless target's saved session ID and turn markers) is written whole to a temporary file beside it and renamed over the old one only after the whole write; `state.json`, `control.json`, `sends.json` and both journals are flushed first. A failed or short write leaves the old record and no temporary file, never an empty or cut-short one, so the next check never reads a loop as new. `runs.jsonl` and the routes history log, the two logs that are appended to, get whole lines only. Every appender holds an exclusive lock on the log, only across one line's write, so a failed or short write is cut back to the log's length before it, and that cut can never remove another process's line. A line torn by a crash is followed by a fresh one.
+
+- **Before a send.** A send (a wake, a retry, a brief, a new conversation's first prompt, a stop, a report) is made only after its record is saved in `sends.json`. When that save fails, nothing is sent, and the check exits 1 naming the cause.
+- **After a send.** When the send was made and the rest of the check cannot be saved, the next check finds the send recorded with no outcome and counts it as made: it is not sent again. A stop is the exception: it is sent again, which is harmless (see [a send recorded before it is made](#a-send-recorded-before-it-is-made)).
+- **A hold.** `pause`, `stop`, `await-user` and the other control commands exit 1 when the hold cannot be saved, and the old record stays: nothing looks held that is not. A hold a check raises (a cap reached, a question) fails the check, which settles nothing; the next check with room raises it again.
+- **A handoff.** A new conversation's intent, the move of the loop's owner, and the move of child threads are each saved before anything is done in BB. A move of child threads whose record cannot be saved moves no child until it can.
+- **Build adoption** waits while the volume is nearly full (below 100 MiB), and says so once for each waiting build (`build_refused` with "waiting for room"); it is tried again after each check.
+
+**Warnings before it bites.** `doctor` reports `state.disk_space`, and `status` prints a `disk:` line (and `diskSpace` in `status --json`) when the volume is low:
+
+| Free on the volume | Level | `doctor` |
+| --- | --- | --- |
+| at least the larger of 1 GiB and 2% of the volume | `ok` | ok |
+| below that | `low`: "the volume that holds the state directory is filling" | warning |
+| below 100 MiB | `critical`: "nearly full" | error (exit 1) |
+| cannot be read | `unknown` | unavailable |
+
+1 GiB is room for an install or a build to finish; 2% scales it to large volumes, where the programs that fill a disk write in larger amounts. At about 100 MiB free, installs and builds already fail for lack of room, and an operating system starts failing writes of its own. Free space is read with `statfs` on macOS and Linux and `GetDiskFreeSpaceEx` on Windows.
+
+**The daemon tells, once per episode.** After each check a daemon reads the volume. An episode begins when the volume falls below the filling threshold. It ends only when free space is back above that threshold by a margin, the larger of 256 MiB and 10% of the threshold, so free space hovering at a threshold is one episode, not one per crossing; leaving "nearly full" needs the same margin above 100 MiB. Within an episode each level (filling, nearly full) is added to `runs.jsonl` (`disk_low`, `disk_critical`) and sent as one `error` report (`data.cause` `disk_space_low` or `disk_space_critical`, one attempt) at most once, and two reports are at least an hour apart: a level reached within the hour is told when the hour is up. Reports go out if the loop reports `error` events (the default). The end of an episode is recorded as `disk_ok`. An unreadable volume neither starts nor ends one. The episode is held in memory: a daemon restarted while the volume is low tells once more, and each daemon on a volume tells for its own loop. Nothing is recorded or sent when the write of that record itself fails.
+
 ## A send recorded before it is made
 
 Released in v0.2.0; **fixture-tested only**. A check used to save what it did only at its end, in `state.json`. A send it made and could not then record was unknown to the next check, which made it again: with a read-only or full state directory a session in error was re-prompted at every check and never held, and a supervisor killed between a send and that save repeated the send on restart.

@@ -16,6 +16,7 @@ import (
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/daemoninfo"
+	"github.com/looptender/looptender/internal/diskspace"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/snapshot"
 	"github.com/looptender/looptender/internal/state"
@@ -476,6 +477,15 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 	}
 	from := adoptBuildID{Label: version, SHA256: a.image.Digest()}
 	to := adoptBuildID{SHA256: c.sha}
+	if diskspace.Of(a.stateDir).Level() == diskspace.Critical {
+		// A switch writes records: not on a nearly full volume. Said once
+		// for this build; it is tried again after each check.
+		if !a.noted[c.sha+adoptDiskReason] {
+			a.noted[c.sha+adoptDiskReason] = true
+			a.note(adoptRecord{Outcome: adoptRefused, Mode: a.mode, From: from, To: to, Reason: adoptDiskReason})
+		}
+		return
+	}
 	if setting == nil && !c.viaLink {
 		// Overwritten in place (go install, go build -o): reported once,
 		// not adopted by default.
@@ -578,6 +588,8 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 	a.skip[c.sha] = true
 	a.note(adoptRecord{Outcome: adoptRefused, Mode: a.mode, From: from, To: to, Reason: "the installed build could not be started; this daemon carries on with its build"})
 }
+
+const adoptDiskReason = "waiting for room: the volume that holds the state directory is nearly full (below 100 MiB free); the switch is tried again after each check"
 
 const adoptInPlaceReason = "a different build is at the launch path, written over the old file rather than installed by moving a link; restart supervision to use it, or set loop.daemon.adopt_installed_build: true to adopt such builds"
 

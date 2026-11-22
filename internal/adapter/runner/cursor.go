@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/looptender/looptender/internal/envvar"
+	"github.com/looptender/looptender/internal/snapshot"
 	"io"
 	"os"
 	"os/exec"
@@ -272,7 +273,7 @@ func (c *Cursor) Send(ctx context.Context, prompt string, mode adapter.Mode) err
 	}
 	if version != "" {
 		// Best effort: without a record a later fresh start is refused.
-		_ = os.WriteFile(c.dir.path(cursorTurnVersionName), []byte(version+"\n"), 0o600)
+		_ = snapshot.WriteFileAtomic(c.dir.path(cursorTurnVersionName), []byte(version+"\n"), 0o600, false)
 	}
 	return nil
 }

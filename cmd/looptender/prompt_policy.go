@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/looptender/looptender/internal/snapshot"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,7 +186,7 @@ func applyPromptPolicy(cfg *config.Config, cfgPath string, now time.Time, opts p
 	}
 	if text != string(raw) {
 		backup := l.PromptFile + ".before-policy-" + now.UTC().Format("20060102T150405Z")
-		if err := os.WriteFile(backup, raw, info.Mode().Perm()); err != nil {
+		if err := snapshot.WriteFileAtomic(backup, raw, info.Mode().Perm(), true); err != nil {
 			return r, errors.New("the previous prompt file could not be kept; nothing was written")
 		}
 		if err := replacePromptFile(l.PromptFile, []byte(text), info.Mode().Perm()); err != nil {
