@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/prompt"
 	"sort"
 	"strings"
@@ -274,6 +275,10 @@ type dockLoop struct {
 	// updates, or its commands run another program. Absent when it follows
 	// updates with nothing to say. It names no path.
 	WakePolicy dockText `json:"wakePolicy,omitempty"`
+	// AlsoWaiting is why a paused loop is still waiting for a person (a
+	// question or a hold's reason): the state word stays "paused", as status
+	// says, and the loop stays under "Needs you".
+	AlsoWaiting string `json:"alsoWaiting,omitempty"`
 	// Versions is what else the read found about the builds the loop runs:
 	// its daemon's label and its service's file. The Versions view lists them.
 	Versions dockLoopVersions `json:"versions"`
@@ -1265,7 +1270,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 	}
 	r.AllClear = complete && omitted == 0 && len(r.NeedsYou) == 0
 	sort.SliceStable(r.Loops, func(i, j int) bool {
-		a, b := dockStatePriority[r.Loops[i].State], dockStatePriority[r.Loops[j].State]
+		a, b := dockLoopPriority(r.Loops[i]), dockLoopPriority(r.Loops[j])
 		if a != b {
 			return a < b
 		}
@@ -1609,17 +1614,39 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		l.State, l.Phrase, l.Detail = "unknown", "Unknown", "Its control record could not be read, so whether it is on, held or stopped is unknown."
 		need = dockUnreadable([]string{"control_unavailable"})
 	default:
-		c := snap.Controls
-		switch {
-		case !c.Enabled:
-			// status says "disabled" for a loop that is off, whatever else is
-			// recorded (a completed task, a stop): one word per state.
+		// One state word per state, from the function status uses
+		// (control.File.Summary): superseded, disabled, stop requested, paused,
+		// awaiting user, completed, enabled, in that order.
+		word := dockControlWord(snap)
+		if word == "awaiting user" && snap.Controls.Completed {
+			// A completed task with an awaiting flag left on asks nothing of
+			// the person (complete clears it): the panel keeps reading it as
+			// finished, as it did, so what is waited for does not change.
+			word = "completed"
+		}
+		switch word {
+		case "superseded":
+			l.State, l.Phrase, l.Detail = "off", "Superseded", "Another loop continues this work; this loop is retired and sends nothing."
+		case "disabled":
 			l.State, l.Phrase, l.Detail = "off", "Off", "Supervision is off for this loop."
-		case c.Stop:
+		case "stop requested":
 			l.State, l.Phrase, l.Detail = "stopped", "Stopped", "A stop is requested. Nothing is sent until it is resumed."
-		case c.Completed:
+		case "paused":
+			l.State, l.Phrase, l.Detail = "paused", "Paused", "Paused. Nothing is sent until it is resumed."
+			// Still waiting for a person when one is asked for, as before: the
+			// state word is status's, and the need and its reason stay.
+			if c := snap.Controls; c.AwaitingUser && !c.Completed {
+				need = dockHoldNeed(st, in.Hold, identifiers)
+				if snap.Moved != nil && snap.Moved.Held {
+					need.Reason, need.Action = snap.Moved.Text, "Resume the loop; that is the one action needed."
+				}
+				l.Phrase = "Paused \u00B7 also waiting for you"
+				l.AlsoWaiting = need.Reason
+				l.Detail += " Also waiting for you: " + need.Reason
+			}
+		case "completed":
 			l.State, l.Phrase, l.Detail = "finished", "Finished", "Marked finished, which is a declaration and is not verified. Nothing is sent until it is resumed."
-		case c.AwaitingUser:
+		case "awaiting user":
 			l.State, l.Phrase = "waiting_for_you", "Waiting for you"
 			need = dockHoldNeed(st, in.Hold, identifiers)
 			if snap.Moved != nil && snap.Moved.Held {
@@ -1628,10 +1655,10 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 				need.Reason, need.Action = snap.Moved.Text, "Resume the loop; that is the one action needed."
 			}
 			l.Detail = need.Reason
-		case c.Paused:
-			l.State, l.Phrase, l.Detail = "paused", "Paused", "Paused. Nothing is sent until it is resumed."
-		case !c.Enabled:
-			l.State, l.Phrase, l.Detail = "off", "Off", "Supervision is off for this loop."
+		default:
+		}
+		switch {
+		case l.State != "":
 		case st == nil:
 			// On, but state.json or the rest of status could not be read.
 			l.State, l.Phrase, l.Detail = "unknown", "Unknown", "It is on, but its check history could not be read."
@@ -2179,10 +2206,12 @@ func dockUnscheduledDetail(st *statusOut, now time.Time) string {
 	if r := st.Schedule.StartedBy; r != nil && r.Source == state.RoutineBBAutomation {
 		last += ", started by a BB automation"
 	}
+	const ticks = " Checks come from a scheduler that is not recorded (ticks): each tick runs the build at the path that scheduler calls."
 	if g := st.Schedule.sch.Recent; g > 0 {
-		return last + ", and recent checks ran about " + dockSpan(g) + " apart (past checks, not a forecast). " + dockCapital(next) + ". Checks come from a scheduler that is not recorded (ticks): each tick runs the build at the path that scheduler calls."
+		return last + ", and recent checks ran about " + dockSpan(g) + " apart (past checks, not a forecast). " + dockCapital(next) + "." + ticks
 	}
-	return last + ". " + dockCapital(next) + "."
+	// Short, because the menu shows this line within a fixed length.
+	return last + ". " + dockCapital(next) + ". Its checks are ticks from a scheduler not on record."
 }
 
 func dockFallbackReadiness(st *statusOut, chain *dockChainInput) dockFallbacks {
@@ -2630,4 +2659,23 @@ func dockWakePolicyText(w *wakePolicyStatus) dockText {
 		return nil
 	}
 	return txt(strings.Join(parts, " ") + " `looptender prompt-policy show` says more.")
+}
+
+// dockControlWord is the control state word status prints for a loop:
+// the snapshot's own when it has one, else the word its flags give.
+func dockControlWord(snap *clientSnapshot) string {
+	if snap.ControlState != "" {
+		return snap.ControlState
+	}
+	c := snap.Controls
+	return control.File{Enabled: c.Enabled, Paused: c.Paused, Stop: c.Stop, AwaitingUser: c.AwaitingUser, Completed: c.Completed}.Summary()
+}
+
+// dockLoopPriority is the loop's place in the list: its state's, except that a
+// paused loop that is still waiting for a person sorts with those that need one.
+func dockLoopPriority(l dockLoop) int {
+	if l.State == "paused" && l.AlsoWaiting != "" {
+		return dockStatePriority["waiting_for_you"]
+	}
+	return dockStatePriority[l.State]
 }

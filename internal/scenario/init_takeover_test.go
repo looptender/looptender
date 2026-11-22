@@ -227,3 +227,42 @@ func TestScenarioInitAndArmWriteTheSameFallback(t *testing.T) {
 		t.Fatalf("init wrote %v\narm wrote  %v", fromInit, fromArm)
 	}
 }
+
+// A preview by a thread that does not own the loop is shown, says plainly
+// who can make the change, exits 0 and never advises --take-over; the real
+// command by that thread writes nothing.
+func TestScenarioPreviewByAThreadThatDoesNotOwnTheLoop(t *testing.T) {
+	t.Parallel()
+	w := NewWorld(t, scenarioStart)
+	codexUsable(w)
+	w.InitWith("--new-thread-provider", "none")
+	w.Must("pause", "-c", w.Config)
+	s := w.record("enable as owner", w.RunAs(primaryThread, "enable", "-c", w.Config), nil)
+	w.Check(s, "enable", exit(s, 0))
+	before := readFile(w, w.Config)
+	notOwner := "You are not this loop's owner, so you cannot make this change"
+	for name, args := range map[string][]string{
+		"fallbacks arm": {"fallbacks", "arm", "-c", w.Config, "--dry-run"},
+		"fallbacks add": {"fallbacks", "add", "-c", w.Config, "--non-interactive", "--agent", "bb", "--new-thread", "--provider", "codex", "--model", codexModel, "--enable-handoff", "--dry-run"},
+	} {
+		r := w.RunAs("thr_example_other", args...)
+		if r.Code != 0 || !strings.Contains(r.Stdout, notOwner) || !strings.Contains(r.Stdout, "Dry run: nothing written.") || strings.Contains(r.Stdout+r.Stderr, "take-over") {
+			t.Fatalf("%s: %d\n%s%s", name, r.Code, r.Stdout, r.Stderr)
+		}
+	}
+	r := w.RunAs("thr_example_other", "fallbacks", "add", "-c", w.Config, "--non-interactive", "--json", "--agent", "bb", "--new-thread", "--provider", "codex", "--model", codexModel, "--dry-run")
+	if r.Code != 0 || !strings.Contains(r.Stdout, `"callerNotOwner":true`) {
+		t.Fatalf("json: %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	r = w.RunAs("thr_example_other", "fallbacks", "arm", "-c", w.Config)
+	if r.Code == 0 || !strings.Contains(r.Stderr, "this caller does not own the loop") || strings.Contains(r.Stdout+r.Stderr, "take-over") || strings.Contains(r.Stdout, "Arm this loop?") {
+		t.Fatalf("real arm: %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	if readFile(w, w.Config) != before {
+		t.Fatal("a refused or previewed change was written")
+	}
+	// The owner's preview has no such note.
+	if r := w.RunAs(primaryThread, "fallbacks", "arm", "-c", w.Config, "--dry-run"); r.Code != 0 || strings.Contains(r.Stdout, notOwner) || !strings.Contains(r.Stdout, "Whether codex can take over now is not known") {
+		t.Fatalf("owner: %d\n%s", r.Code, r.Stdout)
+	}
+}
