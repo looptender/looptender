@@ -498,13 +498,13 @@ func TestScenarioIncidentHolds(t *testing.T) {
 						ownerIs(w, p.owner, generation), noReports(s), noSendsToLanes(w),
 					))
 				}
-				if hold == "stop" && p.recorded {
+				if hold == "stop" && spawned > 0 {
 					// The created thread is running the task: the stop
-					// reaches it. Before the handoff is recorded the stop
-					// goes to the coordinator only; that is open work and is
-					// not asserted here.
+					// reaches it, recorded or not.
 					w.Check(s, "the stop reaches the thread doing the work", check(stopped[successor], "stopped %v", stopped))
 				}
+				// Under the hold an unrecorded creation stays unsettled.
+				w.Check(s, "the creation is settled only after resume", check(s.Status.NewThreads.Pending == (spawned > 0 && !p.recorded), "newThreads.pending %v", s.Status.NewThreads.Pending))
 				s = w.Control("resume")
 				w.Check(s, "a person resumes", exit(s, 0))
 				w.Advance(time.Minute)
@@ -681,8 +681,9 @@ func switchBackJourney(t *testing.T, crash bool) {
 			t.Fatal(err)
 		}
 		s = w.killedTick("killed moving children back")
-		w.Check(s, "killed after the brief, before anything was saved", all(
-			sentExactly(s, Send{Kind: "tell", Thread: primaryThread, Mode: "auto"}), noReports(s), ownerIs(w, successor, 2)))
+		w.Check(s, "killed after the brief, its ownership move saved", all(
+			sentExactly(s, Send{Kind: "tell", Thread: primaryThread, Mode: "auto"}), noReports(s), ownerIs(w, successor, 2),
+			check(stateOf(w).PendingOwnerMove != nil && stateOf(w).PendingOwnerMove.To == primaryThread, "pending owner move %+v", stateOf(w).PendingOwnerMove)))
 		moves = append(moves, s.Moves...)
 		// As documented for a kill right after a switch-back brief: the
 		// next check holds for a person, who finds the coordinator took the
@@ -719,23 +720,19 @@ func switchBackJourney(t *testing.T, crash bool) {
 	}
 
 	// The created thread's commands are refused now; the coordinator's work.
-	// After the kill, the person's retarget settles the brief and the child
-	// moves complete, but the ownership move the switch-back had not saved
-	// is not made; where ownership should end up then is open work, so it is
-	// not asserted on that path.
-	if !crash {
-		w.Check(s, "ownership returned", ownerIs(w, primaryThread, 3))
-		before := readFile(w, filepath.Join(w.runtimeDir(), control.FileName))
-		for _, cmd := range []string{"resume", "enable"} {
-			r := w.RunAs(successor, cmd, "-c", w.Config)
-			s = w.record("successor: "+cmd, r, nil)
-			w.Check(s, "successor refused", all(exit(s, 1),
-				check(strings.Contains(r.Stderr, "ownership of this loop moved from this thread to BB thread "+primaryThread+" with the supervisor's handoff"), "stderr %q", r.Stderr)))
-		}
-		w.Check(s, "a refused command changes nothing", check(readFile(w, filepath.Join(w.runtimeDir(), control.FileName)) == before, "control.json changed"))
-		s = w.record("coordinator: enable", w.RunAs(primaryThread, "enable", "-c", w.Config), nil)
-		w.Check(s, "the coordinator owns the loop again", all(exit(s, 0), ownerIs(w, primaryThread, 3)))
+	// After the kill the switch-back's ownership move was already saved, so
+	// the person's retarget and resume complete it too.
+	w.Check(s, "ownership returned", ownerIs(w, primaryThread, 3))
+	before := readFile(w, filepath.Join(w.runtimeDir(), control.FileName))
+	for _, cmd := range []string{"resume", "enable"} {
+		r := w.RunAs(successor, cmd, "-c", w.Config)
+		s = w.record("successor: "+cmd, r, nil)
+		w.Check(s, "successor refused", all(exit(s, 1),
+			check(strings.Contains(r.Stderr, "ownership of this loop moved from this thread to BB thread "+primaryThread+" with the supervisor's handoff"), "stderr %q", r.Stderr)))
 	}
+	w.Check(s, "a refused command changes nothing", check(readFile(w, filepath.Join(w.runtimeDir(), control.FileName)) == before, "control.json changed"))
+	s = w.record("coordinator: enable", w.RunAs(primaryThread, "enable", "-c", w.Config), nil)
+	w.Check(s, "the coordinator owns the loop again", all(exit(s, 0), ownerIs(w, primaryThread, 3)))
 
 	// Nothing more for the created thread.
 	for i := 0; i < 3; i++ {
@@ -833,6 +830,79 @@ func TestScenarioIncidentWakePolicy(t *testing.T) {
 			s = w.Tick()
 			w.Check(s, "the successor is woken", all(action(s, "wake"), sentExactly(s, Send{Kind: "tell", Thread: successor, Mode: "auto"})))
 			wording(s, "a later wake")
+		})
+	}
+}
+
+// TestScenarioStopFindsTheUnrecordedThread: after a crash between `bb thread
+// spawn` and the record, a person's stop looks the created thread up by its
+// title, read-only, and stops what it finds without settling the handoff.
+// Several threads under the title are all stopped; none is guessed at and a
+// person is told; a lookup that fails is looked at again by the next check.
+func TestScenarioStopFindsTheUnrecordedThread(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name  string
+		setup func(w *World)
+		check func(w *World, stopped []string, s *Step)
+	}{
+		{"several listed under the title", func(w *World) {
+			w.Thread("thr_example_dup").StartTurn()
+			w.ListUnderTitle("thr_example_dup", w.spawnTitle())
+		}, func(w *World, stopped []string, s *Step) {
+			sort.Strings(stopped)
+			w.Check(s, "both stopped", check(fmt.Sprint(stopped) == fmt.Sprint([]string{"thr_example_dup", successor, primaryThread}), "stopped %v", stopped))
+		}},
+		{"none listed under the title", func(w *World) {
+			w.writeJSON("place.list", []map[string]any{})
+		}, func(w *World, stopped []string, s *Step) {
+			w.Check(s, "nothing guessed, a person told", all(
+				check(fmt.Sprint(stopped) == fmt.Sprint([]string{primaryThread}), "stopped %v", stopped),
+				check(strings.Contains(fmt.Sprint(w.Journal[len(w.Journal)-2].Tick["warnings"]), "stop it by hand"), "warnings %v", w.Journal[len(w.Journal)-2].Tick["warnings"]),
+			))
+		}},
+		{"the lookup fails once", func(w *World) {
+			// The stop check lists the coordinator's children first; the
+			// second listing is the lookup by title.
+			if err := os.WriteFile(filepath.Join(w.world, "fail.list"), []byte("2"), 0o600); err != nil {
+				w.t.Fatal(err)
+			}
+		}, func(w *World, stopped []string, s *Step) {
+			first := w.Journal[len(w.Journal)-2]
+			w.Check(s, "stopped by the next check", all(
+				check(fmt.Sprint(stopped) == fmt.Sprint([]string{primaryThread, primaryThread, successor}), "stopped %v", stopped),
+				check(first.Tick["outcome"] == "failed", "first stop check outcome %v", first.Tick["outcome"]),
+			))
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			w := NewWorld(t, scenarioStart)
+			setupIncident(w, incident{fallback: true, events: incidentEvents})
+			w.Advance(5 * time.Minute)
+			startLanes(w)
+			w.Advance(5 * time.Minute)
+			hitLimit(w)
+			w.Advance(time.Minute)
+			crashPoints[0].crash(w)
+			c.setup(w)
+			w.Advance(time.Minute)
+			s := w.Control("stop", "--note", "Fictional stop by a person")
+			w.Check(s, "stop saved", exit(s, 0))
+			var stopped []string
+			for i := 0; i < 2; i++ {
+				w.Advance(10 * time.Minute)
+				s = w.Tick()
+				for _, call := range s.Calls {
+					if len(call) > 2 && call[0] == "thread" && call[1] == "stop" {
+						stopped = append(stopped, call[2])
+					}
+				}
+				w.Check(s, "held", all(nothingSent(s), spawns(w, 1), check(len(s.Moves) == 0, "moved %v", s.Moves),
+					ownerIs(w, primaryThread, 1), targetIs(s, "primary", primaryThread), newThreads(s, 1),
+					check(s.Status.NewThreads.Pending, "the creation was settled under the hold")))
+			}
+			c.check(w, stopped, s)
 		})
 	}
 }
