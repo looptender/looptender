@@ -56,18 +56,21 @@ type fallbackEdit struct {
 
 // Success-only integration contract shared by the three commands.
 type fallbackEditReport struct {
-	SchemaVersion int                 `json:"schemaVersion"`
-	Kind          string              `json:"kind"`
-	Outcome       string              `json:"outcome"` // preview, changed or unchanged
-	Loop          string              `json:"loop"`
-	Candidate     string              `json:"candidate,omitempty"`
-	From          int                 `json:"from,omitempty"`
-	To            int                 `json:"to,omitempty"`
-	Active        string              `json:"activeTarget"`
-	Order         []fallbackAddTarget `json:"order"`
-	Handoff       fallbackAddHandoff  `json:"handoff"`
-	Redundancy    fallbackAddRule     `json:"redundancy"`
-	Health        string              `json:"health,omitempty"` // deleted, none_recorded or kept
+	SchemaVersion int    `json:"schemaVersion"`
+	Kind          string `json:"kind"`
+	Outcome       string `json:"outcome"` // preview, changed or unchanged
+	// CallerNotOwner: a dry-run preview by a caller that does not own the
+	// loop; the change itself must be made by the owner or from a terminal.
+	CallerNotOwner bool                `json:"callerNotOwner,omitempty"`
+	Loop           string              `json:"loop"`
+	Candidate      string              `json:"candidate,omitempty"`
+	From           int                 `json:"from,omitempty"`
+	To             int                 `json:"to,omitempty"`
+	Active         string              `json:"activeTarget"`
+	Order          []fallbackAddTarget `json:"order"`
+	Handoff        fallbackAddHandoff  `json:"handoff"`
+	Redundancy     fallbackAddRule     `json:"redundancy"`
+	Health         string              `json:"health,omitempty"` // deleted, none_recorded or kept
 	// Cleared lists what remove deletes or archives besides the entry:
 	// health, handoff_count and session, as seen at the preview.
 	Cleared        []string `json:"cleared,omitempty"`
@@ -160,8 +163,12 @@ func fallbacksManage(e env, sub string, args []string, input io.Reader) int {
 	if ref := ownListAuthority(cfg.Loop.StateDir, os.Getenv("BB_THREAD_ID")); ref != nil {
 		return refuse(exitUsage, errors.New(ref.Text))
 	}
+	notOwner := false
 	if code, err := fallbackAddAllowed(cfg); err != nil {
-		return refuse(code, err)
+		if !*dryRun || !onlyNotOwner(cfg) {
+			return refuse(code, err)
+		}
+		notOwner = true // a dry run writes nothing: shown, and said so
 	}
 	var edit *fallbackEdit
 	switch sub {
@@ -176,7 +183,9 @@ func fallbacksManage(e env, sub string, args []string, input io.Reader) int {
 		return refuse(exitUsage, err)
 	}
 	report := func(outcome string) int {
-		if err := json.NewEncoder(e.stdout).Encode(fallbackEditReportOf(edit, outcome)); err != nil {
+		r := fallbackEditReportOf(edit, outcome)
+		r.CallerNotOwner = notOwner
+		if err := json.NewEncoder(e.stdout).Encode(r); err != nil {
 			e.errf("fallbacks %s: could not write JSON result; files may already be changed", sub)
 			return exitFailed
 		}
@@ -201,6 +210,9 @@ func fallbacksManage(e env, sub string, args []string, input io.Reader) int {
 	}
 	printFallbackEdit(e.stdout, edit)
 	if *dryRun {
+		if notOwner {
+			fmt.Fprintln(e.stdout, "\n"+notOwnerNote)
+		}
 		fmt.Fprintln(e.stdout, "\nDry run: nothing written.")
 		return exitOK
 	}

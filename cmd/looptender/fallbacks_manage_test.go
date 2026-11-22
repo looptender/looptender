@@ -451,11 +451,19 @@ func TestFallbacksManageGuards(t *testing.T) {
 		t.Setenv("BB_THREAD_ID", "thr_example_visitor")
 		before := f.files(t)
 		for sub, args := range commands {
-			for _, mode := range []string{"--yes", "--dry-run"} {
-				code, stdout, stderr := f.manage(t, "", sub, append(args, mode)...)
-				if code != exitFailed || stdout != "" || !strings.Contains(stderr, "owned by BB thread thr_example_owner") || f.files(t) != before {
-					t.Fatalf("%s %s: %d %q %s", sub, mode, code, stdout, stderr)
-				}
+			code, stdout, stderr := f.manage(t, "", sub, append(args, "--yes")...)
+			if code != exitFailed || stdout != "" || !strings.Contains(stderr, "owned by BB thread thr_example_owner") || f.files(t) != before {
+				t.Fatalf("%s --yes: %d %q %s", sub, code, stdout, stderr)
+			}
+			// A dry run writes nothing: it is shown, says who can make the
+			// change, and never advises --take-over.
+			code, stdout, stderr = f.manage(t, "", sub, append(args, "--dry-run")...)
+			if code != exitOK || !strings.Contains(stdout, notOwnerNote) || !strings.Contains(stdout, "Dry run: nothing written.") || strings.Contains(stdout+stderr, "take-over") || f.files(t) != before {
+				t.Fatalf("%s --dry-run: %d %q %s", sub, code, stdout, stderr)
+			}
+			code, stdout, _ = f.manage(t, "", sub, append(args, "--dry-run", "--json")...)
+			if code != exitOK || !strings.Contains(stdout, `"callerNotOwner":true`) || f.files(t) != before {
+				t.Fatalf("%s --dry-run --json: %d %q", sub, code, stdout)
 			}
 		}
 	})

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
@@ -178,18 +179,20 @@ func isNewThreadCandidate(c config.Candidate) bool {
 
 // takeoverReadiness says whether the offered provider can take over now, as
 // far as the loop's own records show without a model call: the latest
-// recorded probe of any fallback on that provider in health.json. A usage
-// limit it recorded with a reset still ahead means it cannot take over until
-// then. With no record it says so, and that the fallback is checked with a
-// probe only when a handoff happens.
-func takeoverReadiness(cfg *config.Config, provider string, now time.Time) string {
+// recorded probe of a fallback on that provider in the same quota group as
+// the new conversation (group), so a check of another account or quota pool
+// on that provider is not taken for this one. A usage limit it recorded with
+// a reset still ahead means it cannot take over until then. With no record
+// it says so, and that the fallback is checked with a probe only when a
+// handoff happens.
+func takeoverReadiness(cfg *config.Config, provider, group string, now time.Time) string {
 	var last *probe.Result
 	if cfg != nil && cfg.Loop.StateDir != "" {
 		if reg, err := health.Load(cfg.Loop.StateDir); err == nil && reg != nil {
 			ids := map[string]bool{"new-conversation-" + provider: true}
 			if cfg.FallbackSet != nil {
 				for _, c := range cfg.FallbackSet.Candidates {
-					if c.Provider == provider {
+					if c.Provider == provider && c.Group == group {
 						ids[c.ID] = true
 					}
 				}
@@ -201,18 +204,32 @@ func takeoverReadiness(cfg *config.Config, provider string, now time.Time) strin
 			}
 		}
 	}
-	at := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+	at := func(t time.Time) string {
+		ago := "just now"
+		if d := now.Sub(t); d >= time.Minute {
+			ago = humanDuration(d) + " ago"
+		}
+		return t.UTC().Format(time.RFC3339) + ", " + ago
+	}
+	check := fmt.Sprintf("the last recorded check of a fallback on %s in quota group %s", provider, group)
 	switch {
 	case last == nil:
-		return "Whether " + provider + " can take over now is not known: nothing in this loop's records has checked it. A new-conversation fallback is checked with a probe only when a handoff happens; if that probe fails, no conversation is started."
+		return "Whether " + provider + " can take over now is not known: nothing in this loop's records has checked a fallback on it in quota group " + group + ". A new-conversation fallback is checked with a probe only when a handoff happens; if that probe fails, no conversation is started."
 	case !last.OK && last.ResetsAt != nil && last.ResetsAt.After(now):
-		return fmt.Sprintf("%s cannot take over now: its last recorded check (%s) found a usage limit until %s. A handoff before then finds no usable route and the loop waits.", provider, at(last.At), at(*last.ResetsAt))
+		return fmt.Sprintf("%s cannot take over now: %s (%s) found a usage limit until %s (in %s). A handoff before then finds no usable route and the loop waits.", provider, check, at(last.At), last.ResetsAt.UTC().Format(time.RFC3339), humanDuration(last.ResetsAt.Sub(now)))
 	case !last.OK:
 		class := last.ErrorClass
 		if class == "" {
 			class = "no answer"
 		}
-		return fmt.Sprintf("The last recorded check of %s (%s) failed (%s). It is checked again with a probe when a handoff happens.", provider, at(last.At), class)
+		return fmt.Sprintf("%s (%s) failed (%s). It is checked again with a probe when a handoff happens.", upperFirst(check), at(last.At), class)
 	}
-	return fmt.Sprintf("The last recorded check of %s (%s) passed. It is checked again with a probe when a handoff happens.", provider, at(last.At))
+	return fmt.Sprintf("%s (%s) passed. It is checked again with a probe when a handoff happens.", upperFirst(check), at(last.At))
+}
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

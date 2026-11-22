@@ -141,36 +141,49 @@ func TestArmCountsOtherFallbacksGainingHandoff(t *testing.T) {
 
 // What the loop's own probe records say about the offered provider, with no
 // model call: nothing recorded, a usage limit still ahead, a failed check,
-// a passed check.
+// a passed check; and only for fallbacks in the same quota group.
 func TestTakeoverReadiness(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{}
 	cfg.Loop.StateDir = dir
+	// Another account on codex, in its own quota group, with a fresh limit.
+	cfg.FallbackSet = &config.Fallbacks{Candidates: []config.Candidate{{ID: "codex-other-pool", Agent: config.Agent{Adapter: "codex", Provider: "codex", Group: "pool-b"}}}}
 	now := time.Now()
-	if got := takeoverReadiness(cfg, "codex", now); !strings.Contains(got, "is not known") || !strings.Contains(got, "checked with a probe only when a handoff happens") {
+	if got := takeoverReadiness(cfg, "codex", "codex", now); !strings.Contains(got, "is not known") || !strings.Contains(got, "checked with a probe only when a handoff happens") {
 		t.Fatal(got)
 	}
-	if got := takeoverReadiness(nil, "codex", now); !strings.Contains(got, "is not known") {
+	if got := takeoverReadiness(nil, "codex", "codex", now); !strings.Contains(got, "is not known") {
 		t.Fatal(got)
 	}
-	save := func(r probe.Result) {
-		reg := &health.Registry{Candidates: map[string]*health.Entry{"new-conversation-codex": {Last: &r}, "new-conversation-claude-code": {Last: &probe.Result{At: now, OK: true}}}}
+	reset := now.Add(5 * time.Hour)
+	other := probe.Result{At: now, ErrorClass: "rate_limit", ResetsAt: &reset}
+	save := func(r *probe.Result) {
+		reg := &health.Registry{Candidates: map[string]*health.Entry{"codex-other-pool": {Last: &other}, "new-conversation-claude-code": {Last: &probe.Result{At: now, OK: true}}}}
+		if r != nil {
+			reg.Candidates["new-conversation-codex"] = &health.Entry{Last: r}
+		}
 		if err := reg.Save(dir); err != nil {
 			t.Fatal(err)
 		}
 	}
-	reset := now.Add(5 * time.Hour)
-	save(probe.Result{At: now.Add(-time.Hour), ErrorClass: "rate_limit", ResetsAt: &reset})
-	if got := takeoverReadiness(cfg, "codex", now); !strings.Contains(got, "codex cannot take over now") || !strings.Contains(got, reset.UTC().Format(time.RFC3339)) {
+	save(nil)
+	if got := takeoverReadiness(cfg, "codex", "codex", now); !strings.Contains(got, "is not known") {
+		t.Fatalf("another quota group's limit was taken for this one: %s", got)
+	}
+	if got := takeoverReadiness(cfg, "codex", "pool-b", now); !strings.Contains(got, "codex cannot take over now") {
+		t.Fatalf("its own group: %s", got)
+	}
+	save(&probe.Result{At: now.Add(-time.Hour), ErrorClass: "rate_limit", ResetsAt: &reset})
+	if got := takeoverReadiness(cfg, "codex", "codex", now); !strings.Contains(got, "codex cannot take over now") || !strings.Contains(got, reset.UTC().Format(time.RFC3339)) || !strings.Contains(got, "(in 5h 0m)") || !strings.Contains(got, "1h 0m ago") {
 		t.Fatal(got)
 	}
 	past := now.Add(-time.Minute)
-	save(probe.Result{At: now.Add(-time.Hour), ErrorClass: "rate_limit", ResetsAt: &past})
-	if got := takeoverReadiness(cfg, "codex", now); !strings.Contains(got, "failed (rate_limit)") {
+	save(&probe.Result{At: now.Add(-3 * time.Hour), ErrorClass: "rate_limit", ResetsAt: &past})
+	if got := takeoverReadiness(cfg, "codex", "codex", now); !strings.Contains(got, "failed (rate_limit)") || !strings.Contains(got, "3h 0m ago") {
 		t.Fatal(got)
 	}
-	save(probe.Result{At: now.Add(-time.Hour), OK: true})
-	if got := takeoverReadiness(cfg, "codex", now); !strings.Contains(got, "passed") {
+	save(&probe.Result{At: now.Add(-50 * time.Hour), OK: true})
+	if got := takeoverReadiness(cfg, "codex", "codex", now); !strings.Contains(got, "passed") || !strings.Contains(got, "2d 2h ago") || !strings.Contains(got, "in quota group codex") {
 		t.Fatal(got)
 	}
 }
