@@ -28,6 +28,7 @@ def validate(text):
     gate = re.search(r'^  go:\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', text, re.M | re.S)
     assert gate and 'needs: [checks, race]' in gate[1] and 'if: ${{ !cancelled() }}' in gate[1], 'the required name must gate on every job'
     assert '[ "$CHECKS" = success ] && [ "$RACE" = success ]' in gate[1], 'the gate must require success, not just absence of failure'
+    assert 'fail-fast: false' in gate[1], 'a failing gate must not cancel the other'
     assert 'Build and test (${{ matrix.os }})' in gate[1], 'branch protection requires this name'
     assert not re.search(r'run: go test -race ./cmd/looptender -run', text), 'static guards already execute once in the native runner'
     for script in ('ci-scope-test.sh', 'check-contributions-test.sh', 'ci-timeout-note-test.sh', 'ci-workflow-test.py'):
@@ -56,7 +57,8 @@ class WorkflowTests(unittest.TestCase):
     def test_a_gate_that_forgets_a_job_or_tolerates_failure_is_rejected(self):
         for old, new in (('needs: [checks, race]', 'needs: [checks]'),
                          ('[ "$RACE" = success ]', 'true'),
-                         ('if: ${{ !cancelled() }}', '')):
+                         ('if: ${{ !cancelled() }}', ''),
+                         ('fail-fast: false # each gate reports its own result', '')):
             with self.subTest(old=old), self.assertRaises(AssertionError):
                 validate(WORKFLOW.replace(old, new, 1))
 

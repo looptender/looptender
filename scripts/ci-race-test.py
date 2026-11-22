@@ -57,6 +57,12 @@ class PartitionTests(unittest.TestCase):
         real = race.package_groups([race.MODULE + n for n in json.loads(race.WEIGHTS_FILE.read_text())['packages']], [330, 330, 330])
         self.assertTrue(all(real), 'each leg should get a heavy package')
 
+    def test_the_early_guard_tests_are_not_all_in_one_partition(self):
+        guards = ['TestDockHiddenTabReadsNothingG1', 'TestDockReadsTimeOutG2', 'TestDockQuotaOnlyReadsAfterExplicitReview']
+        default, known = race.load_weights()
+        groups = race.partition(list(known) + guards + [f'TestOther{i}' for i in range(1000)])
+        self.assertGreater(len({i for i, g in enumerate(groups) for n in guards if n in g}), 1)
+
     def test_workflow_matrix_runs_every_partition(self):
         text = (Path(__file__).resolve().parents[1] / '.github/workflows/checks.yml').read_text()
         job = re.search(r'^  race:\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', text, re.M | re.S)[1]
