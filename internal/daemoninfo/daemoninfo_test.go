@@ -209,3 +209,47 @@ func TestOptionalProcessIdentityIsAuthenticatedAndRedacted(t *testing.T) {
 		}
 	}
 }
+
+// A daemon that switched to a new build in place is the same process: it
+// reports the process's start and the earlier build's last pass, with the
+// switch as BuildStartedAt. Nothing later than its own start, or out of
+// order, is taken.
+func TestContinueKeepsTheProcessStartAcrossABuildSwitch(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Start(dir, "example-build", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	own := s.StartedAt()
+	started, passBegan, passEnded := own.Add(-6*time.Hour), own.Add(-10*time.Minute), own.Add(-9*time.Minute)
+	s.Continue(own.Add(time.Minute), time.Time{}, time.Time{}) // later than its own: ignored
+	if !s.StartedAt().Equal(own) {
+		t.Fatal("a later start was taken")
+	}
+	s.Continue(started, passBegan, passEnded)
+	got, err := Query(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.StartedAt.Equal(started) || got.BuildStartedAt == nil || !got.BuildStartedAt.Equal(own) ||
+		got.LastPassStartedAt == nil || !got.LastPassStartedAt.Equal(passBegan) || got.LastPassAt == nil || !got.LastPassAt.Equal(passEnded) {
+		t.Fatalf("%+v", got)
+	}
+	// A pass of this build replaces the earlier build's.
+	s.Update("checking", nil)
+	s.Update("waiting", nil)
+	if !s.LastPassStartedAt().After(passBegan) || !s.StartedAt().Equal(started) {
+		t.Fatalf("after a pass: %v %v", s.LastPassStartedAt(), s.StartedAt())
+	}
+	// A pass that ends before the process started is not taken.
+	other, err := Start(t.TempDir(), "example-build", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	other.Continue(started, started.Add(-2*time.Minute), started.Add(-time.Minute))
+	if !other.StartedAt().Equal(started) || !other.LastPassAt().IsZero() || !other.LastPassStartedAt().IsZero() {
+		t.Fatalf("out-of-order pass taken: %v %v", other.LastPassAt(), other.LastPassStartedAt())
+	}
+}

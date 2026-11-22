@@ -319,7 +319,7 @@
       note.appendChild(document.createTextNode("“" + text + "”"));
       li.appendChild(note);
       if (n.noteMasked && !state.identifiers) {
-        var p = el("p", "sub", "Parts that look like an ID, an absolute or home path (also one that contains .. or starts with Users/, home/ or root/, and a \\\\server\\share path), a web address, a user name and password before a host, an email address, an IPv4 or IPv6 address or a long code are hidden; another relative path such as docs/plan.md is shown. ");
+        var p = el("p", "sub", "Parts that look like an ID, an absolute or home path (a /, ~/, ~name, C:\\ or \\ path, also one that contains .. or starts with Users, home or root, with / or \\ between its parts, and a \\\\server\\share path), a web address, a user name and password before a host, an email address, an IPv4 or IPv6 address or a long code are hidden; another relative path such as docs/plan.md or docs\\plan.md is shown. ");
         p.appendChild(showNotesButton());
         li.appendChild(p);
       }
@@ -716,8 +716,11 @@
       pane.appendChild(emptyBox("This loop is no longer registered.", "Pick another from the list."));
       return;
     }
-    var st = el("span", "state tone-" + (TONES[l.state] || "unknown"));
-    st.appendChild(icon(STATE_ICON[l.state] || "unknown"));
+    // A paused loop that is still waiting for a person reads as one that needs
+    // a person: the tone and icon follow what is waited for, not only the word.
+    var stState = l.alsoWaiting ? "waiting_for_you" : l.state;
+    var st = el("span", "state tone-" + (TONES[stState] || "unknown"));
+    st.appendChild(icon(STATE_ICON[stState] || "unknown"));
     st.appendChild(document.createTextNode(l.phrase));
     var pills = st;
     // A failed lane is said beside the supervision state, in words.

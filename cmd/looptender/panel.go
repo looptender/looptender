@@ -749,7 +749,8 @@ func panelCommand(e env, args []string) int {
 	}
 	key := ""
 	if *account != "" {
-		key = "a" + *account
+		// A catalog ID, or the handle panel list gives the account.
+		key = "a" + panelAccountByIDOrHandle(*account)
 	}
 	if *loop != "" {
 		if key, err = panelLoopKey(*directory, *loop); err != nil {

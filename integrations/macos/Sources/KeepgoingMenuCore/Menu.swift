@@ -328,7 +328,7 @@ public enum MenuBuilder {
                 let build = buildText(loop, installed: list.installedBuild)
                 let target = targetText(loop)
                 let shown = [phrase, target, build].filter { !$0.isEmpty }.joined(separator: " · ")
-                rows.append(MenuRow(kind: .loop, title: short, detail: shown, symbol: symbols[loop.state] ?? "questionmark.circle",
+                rows.append(MenuRow(kind: .loop, title: short, detail: shown, symbol: symbols[loop.needsYou && loop.state == "paused" ? "waiting_for_you" : loop.state] ?? "questionmark.circle",
                                     accessibilityLabel: flag.isEmpty ? "\(name), \(shown)" : "\(name), \(Contract.text(loop.phrase)). \(flag)" + (target.isEmpty ? "" : ". Configured target: " + target) + (build.isEmpty ? "" : ". " + build),
                                     accessibilityHelp: choices.count > 1 ? "Shows what you can do with this loop." : "Opens this loop in the panel.",
                                     toolTip: [short == name ? "" : name, target.isEmpty ? "" : "Configured target: " + target].filter { !$0.isEmpty }.joined(separator: "\n"), command: choices.count > 1 ? nil : .openLoop(key: loop.key), submenu: choices.count > 1 ? choices : []))
