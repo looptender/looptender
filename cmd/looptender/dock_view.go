@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/prompt"
 	"sort"
 	"strings"
@@ -1609,17 +1610,21 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		l.State, l.Phrase, l.Detail = "unknown", "Unknown", "Its control record could not be read, so whether it is on, held or stopped is unknown."
 		need = dockUnreadable([]string{"control_unavailable"})
 	default:
-		c := snap.Controls
-		switch {
-		case !c.Enabled:
-			// status says "disabled" for a loop that is off, whatever else is
-			// recorded (a completed task, a stop): one word per state.
+		// One state word per state, from the function status uses
+		// (control.File.Summary): superseded, disabled, stop requested, paused,
+		// awaiting user, completed, enabled, in that order.
+		switch dockControlWord(snap) {
+		case "superseded":
+			l.State, l.Phrase, l.Detail = "off", "Superseded", "Another loop continues this work; this loop is retired and sends nothing."
+		case "disabled":
 			l.State, l.Phrase, l.Detail = "off", "Off", "Supervision is off for this loop."
-		case c.Stop:
+		case "stop requested":
 			l.State, l.Phrase, l.Detail = "stopped", "Stopped", "A stop is requested. Nothing is sent until it is resumed."
-		case c.Completed:
+		case "paused":
+			l.State, l.Phrase, l.Detail = "paused", "Paused", "Paused. Nothing is sent until it is resumed."
+		case "completed":
 			l.State, l.Phrase, l.Detail = "finished", "Finished", "Marked finished, which is a declaration and is not verified. Nothing is sent until it is resumed."
-		case c.AwaitingUser:
+		case "awaiting user":
 			l.State, l.Phrase = "waiting_for_you", "Waiting for you"
 			need = dockHoldNeed(st, in.Hold, identifiers)
 			if snap.Moved != nil && snap.Moved.Held {
@@ -1628,10 +1633,10 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 				need.Reason, need.Action = snap.Moved.Text, "Resume the loop; that is the one action needed."
 			}
 			l.Detail = need.Reason
-		case c.Paused:
-			l.State, l.Phrase, l.Detail = "paused", "Paused", "Paused. Nothing is sent until it is resumed."
-		case !c.Enabled:
-			l.State, l.Phrase, l.Detail = "off", "Off", "Supervision is off for this loop."
+		default:
+		}
+		switch {
+		case l.State != "":
 		case st == nil:
 			// On, but state.json or the rest of status could not be read.
 			l.State, l.Phrase, l.Detail = "unknown", "Unknown", "It is on, but its check history could not be read."
@@ -2179,10 +2184,12 @@ func dockUnscheduledDetail(st *statusOut, now time.Time) string {
 	if r := st.Schedule.StartedBy; r != nil && r.Source == state.RoutineBBAutomation {
 		last += ", started by a BB automation"
 	}
+	const ticks = " Checks come from a scheduler that is not recorded (ticks): each tick runs the build at the path that scheduler calls."
 	if g := st.Schedule.sch.Recent; g > 0 {
-		return last + ", and recent checks ran about " + dockSpan(g) + " apart (past checks, not a forecast). " + dockCapital(next) + ". Checks come from a scheduler that is not recorded (ticks): each tick runs the build at the path that scheduler calls."
+		return last + ", and recent checks ran about " + dockSpan(g) + " apart (past checks, not a forecast). " + dockCapital(next) + "." + ticks
 	}
-	return last + ". " + dockCapital(next) + "."
+	// Short, because the menu shows this line within a fixed length.
+	return last + ". " + dockCapital(next) + ". Its checks are ticks from a scheduler not on record."
 }
 
 func dockFallbackReadiness(st *statusOut, chain *dockChainInput) dockFallbacks {
@@ -2630,4 +2637,14 @@ func dockWakePolicyText(w *wakePolicyStatus) dockText {
 		return nil
 	}
 	return txt(strings.Join(parts, " ") + " `looptender prompt-policy show` says more.")
+}
+
+// dockControlWord is the control state word status prints for a loop:
+// the snapshot's own when it has one, else the word its flags give.
+func dockControlWord(snap *clientSnapshot) string {
+	if snap.ControlState != "" {
+		return snap.ControlState
+	}
+	c := snap.Controls
+	return control.File{Enabled: c.Enabled, Paused: c.Paused, Stop: c.Stop, AwaitingUser: c.AwaitingUser, Completed: c.Completed}.Summary()
 }
