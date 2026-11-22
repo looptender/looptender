@@ -56,6 +56,7 @@ func BindBBTarget(f *File, to string) error {
 	}
 	if same {
 		f.Ownership.Generation++
+		f.Ownership.Followed = nil // an explicit move ends any supervisor-made run
 	}
 	f.BBTarget = to
 	return nil

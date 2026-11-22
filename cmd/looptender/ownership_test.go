@@ -576,3 +576,98 @@ func TestResumeOwnerConflictGivesPersonRecoveryWithoutTransfer(t *testing.T) {
 		t.Fatalf("resume changed ownership or retained hold: %+v", ctl)
 	}
 }
+
+// followSupervisorMove changes control.json as a check does when ownership
+// follows a handoff the supervisor made itself.
+func followSupervisorMove(t *testing.T, f *fixture, from, to string) {
+	t.Helper()
+	_, err := control.UpdateChecked(filepath.Join(f.dir, "state"), func(c *control.File) error {
+		moved, err := control.FollowHandoff(c, from, c.Ownership.Generation, to, time.Now())
+		if err == nil && !moved {
+			t.Error("ownership did not follow")
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A running daemon keeps supervising when ownership follows a handoff the
+// supervisor made, and still exits when ownership is then taken explicitly.
+// The thread that lost ownership is refused control commands with a message
+// naming the handoff, while checks it starts (a scheduler carrying its
+// identity) still run.
+func TestDaemonFollowsSupervisorMadeOwnershipMove(t *testing.T) {
+	f := newFixture(t)
+	t.Setenv("BB_THREAD_ID", "thr_first")
+	f.run("enable")
+	f.run("complete")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	go func() { done <- run(ctx, []string{"daemon", "-c", f.cfg}, io.Discard, io.Discard) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+		}
+	})
+	cfg := loadFixture(t, f.cfg)
+	deadline := time.Now().Add(3 * time.Second)
+	for inspectDaemon(context.Background(), cfg.Loop.StateDir, version, false).Phase != "waiting" {
+		if time.Now().After(deadline) {
+			t.Fatal("daemon did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	followSupervisorMove(t, f, "thr_first", "thr_successor")
+	followSupervisorMove(t, f, "thr_successor", "thr_first_again")
+	select {
+	case code := <-done:
+		t.Fatalf("daemon exited after a supervisor-made move: %d", code)
+	case <-time.After(time.Second):
+	}
+	// The thread that lost ownership: control refused and named, checks run.
+	if code, _, e := f.run("resume"); code == 0 {
+		t.Fatalf("old owner resume: %s", e)
+	}
+	code, _, e := f.run("enable")
+	if code == 0 || !strings.Contains(e, "with the supervisor's handoff") || !strings.Contains(e, "thr_first_again") {
+		t.Fatalf("old owner enable: %d %s", code, e)
+	}
+	t.Setenv("BB_THREAD_ID", "thr_successor")
+	if code, _, e := f.run("tick"); code != 0 && code != exitSkipped {
+		t.Fatalf("check from a superseded owner: %d %s", code, e)
+	}
+	// An explicit claim ends the run: the daemon exits as before.
+	t.Setenv("BB_THREAD_ID", "thr_person_choice")
+	for {
+		code, _, e := f.run("enable", "--take-over")
+		if code == 0 {
+			break
+		}
+		if code != exitSkipped || time.Now().After(deadline.Add(5*time.Second)) {
+			t.Fatal(e)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case code := <-done:
+		if code != exitFailed {
+			t.Fatalf("daemon exit=%d", code)
+		}
+		done <- code
+	case <-time.After(3 * time.Second):
+		t.Fatal("daemon survived an explicit takeover")
+	}
+	if o := ownerControl(t, f).Ownership; o.ThreadID != "thr_person_choice" || o.Followed != nil || !ownerControl(t, f).Completed {
+		t.Fatalf("%+v", o)
+	}
+	// The superseded threads are refused like any non-owner now.
+	t.Setenv("BB_THREAD_ID", "thr_successor")
+	if code, _, _ := f.run("tick"); code == 0 {
+		t.Fatal("check from a thread outside the current run was accepted")
+	}
+}

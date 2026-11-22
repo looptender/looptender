@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/looptender/looptender/internal/lock"
 )
@@ -96,5 +97,54 @@ func TestControlUpdatesSerializeAndPreserveOwnership(t *testing.T) {
 	f, err := UpdateChecked(dir, func(f *File) error { return ClaimOwner(f, "thr_second", true) })
 	if err != nil || !f.Stop || !f.Paused || f.Ownership.ThreadID != "thr_second" {
 		t.Fatalf("%+v %v", f, err)
+	}
+}
+
+func TestFollowHandoffRunAndExplicitEnd(t *testing.T) {
+	f := File{Ownership: &Ownership{ThreadID: "thr_a", Generation: 4}, Paused: true}
+	if moved, err := FollowHandoff(&f, "thr_other", 4, "thr_b", time.Now()); moved || err != nil {
+		t.Fatalf("moved from a thread that does not own the loop: %v %v", moved, err)
+	}
+	if moved, err := FollowHandoff(&f, "thr_a", 3, "thr_b", time.Now()); moved || err != nil {
+		t.Fatal("moved at a stale generation")
+	}
+	if moved, err := FollowHandoff(&f, "thr_a", 4, "thr_b", time.Now()); !moved || err != nil {
+		t.Fatal(err)
+	}
+	if moved, _ := FollowHandoff(&f, "thr_b", 5, "thr_a", time.Now()); !moved {
+		t.Fatal("switch-back did not move")
+	}
+	o := f.Ownership
+	if !f.Paused || o.ThreadID != "thr_a" || o.Generation != 6 || o.Followed.Base != 4 || len(o.Followed.From) != 1 || o.Followed.From[0] != "thr_b" ||
+		!o.Follows("thr_a", 4) || !o.Follows("thr_b", 5) || o.Follows("thr_a", 3) || o.Follows("thr_a", 6) {
+		t.Fatalf("%+v %+v", o, o.Followed)
+	}
+	if CheckOwner(f, "", false) != nil {
+		t.Fatal("valid run refused")
+	}
+	bad := f
+	bad.Ownership = &Ownership{ThreadID: "thr_a", Generation: 6, Followed: &Followed{Base: 6}}
+	if CheckOwner(bad, "", false) == nil {
+		t.Fatal("run base at the current generation accepted")
+	}
+	if err := BindBBTarget(&f, "thr_a"); err != nil || f.Ownership.Followed != nil || f.Ownership.Generation != 7 {
+		t.Fatalf("explicit move kept the run: %+v %v", f.Ownership, err)
+	}
+	f.Ownership = &Ownership{ThreadID: "thr_a", Generation: 1}
+	FollowHandoff(&f, "thr_a", 1, "thr_b", time.Now())
+	if err := ClaimOwner(&f, "thr_c", true); err != nil || f.Ownership.Followed != nil {
+		t.Fatalf("take-over kept the run: %+v", f.Ownership)
+	}
+}
+
+// An explicit take-over by the current owner ends a supervisor-made run.
+func TestSameOwnerTakeOverEndsTheRun(t *testing.T) {
+	f := File{Ownership: &Ownership{ThreadID: "thr_a", Generation: 1}}
+	FollowHandoff(&f, "thr_a", 1, "thr_b", time.Now())
+	if err := ClaimOwner(&f, "thr_b", false); err != nil || f.Ownership.Followed == nil {
+		t.Fatal("a plain enable by the owner ended the run")
+	}
+	if err := ClaimOwner(&f, "thr_b", true); err != nil || f.Ownership.Followed != nil || f.Ownership.Generation != 2 || f.Ownership.FollowedFrom("thr_a") || f.Ownership.Follows("thr_a", 1) {
+		t.Fatalf("%+v %v", f.Ownership, err)
 	}
 }
