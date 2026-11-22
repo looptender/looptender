@@ -148,6 +148,10 @@ public enum MenuCommand: Equatable {
     case openPanelWithChanges
     /// Runs `keepgoing panel stop`. Supervision is not affected.
     case stopPanel
+    /// Relaunches the menu from the installed build. Runs no CLI command.
+    case relaunchMenu
+    /// Turns "Update the menu automatically" on or off. Runs no CLI command.
+    case toggleAutoUpdate
     /// Runs `keepgoing client review <action> --loop <key> --json`, which
     /// reads and changes nothing; its review is then shown for confirmation.
     case review(LoopAction, key: String)
@@ -209,6 +213,20 @@ public enum MenuReading: Equatable {
     case unavailable
 }
 
+/// What the menu says about its own update.
+public struct UpdateOffer: Equatable {
+    /// The installed build's name when it differs from the one running.
+    public let availableLabel: String?
+    public let automatic: Bool
+    /// Why the last relaunch did not happen, when it did not.
+    public let failure: String?
+    public init(availableLabel: String?, automatic: Bool, failure: String? = nil) {
+        self.availableLabel = availableLabel
+        self.automatic = automatic
+        self.failure = failure
+    }
+}
+
 public enum MenuBuilder {
     // Long enough for a real loop name, short enough that the state column
     // stays close to the short names beside it.
@@ -264,6 +282,20 @@ public enum MenuBuilder {
         MenuRow(kind: .status, title: text, detail: "", symbol: "", accessibilityLabel: text, accessibilityHelp: "", toolTip: "", command: nil)
     }
 
+    /// The menu's own update: the offer when the installed build differs (and
+    /// why the last attempt failed, if it did), then the setting.
+    static func updateRows(_ update: UpdateOffer) -> [MenuRow] {
+        var rows: [MenuRow] = []
+        if let label = update.availableLabel.map(Contract.text) {
+            rows.append(action("Update available: relaunch to use \(label)", .relaunchMenu, symbol: "arrow.down.circle",
+                               help: "Starts the installed build of this menu and quits this one. Your loops and Open at Login are not affected."))
+            if let why = update.failure.map(Contract.text), !why.isEmpty { rows.append(status("The last automatic relaunch did not happen: " + why + ".")) }
+        }
+        rows.append(action("Update the menu automatically", .toggleAutoUpdate, symbol: update.automatic ? "checkmark.circle" : "circle",
+                           help: "When on, the menu relaunches itself from the installed build while it is closed and no change is being made.", detail: update.automatic ? "on" : "off"))
+        return rows
+    }
+
     /// "stops by itself in 23 min", from the seconds the panel reports.
     static func stopsIn(_ seconds: Int?) -> String {
         guard let seconds else { return "running" }
@@ -277,7 +309,7 @@ public enum MenuBuilder {
     /// in place and the status line says a read is under way. `panel` is the
     /// panel server's status when it was read; the row that stops it is there
     /// only while it is running.
-    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil) -> MenuModel {
+    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil) -> MenuModel {
         // The first row is always there and always tries, whatever was read.
         var rows = [action("Open looptender Panel", .openPanel, symbol: "macwindow", help: "Opens the looptender panel in your browser.")]
         var badge = ""
@@ -371,6 +403,7 @@ public enum MenuBuilder {
             // stopping a loop; what happens to the loops is in the help.
             rows.append(action("Stop the Panel Page", .stopPanel, symbol: "xmark.circle", help: "Stops the panel's background process. Your loops keep running.", detail: stopsIn(panel.idleRemainingSeconds)))
         }
+        if let update { rows.append(contentsOf: updateRows(update)) }
         rows.append(action("Quit looptender Menu", .quit, symbol: "power", help: "Quits this menu. Supervision keeps running."))
         rows.append(separator)
         rows.append(status(notice ?? (refreshing ? "Reading…" : line)))
@@ -441,7 +474,7 @@ public enum MenuBuilder {
             for e in expects { arguments += ["--expect", e.key + "=" + e.expect] }
             if lanes { arguments.append("--lanes") }
             return arguments + ["--json"]
-        case .quit: return nil
+        case .quit, .relaunchMenu, .toggleAutoUpdate: return nil
         }
     }
 

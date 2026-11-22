@@ -58,6 +58,17 @@ The state words are not written in this app. They come from `keepgoing panel lis
 
 **Accessibility.** Every row's spoken label says what it is ("example-api, Waiting for you") and its help says what choosing it does ("Opens this loop in the panel."), and the menu-bar item's label includes the count. State is carried by words and a symbol shape, never by colour alone; the symbols are decorative and are not read. Text and symbols use the system's menu colours. Loop names are laid out left to right whatever script they are in. Not yet checked by a person with VoiceOver, with Increase Contrast, or on a real menu's highlighted row.
 
+## Updating the menu to the installed build
+
+The menu compares the build it runs with the one installed now, from the file system only (nothing is fetched). They differ when the path it was started through (argv[0], for example a `current` link) now leads to another file, when the file at that path was replaced, or when it runs from `<root>/builds/<id>/...` and `<root>/current` now points at another build. Then:
+
+- a dot follows the icon, and the icon's spoken label adds "menu update available";
+- **Update available: relaunch to use <build>** appears (the build is the directory name under `builds/`, else the app's version). Choosing it relaunches from the installed build;
+- one notification, "looptender menu: update available (<build>)", is posted for each installed build and never again for it, even after the menu is restarted. Clicking it does what the menu item does. The menu asks for notification permission where it already did (when started from an app bundle); without permission it relies on the dot and the menu item and does not ask again;
+- **Update the menu automatically** (on by default; kept in the app's preferences) relaunches by itself while the menu is closed and no change is being read, confirmed or applied. With it on, the notification above is not posted unless the attempt failed; the new menu says "looptender menu updated to <build>" once instead.
+
+Before quitting, the menu checks the installed program: it must exist and be runnable and, in an app bundle, have a readable `Info.plist` that names that program and this app's bundle identifier, and pass `codesign --verify --deep --strict`. It then starts the new one with the same arguments, and quits only if that one is still running 1.5 seconds later. If a check fails, or the new menu does not stay up, this menu keeps running and says why in its last line (and in an alert when you chose the update). An automatic relaunch is tried once for each installed build, so a failing one never repeats; choosing the item yourself can be tried again. Open at Login is never read or changed: the relaunched menu is an ordinary start of the same program. Not testable without the real app: the relaunch itself, the notification's permission and click, and a login-item start; the decisions and the file checks are tested.
+
 ## Notifications when checks stop
 
 When a loop's [checks have stopped](../../docs/operations.md#external-schedulers-can-stop-on-their-own), its row says so and the count beside the icon includes it. The menu can also post a macOS notification, which stays in Notification Center until it is seen. macOS posts notifications only for an app bundle, so this needs the menu built as one:
