@@ -240,3 +240,42 @@ func (n *nativeObserver) Close() error {
 
 // Supported reports whether this build includes the Darwin native backend.
 func Supported() bool { return true }
+
+// ArmExitObservation arms a no-signal observation before an external manager
+// action. It does not authenticate that manager or authorize the action. Tokens
+// must come from fresh separately authenticated selection, never a saved PID.
+// API/kernel calls are cooperative; context deadlines cannot interrupt a stall.
+func ArmExitObservation(ctx context.Context, pid int, expected [8]uint32) (ExitObservation, error) {
+	if e := ctx.Err(); e != nil {
+		return nil, e
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return nil, ErrUnavailable
+	}
+	before, e := nativeToken(pid)
+	if e != nil || before != expected {
+		return nil, ErrUnavailable
+	}
+	fd := int(C.retirement_arm(C.int(pid)))
+	if fd < 0 {
+		return nil, ErrUnavailable
+	}
+	after, e := nativeToken(pid)
+	if e != nil || after != before || ctx.Err() != nil {
+		C.close(C.int(fd))
+		return nil, ErrUnavailable
+	}
+	// These two closures have only event-read and owned-descriptor-close effects.
+	// Do not return/wrap nativeObserver: it carries termination authority.
+	return &exitObservation{
+		poll: func(wait time.Duration) int {
+			return int(C.retirement_event(C.int(fd), C.int(pid), C.int(wait.Milliseconds())))
+		},
+		release: func() error {
+			if C.close(C.int(fd)) != 0 {
+				return os.ErrInvalid
+			}
+			return nil
+		},
+	}, nil
+}

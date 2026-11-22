@@ -15,3 +15,7 @@ func ArmNative(context.Context, Binding) (Observer, error) { return nil, ErrUnav
 
 // Supported reports whether this build includes the Darwin native backend.
 func Supported() bool { return false }
+
+func ArmExitObservation(context.Context, int, [8]uint32) (ExitObservation, error) {
+	return nil, ErrUnavailable
+}

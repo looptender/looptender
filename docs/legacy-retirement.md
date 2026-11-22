@@ -115,3 +115,34 @@ manager-specific retirement plan; a retired predecessor receives retirement only
 - No power-loss certification, forced PID reuse, arbitrary manager behavior,
   descendant termination, old loaded-daemon test, automatic recovery or safe
   replacement claim follows from these tests.
+
+## No-signal manager observation (follow-up source)
+
+The internal Darwin cgo API `ArmExitObservation(ctx, pid, expectedToken)` returns
+only `WaitExit(ctx)` and `Close()`. It does not invoke a manager, signal a process,
+change controls, or grant replacement authority. The caller must independently
+bind the actual manager, application, owner and sources before an external action;
+a native token alone does not prove those facts. Fresh token reads sandwich
+kqueue registration, before any external retirement action. It never registers
+by PID after the action to reconstruct missing evidence.
+
+The in-memory handle is single-use. An exact exit event can establish only that
+selected incarnation's death. Exec (including a combined exec/exit event), invalid
+native events, cancellation, timeout and close failure remain unknown. Any wait
+finishes/closes the observation; a fresh wait cannot upgrade an unknown result.
+`Close` is idempotent and never targets the process. A bounded context is required
+for acquisition and waiting; native calls remain cooperative. Concurrent Close
+waits for an active bounded WaitExit. An unused handle must be closed by its owner.
+Losing the helper loses the observation capability: never reconstruct it from a
+saved PID, endpoint disappearance or daemon-lock availability.
+
+Manager one-use intent, disable/bootout outcomes, application endpoint/lock/control
+verification, and replacement startup remain separate orchestration obligations.
+The manual retirement command retains its own send-before-wait contract. This
+additional API has injected state-machine tests and one independently reviewed
+native macOS owned-process run at `e486c5c3`: pipe-driven exit was observed, while
+an acknowledged request with a living child remained unknown and consumed the
+handle. The run exited successfully without stderr, timeout or output truncation;
+pinned artifacts were unchanged. This is not manager or application evidence. Linux,
+Darwin without cgo, and other native-platform acceptance remain unsupported or
+unverified as described above. No manager or live retirement is certified here.
