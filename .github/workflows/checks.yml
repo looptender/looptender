@@ -419,6 +419,11 @@ jobs:
       - name: Check that a go test pattern matching nothing fails
         if: runner.os == 'Linux'
         run: python3 scripts/ci-go-test-ran-test.py
+      - name: Check that every Windows-only test is selected by a pinned Windows step
+        if: runner.os == 'Linux'
+        run: |
+          python3 scripts/ci-windows-inventory-test.py
+          python3 scripts/ci-windows-inventory.py
       - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
         if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
       - run: go vet ./...

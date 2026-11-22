@@ -41,7 +41,7 @@ def validate(text):
         for line in step.splitlines():
             if re.search(r'\bgo test\b.* -run ', line) and 'go test' in line:
                 assert re.search(r'python3? scripts/ci-go-test-ran\.py go test', line), f'pinned go test must go through the wrapper: {line.strip()}'
-    for script in ('ci-scope-test.sh', 'check-contributions-test.sh', 'ci-timeout-note-test.sh', 'ci-workflow-test.py', 'ci-go-test-ran-test.py'):
+    for script in ('ci-scope-test.sh', 'check-contributions-test.sh', 'ci-timeout-note-test.sh', 'ci-workflow-test.py', 'ci-go-test-ran-test.py', 'ci-windows-inventory.py'):
         assert text.index(script) < text.index('run: go vet ./...'), f'{script} must fail before expensive checks'
 
 
