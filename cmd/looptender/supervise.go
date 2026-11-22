@@ -1591,6 +1591,16 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 			// skipped, so the person asking for it does not have to guess.
 			acquire = func(dir string) (*lock.Lock, error) { return acquireWithin(e.ctx, dir, takeoverLockWait) }
 		}
+		if cmd == "enable" && !takingOver {
+			// A caller that is not the owner is told so by name, whether or not
+			// the supervisor holds the check lock at this moment. The read takes
+			// no lock; the owner is rechecked under the lock before any write.
+			if f, err := control.Load(cfg.Loop.StateDir); err == nil {
+				if err := control.CheckOwner(f, os.Getenv("BB_THREAD_ID"), false); errors.Is(err, control.ErrOwnerConflict) {
+					return ownershipError(e, err)
+				}
+			}
+		}
 		l, err := acquire(cfg.Loop.StateDir)
 		if takingOver && errors.Is(err, lock.ErrHeld) {
 			e.errf("enable --take-over: the old owner's supervisor held this loop's check lock for all of %s, so nothing was taken over. It is busy with a check; run enable --take-over again.", takeoverLockWait)
