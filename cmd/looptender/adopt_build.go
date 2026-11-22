@@ -157,7 +157,7 @@ type buildAdopter struct {
 	launch string // absolute path the daemon was started by: argv[0]
 	// from is the running build's own file, symbolic links resolved, for
 	// a new build that cannot start to return to.
-	from     string
+	from string
 	// loop is the loop's name, for the run log; taken from the
 	// configuration at each safe point.
 	loop     string
@@ -409,7 +409,7 @@ var errAdoptChanged = errors.New("changed since it was checked")
 // adoptPayload is what a switching daemon hands to the new image, through
 // an inherited pipe, so that nothing of it shows in the process list.
 type adoptPayload struct {
-	Config          string `json:"config"`
+	Config string `json:"config"`
 	// Loop is the loop's name, for the run log of a build that cannot
 	// load the configuration. Absent from an earlier build's handover.
 	Loop            string `json:"loop,omitempty"`
