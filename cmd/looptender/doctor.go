@@ -162,7 +162,7 @@ func doctor(e env, args []string, run doctorRun) int {
 	} else {
 		r.add("task", "ok", "Task is configured inline; its text is not displayed.", "")
 	}
-	if s := describeWakePolicy(cfg.Loop); s != nil {
+	if s := describeWakePolicy(cfg.Loop, cfg.Path()); s != nil {
 		status := "ok"
 		if s.Source == prompt.PolicyCustom || s.Source == prompt.PolicyGenerated {
 			status = "warning"
@@ -170,6 +170,12 @@ func doctor(e env, args []string, run doctorRun) int {
 		fix := ""
 		if s.CommandPrefix == prefixOtherBuild || s.CommandPrefix == prefixMissing {
 			status, fix = "warning", "Preview the fix with prompt-policy apply --refresh-prefix; nothing is rewritten without --yes."
+		}
+		if len(s.CommandPrograms) > 0 {
+			status = "warning"
+			if fix == "" {
+				fix = "Edit the prompt by hand so its commands run this installation's program."
+			}
 		}
 		r.add("wake_policy", status, s.Message, fix)
 	}

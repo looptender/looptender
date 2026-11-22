@@ -27,7 +27,7 @@ func promptLoop(t *testing.T, prefix, task string) (config.Loop, string) {
 func fakeProgram(t *testing.T, name string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o700); err != nil {
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n# "+name+"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return p

@@ -1554,8 +1554,9 @@ retired predecessor must not be reinstalled by default.
 
 After a separately authorized shutdown and verified exit, an explicitly requested
 `looptender daemon -c looptender.yaml` starts supervision with existing controls.
-Run in a terminal, that daemon is a child of the terminal's shell: it ends when
-the terminal closes or the session logs out, and nothing shows how it was
+Run in a terminal, that daemon is a child of the terminal's shell: it may end
+when the terminal closes (a daemon started so that it ignores hangup survives
+that) and it ends when the session logs out, and nothing shows how it was
 started. To supervise beyond the terminal, install it as a service
 (`looptender service install -c looptender.yaml`), which runs the same daemon
 with the same controls and is restarted by the operating system.

@@ -151,3 +151,28 @@ func TestDashDashVersionPrintsTheVersion(t *testing.T) {
 		t.Fatalf("%d %q %q", code, out.String(), errb.String())
 	}
 }
+
+// A completed or disabled loop is not warned that a limit can stop its work.
+func TestSingleRouteWarningIsNotShownForACompletedOrDisabledLoop(t *testing.T) {
+	f := newDoctorFixture(t)
+	cfg, err := config.Load(f.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	has := func(held string) bool {
+		r := &doctorReport{Checks: []doctorCheck{}}
+		doctorRoutes(r, cfg, state.File{}, true, held, time.Now())
+		for _, c := range r.Checks {
+			if c.ID == "routes.single" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("") || !has("paused") || !has("awaiting a person") {
+		t.Fatal("a loop that can run lost its single-route warning")
+	}
+	if has("completed") || has("disabled") {
+		t.Fatal("a completed or disabled loop is told a limit can stop its work")
+	}
+}

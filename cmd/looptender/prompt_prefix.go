@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +21,9 @@ const (
 	prefixOtherBuild = "other_build" // a different file that exists
 	prefixMissing    = "missing"     // no such executable file
 	prefixUnknown    = "unknown"     // the prefix is not a plain quoted program path
+	// prefixNotProgram: the path is a directory, such as a state directory
+	// named looptender. It is not a program and is not reported.
+	prefixNotProgram = "not_program"
 )
 
 // promptPrefixProgram is the program path a command prefix names: the prefix
@@ -48,26 +54,86 @@ func checkPromptPrefix(prefix string) (verdict, program string) {
 	if !ok {
 		return prefixUnknown, ""
 	}
+	verdict, _ = checkProgramPath(program)
+	if verdict == prefixNotProgram {
+		verdict = prefixMissing
+	}
+	return verdict, program
+}
+
+// hashBudget bounds the same-bytes comparisons one scan may make: the number
+// of files hashed and the size of each.
+type hashBudget struct{ files int }
+
+const hashFileLimit = 64 << 20
+
+// checkProgramPath is checkProgramWith for one program, with room to hash one.
+func checkProgramPath(program string) (verdict, resolved string) {
+	return checkProgramWith(program, &hashBudget{files: 1})
+}
+
+// checkProgramWith compares a program path with this build's own file: the
+// same file (a link such as ~/.local/bin/looptender that leads to it counts),
+// or a copy with the same size and bytes, is installed. It reads file metadata
+// and, for a file of the same size, its bytes while the budget lasts; it runs
+// nothing. A same-size file that the budget does not allow hashing is not
+// called another program: its verdict is unknown. A directory is not a
+// program. The resolved path is what a bare name found on PATH, or a link,
+// leads to.
+func checkProgramWith(program string, b *hashBudget) (verdict, resolved string) {
 	path := program
 	if !strings.ContainsRune(path, os.PathSeparator) {
 		found, err := exec.LookPath(path)
 		if err != nil {
-			return prefixMissing, program
+			return prefixMissing, ""
 		}
 		path = found
 	}
 	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
-		return prefixMissing, program
+	if err == nil && info.IsDir() {
+		return prefixNotProgram, ""
 	}
+	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
+		return prefixMissing, ""
+	}
+	resolved = realPath(path)
 	self, err := os.Stat(realPath(promptExecutable()))
 	if err != nil {
-		return prefixUnknown, program
+		return prefixUnknown, resolved
 	}
-	if os.SameFile(info, self) {
-		return prefixInstalled, program
+	switch {
+	case os.SameFile(info, self):
+		return prefixInstalled, resolved
+	case info.Size() != self.Size():
+		return prefixOtherBuild, resolved
+	case b.files <= 0 || info.Size() > hashFileLimit:
+		return prefixUnknown, resolved
 	}
-	return prefixOtherBuild, program
+	b.files--
+	if sameFileBytes(path, realPath(promptExecutable())) {
+		return prefixInstalled, resolved
+	}
+	return prefixOtherBuild, resolved
+}
+
+// sameFileBytes says whether two files hold the same bytes.
+func sameFileBytes(a, b string) bool {
+	da, errA := fileDigest(a)
+	db, errB := fileDigest(b)
+	return errA == nil && errB == nil && da == db
+}
+
+func fileDigest(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, io.LimitReader(f, hashFileLimit+1)); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func realPath(p string) string {
