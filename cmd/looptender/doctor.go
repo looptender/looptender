@@ -171,7 +171,8 @@ func doctor(e env, args []string, run doctorRun) int {
 		if s.CommandPrefix == prefixOtherBuild || s.CommandPrefix == prefixMissing {
 			status, fix = "warning", "Preview the fix with prompt-policy apply --refresh-prefix; nothing is rewritten without --yes."
 		}
-		if len(s.CommandPrograms) > 0 {
+		if len(s.CommandPrograms) > 0 || s.CommandProgramsNotLooked > 0 || s.CommandProgramsUnchecked {
+			// Also when nothing was found but not everything was looked at.
 			status = "warning"
 			if fix == "" {
 				fix = "Edit the prompt by hand so its commands run this installation's program."
