@@ -2211,12 +2211,22 @@ func dockUnscheduledDetail(st *statusOut, now time.Time) string {
 	if r := st.Schedule.StartedBy; r != nil && r.Source == state.RoutineBBAutomation {
 		last += ", started by a BB automation"
 	}
-	const ticks = " Checks come from a scheduler that is not recorded (ticks): each tick runs the build at the path that scheduler calls."
+	// The ticks claim is made only when status makes it (schedule.checkedBy),
+	// so this line and the Checked line never say opposite things.
+	ticks := st.Schedule.CheckedBy == "ticks"
 	if g := st.Schedule.sch.Recent; g > 0 {
-		return last + ", and recent checks ran about " + dockSpan(g) + " apart (past checks, not a forecast). " + dockCapital(next) + "." + ticks
+		out := last + ", and recent checks ran about " + dockSpan(g) + " apart (past checks, not a forecast). " + dockCapital(next) + "."
+		if ticks {
+			out += " Checks come from a scheduler that is not recorded (ticks): each tick runs the build at the path that scheduler calls."
+		}
+		return out
 	}
-	// Short, because the menu shows this line within a fixed length.
-	return last + ". " + dockCapital(next) + ". Its checks are ticks from a scheduler not on record."
+	out := last + ". " + dockCapital(next) + "."
+	if ticks {
+		// Short, because the menu shows this line within a fixed length.
+		out += " Its checks are ticks from a scheduler not on record."
+	}
+	return out
 }
 
 func dockFallbackReadiness(st *statusOut, chain *dockChainInput) dockFallbacks {
