@@ -41,7 +41,29 @@ export const planSchema = z.object({
   }).optional(),
 });
 export type SetupPlan = z.infer<typeof planSchema>;
+/**
+ * The task "Keep this conversation going" sends: fixed text, never read from
+ * the conversation. The agent already has that conversation when it is woken.
+ * It asks for await-user when there is nothing to continue, because the
+ * plugin cannot tell from metadata whether the conversation holds a task.
+ */
+export const KEEP_GOING_TASK = [
+  "Continue the work already under way in this conversation. Follow the person's most recent instructions here, and keep to any limits or approvals they set in this conversation.",
+  "Finish the work and verify it. When it is all done, mark the loop complete.",
+  "Use await-user when what remains needs the person, or when this conversation contains no task to continue.",
+].join("\n\n");
+/** The one-line note a person may add to it, kept to a single short line. */
+export const noteSchema = z.string().max(300).regex(/^[^\r\n]*$/, "one line");
+export function conversationTask(note: string | undefined): string {
+  const n = (note ?? "").trim();
+  return n ? `${KEEP_GOING_TASK}\n\nNote from the person: ${n}` : KEEP_GOING_TASK;
+}
+/** What BB's thread metadata says about whether there is anything to continue. */
+export const conversationSchema = z.enum(["none", "unknown"]);
 export const setupInput = z.object({
+  // "conversation" sends the built-in task above; "own" (the default, and
+  // what every earlier client sends) sends `task` as typed.
+  mode: z.enum(["conversation", "own"]).optional(), note: noteSchema.optional(),
   action: z.enum(["preview", "create", "inspect", "start"]), threadId: text,
   withGoal: z.boolean().optional(),
   name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional(),
@@ -76,5 +98,11 @@ export const setupResult = z.object({
   // True when the host's looptender reports a usable standard route list
   // with routes, so setup can offer to follow it. Absent otherwise.
   standardRoutes: z.literal(true).optional(),
+  // The exact task a preview would send, so the person sees it. Only for the
+  // built-in task, whose text the plugin wrote.
+  task: z.string().max(262144).optional(),
+  // On a thread with no setup: "none" when BB's metadata says the thread has
+  // not had a turn yet, "unknown" when it cannot tell. Absent from older builds.
+  conversation: conversationSchema.optional(),
 });
 export type SetupResult = z.infer<typeof setupResult>;

@@ -301,3 +301,52 @@ test("publication failures preserve created identity and never replay lifecycle 
   assert.equal(f.calls.filter(x => x === "create").length, 1);
   assert.equal(f.calls.filter(x => x === "start").length, 1);
 });
+
+test("Keep this conversation going sends the fixed task plus an optional one-line note, shown in the preview", async () => {
+  const { KEEP_GOING_TASK } = await import("./setup-contract.ts");
+  const f = fixture();
+  const sent: string[] = [];
+  f.d.init = async (_bin, _target, _name, task, dry) => { sent.push(task); f.calls.push(dry ? "preview" : "create"); return { plan: structuredClone(f.plan) }; };
+  const preview = (note?: string) => f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", mode: "conversation", ...(note === undefined ? {} : { note }) });
+  const p = await preview();
+  assert.equal(p.ok, true); assert.equal(p.task, KEEP_GOING_TASK); assert.equal(sent[0], KEEP_GOING_TASK);
+  // The task says what to do, and what to do when there is nothing to continue.
+  assert.match(KEEP_GOING_TASK, /most recent instructions/); assert.match(KEEP_GOING_TASK, /limits or approvals/);
+  assert.match(KEEP_GOING_TASK, /mark the loop complete/); assert.match(KEEP_GOING_TASK, /await-user when what remains needs the person/);
+  assert.match(KEEP_GOING_TASK, /no task to continue/);
+  // Create must carry the same mode and note; a different note invalidates the preview.
+  const created = await f.controller.call({ action: "create", threadId: "thr_example", ticket: p.ticket, mode: "conversation" });
+  assert.equal(created.ok, true); assert.equal(sent.at(-1), KEEP_GOING_TASK);
+  const g = fixture();
+  g.d.init = f.d.init;
+  const noted = await g.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", mode: "conversation", note: "  Skip the docs for now  " });
+  assert.equal(noted.task, `${KEEP_GOING_TASK}\n\nNote from the person: Skip the docs for now`);
+  const changed = await g.controller.call({ action: "create", threadId: "thr_example", ticket: noted.ticket, mode: "conversation", note: "Something else" });
+  assert.equal(changed.ok, false); assert.match(changed.message, /preview expired or its task/);
+  assert.equal(g.records().length, 0);
+  // One line only; the typed task is not used in this mode.
+  const multi = await g.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", mode: "conversation", note: "a\nb" });
+  assert.equal(multi.ok, false);
+  const h = fixture(); h.d.init = f.d.init;
+  const own = await h.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", mode: "conversation", task: "ignored" });
+  assert.equal(own.task, KEEP_GOING_TASK);
+});
+
+test("the typed task is unchanged, and an empty one is still refused", async () => {
+  const f = fixture();
+  const p = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", mode: "own", task: "Fictional private task" });
+  assert.equal(p.ok, true); assert.equal(p.task, undefined);
+  const none = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", mode: "own", task: "  " });
+  assert.equal(none.ok, false);
+});
+
+test("inspect reports what thread metadata says about having a turn, and unknown when it cannot tell", async () => {
+  const f = fixture();
+  f.d.conversation = async () => "none";
+  assert.equal((await f.controller.call({ action: "inspect", threadId: "thr_example" })).conversation, "none");
+  f.d.conversation = async () => { throw new Error("PRIVATE"); };
+  const failed = await f.controller.call({ action: "inspect", threadId: "thr_example" });
+  assert.equal(failed.conversation, "unknown"); assert.ok(!JSON.stringify(failed).includes("PRIVATE"));
+  delete f.d.conversation;
+  assert.equal((await f.controller.call({ action: "inspect", threadId: "thr_example" })).conversation, "unknown");
+});

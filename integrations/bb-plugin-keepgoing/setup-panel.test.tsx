@@ -24,6 +24,7 @@ test("UI requires preview, create, and start clicks; task edits invalidate previ
   const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => changed++} />);
   try {
     await ui.findByText("Enter a task");
+    fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
     fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task" } });
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByText("Preview only");
@@ -70,6 +71,7 @@ test("lost creation response retains the destination without a replay button", a
   const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
   try {
     await ui.findByText("Enter a task");
+    fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
     fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task" } });
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByRole("button", { name: "Create disabled setup" });
@@ -94,6 +96,7 @@ test("goal choice is explicit, invalidates preview on change, and shows recorded
     await ui.findByText("Enter a task");
     const choice = ui.getByRole("checkbox", { name: "Record a goal for this task" }) as HTMLInputElement;
     assert.equal(choice.checked, true);
+    fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
     fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task and acceptance" } });
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByText(/Goal: record revision 1/);
@@ -121,6 +124,7 @@ test("keepgoing's refusal is shown in its words and the panel offers no way arou
   const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
   try {
     await ui.findByText("Enter a task");
+    fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
     fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task" } });
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     assert.equal((await ui.findByRole("alert")).textContent, message);
@@ -147,6 +151,7 @@ test("the standard list is a choice only when offered, off by default, and its r
     await ui.findByText("Enter a task");
     const box = ui.getByLabelText("Follow my standard route list for handoffs") as HTMLInputElement;
     assert.equal(box.checked, false);
+    fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
     fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task" } });
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByText("No fallbacks; automatic handoff is off.");
@@ -157,5 +162,47 @@ test("the standard list is a choice only when offered, off by default, and its r
     assert.equal(inputs.at(-1)?.followStandard, true);
     assert.ok(ui.getByText("codex-large: example-large, usage limit codex-large"));
     assert.ok(ui.getByRole("button", { name: "Create disabled setup" }));
+  } finally { cleanup(); }
+});
+
+test("Keep this conversation going is the default, needs no typing, and the preview shows the task", async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const call = async (input: Record<string, unknown>): Promise<SetupResult> => {
+    seen.push(input);
+    if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket", task: "Built-in fictional task text" };
+    return { ok: true, message: "Enter a task", conversation: "unknown" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call as never} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Enter a task");
+    assert.equal((ui.getByRole("radio", { name: "Keep this conversation going" }) as HTMLInputElement).checked, true);
+    assert.equal(ui.queryByLabelText("Task and completion criteria"), null);
+    fireEvent.change(ui.getByLabelText("Anything to add?"), { target: { value: "Skip the docs" } });
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByText("Preview only");
+    assert.ok(ui.getByText("Built-in fictional task text"));
+    const sent = seen.find(i => i.action === "preview")!;
+    assert.equal(sent.mode, "conversation"); assert.equal(sent.note, "Skip the docs"); assert.equal("task" in sent, false);
+    // Changing the note invalidates the preview, as editing the task does.
+    fireEvent.change(ui.getByLabelText("Anything to add?"), { target: { value: "Other" } });
+    assert.equal(ui.queryByRole("button", { name: "Create disabled setup" }), null);
+    // The second choice is the typed task, as before.
+    fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
+    assert.ok(ui.getByLabelText("Task and completion criteria"));
+    assert.equal((ui.getByRole("button", { name: "Preview setup" }) as HTMLButtonElement).disabled, true);
+  } finally { cleanup(); }
+});
+
+test("a thread with no turn yet starts on the typed task and says why; a choice made by hand is kept", async () => {
+  const call = async (): Promise<SetupResult> => ({ ok: true, message: "Enter a task", conversation: "none" });
+  const ui = render(<SetupPanel threadId="thr_example" call={call as never} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Enter a task");
+    assert.equal((ui.getByRole("radio", { name: "Write my own task" }) as HTMLInputElement).checked, true);
+    assert.ok(ui.getByText("This thread has not had a turn yet, so there is nothing to continue. Write a task."));
+    assert.ok(ui.getByLabelText("Task and completion criteria"));
+    fireEvent.click(ui.getByRole("radio", { name: "Keep this conversation going" }));
+    assert.ok(ui.getByLabelText("Anything to add?"));
+    assert.equal(ui.queryByText(/has not had a turn yet/), null);
   } finally { cleanup(); }
 });

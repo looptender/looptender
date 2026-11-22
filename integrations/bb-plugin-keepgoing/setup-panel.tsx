@@ -14,6 +14,11 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
   const [followStandard, setFollowStandard] = useState(false);
   const [standardRoutes, setStandardRoutes] = useState(false);
   const [task, setTask] = useState("");
+  // "Keep this conversation going" sends a fixed task; "own" sends the typed
+  // one. Undecided until the thread's metadata is read: a thread with nothing
+  // to continue starts on "own".
+  const [chosen, setChosen] = useState<"conversation" | "own" | undefined>();
+  const [note, setNote] = useState("");
   const [result, setResult] = useState<SetupResult>();
   const [busy, setBusy] = useState(true);
   useEffect(() => {
@@ -23,17 +28,19 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
       .finally(() => { if (mounted) setBusy(false); });
     return () => { mounted = false; };
   }, [threadId, call]);
+  const empty = result?.conversation === "none";
+  const mode = chosen ?? (empty ? "own" : "conversation");
   async function act(action: "preview" | "create" | "inspect" | "start") {
     setBusy(true);
     try {
       const follow = followStandard && standardRoutes;
-      const r = await call({ action, threadId, ...(action === "preview" || action === "create" ? { name, task, withGoal, ticket: result?.ticket, ...(follow ? { followStandard: true } : {}) } : {}) });
+      const r = await call({ action, threadId, ...(action === "preview" || action === "create" ? { name, mode, ...(mode === "conversation" ? { note } : { task }), withGoal, ticket: result?.ticket, ...(follow ? { followStandard: true } : {}) } : {}) });
       setResult({
         ...r,
         ...(!r.ok && action === "create" && !r.record ? { plan: result?.plan } : {}),
         ...(!r.record && (action === "inspect" || action === "start") ? { record: result?.record } : {}),
       });
-      if (r.record) { setTask(""); onChanged(); }
+      if (r.record) { setTask(""); setNote(""); onChanged(); }
     } catch { setResult({ ok: false, record: result?.record, plan: result?.plan, message: "The request could not be confirmed. Refresh status before retrying; a disabled setup may already exist." }); }
     finally { setBusy(false); }
   }
@@ -43,16 +50,28 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
     <span>Target: {threadId}</span>
     {!result?.record && <>
       <label>Loop name<input aria-label="Loop name" value={name} disabled={busy} onChange={e => { setName(e.target.value); edit(); }} style={{ display: "block", width: "100%" }} /></label>
-      <label>Task and completion criteria<textarea aria-label="Task and completion criteria" value={task} disabled={busy} maxLength={262144} rows={5} onChange={e => { setTask(e.target.value); edit(); }} style={{ display: "block", width: "100%" }} /></label>
+      <fieldset style={{ display: "grid", gap: 4, border: "none", padding: 0, margin: 0 }}>
+        <legend>What should the loop keep going?</legend>
+        <label><input type="radio" name="setup-mode" aria-label="Keep this conversation going" checked={mode === "conversation"} disabled={busy} onChange={() => { setChosen("conversation"); edit(); }} /> Keep this conversation going</label>
+        <label><input type="radio" name="setup-mode" aria-label="Write my own task" checked={mode === "own"} disabled={busy} onChange={() => { setChosen("own"); edit(); }} /> Write my own task</label>
+      </fieldset>
+      {empty && chosen === undefined && <span>This thread has not had a turn yet, so there is nothing to continue. Write a task.</span>}
+      {mode === "conversation"
+        ? <>
+          <span>Continues the work already under way in this conversation, following your latest instructions here, and stops for you when it needs you. Nothing from the conversation is read by this plugin.</span>
+          <label>Anything to add?<input aria-label="Anything to add?" value={note} disabled={busy} maxLength={300} onChange={e => { setNote(e.target.value.replace(/[\r\n]/g, " ")); edit(); }} style={{ display: "block", width: "100%" }} /></label>
+        </>
+        : <label>Task and completion criteria<textarea aria-label="Task and completion criteria" value={task} disabled={busy} maxLength={262144} rows={5} onChange={e => { setTask(e.target.value); edit(); }} style={{ display: "block", width: "100%" }} /></label>}
       <label><input type="checkbox" aria-label="Record a goal for this task" checked={withGoal} disabled={busy} onChange={e => { setWithGoal(e.target.checked); edit(); }} /> Record a goal for this task</label>
       <span>{withGoal ? "Use the loop name as the initial goal title. Save the task once in a private file and share current goal references in future prompts. Requires an updated looptender CLI; v0.1.4 does not support this setup option." : "Copy the task into wake instructions without creating a goal record."}</span>
       {standardRoutes && <label><input type="checkbox" aria-label="Follow my standard route list for handoffs" checked={followStandard} disabled={busy} onChange={e => { setFollowStandard(e.target.checked); edit(); }} /> Follow my standard route list for handoffs</label>}
       <span>{followStandard && standardRoutes
         ? "One existing thread, with its current model and login, that hands off to the routes of your standard route list that apply to it on a rate limit. The preview names them. Creating the setup leaves supervision disabled."
         : "One existing thread, with its current model and login. No fallbacks. Creating the setup leaves supervision disabled."}</span>
-      <button type="button" disabled={busy || !task.trim() || !name} onClick={() => void act("preview")}>Preview setup</button>
+      <button type="button" disabled={busy || (mode === "own" && !task.trim()) || !name} onClick={() => void act("preview")}>Preview setup</button>
     </>}
     {result?.plan && <div aria-label="Setup preview" style={{ display: "grid", gap: 4 }}>
+      {result.task !== undefined && <div aria-label="Task to send" style={{ display: "grid", gap: 2 }}><span>Task that will be sent:</span><pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{result.task}</pre></div>}
       <span>Provider: {result.plan.provider}</span><span>Project: {result.plan.project}</span>
       <span>Configuration: {result.plan.configPath}</span>
       <span>{result.plan.withGoal ? "Goal: record revision 1 referencing a private task snapshot. Creation stays disabled." : "Task: copied into wake instructions; no goal record."}</span>
