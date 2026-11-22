@@ -648,3 +648,32 @@ func TestScenarioTransferInterruptedThenRecovered(t *testing.T) {
 		w.Check(s, "each child moved once", check(n[c] == 1, "%s moved %d times", c, n[c]))
 	}
 }
+
+// TestScenarioStopFindsAManualSuccessor: a person's transfer replace-children
+// is killed after a successor's spawn, before it was recorded. That
+// successor's coordinator is the loop's own thread, not a thread a fallback
+// created. A person's stop looks it up by its title and stops it, through the
+// loop's own BB agent, settling nothing.
+func TestScenarioStopFindsAManualSuccessor(t *testing.T) {
+	t.Parallel()
+	// replace-children judges a lane's reset by the wall clock.
+	w := NewWorld(t, time.Now().UTC().Truncate(time.Second))
+	transferIncident(w)
+	r := w.Run(append([]string{"transfer", "apply", "-c", w.Config, "--from", primaryThread, "--thread", transferDest}, providerChange...)...)
+	s := w.record("transfer apply", r, nil)
+	w.Check(s, "applied", exit(s, 0))
+	w.killAfter("spawn")
+	r = w.Run("transfer", "replace-children", "-c", w.Config, "--model", childModel)
+	s = w.record("replace-children (killed)", r, nil)
+	w.Check(s, "killed after one spawn", all(check(r.Code == -1, "exit %d", r.Code), check(len(s.Sent) == 1 && s.Sent[0].Parent == transferDest, "sent %s", describeSends(s.Sent))))
+	created := s.Sent[0].Thread
+	s = w.Control("stop", "--note", "Fictional stop by a person")
+	w.Check(s, "stop saved", exit(s, 0))
+	w.Advance(time.Minute)
+	s = w.Tick()
+	w.Check(s, "the stop reaches the unrecorded successor", all(
+		ranBB(s, "thread", "stop", created, "--json"), nothingSent(s),
+		check(!strings.Contains(fmt.Sprint(s.Tick["warnings"]), "no longer configured"), "warnings %v", s.Tick["warnings"]),
+		check(countsOf(s).ChildSuccessors != nil && countsOf(s).ChildSuccessors.Pending, "the creation was settled under the stop"),
+	))
+}

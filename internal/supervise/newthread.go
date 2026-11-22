@@ -331,26 +331,33 @@ func (t *tick) newThreadGate(c config.Candidate) string {
 // child (childsuccessor.go), whose creation was asked of bb.
 type unrecordedCreation struct {
 	candidate string // the fallback whose bb CLI and agent reach it
-	title     string
-	place     bb.Place
-	what      string // "the thread created for a handoff", "a successor lane"
+	// primary: the creation's coordinator is the loop's own thread (a
+	// person's transfer replace-children), so the loop's own BB agent
+	// reaches it, not a fallback's.
+	primary bool
+	title   string
+	place   bb.Place
+	what    string // "the thread created for a handoff", "a successor lane"
 }
 
 // unrecordedCreations lists what a stop must look for.
 func (t *tick) unrecordedCreations() []unrecordedCreation {
 	var out []unrecordedCreation
 	if in := t.st.NewThreadIntent; in != nil {
-		out = append(out, unrecordedCreation{in.Candidate, in.Title, bb.Place{Project: in.Project, Environment: in.Environment}, "the thread created for a handoff"})
+		out = append(out, unrecordedCreation{candidate: in.Candidate, title: in.Title, place: bb.Place{Project: in.Project, Environment: in.Environment}, what: "the thread created for a handoff"})
 	}
 	// A successor never asked of bb cannot exist; one asked may.
 	if r := t.st.ChildSuccessors; r != nil && r.Intent != nil && r.Intent.Asked {
-		candidate := ""
+		u := unrecordedCreation{title: r.Intent.Title, place: bb.Place{Project: r.Intent.Project, Environment: r.Intent.Environment}, what: "a successor lane"}
+		if a := t.loop.Agent; a.Adapter == "bb" && a.BB != nil && a.BB.Thread == r.Coordinator {
+			u.primary = true
+		}
 		for id, c := range t.st.NewThreads {
-			if c.Thread == r.Coordinator {
-				candidate = id
+			if !u.primary && c.Thread == r.Coordinator {
+				u.candidate = id
 			}
 		}
-		out = append(out, unrecordedCreation{candidate, r.Intent.Title, bb.Place{Project: r.Intent.Project, Environment: r.Intent.Environment}, "a successor lane"})
+		out = append(out, u)
 	}
 	return out
 }
@@ -378,19 +385,32 @@ func (t *tick) stopUnrecordedThreads(in []unrecordedCreation, stopOne func(strin
 }
 
 func (t *tick) stopUnrecorded(u unrecordedCreation, stopOne func(string, adapter.Adapter), late []func(), errs []error) ([]func(), []error) {
-	c, ok := config.Candidate{}, false
-	if t.fb != nil {
-		c, ok = t.fb.Find(u.candidate)
+	// The agent that reaches the creation, its bb CLI, and the target its
+	// stop is recorded for.
+	var base config.Agent
+	target := u.candidate
+	if u.primary {
+		base, target = t.loop.Agent, state.Primary
+	} else {
+		c, ok := config.Candidate{}, false
+		if t.fb != nil {
+			c, ok = t.fb.Find(u.candidate)
+		}
+		if !ok || !isNewThread(c) {
+			t.warn("%s may have been created (titled %q), and its fallback is no longer configured, so keepgoing cannot stop it: stop it by hand", u.what, u.title)
+			return late, errs
+		}
+		base = c.Agent
 	}
-	if !ok || !isNewThread(c) {
-		t.warn("%s may have been created (titled %q), and its fallback is no longer configured, so keepgoing cannot stop it: stop it by hand", u.what, u.title)
-		return late, errs
+	cli := config.DefaultBBCLI
+	if base.BB != nil && base.BB.CLI != "" {
+		cli = base.BB.CLI
 	}
 	if t.left() < newThreadFindTime {
 		return late, append(errs, fmt.Errorf("no time left to look for %s (titled %q); the next check stops it", u.what, u.title))
 	}
 	ctx, cancel := context.WithTimeout(t.ctx, newThreadFindTime)
-	ids, err := t.opts.Threads(c.BB.CLI).FindByTitle(ctx, u.place, u.title)
+	ids, err := t.opts.Threads(cli).FindByTitle(ctx, u.place, u.title)
 	cancel()
 	if err != nil {
 		return late, append(errs, fmt.Errorf("could not look for %s (titled %q), so it was not stopped; the next check looks again: %w", u.what, u.title, err))
@@ -400,11 +420,11 @@ func (t *tick) stopUnrecorded(u unrecordedCreation, stopOne func(string, adapter
 		return late, errs
 	}
 	for _, id := range ids {
-		agent := c.Agent
+		agent := base
 		b := *agent.BB
 		b.Thread = id
 		agent.BB = &b
-		a, err := t.newAdapter(agent, t.loop.StateDir, u.candidate)
+		a, err := t.newAdapter(agent, t.loop.StateDir, target)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("stop %s: %w", u.what, err))
 			continue
@@ -412,11 +432,11 @@ func (t *tick) stopUnrecorded(u unrecordedCreation, stopOne func(string, adapter
 		if t.isCaller(agent) {
 			late = append(late, func() {
 				t.warn("this command runs in %s; it is stopped last", u.what)
-				stopOne(u.candidate, a)
+				stopOne(target, a)
 			})
 			continue
 		}
-		stopOne(u.candidate, a)
+		stopOne(target, a)
 	}
 	return late, errs
 }
