@@ -5,8 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/health"
+	"github.com/looptender/looptender/internal/probe"
 )
 
 // stubOffer makes the provider detection return offer, and records whether
@@ -133,5 +136,41 @@ func TestArmCountsOtherFallbacksGainingHandoff(t *testing.T) {
 	}
 	if n := otherFallbacksGainingHandoff(&config.Config{}); n != 0 {
 		t.Fatalf("none: %d", n)
+	}
+}
+
+// What the loop's own probe records say about the offered provider, with no
+// model call: nothing recorded, a usage limit still ahead, a failed check,
+// a passed check.
+func TestTakeoverReadiness(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{}
+	cfg.Loop.StateDir = dir
+	now := time.Now()
+	if got := takeoverReadiness(cfg, "codex", now); !strings.Contains(got, "is not known") || !strings.Contains(got, "checked with a probe only when a handoff happens") {
+		t.Fatal(got)
+	}
+	if got := takeoverReadiness(nil, "codex", now); !strings.Contains(got, "is not known") {
+		t.Fatal(got)
+	}
+	save := func(r probe.Result) {
+		reg := &health.Registry{Candidates: map[string]*health.Entry{"new-conversation-codex": {Last: &r}, "new-conversation-claude-code": {Last: &probe.Result{At: now, OK: true}}}}
+		if err := reg.Save(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reset := now.Add(5 * time.Hour)
+	save(probe.Result{At: now.Add(-time.Hour), ErrorClass: "rate_limit", ResetsAt: &reset})
+	if got := takeoverReadiness(cfg, "codex", now); !strings.Contains(got, "codex cannot take over now") || !strings.Contains(got, reset.UTC().Format(time.RFC3339)) {
+		t.Fatal(got)
+	}
+	past := now.Add(-time.Minute)
+	save(probe.Result{At: now.Add(-time.Hour), ErrorClass: "rate_limit", ResetsAt: &past})
+	if got := takeoverReadiness(cfg, "codex", now); !strings.Contains(got, "failed (rate_limit)") {
+		t.Fatal(got)
+	}
+	save(probe.Result{At: now.Add(-time.Hour), OK: true})
+	if got := takeoverReadiness(cfg, "codex", now); !strings.Contains(got, "passed") {
+		t.Fatal(got)
 	}
 }

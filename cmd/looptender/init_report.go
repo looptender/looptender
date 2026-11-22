@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/looptender/looptender/internal/config"
@@ -114,6 +115,9 @@ type initNewThread struct {
 	ChildrenFollow bool   `json:"childrenFollow"`
 	Successors     bool   `json:"successors"`
 	Text           string `json:"text"`
+	// Readiness says whether it can take over now, as far as the loop's
+	// records show without a model call.
+	Readiness string `json:"readiness"`
 }
 type initLimits struct {
 	NoProgressTimeout string   `json:"noProgressTimeout,omitempty"`
@@ -215,7 +219,8 @@ func printInitJSON(e env, o initOptions, cfg *config.Config, goal *control.Goal)
 				var b strings.Builder
 				printNewThreadPlan(&b, cfg.Loop.Provider, c, initNewThreadOff)
 				ref.NewThread = &initNewThread{Provider: c.Provider, Model: c.BB.Model, Reasoning: c.BB.Reasoning, Permission: c.BB.NewThreadPermission(),
-					ChildrenFollow: c.BB.ChildrenFollow(), Successors: c.BB.ReplacesChildren(), Text: strings.TrimSpace(b.String())}
+					ChildrenFollow: c.BB.ChildrenFollow(), Successors: c.BB.ReplacesChildren(), Text: strings.TrimSpace(b.String()),
+					Readiness: takeoverReadiness(cfg, c.Provider, time.Now())}
 			}
 			r.Fallbacks = append(r.Fallbacks, ref)
 		}

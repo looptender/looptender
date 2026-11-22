@@ -460,10 +460,17 @@ func TestFallbacksAddRequiresLoopOwnerAndNoPendingTransfer(t *testing.T) {
 	}
 	before := f.files(t)
 	t.Setenv("BB_THREAD_ID", "thr_example_other")
+	// A preview writes nothing, so a non-owner sees it, told who can make
+	// the change, and is never advised to take the loop over.
+	if code, stdout, stderr := f.add(t, "", "--non-interactive", "--agent", "claude", "--group", "pool-b", "--dry-run", "--json"); code != exitOK || !strings.Contains(stdout, `"callerNotOwner":true`) || strings.Contains(stdout+stderr, "take-over") || f.files(t) != before {
+		t.Fatalf("preview by a non-owner: %d %q %s", code, stdout, stderr)
+	}
+	if code, stdout, stderr := f.add(t, "", "--non-interactive", "--agent", "claude", "--group", "pool-b", "--dry-run"); code != exitOK || !strings.Contains(stdout, notOwnerNote) || strings.Contains(stdout+stderr, "take-over") || f.files(t) != before {
+		t.Fatalf("text preview by a non-owner: %d %q %s", code, stdout, stderr)
+	}
 	for name, args := range map[string][]string{
-		"write":   {"--non-interactive", "--agent", "claude", "--group", "pool-b", "--enable-handoff"},
-		"preview": {"--non-interactive", "--agent", "claude", "--group", "pool-b", "--dry-run", "--json"},
-		"wizard":  {},
+		"write":  {"--non-interactive", "--agent", "claude", "--group", "pool-b", "--enable-handoff"},
+		"wizard": {},
 	} {
 		code, stdout, stderr := f.add(t, "claude\n\npool-b\n\n\nyes\nyes\n", args...)
 		if code != exitFailed || stdout != "" || !strings.Contains(stderr, "owned by BB thread thr_example_owner") || f.files(t) != before {
