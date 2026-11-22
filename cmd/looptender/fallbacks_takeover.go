@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/looptender/looptender/internal/config"
 )
@@ -100,6 +101,7 @@ func fallbacksArm(e env, args []string, input io.Reader, lookPath func(string) (
 	if !*asJSON {
 		probe := config.Candidate{Agent: config.Agent{Provider: c.Provider, BB: &config.BB{NewThread: true, Model: c.Model, Reasoning: c.Reasoning, PermissionMode: c.Permission}}}
 		printNewThreadPlan(e.stdout, cfg.Loop.Provider, probe, "do not arm it; once armed, remove the fallback with keepgoing fallbacks remove, or turn handoff off with keepgoing fallbacks handoff off")
+		fmt.Fprintln(e.stdout, takeoverReadiness(cfg, c.Provider, time.Now()))
 		if n := otherFallbacksGainingHandoff(cfg); n > 0 {
 			fmt.Fprintf(e.stdout, "Arming turns handoff on for rate limits for the whole loop, so its %d other fallback(s) start taking handoffs too, in their current order, before this new conversation is tried.\n", n)
 		}
@@ -107,6 +109,15 @@ func fallbacksArm(e env, args []string, input io.Reader, lookPath func(string) (
 	}
 	if *dryRun {
 		return fallbacksAdd(e, preview, input, lookPath, bb)
+	}
+	// Only the owner, or a terminal, may arm the loop: anyone else sees the
+	// preview and is told so, never asked to confirm a change it cannot make.
+	if onlyNotOwner(cfg) {
+		if code := fallbacksAdd(e, preview, input, lookPath, bb); code != exitOK {
+			return code
+		}
+		e.errf("fallbacks arm: nothing written: this caller does not own the loop")
+		return exitFailed
 	}
 	if !*yes {
 		if code := fallbacksAdd(e, preview, input, lookPath, bb); code != exitOK {

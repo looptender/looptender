@@ -20,6 +20,7 @@ import (
 	"github.com/looptender/looptender/internal/accounts"
 	"github.com/looptender/looptender/internal/adapter/runner"
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/state"
 	"gopkg.in/yaml.v3"
@@ -67,20 +68,23 @@ type fallbackAddPlan struct {
 // values, executable paths and raw configuration never enter this report.
 // Next commands are argv arrays and are never executed here.
 type fallbackAddReport struct {
-	SchemaVersion int                  `json:"schemaVersion"`
-	Kind          string               `json:"kind"`    // fallback_add
-	Outcome       string               `json:"outcome"` // preview or added
-	Loop          string               `json:"loop"`
-	Candidate     fallbackAddCandidate `json:"candidate"`
-	Primary       fallbackAddTarget    `json:"primary"`
-	Order         []fallbackAddTarget  `json:"order"`
-	Handoff       fallbackAddHandoff   `json:"handoff"`
-	Redundancy    fallbackAddRule      `json:"redundancy"`
-	Files         fallbackAddFiles     `json:"files"`
-	Next          fallbackAddNext      `json:"next"`
-	Warnings      []string             `json:"warnings"`
-	Notes         []string             `json:"notes"`
-	Limitations   []string             `json:"limitations"`
+	SchemaVersion int    `json:"schemaVersion"`
+	Kind          string `json:"kind"`    // fallback_add
+	Outcome       string `json:"outcome"` // preview or added
+	// CallerNotOwner: a preview by a caller that does not own the loop; the
+	// change itself must be made by the owner or from a terminal.
+	CallerNotOwner bool                 `json:"callerNotOwner,omitempty"`
+	Loop           string               `json:"loop"`
+	Candidate      fallbackAddCandidate `json:"candidate"`
+	Primary        fallbackAddTarget    `json:"primary"`
+	Order          []fallbackAddTarget  `json:"order"`
+	Handoff        fallbackAddHandoff   `json:"handoff"`
+	Redundancy     fallbackAddRule      `json:"redundancy"`
+	Files          fallbackAddFiles     `json:"files"`
+	Next           fallbackAddNext      `json:"next"`
+	Warnings       []string             `json:"warnings"`
+	Notes          []string             `json:"notes"`
+	Limitations    []string             `json:"limitations"`
 }
 
 type fallbackAddCandidate struct {
@@ -272,9 +276,15 @@ func fallbacksAdd(e env, args []string, input io.Reader, lookPath func(string) (
 		e.errf("fallbacks add: refused, nothing written.\n  %s", ref.Text)
 		return exitUsage
 	}
+	// A dry run writes nothing, so a caller that is not the loop's owner may
+	// still see it; it is told who can run the real command.
+	notOwner := false
 	if code, err := fallbackAddAllowed(cfg); err != nil {
-		e.errf("fallbacks add: refused, nothing written.\n  %v", err)
-		return code
+		if !o.dryRun || !onlyNotOwner(cfg) {
+			e.errf("fallbacks add: refused, nothing written.\n  %v", err)
+			return code
+		}
+		notOwner = true
 	}
 	w := &fallbackAddWizard{e: e, cfg: cfg, o: &o, lookPath: lookPath, bb: bb}
 	if !o.nonInteractive {
@@ -297,13 +307,18 @@ func fallbacksAdd(e env, args []string, input io.Reader, lookPath func(string) (
 				return fail(code, "%v", err)
 			}
 		}
-		if err := json.NewEncoder(e.stdout).Encode(fallbackAddReportOf(plan, o.dryRun)); err != nil {
+		report := fallbackAddReportOf(plan, o.dryRun)
+		report.CallerNotOwner = notOwner
+		if err := json.NewEncoder(e.stdout).Encode(report); err != nil {
 			return fail(exitFailed, "could not write JSON result; files may already be changed")
 		}
 		return exitOK
 	}
 	printFallbackAddPreview(e.stdout, plan)
 	if o.dryRun {
+		if notOwner {
+			fmt.Fprintln(e.stdout, "\n"+notOwnerNote)
+		}
 		fmt.Fprintln(e.stdout, "\nDry run: nothing written.")
 		return exitOK
 	}
@@ -1449,4 +1464,13 @@ func printFallbackAddNext(w io.Writer, p *fallbackAddPlan) {
 		fmt.Fprintf(w, "       %s fallbacks handoff on %s\n         -c %s\n", prefix, cont, cfgPath)
 	}
 	fmt.Fprintln(w, "\nA running daemon uses the new order after its next configuration reload.")
+}
+
+// notOwnerNote is what a preview by a caller that does not own the loop says.
+const notOwnerNote = "You are not this loop's owner, so you cannot make this change: run the same command without --dry-run from the loop's owning BB thread, or from a terminal with no BB thread identity."
+
+// onlyNotOwner reports that the one reason a change is refused is that the
+// caller does not own the loop: a preview is still shown then.
+func onlyNotOwner(cfg *config.Config) bool {
+	return errors.Is(checkOwnership(cfg.Loop.StateDir, nil), control.ErrOwnerConflict) && checkTransferSources(cfg, false) == nil
 }
