@@ -202,7 +202,35 @@ func TestDockStateWordAgreesWithStatusForEveryControlCombination(t *testing.T) {
 	for bits := 0; bits < 32; bits++ {
 		c := &clientControls{Enabled: bits&1 != 0, Paused: bits&2 != 0, Stop: bits&4 != 0, AwaitingUser: bits&8 != 0, Completed: bits&16 != 0}
 		word := control.File{Enabled: c.Enabled, Paused: c.Paused, Stop: c.Stop, AwaitingUser: c.AwaitingUser, Completed: c.Completed}.Summary()
-		l, _ := projectDockLoop(dockEvidence{controls: c}.input(), dockNow, defaultStaleAfter, false)
+		in := dockEvidence{controls: c}.input()
+		l, need := projectDockLoop(in, dockNow, defaultStaleAfter, false)
+		// Who is waited for is what it was before the state word followed
+		// status: an enabled loop that is not stopped or completed and has a
+		// person asked for, paused or not.
+		wantNeed := c.Enabled && !c.Stop && !c.Completed && c.AwaitingUser
+		if (need != nil) != wantNeed {
+			t.Errorf("%+v: needs-you membership is %v, want %v", *c, need != nil, wantNeed)
+		}
+		r := buildDockReport([]dockInput{in}, dockNow, time.Minute, defaultStaleAfter, false, true, 0, true)
+		if (len(r.NeedsYou) == 1) != wantNeed || buildPanelList(r).Loops[0].NeedsYou != wantNeed {
+			t.Errorf("%+v: the report lists %d needs and panel list says %v, want %v", *c, len(r.NeedsYou), buildPanelList(r).Loops[0].NeedsYou, wantNeed)
+		}
+		if c.Enabled && c.Paused && !c.Stop && !c.Completed && c.AwaitingUser {
+			if l.State != "paused" || l.Phrase != "Paused \u00B7 also waiting for you" || l.AlsoWaiting == "" || !strings.Contains(l.Detail, "Also waiting for you: ") {
+				t.Errorf("%+v: paused and waiting reads %s %q %q", *c, l.State, l.Phrase, l.AlsoWaiting)
+			}
+		} else if l.AlsoWaiting != "" {
+			t.Errorf("%+v: also waiting where it is not paused and waiting", *c)
+		}
+		// One exception, kept on purpose: awaiting and completed together is
+		// status's "awaiting user", but a finished task asks nothing of the
+		// person, so the panel keeps reading it as finished (no need).
+		if c.Enabled && !c.Stop && !c.Paused && c.AwaitingUser && c.Completed {
+			if l.State != "finished" || need != nil {
+				t.Errorf("%+v: completed with an awaiting flag reads %s", *c, l.State)
+			}
+			continue
+		}
 		if w, ok := want[word]; ok {
 			if l.State != w {
 				t.Errorf("%+v: status says %q, the panel says %s (%q)", *c, word, l.State, l.Phrase)
@@ -220,5 +248,18 @@ func TestDockStateWordAgreesWithStatusForEveryControlCombination(t *testing.T) {
 	in.Client.Snapshot.ControlState = "superseded"
 	if l, _ := projectDockLoop(in, dockNow, defaultStaleAfter, false); l.Phrase != "Superseded" || l.State != "off" {
 		t.Errorf("superseded reads %s %q", l.State, l.Phrase)
+	}
+}
+
+// A paused loop that is still waiting for a person sorts with the loops that
+// need one, ahead of a supervising loop.
+func TestDockPausedAndWaitingSortsWithTheLoopsThatNeedYou(t *testing.T) {
+	waiting := dockEvidence{controls: &clientControls{Enabled: true, Paused: true, AwaitingUser: true}}.input()
+	waiting.Entry.ID, waiting.Entry.Loop = "loop_00000000000000000000000000000001", "zz-paused-and-waiting"
+	fine := dockEvidence{controls: &clientControls{Enabled: true}}.input()
+	fine.Entry.ID, fine.Entry.Loop = "loop_00000000000000000000000000000002", "aa-supervising"
+	r := buildDockReport([]dockInput{fine, waiting}, dockNow, time.Minute, defaultStaleAfter, false, true, 0, true)
+	if r.Loops[0].Name != "zz-paused-and-waiting" || len(r.NeedsYou) != 1 {
+		t.Fatalf("%q first, %d needs", r.Loops[0].Name, len(r.NeedsYou))
 	}
 }

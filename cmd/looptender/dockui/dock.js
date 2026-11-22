@@ -399,8 +399,8 @@
     ul.setAttribute("aria-labelledby", "pick-loops");
     list(d.loops).forEach(function (l) {
       var li = el("li");
-      var row = pickRow("#/loop/" + l.key, "dot-" + (TONES[l.state] || "unknown"), l.name, l.pickerState, r.view === "loop" && r.key === l.key);
-      if (l.state === "paused" || l.state === "stopped" || l.state === "finished" || l.state === "off") row.classList.add("is-quiet");
+      var row = pickRow("#/loop/" + l.key, "dot-" + (l.alsoWaiting ? "attn" : TONES[l.state] || "unknown"), l.name, l.pickerState, r.view === "loop" && r.key === l.key);
+      if ((l.state === "paused" && !l.alsoWaiting) || l.state === "stopped" || l.state === "finished" || l.state === "off") row.classList.add("is-quiet");
       li.appendChild(row);
       ul.appendChild(li);
     });
@@ -504,7 +504,7 @@
     var ul = el("ul", "work-tree");
     var retainedOpen = Object.create(null);
     list(d.loops).forEach(function (l) {
-      var quiet = l.state === "paused" || l.state === "stopped" || l.state === "finished" || l.state === "off";
+      var quiet = (l.state === "paused" && !l.alsoWaiting) || l.state === "stopped" || l.state === "finished" || l.state === "off";
       var li = el("li", "work-branch" + (quiet ? " is-quiet" : "")), details = el("details");
       details.dataset.loop = l.key;
       details.open = Object.prototype.hasOwnProperty.call(state.treeOpen, l.key) ? state.treeOpen[l.key] : !!needFor(l.key);
@@ -518,6 +518,7 @@
       summary.appendChild(name);
       var status = el("span", "work-status");
       var tone = TONES[l.state] || "unknown";
+      if (l.alsoWaiting) tone = "attn";
       if (l.lanesFailed && tone === "good") tone = "warn";
       status.appendChild(el("span", "dot dot-" + tone));
       status.appendChild(el("span", null, l.phrase));

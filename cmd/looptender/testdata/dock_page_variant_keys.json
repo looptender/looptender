@@ -1,5 +1,6 @@
 [
  "state",
+ "alsoWaiting",
  "phrase",
  "detail",
  "lanesFailed",

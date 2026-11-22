@@ -275,6 +275,10 @@ type dockLoop struct {
 	// updates, or its commands run another program. Absent when it follows
 	// updates with nothing to say. It names no path.
 	WakePolicy dockText `json:"wakePolicy,omitempty"`
+	// AlsoWaiting is why a paused loop is still waiting for a person (a
+	// question or a hold's reason): the state word stays "paused", as status
+	// says, and the loop stays under "Needs you".
+	AlsoWaiting string `json:"alsoWaiting,omitempty"`
 	// Versions is what else the read found about the builds the loop runs:
 	// its daemon's label and its service's file. The Versions view lists them.
 	Versions dockLoopVersions `json:"versions"`
@@ -1266,7 +1270,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 	}
 	r.AllClear = complete && omitted == 0 && len(r.NeedsYou) == 0
 	sort.SliceStable(r.Loops, func(i, j int) bool {
-		a, b := dockStatePriority[r.Loops[i].State], dockStatePriority[r.Loops[j].State]
+		a, b := dockLoopPriority(r.Loops[i]), dockLoopPriority(r.Loops[j])
 		if a != b {
 			return a < b
 		}
@@ -1613,7 +1617,14 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		// One state word per state, from the function status uses
 		// (control.File.Summary): superseded, disabled, stop requested, paused,
 		// awaiting user, completed, enabled, in that order.
-		switch dockControlWord(snap) {
+		word := dockControlWord(snap)
+		if word == "awaiting user" && snap.Controls.Completed {
+			// A completed task with an awaiting flag left on asks nothing of
+			// the person (complete clears it): the panel keeps reading it as
+			// finished, as it did, so what is waited for does not change.
+			word = "completed"
+		}
+		switch word {
 		case "superseded":
 			l.State, l.Phrase, l.Detail = "off", "Superseded", "Another loop continues this work; this loop is retired and sends nothing."
 		case "disabled":
@@ -1622,6 +1633,17 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			l.State, l.Phrase, l.Detail = "stopped", "Stopped", "A stop is requested. Nothing is sent until it is resumed."
 		case "paused":
 			l.State, l.Phrase, l.Detail = "paused", "Paused", "Paused. Nothing is sent until it is resumed."
+			// Still waiting for a person when one is asked for, as before: the
+			// state word is status's, and the need and its reason stay.
+			if c := snap.Controls; c.AwaitingUser && !c.Completed {
+				need = dockHoldNeed(st, in.Hold, identifiers)
+				if snap.Moved != nil && snap.Moved.Held {
+					need.Reason, need.Action = snap.Moved.Text, "Resume the loop; that is the one action needed."
+				}
+				l.Phrase = "Paused \u00B7 also waiting for you"
+				l.AlsoWaiting = need.Reason
+				l.Detail += " Also waiting for you: " + need.Reason
+			}
 		case "completed":
 			l.State, l.Phrase, l.Detail = "finished", "Finished", "Marked finished, which is a declaration and is not verified. Nothing is sent until it is resumed."
 		case "awaiting user":
@@ -2647,4 +2669,13 @@ func dockControlWord(snap *clientSnapshot) string {
 	}
 	c := snap.Controls
 	return control.File{Enabled: c.Enabled, Paused: c.Paused, Stop: c.Stop, AwaitingUser: c.AwaitingUser, Completed: c.Completed}.Summary()
+}
+
+// dockLoopPriority is the loop's place in the list: its state's, except that a
+// paused loop that is still waiting for a person sorts with those that need one.
+func dockLoopPriority(l dockLoop) int {
+	if l.State == "paused" && l.AlsoWaiting != "" {
+		return dockStatePriority["waiting_for_you"]
+	}
+	return dockStatePriority[l.State]
 }
