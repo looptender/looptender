@@ -63,6 +63,10 @@ variants.push(["next check known", (l) => { l.nextCheck = { availability: "known
 variants.push(["next check in progress", (l) => { l.nextCheck = { availability: "in_progress", phrase: "A check is running" }; }]);
 variants.push(["checked by ticks, paused", (l) => { l.state = "paused"; l.phrase = "Paused"; l.checkedBy = { kind: "ticks", text: "Checked by ticks from a scheduler that is not recorded." }; }]);
 variants.push(["checked by nothing", (l) => { l.checkedBy = { kind: "none", text: "Nothing is on record to check it." }; }]);
+variants.push(["fresh: updated", (l) => { l.freshness = { state: "updated", text: "Updated 2 h ago", detail: "Installed 22 Nov 10:00 \u00B7 was v0.1.0 \u00B7 now v0.2.0" }; }]);
+variants.push(["fresh: pending", (l) => { l.freshness = { state: "pending", text: "Update pending \u00B7 switches at next check" }; }]);
+variants.push(["fresh: older, paused", (l) => { l.state = "paused"; l.phrase = "Paused"; l.freshness = { state: "older", text: "Older build \u00B7 restart the supervisor to update", detail: "Runs v0.1.0.", command: "keepgoing daemon-shutdown -c CONFIG" }; }]);
+variants.push(["fresh: none", (l) => { delete l.freshness; }]);
 variants.push(["long detail", (l) => { l.detail = long; }]);
 
 function scenario(mutateData) {
@@ -159,6 +163,13 @@ const expectations = [
   ["a paused loop that still waits for a person has the needs-you pill on its page and in the picker", (d) => target(d, (l) => { l.state = "paused"; l.phrase = "Paused \u00B7 also waiting for you"; l.alsoWaiting = "A question is open."; }),
     [{ hash: "loop", fn: (w, h) => h.endsWith(fixture.dock.loops[0].key) ? (w.document.querySelector("#pane .state.tone-attn") ? null : "the loop page's pill is not the needs-you tone") : null },
      { hash: "#/", fn: (w) => (w.document.querySelector("#picker .dot-attn") ? null : "the picker row is not the attention dot") }]],
+  ["an older daemon's loop shows the state, the detail and the command as text, with no button", (d) => { d.freshness = { text: "Build v0.2.0 installed 3 h ago \u00B7 1 supervisor on it \u00B7 1 older", onIt: 1, older: 1 }; return target(d, (l) => { l.freshness = { state: "older", text: "Older build \u00B7 restart the supervisor to update", detail: "Runs v0.1.0.", command: "keepgoing daemon-shutdown -c CONFIG" }; }); },
+    [{ hash: "loop", fn: (w, h) => h.endsWith(fixture.dock.loops[0].key) ? (/Older build \u00B7 restart the supervisor to update/.test(text(w, "#pane .fresh-line")) && /keepgoing daemon-shutdown -c CONFIG/.test(text(w, "#pane .fresh-command code")) && !/Restart|Resume|Update now/i.test(text(w, "#pane button")) ? null : "the older build is not worded, or a button offers a restart: " + text(w, "#pane")) : null },
+     { hash: "#/", fn: (w) => (/Build v0.2.0 installed 3 h ago/.test(text(w, "#pane .fresh-summary")) && /Older build/.test(text(w, "#pane .work-tree .fresh")) ? null : "the Overview lacks the summary line or the loop's chip") }]],
+  ["an up-to-date loop's chip is just the version, and a loop with no state shows no chip", (d) => target(d, (l) => { l.freshness = { state: "current", text: "v0.2.0" }; }),
+    [{ hash: "#/", fn: (w) => (text(w, "#pane .work-tree .fresh") === "v0.2.0" ? null : "the chip is not just the version: " + text(w, "#pane .work-tree .fresh")) }]],
+  ["no freshness, no chip and no summary", (d) => target(d, (l) => { delete l.freshness; }),
+    [{ hash: "#/", fn: (w) => (!w.document.querySelector("#pane .fresh") && !w.document.querySelector("#pane .fresh-summary") ? null : "a chip or summary appeared with nothing known") }]],
   ["the Overview tree names an unsupervised loop", (d) => target(d, (l) => { l.state = "not_checked_recently"; l.phrase = "Not supervised"; }),
     [{ hash: "#/", fn: (w) => (/Not supervised/.test(text(w, "#pane .work-tree")) ? null : "no 'Not supervised' row in the Overview tree") }]],
 ];

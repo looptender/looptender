@@ -656,3 +656,7 @@ details[open] > .how-summary::before { transform: rotate(45deg); }
 .account-connect-another input { width: 100%; min-width: 0; box-sizing: border-box; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line-2); border-radius: 5px; padding: .65rem; caret-color: var(--focus); }
 .account-connect-another input:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .account-connect-another .btn { justify-self: start; }
+
+.fresh { margin-left: 0.5rem; padding: 0 0.375rem; border: 1px solid currentColor; border-radius: 0.5rem; font-size: 0.75rem; }
+.fresh-pending, .fresh-older { font-weight: 600; }
+.fresh-summary { margin: 0.25rem 0 0.75rem; }

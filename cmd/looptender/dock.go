@@ -556,6 +556,9 @@ func (d *dockReader) readLoop(ctx context.Context, dir string, entry registry.En
 	}
 	in.Client = readClientStatus(ctx, dir, entry.ID, false, false, d.staleAfter, now, query)
 	in.Daemon = daemon
+	if rec, err := loadAdoptRecord(entry.StateDir); err == nil {
+		in.AdoptRecord = rec
+	}
 	// A missing configuration binding cannot authorize controls or expose a
 	// target, but its registered state directory can answer a live diagnostic.
 	if in.Client.Snapshot == nil && d.query != nil && ctx.Err() == nil && slices.Contains(in.Client.Issues, "binding_unavailable") {
