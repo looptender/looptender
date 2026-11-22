@@ -2,7 +2,7 @@
 
 Design specification and delivery plan, 2026-11-20. This document specifies how a person reaches a device's loops through a personal Telegram bot—starting with redacted alerts and safe remote controls, and optionally extending to threaded chat steering as a lightweight mobile interface.
 
-**Current status:** **TG1** (`internal/telegram` plus `loop.report.format: telegram` in `internal/report`, `internal/config`, and `schema/looptender.schema.json`), **TG2** (`looptender telegram setup|status|test|disconnect`), **TG3** (`looptender telegram poll` outbound `getUpdates` long polling for `/status`, `Pause`, and `Stop` with persisted offsets, staleness cutoffs, and `telegram_pause`/`telegram_stop` incident attribution), and **TG4** (two-step ticketed `Prepare resume` / `Confirm resume` bound to `client prepare-resume` / `client resume` single-use tickets with `telegram_resume` attribution, plus `looptender telegram topics` and automatic per-loop private-chat topic creation with single-DM fallback) are implemented on unreleased source and verified with offline HTTP stand-ins and unit tests. Opt-in `doctor --telegram` checks saved pairing validity and token-file presence locally without reading token contents or making network requests; delivery and polling health remain unverified. Terminal QR rendering, delivery/poller diagnostics, background service wiring for `telegram poll`, **TG5** (opt-in `chat` steering and unified `onboard`), and live Telegram Bot API verification remain **planned, not built**.
+**Current status:** **TG1** (`internal/telegram` plus `loop.report.format: telegram` in `internal/report`, `internal/config`, and `schema/looptender.schema.json`), **TG2** (`looptender telegram setup|status|test|disconnect`), **TG3** (`looptender telegram poll` outbound `getUpdates` long polling for `/status`, `Pause`, and `Stop` with persisted offsets, staleness cutoffs, and `telegram_pause`/`telegram_stop` incident attribution), and **TG4** (two-step ticketed `Prepare resume` / `Confirm resume` bound to `client prepare-resume` / `client resume` single-use tickets with `telegram_resume` attribution, plus `looptender telegram topics` and automatic per-loop private-chat topic creation with single-DM fallback) are implemented on unreleased source and verified with offline HTTP stand-ins and unit tests. Opt-in `doctor --telegram` checks saved pairing validity and token-file presence locally without reading token contents or making network requests; delivery and polling health remain unverified. Opt-in terminal QR rendering (`telegram setup --qr`) is verified with an independent offline decoder. Delivery/poller diagnostics, background service wiring for `telegram poll`, **TG5** (opt-in `chat` steering and unified `onboard`), and live Telegram Bot API verification remain **planned, not built**.
 
 ## Where the architectural line sits
 
@@ -48,10 +48,11 @@ No third-party setup service is involved; only the person and their device ever 
 
 1. Create a bot via `@BotFather` (`/newbot`), choose a name and username, and copy the token.
 2. Run `looptender telegram setup` with the token supplied through its configured environment variable or standard input (`--token-stdin`). Standard input is not a hidden-input prompt. Setup writes the token with `0600` permissions to private state outside the repository. Use the default `alerts` mode; although setup can record `--mode chat --accept-non-e2e`, chat steering remains planned in TG5.
-3. looptender validates the token with `getMe`, attempts to register the slash menu with `setMyCommands`, and prints a one-time deep link. Terminal QR rendering remains planned:
+3. looptender validates the token with `getMe`, attempts to register the slash menu with `setMyCommands`, and prints a one-time deep link. Add `--qr` to also render that same link locally as a terminal QR (no bot token or additional requests):
    ```text
    https://t.me/example_looptender_bot?start=pair_<nonce>
    ```
+   QR output is opt-in and requires ANSI black/white colors plus Unicode half-block characters. Keep the entire code visible without line wrapping; use the printed text link if colors, font or terminal width make scanning unreliable. Encoding failure also leaves the text link available. The QR has the same nonce, authority and expiry as the link; it grants no separate pairing permission. Offline decoding does not establish phone scanning or live Telegram acceptance.
 4. The person opens the link in Telegram and taps **Start**. Telegram sends `/start pair_<nonce>` to the bot; looptender reads it via `getUpdates`, verifies the nonce and expiry, rejects non-private chats or bot senders, and persists `pairing.json` locked strictly to that `allowed_user_id` and `allowed_chat_id`.
 5. If `getMe` reports `has_topics_enabled: true`, looptender creates one private-chat topic per registered loop (`createForumTopic`) and stores the mapping in private state. Otherwise it uses the single private DM cleanly.
 
@@ -87,7 +88,7 @@ This is **not chosen** for initial delivery because it requires a hosted helper 
 Each phase requires offline fixture tests before merge; live Telegram checks are tracked separately and never assumed from fixtures.
 
 - **TG1 — Internal Telegram client, pairing primitives, redacted event formatter, and report format** *(implemented and verified against offline HTTP stand-ins; live Telegram check open)*. Pure Go stdlib Bot API client (`GetMe`, `SendMessage`, `GetUpdates`, `AnswerCallbackQuery`, `SetMyCommands`, `CreateForumTopic`), strict token redaction and redirect refusal, one-time pairing nonce/matcher and atomic `0600` pairing/token state store, redacted event formatter, and outbound `loop.report.format: telegram` in `internal/report` with `deliveries.json` recording.
-- **TG2 — Guided local pairing (`looptender telegram setup|status|test|disconnect`)** *(implemented and verified against offline HTTP stand-ins; terminal QR and live Telegram check open; local opt-in `doctor --telegram` diagnostics implemented)*. Token prompt into a `0600` secret file, `getMe` check, `setMyCommands`, deep-link `?start=pair_<nonce>` pairing, strict `user_id`/`chat_id` lock, and redacted `status`/`test`/`disconnect`.
+- **TG2 — Guided local pairing (`looptender telegram setup|status|test|disconnect`)** *(implemented and verified against offline HTTP stand-ins; opt-in terminal QR independently decoded offline; phone scanning and live Telegram check open; local opt-in `doctor --telegram` diagnostics implemented)*. Token prompt into a `0600` secret file, `getMe` check, `setMyCommands`, deep-link `?start=pair_<nonce>` pairing, strict `user_id`/`chat_id` lock, and redacted `status`/`test`/`disconnect`.
 - **TG3 — Outbound polling runner: `/status`, `Pause`, and `Stop`** *(implemented via `looptender telegram poll` and verified against offline HTTP stand-ins; background service wiring and live Telegram check open)*. Long-poll `getUpdates` under a single-instance lock with atomic offset persistence before acting, staleness cutoffs, read-only `/status` across registered loops, and restrictive `Pause`/`Stop` inline buttons bound to a 64-bit control-digest prefix and routed strictly through `client pause` / `client stop` with `telegram_pause`/`telegram_stop` incident attribution.
 - **TG4 — Ticketed `Resume` and private-chat topics per loop** *(implemented and verified against offline HTTP stand-ins; live Telegram check open)*. Bind two-step `Prepare resume` / `Confirm resume` inline buttons to `client prepare-resume` / `client resume` single-use tickets (lossless 47-byte base64url callback payload) with `telegram_resume` incident attribution; map registered loops to private-chat forum topics (`createForumTopic`, `looptender telegram topics [--sync]`, and topic-scoped `/status`) when `has_topics_enabled` is true, with clean fallback to single DM.
 - **TG5 — Opt-in `chat` mode and unified `onboard` flow**. Explicit opt-in chat steering in a loop's topic (`await-user` replies, bounded turn summaries), `/new <repo> <goal>` restricted to allowlisted repositories with mandatory bounds and fixed local permission posture, and unified `looptender onboard` connecting detected AI CLIs, GitHub (`gh`), preferred routes, Telegram, and background service.
@@ -97,3 +98,24 @@ Each phase requires offline fixture tests before merge; live Telegram checks are
 ### Local diagnostic check
 
 `looptender doctor --telegram --offline` checks saved pairing and token-file presence without reading token contents or contacting Telegram. `--telegram-dir` selects a non-default pairing directory. Missing or invalid local evidence is reported without exposing bot/chat identities; delivery and polling remain unverified. See [local diagnostics](diagnostics.md#local-telegram-setup).
+
+## Terminal QR implementation and offline evidence
+
+`cmd/looptender/telegram_qr.go` renders only the validated pairing deep link, in
+memory, with a four-module white quiet zone and explicit black/white ANSI colors.
+It has no client, token, storage or control access. The existing text link is
+printed before the optional QR, and setup keeps its existing polling and expiry
+logic. This does not wire a background service or implement chat steering.
+
+Encoding uses pinned [go-qr v2.7.0](https://github.com/piglig/go-qr/releases/tag/v2.7.0)
+(MIT), a pure Go encoder with no external runtime dependencies. This avoids
+maintaining QR error correction and mask selection here, at the cost of adding
+a runtime module; only terminal glyph rendering is project code. Its license
+is reproduced in `THIRD_PARTY_NOTICES`. Tests alone use
+[gozxing v0.1.1](https://github.com/makiuchi-d/gozxing/tree/v0.1.1) (Apache-2.0)
+as an independent decoder; its `x/xerrors` dependency is also test-only and neither
+is linked into the executable. Tests reconstruct pixels from the actual output
+glyphs, recover the exact fictional pairing URL, and check default plain output,
+QR failure fallback, help/flag handling, token exclusion and unchanged setup
+request sequence. These fixtures do not establish scanning from a real terminal
+with a phone or live Telegram pairing.
