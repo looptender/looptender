@@ -236,7 +236,7 @@ func (s *Spec) ObservationInputs() []string {
 	if s.Limits != nil {
 		in = append(in, "ResetsAt")
 	}
-	if s.ValidSession != nil {
+	if s.ValidSession != nil || s.Capabilities.ExactResume {
 		in = append(in, "SessionLost")
 	}
 	sort.Strings(in)
@@ -390,6 +390,16 @@ func (h *Headless) session() (session string, lost bool) {
 	return s, false
 }
 
+// needsSessionRecovery is evaluated under the sampled turn's guard. A prior
+// attempt without an identity cannot authorize another fresh conversation. The
+// explicit reset fence authorizes one new attempt; setup consumes that fence.
+// An abandoned wrapper is different: its handshake proved it ran no agent.
+func (h *Headless) needsSessionRecovery(st Status, reset bool) bool {
+	session, lost := h.session()
+	return lost || (h.spec.Capabilities.ExactResume && session == "" &&
+		(st.Phase == Finished || st.Phase == Crashed) && !st.Record.Abandoned && !reset)
+}
+
 // Only deterministic reset lifecycle tests set these hooks; they run while
 // the documented guard is held, or at the explicitly unguarded sample boundary.
 var afterResetSample, beforeSessionCommit, afterSessionCommit func()
@@ -458,6 +468,14 @@ func (h *Headless) Observe(ctx context.Context) (obs decide.Observation, err err
 	if err != nil {
 		return decide.Observation{State: decide.Unknown}, err
 	}
+	reset := false
+	if st.Phase != NeverRun && st.Phase != Running {
+		reset, err = h.dir.sessionWasReset(st.Record)
+		if err != nil {
+			return decide.Observation{State: decide.Unknown}, err
+		}
+	}
+	sessionLost := h.needsSessionRecovery(st, reset)
 	defer func() {
 		if obs.Evidence.Source == "" {
 			obs.Evidence = runnerEvidence(st)
@@ -466,7 +484,7 @@ func (h *Headless) Observe(ctx context.Context) (obs decide.Observation, err err
 		// Starting another in its place would lose the agent's context
 		// without anyone deciding to, so a person is asked instead. A
 		// finished turn that reported its session has saved it again by now.
-		if _, lost := h.session(); lost && err == nil && st.Phase != Running {
+		if sessionLost && err == nil && st.Phase != Running {
 			obs.SessionLost = true
 		}
 	}()
@@ -494,15 +512,12 @@ func (h *Headless) Observe(ctx context.Context) (obs decide.Observation, err err
 	if err := h.dir.sameGeneration(st); err != nil {
 		return decide.Observation{State: decide.Unknown}, err
 	}
-	reset, err := h.dir.sessionWasReset(st.Record)
-	if err != nil {
-		return decide.Observation{State: decide.Unknown}, err
-	}
 	if !reset {
 		if err := h.dir.restoreCompletedSession(r.Session); err != nil {
 			return decide.Observation{State: decide.Unknown}, err
 		}
 	}
+	sessionLost = h.needsSessionRecovery(st, reset)
 	guard.Release()
 	guard = nil
 	// Provider limit reads below never hold the turn guard.
@@ -515,7 +530,7 @@ func (h *Headless) Observe(ctx context.Context) (obs decide.Observation, err err
 	obs = decide.Observation{State: decide.Error, ErrorClass: r.Class, DeferredInteraction: waiting, Evidence: r.Evidence}
 	// Some agents report a usage limit only as prose. Ask the agent's own
 	// structured interface instead of reading it.
-	if l := h.spec.Limits; l != nil && obs.ErrorClass == decide.ErrUnknown {
+	if l := h.spec.Limits; l != nil && obs.ErrorClass == decide.ErrUnknown && !sessionLost {
 		if limits, err := l.Read(ctx, h.set.CLI, envList(h.set.Env)); err == nil && limits.Blocked {
 			obs.ErrorClass, obs.ResetsAt = decide.ErrRateLimit, limits.ResetsAt
 			obs.Evidence = evidence.Clean(evidence.Detail{Source: l.EvidenceSource, Code: l.EvidenceCode, ExitCode: runnerEvidence(st).ExitCode})
@@ -561,7 +576,7 @@ func (h *Headless) Send(ctx context.Context, prompt string, mode adapter.Mode) e
 			return err
 		}
 	}
-	if _, lost := h.session(); lost {
+	if h.needsSessionRecovery(st, reset) {
 		return errSessionLost
 	}
 	argv := h.Args()

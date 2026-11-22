@@ -77,6 +77,7 @@ func telegramSetupCommand(e env, args []string, stdin io.Reader) int {
 	apiURL := fs.String("api-url", "", "override Telegram Bot API base URL (https, or loopback http for tests)")
 	timeout := fs.Duration("timeout", 2*time.Minute, "how long to wait for the one-tap pairing message")
 	pollWait := fs.Duration("poll-wait", 2*time.Second, "per-request getUpdates timeout during pairing")
+	showQR := fs.Bool("qr", false, "also render the pairing link as a terminal QR (requires ANSI colors and Unicode)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitOK
@@ -169,7 +170,7 @@ func telegramSetupCommand(e env, args []string, stdin io.Reader) int {
 	}
 
 	fmt.Fprintf(e.stdout, "Validated bot @%s (private-chat topics enabled: %t).\n", me.Username, me.HasTopicsEnabled)
-	fmt.Fprintf(e.stdout, "Open this one-tap link in Telegram and press Start (expires in %s):\n  %s\n", timeout.Round(time.Second), link)
+	printTelegramPairingLink(e.stdout, link, timeout.Round(time.Second), *showQR)
 	fmt.Fprintln(e.stdout, "Waiting for pairing confirmation...")
 
 	now := time.Now().UTC()
