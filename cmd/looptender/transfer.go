@@ -352,6 +352,7 @@ func transferCommand(e env, args []string, run doctorRun) int {
 	// so, and offer what BB reports for the destination thread, if anything.
 	if providerChange := route != nil || plan.Provider != nil; providerChange {
 		destination := r.To
+		destinationRead := destination.Provider != ""
 		for _, l := range []struct {
 			id, name, flag string
 			blank          bool
@@ -369,6 +370,8 @@ func transferCommand(e env, args []string, run doctorRun) int {
 				msg += " BB reports the destination thread's " + l.name + " as " + l.reported + "; pass " + l.flag + " " + l.reported + " to record it."
 			case *offline:
 				msg += " BB was not asked (offline), so no value is offered."
+			case !destinationRead:
+				msg += " BB could not be reached for the destination thread, so no value is offered."
 			default:
 				msg += " BB did not report the destination thread's " + l.name + ", so no value is offered."
 			}
@@ -378,7 +381,7 @@ func transferCommand(e env, args []string, run doctorRun) int {
 		what := "The loop's task was written for the previous provider and should be reviewed before it is resumed."
 		if cfg.Loop.PromptFile != "" {
 			if info, err := os.Stat(cfg.Loop.PromptFile); err == nil && info.Mode().IsRegular() {
-				what = "The loop's prompt file was last changed " + dockSpan(time.Since(info.ModTime())) + " ago, before this move, so it was written for the previous provider; review it before the loop is resumed."
+				what = "The loop's prompt file was last changed " + dockSpan(time.Since(info.ModTime())) + " ago; review it after a provider change, in case it was written for the previous provider."
 			}
 		}
 		r.Checks = append(r.Checks, doctorCheck{ID: "prompt_review", Status: "warning", Message: what})

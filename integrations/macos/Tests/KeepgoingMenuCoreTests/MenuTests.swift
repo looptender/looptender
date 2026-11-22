@@ -387,6 +387,14 @@ final class MenuTests: XCTestCase {
         XCTAssertTrue(rows.contains("example-codex-loop | Moved: resume to start · claude-code example-model"))
         // An ordinary hold keeps its wording, with only the provider known.
         XCTAssertTrue(rows.contains("example-docs | Waiting for you · codex"))
+        // VoiceOver and the tooltip say the target is configuration, also on a flagged row.
+        let flagged = try JSONDecoder().decode(PanelList.self, from: Data("""
+        {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":true,"needsYou":0,"unread":0,"omitted":0,
+         "loops":[{"key":"l000000000001","name":"example-api","state":"supervising","phrase":"Supervising","needsYou":false,"noProgress":"No progress: fictional","provider":"claude-code","model":"example-model"}]}
+        """.utf8))
+        let row = MenuBuilder.build(.read(flagged, at: now), now: now).rows.first { $0.kind == .loop }!
+        XCTAssertTrue(row.accessibilityLabel.contains("Configured target: claude-code example-model"))
+        XCTAssertTrue(row.toolTip.contains("Configured target: claude-code example-model"))
         // A CLI that sends neither leaves the row as it was.
         XCTAssertTrue(rows.contains("example-site | Supervising"))
     }

@@ -292,6 +292,8 @@ func transferApply(e env, args []string, run doctorRun, afterStep func(string) e
 			return err
 		}
 		f.PendingTransfer = nil
+		moved := time.Now().UTC()
+		f.MovedAt = &moved
 		return control.BindBBTarget(f, p.To)
 	})
 	if err != nil && !errors.Is(err, errControlHistory) {

@@ -329,9 +329,9 @@ public enum MenuBuilder {
                 let target = targetText(loop)
                 let shown = [phrase, target, build].filter { !$0.isEmpty }.joined(separator: " · ")
                 rows.append(MenuRow(kind: .loop, title: short, detail: shown, symbol: symbols[loop.state] ?? "questionmark.circle",
-                                    accessibilityLabel: flag.isEmpty ? "\(name), \(shown)" : "\(name), \(Contract.text(loop.phrase)). \(flag)" + (build.isEmpty ? "" : ". " + build),
+                                    accessibilityLabel: flag.isEmpty ? "\(name), \(shown)" : "\(name), \(Contract.text(loop.phrase)). \(flag)" + (target.isEmpty ? "" : ". Configured target: " + target) + (build.isEmpty ? "" : ". " + build),
                                     accessibilityHelp: choices.count > 1 ? "Shows what you can do with this loop." : "Opens this loop in the panel.",
-                                    toolTip: short == name ? "" : name, command: choices.count > 1 ? nil : .openLoop(key: loop.key), submenu: choices.count > 1 ? choices : []))
+                                    toolTip: [short == name ? "" : name, target.isEmpty ? "" : "Configured target: " + target].filter { !$0.isEmpty }.joined(separator: "\n"), command: choices.count > 1 ? nil : .openLoop(key: loop.key), submenu: choices.count > 1 ? choices : []))
             }
             if list.canAll?.contains("pause") == true {
                 rows.append(action("Pause All Loops…", .reviewAll(.pause), symbol: "pause.circle",
