@@ -1597,6 +1597,11 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 				return err
 			}
 			if err := control.CheckOwner(*f, os.Getenv("BB_THREAD_ID"), false); err != nil {
+				if errors.Is(err, control.ErrOwnerConflict) && f.Ownership != nil && f.Ownership.FollowedFrom(caller) {
+					// Say why this thread no longer owns the loop, as every
+					// other control command does for a thread ownership left.
+					return fmt.Errorf("resume refused: %w; nothing changed. A person can review Resume in the looptender menu or panel started from an ordinary terminal outside BB", err)
+				}
 				if errors.Is(err, control.ErrOwnerConflict) {
 					return errors.New("resume refused: BB_THREAD_ID identifies a different thread from this loop's owner; nothing changed. A person can review Resume in the looptender menu or panel started from an ordinary terminal outside BB. Resuming does not require an ownership transfer")
 				}

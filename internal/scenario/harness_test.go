@@ -155,9 +155,9 @@ type World struct {
 	bin, world, home string
 	env              []string
 
-	sendsSeen, callsSeen, hooksSeen, probesSeen int
-	sendsTotal                                  int
-	Journal                                     []*Step
+	sendsSeen, callsSeen, hooksSeen, probesSeen, movesSeen int
+	sendsTotal                                             int
+	Journal                                                []*Step
 }
 
 // NewWorld builds a scenario world starting at the given time.
@@ -494,13 +494,15 @@ func standinTrouble(world, stderr string) string {
 // agents, what holds exist, what was reported, and what status, timeline and
 // runs say.
 type Step struct {
-	Label     string
-	At        time.Time
-	Result    Result
-	Tick      map[string]any
-	Sent      []Send
-	Calls     [][]string
-	Probes    [][]string
+	Label  string
+	At     time.Time
+	Result Result
+	Tick   map[string]any
+	Sent   []Send
+	Calls  [][]string
+	Probes [][]string
+	// Moves are the child threads bb moved to another parent.
+	Moves     []Move
 	Reports   []Report
 	NetChecks int
 	Status    Status
@@ -515,6 +517,14 @@ type Send struct {
 	Mode    string `json:"mode"`
 	Title   string `json:"title,omitempty"`
 	Message string `json:"message"`
+}
+
+// Move is one child thread given a new parent with `bb thread update
+// --parent-thread`.
+type Move struct {
+	Child string `json:"child"`
+	From  string `json:"from"`
+	To    string `json:"to"`
 }
 
 // Holds lists the holds in force, from status.
@@ -689,6 +699,10 @@ func (w *World) record(label string, r Result, line map[string]any) *Step {
 	readLines(w.t, filepath.Join(w.world, "probes.jsonl"), &probes)
 	s.Probes = probes[w.probesSeen:]
 	w.probesSeen = len(probes)
+	var moves []Move
+	readLines(w.t, filepath.Join(w.world, "moves.jsonl"), &moves)
+	s.Moves = moves[w.movesSeen:]
+	w.movesSeen = len(moves)
 	all := w.Hooks.Events()
 	s.Reports = all[w.hooksSeen:]
 	w.hooksSeen = len(all)
@@ -706,6 +720,11 @@ func (w *World) record(label string, r Result, line map[string]any) *Step {
 		if th := w.Threads[m.Thread]; th != nil {
 			th.received(m)
 		}
+	}
+	// After a created thread is tracked, so a move to it does not replace
+	// what bb reports about it.
+	for _, m := range s.Moves {
+		w.moved(m)
 	}
 	w.invariants(s)
 	return s
@@ -944,6 +963,29 @@ func (th *Thread) Child(id string) *Thread {
 	}
 	th.w.writeJSON(th.ID+".children", list)
 	return c
+}
+
+// moved keeps the stand-in threads in step with a move bb made, so a later
+// Set or Child writes the parent bb now reports.
+func (w *World) moved(m Move) {
+	c := w.Thread(m.Child)
+	c.Parent = m.To
+	if from := w.Threads[m.From]; from != nil {
+		kept := []string{}
+		for _, id := range from.children {
+			if id != m.Child {
+				kept = append(kept, id)
+			}
+		}
+		from.children = kept
+	}
+	to := w.Thread(m.To)
+	for _, id := range to.children {
+		if id == m.Child {
+			return
+		}
+	}
+	to.children = append(to.children, m.Child)
 }
 
 // Set changes the status `bb thread show` reports.

@@ -475,14 +475,30 @@ func TestStopAndPauseWinOverThreadCreation(t *testing.T) {
 					c.Paused, c.Stop, c.AwaitingUser, c.Completed = hold == "pause", hold == "stop", hold == "awaiting user", hold == "completed"
 					c.Enabled = hold != "disabled"
 				})
+				// A stop with an unrecorded creation looks the thread up by
+				// its title, once, and stops it; nothing is settled.
+				findsAndStops := hold == "stop" && pending
+				built := map[string]string{}
 				for i := 0; i < 3; i++ {
-					if res := mustThreadTick(t, w, f, t0.Add(time.Duration(i)*time.Minute)); res.Action != "none" || res.Target != state.Primary {
-						t.Fatalf("%+v", res)
+					res, err := threadTick(t, w, f, t0.Add(time.Duration(i)*time.Minute), built)
+					want := "none"
+					if findsAndStops && i == 0 {
+						want = "stop"
+					}
+					if err != nil || res.Action != want || res.Target != state.Primary {
+						t.Fatalf("check %d: %+v %v", i, res, err)
 					}
 				}
 				st, _ := state.Load(w.dir)
-				if len(f.spawned) != 0 || f.lists != 0 || len(f.places) != 0 || len(st.NewThreads) != 0 || (st.NewThreadIntent != nil) != pending || len(w.probes) != 0 {
+				lists := map[bool]int{true: 1}[findsAndStops]
+				if len(f.spawned) != 0 || f.lists != lists || len(f.places) != 0 || len(st.NewThreads) != 0 || (st.NewThreadIntent != nil) != pending || len(w.probes) != 0 {
 					t.Fatalf("BB was asked under %s: spawns=%d listings=%d places=%d probes=%d state=%+v", hold, len(f.spawned), f.lists, len(f.places), len(w.probes), st)
+				}
+				if findsAndStops {
+					if a := w.adapters["claude-other"]; a == nil || a.stopped != 1 || built["claude-other"] != "thr_created_earlier" || len(a.sent) != 0 {
+						t.Fatalf("the created thread was not stopped once: %+v built=%v", a, built)
+					}
+					return
 				}
 				if hold == "stop" {
 					p.obs = decide.Observation{State: decide.Active}

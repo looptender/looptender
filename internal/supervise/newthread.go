@@ -325,3 +325,61 @@ func (t *tick) newThreadGate(c config.Candidate) string {
 	}
 	return string(v)
 }
+
+// stopUnrecordedThreads carries a stop to the thread created for a handoff
+// whose outcome was never recorded (the supervisor stopped between asking bb
+// and saving the answer, or a person was asked to settle it). That thread
+// may be running the task, and stop wins. Under the hold nothing is settled:
+// the thread is looked up by the intent's unique title, read-only, and
+// stopped; it is not recorded, the target, owner and children stay where
+// they are, and the intent stays for the first check after a resume. Every
+// thread listed under the title is stopped: the title's random token was
+// written by this handoff alone, so each may have the task, and a second
+// stop is harmless. None listed is not guessed at: a person is told to stop
+// it by hand. A lookup that fails is an error, so the next check looks
+// again. A thread the stop command runs in is returned in late, to be
+// stopped last.
+func (t *tick) stopUnrecordedThreads(in *state.NewThreadIntent, stopOne func(string, adapter.Adapter), errs []error) (late []func(), _ []error) {
+	if t.fb == nil {
+		t.warn("a thread may have been created for a handoff (titled %q), and its fallback is no longer configured, so keepgoing cannot stop it: stop it by hand", in.Title)
+		return nil, errs
+	}
+	c, ok := t.fb.Find(in.Candidate)
+	if !ok || !isNewThread(c) {
+		t.warn("a thread may have been created for a handoff (titled %q), and its fallback is no longer configured, so keepgoing cannot stop it: stop it by hand", in.Title)
+		return nil, errs
+	}
+	if t.left() < newThreadFindTime {
+		return nil, append(errs, fmt.Errorf("no time left to look for the thread created for a handoff (titled %q); the next check stops it", in.Title))
+	}
+	ctx, cancel := context.WithTimeout(t.ctx, newThreadFindTime)
+	ids, err := t.opts.Threads(c.BB.CLI).FindByTitle(ctx, bb.Place{Project: in.Project, Environment: in.Environment}, in.Title)
+	cancel()
+	if err != nil {
+		return nil, append(errs, fmt.Errorf("could not look for the thread created for a handoff (titled %q), so it was not stopped; the next check looks again: %w", in.Title, err))
+	}
+	if len(ids) == 0 {
+		t.warn("a thread may have been created for a handoff (titled %q) and BB lists none under that title, so keepgoing could not stop it: if it exists under another title, stop it by hand", in.Title)
+		return nil, errs
+	}
+	for _, id := range ids {
+		agent := c.Agent
+		b := *agent.BB
+		b.Thread = id
+		agent.BB = &b
+		a, err := t.newAdapter(agent, t.loop.StateDir, in.Candidate)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("stop the thread created for a handoff: %w", err))
+			continue
+		}
+		if t.isCaller(agent) {
+			late = append(late, func() {
+				t.warn("this command runs in the thread created for a handoff; it is stopped last")
+				stopOne(in.Candidate, a)
+			})
+			continue
+		}
+		stopOne(in.Candidate, a)
+	}
+	return late, errs
+}

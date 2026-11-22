@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -159,5 +160,17 @@ func TestAdoptPayloadMustBeComplete(t *testing.T) {
 		if code := adoptBuildCommand(env{context.Background(), &out, &out}, args); code != exitUsage {
 			t.Errorf("%v: %d", args, code)
 		}
+	}
+}
+
+// The candidate's probe and validate run without the BB_THREAD_ID of the
+// thread that started the daemon: after a handoff the supervisor made, that
+// thread no longer owns the loop, and validating as it refused every
+// installed build.
+func TestAdoptCommandEnvDropsTheStartingThread(t *testing.T) {
+	got := adoptCommandEnv([]string{"PATH=/example/bin", "BB_THREAD_ID=thr_example_left", "HOME=/example/home", "BB_THREAD_ID_OTHER=kept"})
+	want := []string{"PATH=/example/bin", "HOME=/example/home", "BB_THREAD_ID_OTHER=kept"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("env %v, want %v", got, want)
 	}
 }

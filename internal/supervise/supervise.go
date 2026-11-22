@@ -1337,7 +1337,10 @@ func (t *tick) stop(target string, agent config.Agent, gate decide.Control) erro
 	// The briefs that may have put the task on another conversation: those
 	// found unsettled now, and those named by a hold already raised for them.
 	briefs := append(append([]control.Brief(nil), t.briefHold...), t.unsettledBriefs...)
-	if len(briefs) > 0 && !t.st.StopRequestedSent {
+	// A thread created for a handoff whose outcome is not recorded may be
+	// running the task too (newthread.go, stopUnrecordedThreads).
+	unrecorded := t.st.NewThreadIntent
+	if (len(briefs) > 0 || unrecorded != nil) && !t.st.StopRequestedSent {
 		// A stop is asked for: stop every conversation that may have the
 		// task, the current one and each one briefed (a second stop is
 		// harmless). Each stop is recorded first, like any send.
@@ -1400,7 +1403,14 @@ func (t *tick) stop(target string, agent config.Agent, gate decide.Control) erro
 			}
 			stopOne(b.Target, ba)
 		}
+		var late []func()
+		if unrecorded != nil {
+			late, errs = t.stopUnrecordedThreads(unrecorded, stopOne, errs)
+		}
 		t.stopLanes(a)
+		for _, f := range late {
+			f() // the thread the command runs in: after everything else
+		}
 		if own {
 			t.warn("this command runs in %s; it is stopped last", target)
 			stopOne(target, a)
@@ -1844,17 +1854,36 @@ func (t *tick) switchBack(from string) (bool, error) {
 			return false, nil
 		}
 	}
+	// Ownership follows the switch-back (ownerfollow.go). The pending move is
+	// saved before the brief's send record, so a supervisor killed after the
+	// brief leaves it on record: once a person settles the brief by
+	// retargeting the loop to the primary, the next check completes it. It
+	// is put back as it was if the brief is not sent.
+	_, fromAgent := t.resolve(from)
+	bbMove := fromAgent.Adapter == "bb" && fromAgent.BB != nil && t.loop.Agent.Adapter == "bb" && t.loop.Agent.BB != nil
+	ownerBefore, afterBefore := t.st.PendingOwnerMove, len(t.afterSave)
+	undoOwner := func() {
+		if bbMove {
+			t.st.PendingOwnerMove, t.afterSave = ownerBefore, t.afterSave[:afterBefore]
+			t.saveOwnerMove()
+		}
+	}
+	if bbMove {
+		t.followOwner(fromAgent.BB.Thread, t.loop.Agent.BB.Thread, "switch_back")
+		t.saveOwnerMove()
+	}
 	if _, err := t.reserveSend("switch_back", state.Primary); err != nil {
+		undoOwner()
 		return false, err
 	}
 	if err := t.send(pa, brief, adapter.ModeAuto, state.Primary, "switch_back"); err != nil {
 		t.warn("switch-back: send to primary: %v", err)
+		undoOwner()
 		t.rejectSwitchBack(from)
 		return false, nil
 	}
 	t.res.Handoff = &HandoffNote{From: from, To: state.Primary, Reason: "switch_back"}
-	if _, fromAgent := t.resolve(from); fromAgent.Adapter == "bb" && fromAgent.BB != nil && t.loop.Agent.Adapter == "bb" && t.loop.Agent.BB != nil {
-		t.followOwner(fromAgent.BB.Thread, t.loop.Agent.BB.Thread, "switch_back")
+	if bbMove {
 		t.planChildMove(from, fromAgent.BB.Thread, t.loop.Agent.BB.Thread)
 	}
 	t.res.Target = state.Primary
