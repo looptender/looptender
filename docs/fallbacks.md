@@ -429,7 +429,7 @@ This is the only case in which looptender creates a conversation. It is opt-in p
 
 The new thread then becomes the active target and is supervised like any other. Each handoff to such a candidate creates a fresh thread; an earlier one is left where it is.
 
-**The conversation that was left** is not stopped, archived, re-parented or sent anything by keepgoing. It stays as it was. Two things follow from that:
+**The conversation that was left** is not stopped, archived, re-parented or sent anything by keepgoing. It stays as it was; only its direct children are moved (see [child threads](#child-threads-follow-the-handoff)). Two things follow from that:
 
 - BB may itself retry that conversation later, for example when its provider limit resets. looptender does not prevent this and no longer observes that thread, so two conversations can then be active on the task.
 - The new thread works in the **same environment and checkout** as the one it continues. Nothing isolates the two.
@@ -487,6 +487,17 @@ The new thread's first prompt ends with fixed wording that says which case appli
 - Once a created thread is recorded, a build from before this change does not know the candidate's thread and refuses the run graph's new source value. Do not run an older build against the same state directory.
 
 With failover disabled (`errors.failover_on: []`), a rate-limit error with a structured future reset waits without spending recovery retries. Ordinary checks continue observing the target, so an earlier structured recovery can take effect on the next check. Once the reset passes, a still-errored target uses bounded recovery. Without a known reset, bounded recovery applies immediately. This correction is available in v0.1.4 and later. Existing awaiting-user holds require explicit `resume`; stop, pause, completion and configured loop-wide bounds retain precedence. This does not add account polling or schedule an extra check at the reset timestamp. In v0.2.0, a wait whose reset is further away than `errors.report_wait_after` (default `6h`) sends one `limit_wait` report without holding the loop; see [a long limit wait](operations.md#a-long-limit-wait-with-no-way-out). `timeline --kind limit_wait` shows the waiting checks.
+
+### Child threads follow the handoff
+
+Unreleased; **offline fixtures with a fake `bb` only**. A coordinator's lanes are child threads of its conversation, and BB wakes a child's parent when the child finishes. Left under a conversation that cannot run, they would wake nobody who can act. So once a handoff to a created thread is recorded, keepgoing moves the direct children of the conversation it left to the created thread, with `bb thread update <child> --parent-thread <new thread>`. An automatic switch-back from a created thread moves that thread's children back to the primary's thread. A candidate turns this off with `bb.move_children: false`. A handoff to an existing thread, a manual `retarget` and `transfer` move no children.
+
+- **Only the parent changes.** No child is messaged, retried, stopped, archived or given another model, and its parent-notification setting is kept. A child in error stays in error: a BB thread cannot change provider, so one whose provider hit a usage limit waits for that limit like any other. Under the new parent, [lane recovery](operations.md#lane-recovery) leaves a rate-limited lane alone, as before. The created thread's first prompt says how many children the last check saw and how many were in error, so it can decide whether to redo that work itself. Whether BB interrupts a child's running turn when its parent changes has not been checked live.
+- **Which children.** The children listed by `bb thread list --parent-thread <left thread> --include-hidden` after the created thread is recorded, except archived or deleted ones, at most 50 per handoff. The rest are counted as left where they were.
+- **Confirmed, bounded, and retried a little.** Each update has 5 seconds, and updates run only in the time the check has left. Afterwards the left thread is listed again: a child still under it was not moved, whatever bb answered, and is tried again by later checks, at most 3 times in all. A failed listing leaves the move for a later check.
+- **Recorded first.** The move is saved to `state.json` (`childMove`) once the children are listed and after the updates. A supervisor that stops part-way leaves the list on record; the next check lists the left thread again and moves only the children still under it. A child that a person moved elsewhere in the meantime is then counted as moved.
+- **Holds win.** The control file is read again before each update: a stop, pause, await-user, completion or disable saved meanwhile ends the moves, and the rest wait for a check after the hold is lifted. A held loop moves nothing. A dry run lists and moves nothing.
+- **Where it shows.** `status` prints a `child threads:` line with how many moved, are still to move, could not be moved and were left (`childMove` in JSON, counts only), and the tick output has `childrenMoved` and `childrenPending`. No child ID appears in reports or the history.
 
 ## Switching back
 
