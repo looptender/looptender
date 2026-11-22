@@ -461,6 +461,14 @@ type LimitWaitReport struct {
 	ResetsAt   time.Time `json:"resetsAt"`
 	DetectedAt time.Time `json:"detectedAt"`
 	Outcome    string    `json:"outcome"`
+	// Reason is why no handoff was possible: limit_failover_disabled,
+	// limit_no_fallback or limit_refusal_unrecovered. Empty in a record
+	// saved by an earlier build.
+	Reason string `json:"reason,omitempty"`
+	// ReportSection is "none" when the loop had no report section when the
+	// wait was recorded, "present" when it had one, and empty in a record
+	// saved by an earlier build.
+	ReportSection string `json:"reportSection,omitempty"`
 	// Reports counts report attempts in this wait, including this one.
 	Reports int `json:"reports,omitempty"`
 }

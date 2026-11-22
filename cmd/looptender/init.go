@@ -137,6 +137,9 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 	for _, w := range sharedLoopWarnings(cfg, others) {
 		e.errf("warning: %s", w)
 	}
+	if w := singleRouteWarning(cfg); w != "" {
+		e.errf("warning: %s %s", w, limitWaitWayOut)
+	}
 	var goal *control.Goal
 	if asJSON {
 		if err := e.ctx.Err(); err != nil {
