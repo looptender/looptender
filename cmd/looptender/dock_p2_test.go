@@ -1,6 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +112,44 @@ func TestDockCSSKeepsTheUsageTableAndBannerFromCoveringContent(t *testing.T) {
 	for _, want := range []string{".table-wrap { margin-top: 0.75rem; max-inline-size: 100%; min-inline-size: 0; overflow-x: auto; }", ".pane, .panel { min-inline-size: 0; }", "@media (max-width: 34rem) { body.has-banner { padding-bottom: 14rem; } }"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("dock.css lacks %q", want)
+		}
+	}
+}
+
+// Every loop field the jsdom page test sets or deletes (testdata/dock_page_variant_keys.json,
+// which the script checks its variants against) must exist in dockLoop's JSON
+// tags, nested paths included, so a renamed field cannot leave a variant
+// testing nothing.
+func TestDockPageVariantKeysExistInTheLoopJSON(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "dock_page_variant_keys.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	if err := json.Unmarshal(raw, &keys); err != nil || len(keys) < 20 {
+		t.Fatalf("%v %d", err, len(keys))
+	}
+	for _, path := range keys {
+		typ := reflect.TypeOf(dockLoop{})
+		for _, part := range strings.Split(path, ".") {
+			for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice {
+				typ = typ.Elem()
+			}
+			if typ.Kind() != reflect.Struct {
+				t.Errorf("%s: %q is not inside a struct (%s)", path, part, typ)
+				break
+			}
+			var next reflect.Type
+			for i := 0; i < typ.NumField(); i++ {
+				if name, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ","); name == part {
+					next = typ.Field(i).Type
+				}
+			}
+			if next == nil {
+				t.Errorf("%s: dockLoop's JSON has no field %q", path, part)
+				break
+			}
+			typ = next
 		}
 	}
 }

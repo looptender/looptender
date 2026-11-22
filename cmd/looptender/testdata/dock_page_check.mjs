@@ -21,6 +21,23 @@ const html = readFileSync(`${dir}/index.html`, "utf8");
 const fixture = JSON.parse(readFileSync(`${dir}/fixture.json`, "utf8"));
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
+
+// The loop fields the variants below set or delete. Each must be listed in
+// dock_page_variant_keys.json, which a Go test checks against dockLoop's JSON
+// tags, so a renamed field cannot leave a variant testing nothing.
+const listed = new Set(JSON.parse(readFileSync(new URL("./dock_page_variant_keys.json", import.meta.url), "utf8")));
+const unlisted = new Set();
+function paths(prefix, v, out) {
+  out.push(prefix);
+  const items = Array.isArray(v) ? v : [v];
+  for (const it of items) if (it && typeof it === "object") for (const [k, x] of Object.entries(it)) paths(`${prefix}.${k}`, x, out);
+}
+function track(l) {
+  return new Proxy(l, {
+    set(o, k, v) { const p = []; paths(String(k), v, p); for (const x of p) if (!listed.has(x)) unlisted.add(x); o[k] = v; return true; },
+    deleteProperty(o, k) { if (!listed.has(String(k))) unlisted.add(String(k)); delete o[k]; return true; },
+  });
+}
 const failures = [];
 const long = "A note that goes on. ".repeat(60);
 
@@ -59,13 +76,13 @@ scenarios.push(["every variant at once", (d) => {
     const l = clone(base);
     l.key = "l" + (0xa00000000000 + i).toString(16);
     l.name = `variant-${i}`;
-    fn(l);
+    fn(track(l));
     d.loops.push(l);
   });
 }]);
 // Each variant on every real loop, one report each.
 for (const [name, fn] of variants) {
-  scenarios.push([`${name} on every loop`, (d) => { for (const l of d.loops) fn(l); }]);
+  scenarios.push([`${name} on every loop`, (d) => { for (const l of d.loops) fn(track(l)); }]);
 }
 // Long and awkward need notes.
 scenarios.push(["long and awkward notes", (d) => {
@@ -122,7 +139,7 @@ for (const [name, fn] of scenarios) await render(name, scenario(fn));
 // What the page shows, not only that it renders.
 const text = (w, sel) => [...w.document.querySelectorAll(sel)].map((n) => n.textContent).join(" | ");
 const outsideDetails = (w, re) => [...w.document.querySelectorAll("#pane p, #pane div")].some((n) => re.test(n.textContent) && !n.closest("details"));
-const target = (d, fn) => { const l = d.loops[0]; fn(l); return l; };
+const target = (d, fn) => { const l = d.loops[0]; fn(track(l)); return l; };
 const expectations = [
   ["a paused loop's long limit wait, with the deadline and hold notes, is shown outside the folds", (d) => target(d, (l) => {
     l.state = "paused"; l.phrase = "Paused";
@@ -170,6 +187,7 @@ for (const [name, mutate, checks] of expectations) await render(name, scenario(m
   for (const e of errors) failures.push("banner: " + e);
 }
 
+if (unlisted.size) failures.push(`the variants set loop fields that dock_page_variant_keys.json does not list (add them, and they will be checked against dockLoop's JSON tags): ${[...unlisted].join(", ")}`);
 if (failures.length) {
   console.error(`dock.js failed while rendering ${failures.length} time(s):`);
   for (const f of failures.slice(0, 30)) console.error("  " + f);
