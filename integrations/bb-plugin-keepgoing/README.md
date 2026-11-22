@@ -28,6 +28,22 @@ bb plugin config keepgoing set keepgoingPath /absolute/path/to/keepgoing
 bb plugin config keepgoing set configs "/absolute/path/to/keepgoing.yaml"
 ```
 
+### After installing a new build
+
+`bb plugin reload keepgoing` does not make BB serve a newer bundle when the plugin's source is a path that goes through a symlink that moved (for example `~/.local/share/looptender/current/bb-plugin-keepgoing`, where `current` points at the newest build directory). BB's server process loads the plugin's modules by that path and keeps them for its lifetime; a reload re-runs the plugin from the modules it already has, and Node resolves the symlink once and remembers it, so moving `current` and reloading changes nothing, and a changed bundle on disk is not read. The reload still prints the plugin as running, and `bb plugin list` shows the same version and the handler counters keep counting across it. Without a restart of BB, the way to load a different bundle is to give the plugin a source path it has not loaded:
+
+```sh
+bb plugin install path:/absolute/path/to/looptender/builds/<build>/bb-plugin-keepgoing --yes
+```
+
+Installing a local path for an id already installed from another path moves it and keeps its settings (`bb guide plugins`). If that does not show the new behaviour, quit and reopen BB: that restarts the process that holds the old modules. To stamp each build, run this in the staged copy before `bb plugin build`:
+
+```sh
+node stamp-build.mjs <looptender build label>   # package.json becomes <base>-build.<label>; build-label.ts records the label
+```
+
+A stamped build is a distinct plugin version (`0.3.1-build.<label>`), and `bb keepgoing status` ends with a line saying which looptender build the plugin was built from and whether that is the build it runs: "Plugin: built from looptender X, but the looptender it runs is Y ..." is what a plugin BB kept serving after an install looks like. A source build is not stamped and says so. The stamp is not in the repository's own copy, and `client-flag.ts`'s `PLUGIN_VERSION` stays the base version.
+
 `configs` takes one existing server-local configuration file path per line (`looptender.yaml`, or `keepgoing.yaml` from releases up to v0.2.0). Those loops, setups created through the UI, and explicitly imported registry references (unreleased source) are shown and controlled. UI-created setups are registered separately with their host and configuration path in private plugin storage. A path sent from the browser is checked against this list, so the plugin never runs looptender against an arbitrary file. The plugin needs a looptender build whose `status --json` includes `primaryAgent` and `targetAgent`, which is any build after 0.1.0.
 
 <a id="supervise-this-thread"></a>
