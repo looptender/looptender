@@ -22,12 +22,33 @@ type ListedChild struct {
 	Archived bool
 }
 
+// ChildRun runs one bb command and returns its standard output.
+type ChildRun func(ctx context.Context, args ...string) ([]byte, error)
+
+// Children lists and re-parents child threads through run. The supervisor
+// uses it through the adapter; transfer apply gives it its own bb runner.
+type Children struct{ Run ChildRun }
+
 // ListChildren lists the direct children of parent, archived ones marked.
 func (a *Adapter) ListChildren(ctx context.Context, parent string) ([]ListedChild, error) {
+	return a.children().ListChildren(ctx, parent)
+}
+
+// SetParent makes parent the parent thread of child.
+func (a *Adapter) SetParent(ctx context.Context, child, parent string) error {
+	return a.children().SetParent(ctx, child, parent)
+}
+
+func (a *Adapter) children() Children {
+	return Children{Run: func(ctx context.Context, args ...string) ([]byte, error) { return a.run(ctx, "", args...) }}
+}
+
+// ListChildren lists the direct children of parent, archived ones marked.
+func (c Children) ListChildren(ctx context.Context, parent string) ([]ListedChild, error) {
 	if !childIDPattern.MatchString(parent) {
 		return nil, errors.New("bb thread list: invalid parent")
 	}
-	out, err := a.run(ctx, "", "thread", "list", "--parent-thread", parent, "--include-hidden", "--json")
+	out, err := c.Run(ctx, "thread", "list", "--parent-thread", parent, "--include-hidden", "--json")
 	if code, ok := envelopeError(out); ok {
 		return nil, errors.New("bb thread list: " + code)
 	}
@@ -59,11 +80,11 @@ func (a *Adapter) ListChildren(ctx context.Context, parent string) ([]ListedChil
 }
 
 // SetParent makes parent the parent thread of child.
-func (a *Adapter) SetParent(ctx context.Context, child, parent string) error {
+func (c Children) SetParent(ctx context.Context, child, parent string) error {
 	if !childIDPattern.MatchString(child) || !childIDPattern.MatchString(parent) || child == parent {
 		return errors.New("bb thread update: invalid thread")
 	}
-	out, err := a.run(ctx, "", "thread", "update", child, "--parent-thread", parent, "--json")
+	out, err := c.Run(ctx, "thread", "update", child, "--parent-thread", parent, "--json")
 	if code, ok := envelopeError(out); ok {
 		return errors.New("bb thread update: " + code)
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/looptender/looptender/internal/control"
@@ -24,6 +25,8 @@ type movedStatus struct {
 	// then resuming is the one action needed.
 	Held bool   `json:"held"`
 	Text string `json:"text"`
+	// ChildrenMoved counts the child threads the move brought along.
+	ChildrenMoved int `json:"childrenMoved,omitempty"`
 }
 
 const (
@@ -85,6 +88,12 @@ func movedOf(ctl control.File, st state.File) *movedStatus {
 	m := &movedStatus{At: at, Text: movedUnheldText}
 	if ctl.AwaitingUser && untouched && ctl.Note == "" && ctl.Question == nil && ctl.OpenQuestion == nil && len(ctl.BriefHold) == 0 && !ctl.EpisodeHold {
 		m.Held, m.Text = true, movedHeldText
+	}
+	// The move's own child threads, from its record, while it is the one
+	// that brought the loop to the thread it is bound to.
+	if c := st.ChildMove; c != nil && c.Transfer != "" && c.To == ctl.BBTarget && c.Moved > 0 {
+		m.ChildrenMoved = c.Moved
+		m.Text += fmt.Sprintf(" %d child thread(s) moved to the new thread.", c.Moved)
 	}
 	return m
 }
