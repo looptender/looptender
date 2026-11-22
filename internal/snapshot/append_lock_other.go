@@ -4,5 +4,5 @@ package snapshot
 
 import "os"
 
-func lockAppend(*os.File) error { return nil }
-func unlockAppend(*os.File)     {}
+func tryLockAppend(*os.File) (bool, error) { return true, nil }
+func unlockAppend(*os.File)                {}

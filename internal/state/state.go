@@ -1063,8 +1063,23 @@ func Append(stateDir string, e Event) error {
 		return err
 	}
 	// Whole lines only: a failed or short write is cut back, so a full disk
-	// never leaves a torn line for the next event to join.
-	return snapshot.AppendLine(filepath.Join(stateDir, LogName), append(b, '\n'), 0o600)
+	// never leaves a torn line for the next event to join. An event written
+	// without the appenders' lock (another appender held it too long) says
+	// so: had its write failed, it could not have been cut back.
+	return snapshot.AppendLineNoting(filepath.Join(stateDir, LogName), func(locked bool) []byte {
+		if locked {
+			return append(b, '\n')
+		}
+		noted := e
+		noted.Extra = map[string]any{"appendLock": "not_obtained"}
+		for k, v := range e.Extra {
+			noted.Extra[k] = v
+		}
+		if nb, err := json.Marshal(noted); err == nil {
+			return append(nb, '\n')
+		}
+		return append(b, '\n')
+	}, 0o600)
 }
 
 // Brief names a brief to another conversation: Action is handoff or
