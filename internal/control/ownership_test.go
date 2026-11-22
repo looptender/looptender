@@ -136,3 +136,15 @@ func TestFollowHandoffRunAndExplicitEnd(t *testing.T) {
 		t.Fatalf("take-over kept the run: %+v", f.Ownership)
 	}
 }
+
+// An explicit take-over by the current owner ends a supervisor-made run.
+func TestSameOwnerTakeOverEndsTheRun(t *testing.T) {
+	f := File{Ownership: &Ownership{ThreadID: "thr_a", Generation: 1}}
+	FollowHandoff(&f, "thr_a", 1, "thr_b", time.Now())
+	if err := ClaimOwner(&f, "thr_b", false); err != nil || f.Ownership.Followed == nil {
+		t.Fatal("a plain enable by the owner ended the run")
+	}
+	if err := ClaimOwner(&f, "thr_b", true); err != nil || f.Ownership.Followed != nil || f.Ownership.Generation != 2 || f.Ownership.FollowedFrom("thr_a") || f.Ownership.Follows("thr_a", 1) {
+		t.Fatalf("%+v %v", f.Ownership, err)
+	}
+}
