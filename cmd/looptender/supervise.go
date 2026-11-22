@@ -929,13 +929,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 		printLimitWait(w, out.LimitWait)
 		printIdleSpacing(w, out.IdleSpacing, now)
 	}
-	if held := loopHeld(out.Control, out.controlUnreadable); held != "" && out.NoProgress.Availability == "flagged" {
-		// A held loop is not judged and observes nothing: the flag is what the
-		// last check before the hold found.
-		fmt.Fprintf(w, "progress flag: %s (recorded before the hold; the loop is held (%s), so this is not current)\n", out.NoProgress.Text, held)
-	} else {
-		fmt.Fprintf(w, "progress flag: %s\n", out.NoProgress.Text)
-	}
+	fmt.Fprintf(w, "progress flag: %s\n", noProgressText(out.NoProgress, loopHeld(out.Control, out.controlUnreadable)))
 	if !out.stateUnreadable {
 		printTurnRetry(w, out.TurnRetry)
 		printContext(w, out.ContextWindow)

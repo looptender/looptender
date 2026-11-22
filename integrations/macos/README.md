@@ -141,7 +141,9 @@ source and timestamp type; contradictory evidence refuses rather than becoming
 fresh or zero. Route readings stay separate.
 
 The additive `panel list --json` field `accountQuotas` is optional: an older CLI
-keeps the old loop menu. New data is validated before rendering (16 projected
+keeps the old loop menu. Each account's `id` there is a handle, not the catalog ID; the menu
+passes it back to `panel --account` unchanged, and its shape is the one the
+menu already validates (32 lowercase hex). New data is validated before rendering (16 projected
 accounts, 41 rows per account, bounded inert text/percent/date/state values);
 menus show six accounts and eight details each with explicit counts for more.
 Long menu text is shortened visibly, with complete accessible labels/tooltips.

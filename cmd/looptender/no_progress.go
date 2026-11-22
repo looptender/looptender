@@ -425,3 +425,14 @@ func (v *noProgressView) explainNoCheck(ctl control.File, a *progressAllowanceSt
 		v.Text += " The time without Git progress under its limits comes from the limit's own record."
 	}
 }
+
+// noProgressText is the flag's sentence as status and the panel show it. A
+// held loop is not judged and observes nothing, so a flag raised on it is
+// what the last check before the hold found: it says so, naming the hold
+// (loopHeld), instead of reading as current.
+func noProgressText(np noProgressView, held string) string {
+	if held != "" && np.Availability == "flagged" {
+		return np.Text + " (recorded before the hold; the loop is held (" + held + "), so this is not current)"
+	}
+	return np.Text
+}

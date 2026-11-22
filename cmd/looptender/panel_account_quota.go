@@ -36,6 +36,29 @@ func panelQuotaProviderSupported(provider string) bool {
 
 var panelAccountID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
+// panelAccountByIDOrHandle resolves panel --account: a handle from panel
+// list is looked up in the catalog; anything else (a catalog ID, or a value
+// the catalog cannot resolve) is used as given, as before handles.
+func panelAccountByIDOrHandle(value string) string {
+	dir, err := accountsDirectory("")
+	if err != nil {
+		return value
+	}
+	f, err := accounts.Load(dir)
+	if err != nil {
+		return value
+	}
+	for _, e := range f.Entries {
+		if e.ID == value {
+			return value
+		}
+	}
+	if id, ok := f.ByHandle(value); ok {
+		return id
+	}
+	return value
+}
+
 // This handler is reached only after the existing panel session, same-origin,
 // fetch metadata, content-type, body bound and allow-changes guards. Reviews
 // perform no RPC; confirmation spends a session-bound single-use form.
