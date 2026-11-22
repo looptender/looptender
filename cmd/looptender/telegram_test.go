@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/looptender/looptender/internal/registry"
 	"github.com/looptender/looptender/internal/telegram"
 )
 
@@ -32,15 +35,46 @@ func (b *syncBuffer) String() string {
 }
 
 func TestTelegramCLIWorkflowAgainstStandIn(t *testing.T) {
+	for _, qr := range []bool{false, true} {
+		name := "text"
+		if qr {
+			name = "qr"
+		}
+		t.Run(name, func(t *testing.T) { telegramCLIWorkflowAgainstStandIn(t, qr) })
+	}
+}
+
+func telegramCLIWorkflowAgainstStandIn(t *testing.T, showQR bool) {
 	const tok = "123456789:EXAMPLE_CLI_PAIRING_TOKEN"
 	dir := t.TempDir()
 	t.Setenv(telegram.TokenEnv, "")
 	t.Setenv(telegram.APIURLEnv, "")
+	// Model a populated inherited registry, as a full command suite can leave
+	// behind. This pairing fixture must explicitly select its own empty registry
+	// rather than try to create topics for unrelated loops.
+	ambientRegistry := filepath.Join(t.TempDir(), "registry")
+	for _, name := range []string{"example-first", "example-second"} {
+		if _, err := registry.Add(ambientRegistry, name, filepath.Join(ambientRegistry, name+".yaml"), filepath.Join(ambientRegistry, name+"-state")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv(registryDirEnv, ambientRegistry)
+	ambientBefore, err := os.ReadFile(filepath.Join(ambientRegistry, registry.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		after, err := os.ReadFile(filepath.Join(ambientRegistry, registry.FileName))
+		if err != nil || !bytes.Equal(after, ambientBefore) {
+			t.Error("pairing fixture changed the inherited registry")
+		}
+	})
 
 	var mu sync.Mutex
 	var pairCode string
 	var sentMessages []string
 	var commandsSet bool
+	var calls []string
 	var outBuf syncBuffer
 
 	nonceRE := regexp.MustCompile(`https://t\.me/example_looptender_bot\?start=(pair_[A-Za-z0-9_-]+)`)
@@ -52,6 +86,9 @@ func TestTelegramCLIWorkflowAgainstStandIn(t *testing.T) {
 			return
 		}
 		method := strings.TrimPrefix(r.URL.Path, prefix)
+		mu.Lock()
+		calls = append(calls, method)
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch method {
 		case "getMe":
@@ -116,9 +153,13 @@ func TestTelegramCLIWorkflowAgainstStandIn(t *testing.T) {
 
 	// 2. Full zero-infra setup via stdin token + deep-link pairing.
 	errBuf.Reset()
-	code = telegramCommandWithInput(env{ctx: context.Background(), stdout: &outBuf, stderr: &errBuf}, []string{
-		"setup", "--dir", dir, "--token-stdin", "--api-url", srv.URL, "--timeout", "5s", "--poll-wait", "1s",
-	}, strings.NewReader(tok+"\n"))
+	setupArgs := []string{
+		"setup", "--dir", dir, "--registry", filepath.Join(t.TempDir(), "registry"), "--token-stdin", "--api-url", srv.URL, "--timeout", "5s", "--poll-wait", "1s",
+	}
+	if showQR {
+		setupArgs = append(setupArgs, "--qr")
+	}
+	code = telegramCommandWithInput(env{ctx: context.Background(), stdout: &outBuf, stderr: &errBuf}, setupArgs, strings.NewReader(tok+"\n"))
 	if code != exitOK {
 		t.Fatalf("setup failed: code=%d stdout=%q stderr=%q", code, outBuf.String(), errBuf.String())
 	}
@@ -127,6 +168,17 @@ func TestTelegramCLIWorkflowAgainstStandIn(t *testing.T) {
 	}
 	if !commandsSet {
 		t.Fatal("expected setMyCommands to be called during setup")
+	}
+	if got := strings.Join(calls, ","); got != "getMe,setMyCommands,getUpdates,sendMessage" {
+		t.Fatalf("unexpected setup requests: %s", got)
+	}
+	if showQR {
+		link := nonceRE.FindString(outBuf.String())
+		if decoded := decodeTelegramTerminalQR(t, outBuf.String()); decoded != link {
+			t.Fatalf("QR differs from text pairing link: %q", decoded)
+		}
+	} else if strings.ContainsAny(outBuf.String(), "\x1b█▀▄") {
+		t.Fatal("default setup must remain plain text")
 	}
 
 	// 3. Read-only status --json never leaks token and shows paired details.

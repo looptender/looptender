@@ -138,8 +138,8 @@ Scenarios:
 - `TestScenarioFilesFromANewerBuild`: the rollback direction. Old releases cannot be built in CI, so this build plays the older one against files given a schema or record kind it does not know. With the incident journal one schema ahead, a check still retries the failed turn but exits 1 with `tick: incident history unavailable; check private state storage`, `timeline` exits 1 with its source unavailable, `pause` is saved with a warning and exit 1 and then holds, and the journal is left byte for byte. With a run graph holding an unknown record kind, the check does the same work with exit 0 and one warning, `runs` exits 1 with `graph: corrupt`, and the graph is left byte for byte. The same commands were run once by hand with the real v0.1.5 binary against a state directory today's source had written to; the messages matched and are recorded in [operations](operations.md#upgrading-and-rolling-back). Mutations that fail these two: a hold not honoured, saved counters dropped on load, an older journal discarded on upgrade, and a newer journal silently reset.
 - `TestScenarioUnwritableStateDirectory` (macOS and Linux; it needs an ordinary user, because root can write a read-only directory): the state directory becomes read-only while the session is in error. Every check exits 1 and names the cause (`permission denied`). `status` still works, and `pause` fails with exit 1. `state.json`, `control.json`, the journal and the run graph are left byte for byte, and no temporary file is left. Once the directory is writable again, the next check retries the failed turn and counts it. The record of a send is saved before the send, with or without `limits.max_sends`, so it cannot be saved and nothing is sent. Before (v0.2.0), without a send allowance every check re-prompted and none was counted, so the re-prompt cap never ended in a hold: six checks, six retries.
 - `TestScenarioNoRoomToWrite` (macOS and Linux), with an idle session and with one in error: the disk is full. The harness runs `keepgoing` with a zero file-size limit, under which creating a file works and writing into it fails with `file too large`, as on a full disk; the stand-ins lift the limit for themselves. Checks exit 1 naming the cause and send nothing, `pause` fails with exit 1, `status` works, no record changes or is truncated, and no temporary file is left. With room again, the next check wakes the idle session or retries the failed turn. Nothing is sent because the record of the send cannot be saved before it is made (see [a send recorded before it is made](operations.md#a-send-recorded-before-it-is-made)); on a full disk the BB log cursor also fails to save first, which makes the retry state unverified, so either alone keeps the send from being made. Mutations that fail these two: a control file written in place instead of replaced, a temporary file not removed, a check that could not be recorded exiting 0, and a send allowed through when its reservation could not be saved.
-- `TestScenarioHeadlessOutage`, for headless Claude Code and Codex at each outage length: the stand-in CLI's turns succeed, fail with the CLI's structured error, or print a captive portal's page, following the fake network. A broken turn, irregular checks, the portal and its clearing, then recovery by a re-prompt into the saved session (or, once held, by a person: `resume`, and when that holds again, `retarget primary` then `resume`, as today). Every turn after the first resumes exactly the saved session and carries the task. The harness waits for each detached turn to end before it records the step. It replaces `cmd/keepgoing/offline_scenario_test.go`.
-- `TestScenarioHeadlessFirstTurnFails`: a first turn that fails before the CLI reports a session saves nothing, so each of the three re-prompts starts a new conversation with the whole task, then the loop is held with one `await_user` report. Today's behaviour, listed as a gap in [adapters](adapters.md).
+- `TestScenarioHeadlessOutage`, for headless Claude Code and Codex at each outage length: the stand-in CLI's turns succeed, fail with the CLI's structured error, or print a captive portal's page, following the fake network. A broken turn, irregular checks, the portal and its clearing, then recovery by a re-prompt into the saved session (or, once held, by a person: `resume`, which starts a new bounded error episode). Every turn after the first resumes exactly the saved session and carries the task. The harness waits for each detached turn to end before it records the step. It replaces `cmd/keepgoing/offline_scenario_test.go`.
+- `TestScenarioHeadlessFirstTurnFails`: the initial silent attempt is followed by an identity hold without another turn. Repeated checks and resume alone send nothing. Explicit session reset preserves the hold; after resume it permits one fresh attempt, whose missing identity holds again. `TestHeadlessMissingIdentityRefusesFreshReplay` also exercises direct-send refusal across adapter reconstruction and known-ID exact resume with fictional executables. Boundary fixtures cover running, crashed, malformed/oversized output, successful output without identity, abandoned-before-start, and unreadable turn records. These are offline fixtures, not evidence that a real provider created or recovered any conversation.
 - `TestScenarioChildFailureNoticeAndReport`, with lane recovery off (the default): a conversation hands work to two children and waits. One fails while the other works: the owner gets one `child_error` report at once, carrying counts and no child identity, and the waiting conversation is told an hour after its last message with the notice alone (`[keepgoing:child-errors count=1 running=1]`, no task prompt). A re-failure 38 minutes after recovery says nothing; a failure 80 minutes after recovery is reported again and the notice ends the next ordinary wake, after the task. A third child that fails during a pause is neither observed nor reported until `resume`, when the first check reports it. At every step no child is sent anything, and over the whole journey the only `bb` commands naming a child read its status or pending interactions. Mutations that fail it: forgetting a recovered child at once, dropping the spacing of the notice-only wake, never adding the notice, and a pause that does not stop the check.
 - `TestScenarioTwoSupervisorsOnOneLoop`: two callers for one loop. A check held in the middle of observing the session (the stand-in `bb` can hold `thread show` until the test releases it) makes a second check exit 75, `another tick holds the lock; skipping`, before it runs any `bb` command, and the session gets one wake. A second daemon exits 75, `another daemon is running for example-loop`. A check from another BB thread is refused with exit 1. After `enable --take-over` from that thread (which waits for the tick lock the old owner's daemon takes for each control poll), the daemon the old owner started stops by itself within seconds, sending nothing, and the new owner's daemon starts; a check from the old owner then does no work (exit 1 for its ownership, or 75 when the new daemon is in the middle of a check, because the tick lock is taken before ownership is checked). Mutations that fail it: no tick lock, no daemon lock, a daemon that ignores a takeover, and checks that do not verify their owner.
 - `TestScenarioTwoLoopsOnOneSession`: two separately configured loops, each with its own state directory, are set up on one BB thread. Enabling the second is refused, naming the first, and succeeds with `--allow-second-loop` and a warning. Checked one after the other, the second sees the session working and sends nothing. Checked at the same moment (the first held at `thread show`), the second finds the session claimed, sends nothing and exits 75 naming the first; the session is woken once. The same holds the other way round. Unit tests in `internal/session`, `internal/supervise` (`session_claim_test.go`) and `cmd/keepgoing` (`sessions_test.go`) cover the rest: the claim is held from observing until sending (a test that releases it in between fails), a stuck holder is reported once and a stop goes past it, a daemon retries a skipped stop within one control poll, a too-open directory is made `0700`, a planted file or symlink makes the check act on nothing, two spellings of one directory on the case-insensitive macOS disk are one session, a leftover holder file is not believed, and degraded and recovered reports are retried until delivered.
@@ -678,3 +678,97 @@ survive successful completion. These fixtures do not establish live acceptance.
 ### Antigravity manual permission recovery
 
 The [2026-11-21 local walkthrough](antigravity.md#manual-recovery-of-permission-held-local-tests) verified two real permission holds with no repeated send, followed by person-driven continuation of the exact saved sessions and report completion. It used macOS and agy 1.5.13. Direct saved-control read-back confirmed completion and awaiting-user clearance. The tasks only read project documentation and wrote reports; listed project test commands were not executed. Original permission details were discarded, so this is not unattended approval/replay evidence. Owned stop was not exercised in this walkthrough, and remote-project attachment and installed Linux/Windows acceptance remain open.
+
+### Owned supervisor shutdown (unreleased source)
+
+`TestShutdownInvocationAndLegacy`, `TestShutdownOldInvocationCannotCancelReplacement`,
+`TestShutdownUnsignedRequestNeverReachesValidator` and
+`TestShutdownLostReplyIsUnknown` exercise the authenticated loopback transport:
+legacy capability refusal, state/build/start mismatch, copied endpoints, old
+requests against a replacement, forged requests and a lost acknowledgement.
+The Unix command fixtures `TestDaemonShutdownPreservesControls`,
+`TestDaemonShutdownBindingRefusals` and
+`TestDaemonShutdownRetainsCheckLockUntilJoin` exercise all six control states,
+foreign caller, owner generation, changed target/goal/config, retirement, busy
+checks, cancellation, replay refusal and the retained check lock.
+`TestDaemonShutdownUnverifiedExitIsBounded` refuses to treat acknowledgement
+alone as completion and exercises the five-second join deadline. Removing the
+retained-lock guard makes its regression fixture fail (acceptance released the
+check lock); the guard was restored before final validation. Fixtures use
+fictional loops and local stand-ins; no real provider or installed daemon is used.
+
+Native macOS execution and race checks are separate from Windows/Linux
+cross-compilation. The transport tests are portable; command fixtures are
+Unix-only. Native Windows/Linux execution, installed upgrade, service-manager
+restart, reboot, legacy bootstrap and live-provider acceptance remain unverified.
+The command refuses a busy check instead of cancelling provider work in flight.
+No process-level force-exit or arbitrary PID signal is provided. Read the
+[shutdown and legacy bootstrap limits](operations.md#shut-down-only-the-supervisor-unreleased-source)
+before planning rollout; a new binary cannot change an old running process.
+
+## Damaged-control freeze fixtures (unreleased)
+
+The original empty/truncated/garbage `TestFaultDamagedRecord/control.json` journey
+now requires CLI Pause success and exact embedded evidence on macOS/Linux;
+Windows retains its explicit known failure. This narrows acceptance to a
+restrictive freeze, not Stop, recovery, readable status or resume. The dedicated
+`TestControlFreeze` cases check any-thread restrictive policy, unchanged caller,
+strict canonical repeat, malformed envelopes, copied bindings, raw/native file
+and directory replacement, stale source, nonregular/unreadable/oversized input,
+healthy Pause history failure, exact nested tag spelling (including Unicode-fold
+aliases), scalar-null refusal with existing nullable-field compatibility, lock/drain refusal,
+and a cooperating writer replacing healthy control before ordinary Pause takes
+the control lock. The validator checks the exact current raw buffer under that
+lock before decoding the same bytes; malformed/unsupported replacements never
+reach the mutation callback. Portable control fixtures verify lock-held
+validation, bounds, unchanged rejected evidence and existing absent-control behavior.
+Other cases cover continued permissive-command refusal. Sync, close, write/short-write, recheck, rename and directory-sync fault
+injection checks unchanged original versus published/unconfirmed outcomes. Child
+process exit immediately before/after rename checks no permissive crash
+intermediate; this is not power-loss/filesystem hardware testing.
+
+`TestFrozen*` additionally requires `FROZEN_CONTROL_READER` naming a separately
+built old executable. Replay also requires a canonical durable
+`FROZEN_CONTROL_EVIDENCE_ROOT`, its dedicated `FROZEN_CONTROL_LOG_DIR`,
+`FROZEN_CONTROL_SHA256`, `FROZEN_CONTROL_SANDBOX_POLICY` and
+`FROZEN_CONTROL_POLICY_SHA256`. Binary and policy must be regular read-only
+artifacts in read-only directories disjoint from every writable fixture/log
+root. Canonical paths and native identities are rechecked before command
+construction; this does not atomically bind execution against an external owner
+replacing artifacts afterward. Logs must be outside temporary cleanup storage;
+sync/close failures fail the fixture. The Darwin harness launches each frozen
+child and descendants through the separately reviewed default-deny policy,
+with writes confined to fixture/log roots and network denied. Other native
+platform replay requires its own reviewed containment and currently refuses.
+First replay requires independent policy/probe review and explicit release of
+the execution hold; providing environment variables is not that approval. Every child uses an explicit environment allowlist with both
+legacy/current storage names and fictional platform homes, temp directories and
+stand-in PATH; provider credentials and caller environment are not inherited.
+Bounded logs persist for review even on success. Exit zero with a warning or
+missing expected session metadata is not publication success. The fixtures exercise
+the actual new Pause envelope, old reader
+refusal, transferred/retired raw evidence, and valid external restore/removal
+bypass. Set `FROZEN_LEGACY_BINDINGS=1` for v0.2.0, which predates retirement metadata.
+The deliberately undrained old daemon fixture demonstrates a send after publication;
+it proves drain is necessary, not that publication cancels work. Without an old
+executable these tests skip explicitly. The candidate readers are v0.2.0 (`d6bcd054`) and f35a0a94. Earlier inherited-
+environment runs are withdrawn as isolated compatibility evidence; replay awaits
+independent harness-isolation review. No installed old-version acceptance follows.
+A shell-only negative isolation sentinel checks poisoned parent credentials,
+legacy/current bindings and confined writes without executing an old reader.
+The stale-loaded fixture releases its bounded stand-in gate on every exit,
+cancels/waits only its owned child and preserves early-exit output.
+
+Built CLI malformed-Pause journeys additionally require status and offline
+doctor to preserve unavailable control and give no unsupported restore remedy.
+Read-only fixtures distinguish a bound freeze from unknown, truncated and
+wrong-binding arrays, with no raw evidence disclosure or record mutation.
+
+Lifecycle/platform review: no new lock, installer, provider, scheduler or process
+shutdown mechanism. macOS native offline fixtures and target compilation are
+separate from Linux/Windows execution, installed upgrade and live acceptance.
+The Unix publisher uses file Sync, atomic same-directory rename and directory Sync;
+unsupported filesystem errors cannot report success. Windows publication/marker
+and directory durability remain unimplemented; its explicit refusal fixture must
+run natively before claiming Windows behavior. README, operations and roadmap
+retain these limitations. No repair/release protocol or control UI changed.

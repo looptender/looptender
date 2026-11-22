@@ -53,7 +53,36 @@ func TestCrashStageWaitsForExactQuitConsumption(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("matching consumption did not release staging")
 	}
-	// Immediate reuse is now safe: the old agent consumed its generation's quit.
+	// The old agent consumed its generation's quit, but that alone grants
+	// no identity for a fresh conversation. Explicitly authorize the next
+	// fictional staging attempt; the receipt assertions above remain intact.
+	if obs, err := a.Observe(context.Background()); err != nil || !obs.SessionLost {
+		t.Fatalf("crashed identity: %+v %v", obs, err)
+	}
+	quitRecords := map[string][]byte{}
+	for _, name := range []string{"quit", "quit-ack"} {
+		b, err := os.ReadFile(filepath.Join(r.dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		quitRecords[name] = b
+	}
+	if string(quitRecords["quit"]) != string(quitRecords["quit-ack"]) {
+		t.Fatal("consumed receipt does not match quit")
+	}
+	resetter, ok := a.(interface{ ResetSession() (bool, error) })
+	if !ok {
+		t.Fatal("fixture adapter does not support explicit reset")
+	}
+	if _, err := resetter.ResetSession(); err != nil {
+		t.Fatal(err)
+	}
+	for name, before := range quitRecords {
+		after, err := os.ReadFile(filepath.Join(r.dir, name))
+		if err != nil || string(after) != string(before) {
+			t.Fatalf("reset changed %s: %q %v", name, after, err)
+		}
+	}
 	if err := r.Stage(context.Background(), a, ExitNonZero); err != nil {
 		t.Fatal(err)
 	}

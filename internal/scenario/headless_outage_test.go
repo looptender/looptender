@@ -145,13 +145,9 @@ func runHeadlessOutage(t *testing.T, cli string, o outage, known map[string][]Wa
 	expect(s, expectOnlyComplete, check(fmt.Sprint(reportTypes(reports)) == "[keepgoing.complete]", "reported %v", reportTypes(reports)))
 }
 
-// TestScenarioHeadlessFirstTurnFails: when the very first turn fails before
-// the CLI reports a session, nothing is saved, so each re-prompt starts a new
-// conversation with the whole task, until the re-prompts are spent and the
-// loop is held. This is today's behaviour, listed as a gap in
-// docs/adapters.md; it replaces cmd/looptender's
-// TestOfflineFirstTurnStartsANewSessionOnEveryReprompt. An explicit resume
-// then starts a new error episode.
+// A first attempt with no reported session must not be replayed as another
+// fresh conversation. Resume clears holds, not missing identity; only an
+// explicit session reset permits one fresh attempt, with holds preserved.
 func TestScenarioHeadlessFirstTurnFails(t *testing.T) {
 	t.Parallel()
 	for _, cli := range []string{"claude", "codex"} {
@@ -163,33 +159,34 @@ func TestScenarioHeadlessFirstTurnFails(t *testing.T) {
 			w.Control("enable")
 			w.Advance(time.Minute)
 			s := w.Tick()
-			w.Check(s, "first turn", all(action(s, "wake"), sentExactly(s, Send{Kind: "turn", Thread: cli})))
-			for i, after := range []time.Duration{time.Minute, 10 * time.Minute, 10 * time.Minute} {
-				w.Advance(after)
-				s = w.Tick()
-				w.Check(s, fmt.Sprintf("re-prompt %d starts a new conversation", i+1), all(
-					action(s, "reprompt"), sentExactly(s, Send{Kind: "turn", Thread: cli}), sentContains(s, scenarioTask), noReports(s),
-				))
-			}
-			w.Advance(10 * time.Minute)
+			w.Check(s, "first attempt", all(action(s, "wake"), sentExactly(s, Send{Kind: "turn", Thread: cli})))
+			w.Advance(time.Minute)
 			s = w.Tick()
-			w.Check(s, "held", all(action(s, "await_user"), nothingSent(s), holds(s, "awaitingUser"), reported(s, "keepgoing.await_user")))
-
-			// A person resumes. That starts a new error episode, so the next
-			// check recovers again; it used to raise the same hold at once.
-			// The provider still fails, and the new episode is bounded like
-			// the first: three re-prompts, then the hold.
-			w.Advance(10 * time.Minute)
+			w.Check(s, "missing identity holds without replay", all(action(s, "await_user"), nothingSent(s), holds(s, "awaitingUser"), reported(s, "keepgoing.await_user")))
+			for i := 0; i < 4; i++ {
+				w.Advance(10 * time.Minute)
+				s = w.Tick()
+				w.Check(s, "hold persists", all(nothingSent(s), holds(s, "awaitingUser"), noReports(s)))
+			}
 			s = w.Control("resume")
-			w.Check(s, "resume", all(exit(s, 0), holds(s), nothingSent(s)))
-			for i, after := range []time.Duration{time.Minute, 10 * time.Minute, 10 * time.Minute} {
-				w.Advance(after)
-				s = w.Tick()
-				w.Check(s, fmt.Sprintf("re-prompt %d of the new episode", i+1), all(action(s, "reprompt"), sentExactly(s, Send{Kind: "turn", Thread: cli}), holds(s)))
+			w.Check(s, "resume clears hold only", all(exit(s, 0), holds(s), nothingSent(s)))
+			w.Advance(time.Minute)
+			s = w.Tick()
+			w.Check(s, "resume cannot invent identity", all(action(s, "await_user"), nothingSent(s), holds(s, "awaitingUser")))
+			reset := w.Run("session", "reset", "-c", w.Config)
+			if reset.Code != 0 {
+				t.Fatalf("reset: %+v", reset)
 			}
+			w.Advance(time.Minute)
+			s = w.Tick()
+			w.Check(s, "reset preserves hold", all(nothingSent(s), holds(s, "awaitingUser")))
+			w.Control("resume")
+			w.Advance(time.Minute)
+			s = w.Tick()
+			w.Check(s, "explicit reset permits one fresh attempt", all(action(s, "reprompt"), sentExactly(s, Send{Kind: "turn", Thread: cli})))
 			w.Advance(10 * time.Minute)
 			s = w.Tick()
-			w.Check(s, "held again when the new episode is spent", all(action(s, "await_user"), nothingSent(s), holds(s, "awaitingUser")))
+			w.Check(s, "reset authority does not replay", all(action(s, "await_user"), nothingSent(s), holds(s, "awaitingUser")))
 		})
 	}
 }

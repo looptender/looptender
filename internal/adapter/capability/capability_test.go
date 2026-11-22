@@ -437,6 +437,13 @@ func TestPortedAgentsSetExactlyTheirInputs(t *testing.T) {
 				}
 			}
 			observe(dir)
+			// Missing identity holds before an optional limit query. Retain
+			// separate coverage for the same error in a known session,
+			// where the structured lookup still supplies the reset time.
+			if err := os.WriteFile(filepath.Join(dir, "session"), []byte("00000000-0000-4000-8000-0000000000aa\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			observe(dir)
 		}
 		if got := sorted(set); !reflect.DeepEqual(got, listed) {
 			t.Errorf("%s: its runner set Observation fields %v; the capability table lists %v", spec.Name, got, listed)

@@ -1100,7 +1100,7 @@ A lane whose status is `error` is not running work. It does not keep the parent 
 v0.2.0 tells the session that owns the lanes, and records the count:
 
 - Each BB check lists the verified lanes in error, from the status field alone. looptender never sends a message to a lane or creates one, and stops one only when a person asks with [`stop --lanes`](#stopping-the-lanes-too). Unless [lane recovery](#lane-recovery) is switched on, it also never retries a lane and never reads a lane's log; with it on, it may ask BB to retry a failed lane's turn, and to decide that it reads the typed fields of that lane's log, never its message text.
-- When the parent is woken, or re-prompted after an error of its own, and a lane has newly entered error, that message ends with a fixed notice: a `[keepgoing:child-errors count=N]` line, then one sentence saying N direct child threads were in error, that looptender has not touched them, and that the session should decide whether to retry or replace that work. The notice holds the count only: no lane ID, title, task text or error detail.
+- When the parent is woken, or re-prompted after an error of its own, and a lane has newly entered error, that message ends with a fixed notice: a `[keepgoing:child-errors count=N]` line, then wording saying N direct child threads were in error and that looptender has not touched them. In v0.2.0 the notice asks the session to decide whether to retry or replace that work. **Unreleased source** replaces that guidance with a reminder to reconcile current structured execution/pending input with the explicit assignment outcome before choosing an authorized action. The new reminder warns that idle, error and disappearance do not establish completion, and preserves completed/superseded work, active retries and runtime holds. Both versions hold the count only: no lane ID, title, task text or error detail.
 - Only growth is announced. looptender keeps a short hash of each lane it has announced, never the IDs. A lane not in that record triggers the notice; a set that only shrinks does not, so retrying one lane, or archiving or deleting an errored one, says nothing.
 - A recovered lane is forgotten slowly. A lane stays in the record until it has been out of error for `progress.min_wake_interval` (default `60m`). Failing again before that is the same failure and says nothing, so a lane that flaps between error and a provider retry is announced once, not on every re-failure, and does not cause a wake each time. A lane that has been out of error that long and fails again is announced again. This is the same rule, in the same code, as the owner report below; the two keep separate records only because they are told at different times.
 - N is every lane in error at that check, including ones announced earlier that the parent may have chosen to abandon. looptender cannot tell an abandoned lane from one still waiting for a decision.
@@ -1447,3 +1447,105 @@ marker. Prefer upgrading again to inspect that history. An intentionally fresh
 state directory loses diagnostic and episode continuity and must not be treated
 as permission to replay an uncertain delivery. No automatic migration, downcast
 or deletion occurs.
+
+## Shut down only the supervisor (unreleased source)
+
+`looptender daemon-shutdown -c looptender.yaml` asks one authenticated running
+supervisor to exit. It does not request target Stop, stop lanes, clear a hold,
+resume work, install a build or launch a replacement. Enabled, disabled, paused,
+stop, awaiting-user and completed controls remain unchanged. A scheduler may
+start supervision again; this command does not remove or disable its job.
+
+The command challenges the private loopback endpoint, then signs a request for
+that invocation's random identity, start, state identity and executing version. The daemon checks
+the exact configuration path and source digest, current control/goal/active-target
+binding, unchanged owner generation and caller under the check and control locks.
+It refuses retired/transferring loops, foreign owners, changed sources and busy
+checks. The source binding is the configuration loaded when this invocation
+started; an edited or unavailable startup source requires the original owned
+lifecycle manager. Caller identity is retained, with the same local-user trust
+boundary as existing CLI ownership checks; the endpoint is not person attestation.
+
+On acceptance it cancels its own context and retains the check lock until its
+loop returns. It starts no new provider work and does not cancel an in-flight
+provider command: a busy check is refused instead. Cancellation acknowledgement
+is only intent. The CLI waits at most five seconds for endpoint removal and
+release of `daemon.lock`, and otherwise reports exit unverified. A lost response
+is unknown: inspect the same invocation and lock before any later launch. Do not
+retry automatically, signal a saved PID, or infer absence from an unavailable
+endpoint. Completion is a point-in-time observation, not a reservation against
+another scheduler or caller starting a daemon.
+
+### Legacy bootstrap limit
+
+Installing a new executable or moving a `current` symlink cannot add this endpoint
+to an already running old process. A legacy daemon refuses this operation or has
+no endpoint. Its bootstrap shutdown must use its original foreground session or
+a separately verified owning service manager. If neither is available, migration
+is blocked pending an identity-safe operator procedure; there is no PID fallback.
+Service replacement must retain the existing owner checks and every hold. A
+retired predecessor must not be reinstalled by default.
+
+After a separately authorized shutdown and verified exit, an explicitly requested
+`looptender daemon -c looptender.yaml` starts supervision with existing controls.
+Re-read sources and ownership first. `start --background` enables supervision and
+is not a state-preserving restart; `stop` acts on the target and `resume` clears
+holds. This facility adds no combined restart operation. Source fixtures do not
+establish installed legacy migration, service restart or live-provider acceptance.
+
+## Damaged-control Pause freeze (unreleased)
+
+On macOS and Linux, CLI `pause` can persist a restrictive freeze when an existing
+regular `control.json` contains syntactically malformed JSON (including empty,
+truncated and garbage bytes, at most 1 MiB). This is not a repaired control or a
+normal paused record. Ownership, prior holds and target bindings remain unknown;
+all original bytes are retained privately in the canonical record. The command
+preserves the existing policy that any calling thread may add a restrictive
+Pause; it records the unchanged caller as provenance without granting ownership.
+Windows and other platforms explicitly refuse this freeze without changing the
+record. Their damaged-control Pause acceptance remains open.
+
+Pause waits at most two seconds to drain the existing tick lock, then takes the
+control lock without waiting. A busy/refused drain does not acknowledge Pause.
+After checking the exact bytes, native file/directory identity and loaded source
+bindings again, it writes private staging, syncs and closes it, atomically renames
+it over the canonical record, and syncs the containing directory before reporting
+success. No missing-file/default-control intermediate is published. A failure
+can leave either the damaged original or a published freeze with unconfirmed
+durability; it never restores a permissive record. A repeated Pause accepts only
+the same strictly validated incident and bindings, without rewriting or nesting
+its evidence. Ordinary output contains neither the raw bytes nor their private
+identities. Valid JSON with unsupported schema, permission/read errors, ordinary
+Pause write/history errors and nonregular inputs are not repaired or frozen.
+Ordinary records must use exact schema tag spelling recursively: duplicate keys,
+case/Unicode-fold aliases and scalar nulls refuse unchanged. Existing nullable
+pointer and slice fields remain supported; this check grants no new authority.
+The ordinary command Pause transaction revalidates current raw bytes under the
+control lock and decodes that same buffer before saving. A healthy preflight
+does not authorize rewriting a later unsupported replacement.
+
+The top-level array format deliberately makes ordinary control readers refuse.
+Frozen v0.2.0 and source f35a0a94 fixtures exercise refusal for tick, daemon,
+pause, stop, enable, resume and validate while it remains intact. Their isolated
+replay is pending after correcting the fixture environment; earlier inherited-
+environment runs do not establish isolated compatibility or installed-version
+acceptance. A check that already loaded the previous control may still
+act until drained; previously queued or accepted actions are not retracted.
+Freeze neither stops the target or its lanes nor shuts down the supervisor.
+Registered-client, panel and Telegram controls do not gain a freeze path.
+Ordinary command Pause saves, including the registered CLI command, share the
+locked raw validation; panel and Telegram origins retain their existing behavior.
+
+Status and offline doctor retain unavailable control/ownership and give no
+backup-restoration remedy for a frozen or unsupported array envelope. An unknown
+or wrong-binding array is unsupported, not a confirmed freeze. Old executables
+cannot receive this corrected guidance and may still suggest unsafe restoration.
+
+There is no repair, release or resume operation for this record. Valid external
+restoration, deletion followed by enable, or replacement of the state directory
+can bypass the freeze; a sidecar would not protect old readers from those actions.
+Do not treat a backup or incident journal as authenticated ownership. A future
+recovery protocol needs separate complete authority/evidence review, proven old
+scheduler/writer retirement or compatible enforcement, and explicit preservation
+of unrelated holds. Releasing a future fence must not imply resume. No such
+recovery or installed upgrade acceptance is claimed here.
