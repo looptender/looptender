@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,10 +176,26 @@ func TestGeneratedPromptReportsThePrefixOnceAndOtherProgramsInTheTask(t *testing
 	if s == nil || s.CommandPrefix != prefixOtherBuild {
 		t.Fatalf("%+v", s)
 	}
-	if len(s.CommandPrograms) != 1 || s.CommandPrograms[0].Path != l.missing {
-		t.Fatalf("the prefix program is reported once, and only the task's other program is listed: %+v", s.CommandPrograms)
+	// The JSON lists both programs, each marked with where it was found.
+	if len(s.CommandPrograms) != 2 {
+		t.Fatalf("both flagged programs are listed: %+v", s.CommandPrograms)
 	}
-	if !strings.Contains(s.Message, "--refresh-prefix") {
+	bySource := map[string]promptCommandFinding{}
+	for _, f := range s.CommandPrograms {
+		bySource[f.Source] = f
+	}
+	if p := bySource[findingPolicyPrefix]; p.Path != l.oldBuild || p.Verdict != prefixOtherBuild || p.Count < 2 {
+		t.Fatalf("the policy prefix program: %+v", p)
+	}
+	if p := bySource[findingPromptText]; p.Path != l.missing || p.Verdict != prefixMissing || p.Count != 1 {
+		t.Fatalf("the task text's program: %+v", p)
+	}
+	raw, _ := json.Marshal(s)
+	if !strings.Contains(string(raw), `"source":"policy_prefix"`) || !strings.Contains(string(raw), `"source":"prompt_text"`) {
+		t.Fatalf("%s", raw)
+	}
+	// The message names the prefix program once (the prefix note) and the task's program.
+	if strings.Count(s.Message, l.oldBuild) != 1 || strings.Count(s.Message, l.missing) != 1 || !strings.Contains(s.Message, "--refresh-prefix") {
 		t.Fatalf("%s", s.Message)
 	}
 }
