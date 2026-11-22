@@ -86,6 +86,16 @@ jobs:
       - run: npm test
         env:
           KEEPGOING_TEST_BINARY: ${{ runner.temp }}/keepgoing-plugin-test
+      # The panel page's script is run, not only read, here: jsdom and the
+      # TypeScript compiler are this package's dependencies. The Go jobs skip
+      # these two tests, which need them.
+      - name: Run the panel page against every loop state, and lint its helpers
+        working-directory: .
+        run: go test ./cmd/looptender -run 'TestDockPageRendersEveryLoopStateWithoutAnException|TestDockPageNeverCallsAHelperThroughAShadowingVariable' -count=1 -v
+        env:
+          DOCK_PAGE_REQUIRED: "1"
+          DOCK_JSDOM_DIR: ${{ github.workspace }}/integrations/bb-plugin-keepgoing/node_modules/jsdom
+          TS_DIR: ${{ github.workspace }}/integrations/bb-plugin-keepgoing/node_modules/typescript
 
   # The Windows tests run as two jobs at once. As one job they took 6 to 8.5
   # minutes on main and ran into a 10-minute limit; "The Windows jobs' time"
