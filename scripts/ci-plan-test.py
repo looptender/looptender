@@ -55,6 +55,27 @@ class PlanTests(unittest.TestCase):
             self.assertIsNone(answer({**good, **change}), change)
 
 
+class OutputTests(unittest.TestCase):
+    def test_outputs_go_to_the_github_output_file_and_only_the_reason_to_stdout(self):
+        import contextlib, io, os, tempfile
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / 'output'
+            env = {'EVENT': 'pull_request', 'DRAFT': 'true', 'GITHUB_OUTPUT': str(out)}
+            captured = io.StringIO()
+            old = dict(os.environ)
+            os.environ.update(env)
+            try:
+                with contextlib.redirect_stdout(captured):
+                    plan.main()
+            finally:
+                os.environ.clear(); os.environ.update(old)
+            lines = out.read_text().splitlines()
+            self.assertEqual(lines, ['os=["ubuntu-24.04"]', 'duplicate=false'])
+            # Every line of a file GitHub reads must be name=value; stdout is a sentence.
+            self.assertNotIn('=', captured.getvalue().split(':')[0])
+            self.assertTrue(all('=' in l for l in lines))
+
+
 def needs(**results):
     plan_out = results.pop('_duplicate', 'false')
     base = {'plan': {'result': 'success', 'outputs': {'duplicate': plan_out}}}

@@ -87,7 +87,7 @@ jobs:
           SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci-plan.py >> "$GITHUB_OUTPUT"
+        run: python3 scripts/ci-plan.py
 
   bb-plugin:
     name: BB plugin typecheck

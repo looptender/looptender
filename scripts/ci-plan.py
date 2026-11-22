@@ -61,8 +61,10 @@ def main():
     systems, duplicate, reason = plan(event, os.environ.get('DRAFT', ''),
                                       lambda: passed_merge_group(os.environ['REPO'], os.environ['SHA']))
     lines = [f'os={json.dumps(systems)}', f'duplicate={"true" if duplicate else "false"}']
+    # The outputs go to the file GitHub reads, never to stdout: only the
+    # reason is printed, and a step that redirected stdout there would corrupt it.
     out = os.environ.get('GITHUB_OUTPUT')
-    for target in ([open(out, 'a')] if out else []) + [sys.stdout]:
+    with open(out, 'a') if out else sys.stderr as target:
         target.write('\n'.join(lines) + '\n')
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
     if summary:
