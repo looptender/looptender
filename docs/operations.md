@@ -1492,3 +1492,60 @@ Re-read sources and ownership first. `start --background` enables supervision an
 is not a state-preserving restart; `stop` acts on the target and `resume` clears
 holds. This facility adds no combined restart operation. Source fixtures do not
 establish installed legacy migration, service restart or live-provider acceptance.
+
+## Damaged-control Pause freeze (unreleased)
+
+On macOS and Linux, CLI `pause` can persist a restrictive freeze when an existing
+regular `control.json` contains syntactically malformed JSON (including empty,
+truncated and garbage bytes, at most 1 MiB). This is not a repaired control or a
+normal paused record. Ownership, prior holds and target bindings remain unknown;
+all original bytes are retained privately in the canonical record. The command
+preserves the existing policy that any calling thread may add a restrictive
+Pause; it records the unchanged caller as provenance without granting ownership.
+Windows and other platforms explicitly refuse this freeze without changing the
+record. Their damaged-control Pause acceptance remains open.
+
+Pause waits at most two seconds to drain the existing tick lock, then takes the
+control lock without waiting. A busy/refused drain does not acknowledge Pause.
+After checking the exact bytes, native file/directory identity and loaded source
+bindings again, it writes private staging, syncs and closes it, atomically renames
+it over the canonical record, and syncs the containing directory before reporting
+success. No missing-file/default-control intermediate is published. A failure
+can leave either the damaged original or a published freeze with unconfirmed
+durability; it never restores a permissive record. A repeated Pause accepts only
+the same strictly validated incident and bindings, without rewriting or nesting
+its evidence. Ordinary output contains neither the raw bytes nor their private
+identities. Valid JSON with unsupported schema, permission/read errors, ordinary
+Pause write/history errors and nonregular inputs are not repaired or frozen.
+Ordinary records must use exact schema tag spelling recursively: duplicate keys,
+case/Unicode-fold aliases and scalar nulls refuse unchanged. Existing nullable
+pointer and slice fields remain supported; this check grants no new authority.
+The ordinary command Pause transaction revalidates current raw bytes under the
+control lock and decodes that same buffer before saving. A healthy preflight
+does not authorize rewriting a later unsupported replacement.
+
+The top-level array format deliberately makes ordinary control readers refuse.
+Frozen v0.2.0 and source f35a0a94 fixtures exercise refusal for tick, daemon,
+pause, stop, enable, resume and validate while it remains intact. Their isolated
+replay is pending after correcting the fixture environment; earlier inherited-
+environment runs do not establish isolated compatibility or installed-version
+acceptance. A check that already loaded the previous control may still
+act until drained; previously queued or accepted actions are not retracted.
+Freeze neither stops the target or its lanes nor shuts down the supervisor.
+Registered-client, panel and Telegram controls do not gain a freeze path.
+Ordinary command Pause saves, including the registered CLI command, share the
+locked raw validation; panel and Telegram origins retain their existing behavior.
+
+Status and offline doctor retain unavailable control/ownership and give no
+backup-restoration remedy for a frozen or unsupported array envelope. An unknown
+or wrong-binding array is unsupported, not a confirmed freeze. Old executables
+cannot receive this corrected guidance and may still suggest unsafe restoration.
+
+There is no repair, release or resume operation for this record. Valid external
+restoration, deletion followed by enable, or replacement of the state directory
+can bypass the freeze; a sidecar would not protect old readers from those actions.
+Do not treat a backup or incident journal as authenticated ownership. A future
+recovery protocol needs separate complete authority/evidence review, proven old
+scheduler/writer retirement or compatible enforcement, and explicit preservation
+of unrelated holds. Releasing a future fence must not imply resume. No such
+recovery or installed upgrade acceptance is claimed here.
