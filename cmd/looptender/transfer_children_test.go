@@ -289,7 +289,7 @@ func TestTransferPreviewChildReadsAreBounded(t *testing.T) {
 	control.Save(dir, control.File{Enabled: true, Ownership: &control.Ownership{ThreadID: "thr_source", Generation: 1}})
 	state.Save(dir, state.File{ActiveTarget: state.Primary})
 	old := previewChildrenBudget
-	previewChildrenBudget = time.Nanosecond
+	previewChildrenBudget = -time.Second // already spent: cancelled at once on every platform
 	t.Cleanup(func() { previewChildrenBudget = old })
 	b := newChildBB(t, 3, 0)
 	_, r, _ := runTransfer(t, path, b.run())
