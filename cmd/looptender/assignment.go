@@ -11,6 +11,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
@@ -338,6 +339,16 @@ func printAssignmentSummary(e env, s control.AssignmentSummary) {
 	fmt.Fprintf(e.stdout, "Historical direct-child evidence (%s), read %s: %d assignments, %d unknown, %d unacknowledged, %d unfinished; %d person-blocked, %d dependency-waiting. No work dispatched.\n", s.Coverage, s.ObservedAt.Format(time.RFC3339), c.Assignments, c.Unknown, c.Unacknowledged, c.Unfinished, c.PersonBlocked, c.DependencyWaiting)
 }
 
+// assignmentCallNanos bounds each bb call an assignment inventory makes. Too
+// slow a call leaves the inventory partial, which is the conservative answer.
+// Tests raise it so that a loaded machine's process start-up is not read as a
+// partial inventory.
+var assignmentCallNanos atomic.Int64
+
+func init() { assignmentCallNanos.Store(int64(2 * time.Second)) }
+
+func assignmentCallTimeout() time.Duration { return time.Duration(assignmentCallNanos.Load()) }
+
 // assignmentInventory reads only list/show structured identity/status fields.
 // Matching bracket reads detect some races; they do not make an atomic snapshot.
 func assignmentInventory(ctx context.Context, cli, parent string, run doctorRun) control.AssignmentInventory {
@@ -347,7 +358,7 @@ func assignmentInventory(ctx context.Context, cli, parent string, run doctorRun)
 	if !assignmentCoordinatorKnown(ctx, cli, parent, run) {
 		inv.Coverage = "partial"
 	}
-	first, ok := inventoryChildren(ctx, cli, parent, 2*time.Second, run)
+	first, ok := inventoryChildren(ctx, cli, parent, assignmentCallTimeout(), run)
 	sort.Strings(first)
 	if !ok || len(first) >= inventoryMaxLanes {
 		inv.Coverage = "partial"
@@ -355,7 +366,7 @@ func assignmentInventory(ctx context.Context, cli, parent string, run doctorRun)
 	for _, id := range first {
 		lane := control.AssignmentLane{Thread: id, Execution: "unknown"}
 		if ctx.Err() == nil {
-			q, cancel := context.WithTimeout(ctx, 2*time.Second)
+			q, cancel := context.WithTimeout(ctx, assignmentCallTimeout())
 			raw, err := run(q, cli, []string{"thread", "show", id, "--json"}, nil, "")
 			var v struct {
 				OK     *bool           `json:"ok"`
@@ -382,7 +393,7 @@ func assignmentInventory(ctx context.Context, cli, parent string, run doctorRun)
 		}
 		inv.Lanes = append(inv.Lanes, lane)
 	}
-	last, ok := inventoryChildren(ctx, cli, parent, 2*time.Second, run)
+	last, ok := inventoryChildren(ctx, cli, parent, assignmentCallTimeout(), run)
 	sort.Strings(last)
 	if !ok || len(last) >= inventoryMaxLanes || !reflect.DeepEqual(first, last) || ctx.Err() != nil {
 		inv.Coverage = "partial"
@@ -395,7 +406,7 @@ func assignmentInventory(ctx context.Context, cli, parent string, run doctorRun)
 }
 
 func assignmentCoordinatorKnown(ctx context.Context, cli, parent string, run doctorRun) bool {
-	q, cancel := context.WithTimeout(ctx, 2*time.Second)
+	q, cancel := context.WithTimeout(ctx, assignmentCallTimeout())
 	defer cancel()
 	raw, err := run(q, cli, []string{"thread", "show", parent, "--json"}, nil, "")
 	var v struct {
