@@ -91,7 +91,7 @@ jobs:
       # these two tests, which need them.
       - name: Run the panel page against every loop state, and lint its helpers
         working-directory: .
-        run: go test ./cmd/looptender -run 'TestDockPageRendersEveryLoopStateWithoutAnException|TestDockPageNeverCallsAHelperThroughAShadowingVariable' -count=1 -v
+        run: python3 scripts/ci-go-test-ran.py go test ./cmd/looptender -run 'TestDockPageRendersEveryLoopStateWithoutAnException|TestDockPageNeverCallsAHelperThroughAShadowingVariable' -count=1 -v
         env:
           DOCK_PAGE_REQUIRED: "1"
           DOCK_JSDOM_DIR: ${{ github.workspace }}/integrations/bb-plugin-keepgoing/node_modules/jsdom
