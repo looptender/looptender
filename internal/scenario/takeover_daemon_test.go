@@ -183,11 +183,26 @@ func TestScenarioIncidentAdoptsInstalledBuild(t *testing.T) {
 	snap, err := daemoninfo.Query(context.Background(), stateDir)
 	w.Check(s, "the same process supervises", check(err == nil && snap.ProcessID == started.PID, "daemon %+v %v, started %d", snap, err, started.PID))
 
-	// The new build finishes the moves the old one could not make.
-	for i := 0; i < 3 && childMoveIs(s, 5, 0) != nil; i++ {
-		nudge()
-		s = checked("daemon: next check on the new build", nil)
+	// The new build finishes the moves the old one could not make. The
+	// daemon runs its next check by itself (control.json changed with the
+	// owner), so the test waits for the moves to be on record, nudging it,
+	// before it records the step: a step read in the middle of a check sees
+	// some moves and not others.
+	moved := func() bool {
+		var moves []Move
+		readLines(t, filepath.Join(w.world, "moves.jsonl"), &moves)
+		st, err := state.Load(stateDir)
+		return len(moves) >= len(lanes) && err == nil && st.ChildMove != nil && st.ChildMove.Done
 	}
+	for deadline := time.Now().Add(30 * time.Second); !moved(); time.Sleep(200 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the new build did not finish the child moves")
+		}
+		nudge()
+	}
+	checks = countTicks(stateDir)
+	nudge()
+	s = checked("daemon: next check on the new build", nil)
 	converged(w, s)
 
 	// A build that declares an older state format is never switched to.
