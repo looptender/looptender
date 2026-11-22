@@ -82,7 +82,7 @@ class PartitionTests(unittest.TestCase):
         self.assertIn('still running: TestStuck (30s so far)', text)
         self.assertIn('slowest finished: TestSlow 20.0s, TestFast 1.0s', text)
         # A stuck test keeps counting to the moment of the stop, not to its last output.
-        self.assertIn('still running: TestStuck (540s so far)', later)
+        self.assertIn('still running: TestStuck (600s so far)', later)
 
     def test_deadline_message_comes_from_the_partition_not_a_generic_string(self):
         with tempfile.TemporaryDirectory() as temp:
