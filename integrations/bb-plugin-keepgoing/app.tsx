@@ -115,17 +115,25 @@ function ToggleButton({ loop, threadId, onDone }: { loop: LoopView; threadId: st
   const rpc = useRpc<typeof rpcContract>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [confirming, setConfirming] = useState(false);
   const paused = loop.controlState !== "enabled";
   if (loop.managedId && ["disabled", "move requires inspection"].includes(loop.controlState)) return null;
+  // An enabled loop whose current target is another thread: this card belongs
+  // to its primary, so pausing it is allowed, but only after it is said which
+  // loop and which thread are meant.
+  const watching = !paused && !loop.supervising;
+  const targetThread = loop.details?.targetThread ?? loop.target;
   const act = () => {
     setBusy(true);
     setError("");
+    // A key left undefined is not JSON; send managedId only when there is one.
     rpc
-      .call("control", { configPath: loop.configPath, action: "pause", managedId: loop.managedId, expectedThreadId: threadId })
+      .call("control", { configPath: loop.configPath, action: "pause", ...(loop.managedId ? { managedId: loop.managedId } : {}), expectedThreadId: threadId })
       .then(result => { if (!result.ok) setError(result.message); })
       .catch(() => setError("Control could not be confirmed. Refresh status before retrying."))
       .finally(() => {
         setBusy(false);
+        setConfirming(false);
         onDone();
       });
   };
@@ -133,10 +141,26 @@ function ToggleButton({ loop, threadId, onDone }: { loop: LoopView; threadId: st
     {/* Resume is a person's, from the panel or a terminal: the plugin
         cannot tell a click from the supervised session. */}
     {paused
-      ? <span>A person resumes this from an ordinary terminal: <code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code>, or the looptender panel started there.</span>
-      : <button type="button" disabled={busy} onClick={act} style={buttonStyle}>Pause</button>}
+      ? <ResumeNote loop={loop} />
+      : watching && confirming
+        ? <span role="group" aria-label={`Confirm pausing ${loop.loop}`}>
+            <span>Pause loop {loop.loop}? It supervises {targetThread}, not this thread.</span>{" "}
+            <button type="button" disabled={busy} onClick={act} style={buttonStyle}>Pause loop {loop.loop}</button>{" "}
+            <button type="button" disabled={busy} onClick={() => setConfirming(false)} style={buttonStyle}>Cancel</button>
+          </span>
+        : <button type="button" disabled={busy} onClick={watching ? () => setConfirming(true) : act} style={buttonStyle}>{watching ? "Pause…" : "Pause"}</button>}
     {error && <span role="alert">{error}</span>}
   </>;
+}
+
+// Where a held loop is resumed, in the words `looptender status` uses for the
+// same state. A superseded loop is never resumed: its successor continues.
+function ResumeNote({ loop }: { loop: LoopView }) {
+  if (loop.controlState === "superseded") {
+    const successor = loop.details?.supersededBy;
+    return <span>Resume is refused for a superseded loop; its successor continues the work{successor ? ` (${successor})` : ""}.</span>;
+  }
+  return <span>A person resumes this from an ordinary terminal: <code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code>, or the looptender panel started there.</span>;
 }
 
 function ThreadSetup({ threadId, onChanged, hideStart = false }: { threadId: string; onChanged(): void; hideStart?: boolean }) {

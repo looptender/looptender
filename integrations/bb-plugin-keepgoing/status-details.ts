@@ -63,6 +63,9 @@ export const detailsSchema = z.object({
   targetProvider: z.string().max(128).optional(), targetModel: z.string().max(128).optional(),
   moved: movedSchema.optional(),
   limitWait: limitWaitSchema.nullable().optional(),
+  // status --json control.supersededBy: the thread a person declared to
+  // continue this loop's work in another loop. Present only on a superseded loop.
+  supersededBy: z.string().max(128).optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
 
@@ -136,6 +139,8 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
     `Build: ${buildSummary(d.runtime).text}${d.runtime?.installedBuild && !buildSummary(d.runtime).differs ? ` · installed ${d.runtime.installedBuild}` : ""}`,
     ...(d.targetProvider ? [`Provider: ${d.targetProvider}${d.targetModel ? ` · model ${d.targetModel}` : ""} (configured)`] : []),
     ...(d.moved ? [`Moved: ${d.moved.text}`] : []),
+    // The words `looptender status` prints, with the successor when it names one.
+    ...(d.supersededBy !== undefined ? [`Superseded: successor reference is recorded${d.supersededBy ? ` (${d.supersededBy})` : ""}; resume and takeover are refused`] : []),
     d.runtime ? `Check evidence: ${d.runtime.state} · ${d.runtime.freshness} · source ${d.runtime.source}` : "Check evidence: unavailable from this build",
   ];
   const daemon = d.daemon;
