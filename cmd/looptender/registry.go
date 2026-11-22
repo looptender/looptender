@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/envvar"
@@ -149,6 +151,12 @@ func registryCommand(e env, args []string) int {
 // KEEPGOING_REGISTRY_DIR, is still read; see envvar.
 const registryDirEnv = envvar.Prefix + string(envvar.RegistryDir)
 
+// errUserConfigUnavailable is what a registry in the default place reports
+// when the operating system's user configuration directory cannot be found:
+// APPDATA on Windows, HOME or XDG_CONFIG_HOME elsewhere. Windows does not use
+// USERPROFILE for it.
+var errUserConfigUnavailable = errors.New("the user configuration directory is not defined (on Windows APPDATA, elsewhere HOME or XDG_CONFIG_HOME); set it, or choose a registry with --directory or LOOPTENDER_REGISTRY_DIR")
+
 func registryDirectory(path string) (string, error) {
 	bad := errors.New("registry directory must be a private path outside Git checkouts")
 	if path == "" {
@@ -162,7 +170,9 @@ func registryDirectory(path string) (string, error) {
 	if path == "" {
 		var err error
 		if path, err = userdir.Config("registry"); err != nil {
-			return "", bad
+			// Say why: "private path outside Git checkouts" would send a
+			// person looking at the wrong thing.
+			return "", errUserConfigUnavailable
 		}
 	}
 	dir, err := canonicalFuturePath(path)
@@ -217,8 +227,13 @@ const registryPublicationWarning = "warning: supervision changed, but its dock/p
 // publishEnabledLoop records discovery metadata only after an explicit enable
 // or start succeeds. Failure must not undo or replay that lifecycle operation.
 func publishEnabledLoop(e env, cfg *config.Config) bool {
-	if cfg.CheckSources() != nil || registryCommand(env{e.ctx, io.Discard, io.Discard}, []string{"add", "-c", cfg.Path()}) != exitOK {
+	var why bytes.Buffer
+	if cfg.CheckSources() != nil || registryCommand(env{e.ctx, io.Discard, &why}, []string{"add", "-c", cfg.Path()}) != exitOK {
 		e.errf("%s", registryPublicationWarning)
+		// The registry command's own one-line reason, never provider output.
+		if line := strings.TrimSpace(strings.SplitN(why.String(), "\n", 2)[0]); strings.HasPrefix(line, "registry: ") {
+			e.errf("%s", line)
+		}
 		return false
 	}
 	return true

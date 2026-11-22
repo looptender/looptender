@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/registry"
+	"github.com/looptender/looptender/internal/userdir"
 )
 
 func registryRun(t *testing.T, dir string, args ...string) (int, string, string) {
@@ -127,5 +130,70 @@ func TestRegistryCLIRejectsCheckoutLockAndBadInput(t *testing.T) {
 		if code, _, _ := registryRun(t, dir, args...); code == 0 {
 			t.Fatal("invalid args accepted", args)
 		}
+	}
+}
+
+// userConfigHome points the operating system's user configuration directory
+// at a private directory the way each platform reads it, and says where the
+// default registry then is. Windows reads APPDATA, not USERPROFILE.
+func userConfigHome(t *testing.T) (base string) {
+	t.Helper()
+	root := t.TempDir()
+	for _, name := range []string{"LOOPTENDER_REGISTRY_DIR", "KEEPGOING_REGISTRY_DIR", "APPDATA", "XDG_CONFIG_HOME", "HOME", "USERPROFILE"} {
+		t.Setenv(name, "")
+	}
+	switch runtime.GOOS {
+	case "windows":
+		t.Setenv("APPDATA", filepath.Join(root, "roaming"))
+		t.Setenv("USERPROFILE", filepath.Join(root, "profile")) // not where the registry goes
+		return filepath.Join(root, "roaming")
+	case "darwin":
+		t.Setenv("HOME", filepath.Join(root, "home"))
+		return filepath.Join(root, "home", "Library", "Application Support")
+	}
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	return filepath.Join(root, "config")
+}
+
+func TestRegistryDefaultDirectoryIsTheUserConfigDirectory(t *testing.T) {
+	base := userConfigHome(t)
+	cfg := registryConfig(t)
+	var out, errs bytes.Buffer
+	if code := run(context.Background(), []string{"registry", "add", "-c", cfg, "--json"}, &out, &errs); code != exitOK {
+		t.Fatalf("add without --directory: %d %s %s", code, out.String(), errs.String())
+	}
+	if _, err := os.Stat(filepath.Join(base, userdir.Name, "registry", registry.FileName)); err != nil {
+		t.Fatalf("the reference is not under the user configuration directory: %v", err)
+	}
+}
+
+func TestRegistryAddNamesAnUndefinedUserConfigDirectory(t *testing.T) {
+	userConfigHome(t)
+	for _, name := range []string{"APPDATA", "XDG_CONFIG_HOME", "HOME"} {
+		t.Setenv(name, "")
+	}
+	cfg := registryConfig(t)
+	var out, errs bytes.Buffer
+	if code := run(context.Background(), []string{"registry", "add", "-c", cfg}, &out, &errs); code != exitFailed || !strings.Contains(errs.String(), "user configuration directory is not defined") || strings.Contains(errs.String(), "outside Git checkouts") {
+		t.Fatalf("%d %s", code, errs.String())
+	}
+}
+
+func TestRegistryPublicationWarningNamesItsCause(t *testing.T) {
+	cfg, err := config.Load(registryConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	userConfigHome(t)
+	for _, name := range []string{"APPDATA", "XDG_CONFIG_HOME", "HOME"} {
+		t.Setenv(name, "")
+	}
+	var out, errs bytes.Buffer
+	if publishEnabledLoop(env{context.Background(), &out, &errs}, cfg) {
+		t.Fatal("published without a registry directory")
+	}
+	if !strings.Contains(errs.String(), registryPublicationWarning) || !strings.Contains(errs.String(), "registry: the user configuration directory is not defined") {
+		t.Fatalf("warning lost its cause: %q", errs.String())
 	}
 }

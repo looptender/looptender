@@ -196,7 +196,13 @@ func NewWorld(t *testing.T, start time.Time) *World {
 		"GIT_COMMITTER_NAME=Example", "GIT_COMMITTER_EMAIL=example@example.com",
 	}
 	if runtime.GOOS == "windows" {
-		w.env = append(w.env, "SystemRoot="+os.Getenv("SystemRoot"))
+		// Windows finds the user's configuration directory in APPDATA, not
+		// USERPROFILE, and the environment here is otherwise empty: without
+		// these the dock/panel reference has no default place and enable warns
+		// that it could not be saved.
+		w.env = append(w.env, "SystemRoot="+os.Getenv("SystemRoot"),
+			"APPDATA="+filepath.Join(w.home, "AppData", "Roaming"),
+			"LOCALAPPDATA="+filepath.Join(w.home, "AppData", "Local"))
 	}
 	w.git("init", "-q")
 	w.Commit("test: initialize fictional project")
