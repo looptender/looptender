@@ -26,16 +26,11 @@ type File struct {
 	// Any nonempty value permanently fences this loop, including malformed ones.
 	SupersededBy    string             `json:"supersededBy,omitempty"`
 	PendingTransfer *PendingBBTransfer `json:"pendingTransfer,omitempty"`
-	// MovedAt is when transfer apply finished moving the loop to its new
-	// thread, which leaves the awaiting-user hold. It only marks that the hold
-	// is the move's own, for wording; nothing reads it to decide anything.
-	// Builds before it record none.
-	MovedAt   *time.Time `json:"movedAt,omitempty"`
-	BBTarget  string     `json:"bbTarget,omitempty"`
-	Ownership *Ownership `json:"ownership,omitempty"`
-	Enabled   bool       `json:"enabled"`
-	Paused    bool       `json:"paused"`
-	Stop      bool       `json:"stop"`
+	BBTarget        string             `json:"bbTarget,omitempty"`
+	Ownership       *Ownership         `json:"ownership,omitempty"`
+	Enabled         bool               `json:"enabled"`
+	Paused          bool               `json:"paused"`
+	Stop            bool               `json:"stop"`
 	// StopLanesAt is when a person asked for the stop to cover the lanes as
 	// well (keepgoing stop --lanes): the conversations the supervised one
 	// started, and theirs. Each such request is carried out once; asking

@@ -292,13 +292,12 @@ func transferApply(e env, args []string, run doctorRun, afterStep func(string) e
 			return err
 		}
 		f.PendingTransfer = nil
-		moved := time.Now().UTC()
-		f.MovedAt = &moved
 		return control.BindBBTarget(f, p.To)
 	})
 	if err != nil && !errors.Is(err, errControlHistory) {
 		return pendingFail(err)
 	}
+	markMoved(cfg.Loop.StateDir)
 	result := struct {
 		Outcome                  string `json:"outcome"`
 		ID                       string `json:"id"`
@@ -357,6 +356,7 @@ func resetTransferState(dir string, providerChange bool) error {
 	st.LastPromptSend = nil
 	st.GoalCopy = nil // the next send carries the goal in full
 	st.CheckedAt = time.Time{}
+	st.MovedAt, st.MovedControlAt = nil, nil
 	st.StopRequestedSent = false
 	st.AwaitingReported = false
 	st.PrimaryResetsAt = time.Time{}

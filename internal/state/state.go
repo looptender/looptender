@@ -36,6 +36,15 @@ const Primary = "primary"
 
 // File is what one tick leaves for the next.
 type File struct {
+	// MovedAt and MovedControlAt mark the hold transfer apply leaves when it
+	// finishes: when the move finished, and the control record's updatedAt
+	// right after, so a later control change (a resume, a hold, a pause) shows
+	// the hold is no longer the move's. They only word the hold; nothing reads
+	// them to decide anything. They live here, not in control.json, because
+	// older builds decode control.json strictly before a pause and would
+	// refuse one with a field they do not know. A state reset clears them.
+	MovedAt        *time.Time `json:"movedAt,omitempty"`
+	MovedControlAt *time.Time `json:"movedControlAt,omitempty"`
 	// PRBacklog is optional diagnostic evidence and notice bookkeeping, never authority.
 	PRBacklog      *prbacklog.Cache `json:"prBacklog,omitempty"`
 	LastPromptSend *PromptSend      `json:"lastPromptSend,omitempty"`

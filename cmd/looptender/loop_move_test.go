@@ -18,13 +18,21 @@ import (
 )
 
 func movedControl(held bool) control.File {
-	return control.File{Enabled: true, AwaitingUser: held, Ownership: &control.Ownership{ThreadID: "thr_destination", Generation: 2,
-		Previous: &control.Handoff{ThreadID: "thr_source", Status: "handed_off", At: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)}}}
+	return control.File{Enabled: true, AwaitingUser: held, UpdatedAt: movedBase, Ownership: &control.Ownership{ThreadID: "thr_destination", Generation: 2,
+		Previous: &control.Handoff{ThreadID: "thr_source", Status: "handed_off", At: movedBase}}}
 }
 
+var movedBase = time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// markedControl and markedState are what transfer apply leaves: the control
+// record as the move saved it and the mark in state.json.
 func markedControl(held bool) control.File {
-	at := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	return control.File{Enabled: true, AwaitingUser: held, MovedAt: &at}
+	return control.File{Enabled: true, AwaitingUser: held, UpdatedAt: movedBase}
+}
+
+func markedState() state.File {
+	at, ctlAt := movedBase, movedBase
+	return state.File{MovedAt: &at, MovedControlAt: &ctlAt}
 }
 
 func withControl(f control.File, edit func(*control.File)) control.File {
@@ -47,8 +55,8 @@ func TestMovedIsDerivedFromTheMoveRecords(t *testing.T) {
 		{"checked since the move", movedControl(true), state.File{CheckedAt: checked}, ""},
 		{"an ordinary hold on a loop that never moved", control.File{Enabled: true, AwaitingUser: true}, state.File{}, ""},
 		// The move's own mark, with and without the handoff record.
-		{"marked by transfer apply, held", markedControl(true), state.File{}, "held"},
-		{"marked, held, but a check has run", markedControl(true), state.File{CheckedAt: checked}, ""},
+		{"marked by transfer apply, held", markedControl(true), markedState(), "held"},
+		{"marked, held, but a check has run", markedControl(true), func() state.File { s := markedState(); s.CheckedAt = checked; return s }(), ""},
 		// Holds that are not a plain resume: the real need must show.
 		{"a transfer pending", withControl(movedControl(true), func(f *control.File) {
 			f.PendingTransfer = &control.PendingBBTransfer{Version: 1, ID: "move_x", From: "thr_a", To: "thr_b"}
@@ -58,10 +66,13 @@ func TestMovedIsDerivedFromTheMoveRecords(t *testing.T) {
 		}), state.File{}, ""},
 		{"superseded", withControl(movedControl(true), func(f *control.File) { f.SupersededBy = "thr_other" }), state.File{}, ""},
 		{"stopped", withControl(movedControl(true), func(f *control.File) { f.Stop = true }), state.File{}, ""},
-		{"completed", withControl(markedControl(true), func(f *control.File) { f.Completed = true }), state.File{}, ""},
+		{"completed", withControl(markedControl(true), func(f *control.File) { f.Completed = true }), markedState(), ""},
 		{"an agent's hold with a note", withControl(movedControl(true), func(f *control.File) { f.Note = "need a decision on X" }), state.File{}, "unheld"},
-		{"an open question", withControl(markedControl(true), func(f *control.File) { f.Question = &control.Question{} }), state.File{}, "unheld"},
-		{"an open question that outlived completion", withControl(markedControl(true), func(f *control.File) { f.OpenQuestion = &control.OpenQuestion{} }), state.File{}, "unheld"},
+		{"an open question", withControl(markedControl(true), func(f *control.File) { f.Question = &control.Question{} }), markedState(), "unheld"},
+		{"an open question that outlived completion", withControl(markedControl(true), func(f *control.File) { f.OpenQuestion = &control.OpenQuestion{} }), markedState(), "unheld"},
+		// A moved loop that was resumed and then got a bare await-user before its first check.
+		{"marked, then resumed and held again", withControl(markedControl(true), func(f *control.File) { f.UpdatedAt = movedBase.Add(time.Minute) }), markedState(), "unheld"},
+		{"unmarked, then resumed and held again", withControl(movedControl(true), func(f *control.File) { f.UpdatedAt = movedBase.Add(time.Minute) }), state.File{}, "unheld"},
 		{"an owner with no handoff recorded", control.File{Enabled: true, AwaitingUser: true, Ownership: &control.Ownership{ThreadID: "thr_destination", Generation: 1}}, state.File{}, ""},
 	} {
 		m := movedOf(tc.ctl, tc.st)
@@ -232,7 +243,7 @@ func TestTransferApplyMarksItsOwnHold(t *testing.T) {
 		return nil
 	}, args...)
 	ctl, _ := control.Load(dir)
-	if code == 0 || ctl.PendingTransfer == nil || ctl.MovedAt != nil {
+	if st, _ := state.Load(dir); code == 0 || ctl.PendingTransfer == nil || st.MovedAt != nil {
 		t.Fatalf("pending: %d %+v", code, ctl)
 	}
 	// Mid-transfer the hold is not the move's: recover, not resume, is needed.
@@ -243,8 +254,15 @@ func TestTransferApplyMarksItsOwnHold(t *testing.T) {
 	code, out := callProviderTransfer(t, path, crossProviderRunner(t, nil), nil, "recover", "--id", ctl.PendingTransfer.ID, "--take-over")
 	ctl, _ = control.Load(dir)
 	st, _ := state.Load(dir)
-	if code != 0 || ctl.MovedAt == nil || ctl.PendingTransfer != nil {
+	if code != 0 || st.MovedAt == nil || st.MovedControlAt == nil || !st.MovedControlAt.Equal(ctl.UpdatedAt) || ctl.PendingTransfer != nil {
 		t.Fatalf("%d %s %+v", code, out, ctl)
+	}
+	// What the move leaves in control.json must stay readable by builds that
+	// decode it strictly before a pause (ordinaryPauseRecord): the mark is in
+	// state.json, never here.
+	raw, err := os.ReadFile(filepath.Join(dir, control.FileName))
+	if err != nil || !ordinaryPauseRecord(raw) || strings.Contains(string(raw), "moved") {
+		t.Fatalf("control.json after a move is not an ordinary pause record: %v %s", err, raw)
 	}
 	if m := movedOf(ctl, st); m == nil || !m.Held {
 		t.Fatalf("finished move: %+v awaiting=%v note=%q q=%v oq=%v briefs=%d ep=%v stop=%v checked=%v last=%v", m, ctl.AwaitingUser, ctl.Note, ctl.Question, ctl.OpenQuestion, len(ctl.BriefHold), ctl.EpisodeHold, ctl.Stop, st.CheckedAt, st.LastCheck)
