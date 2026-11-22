@@ -7,6 +7,9 @@ export const checkSchema = z.object({
 });
 export const runtimeSchema = z.object({
   state: z.string(), source: z.string(), freshness: z.string(),
+  // Added by a later looptender; absent from older ones, and absent when a
+  // label does not identify a build. Display-short labels, nothing more.
+  recordedBuild: z.string().max(64).optional(), installedBuild: z.string().max(64).optional(), binaryComparison: z.string().optional(),
 });
 export const scheduleSchema = z.object({
   overdue: z.boolean(), message: z.string().optional(),
@@ -17,6 +20,14 @@ export const scheduleSchema = z.object({
 export const daemonSchema = z.object({
   state: z.string(), phase: z.string().optional(), observedAt: z.string().optional(),
   nextCheckAt: z.string().optional(), dryRun: z.boolean().optional(), binaryComparison: z.string().optional(),
+});
+// A long limit wait with no handoff possible, from status --json limitWait.
+// Only its state, reason and reset time cross this boundary.
+export const limitWaitSchema = z.object({
+  state: z.string(), resetsAt: z.string().optional(), resetPassed: z.boolean().optional(),
+  reason: z.string().optional(), reportConfigured: z.boolean().optional(), resetIn: z.string().optional(),
+  // Set when the loop is held: its recorded wait is from before the hold.
+  held: z.string().optional(),
 });
 export const goalSummarySchema = z.object({
   id: z.string().regex(/^goal_[0-9a-f]{32}$/), revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), state: z.literal("recorded"),
@@ -40,8 +51,21 @@ export const detailsSchema = z.object({
   targetThread: z.string().nullable(), targetAdapter: z.string(), targetConfigured: z.boolean().nullable(),
   runtime: runtimeSchema.nullable(), daemon: daemonSchema.nullable(), lastCheck: checkSchema.nullable(),
   schedule: scheduleSchema.nullable().optional(),
+  limitWait: limitWaitSchema.nullable().optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
+
+type Runtime = StatusDetails["runtime"];
+
+// The build the loop's supervisor last recorded running, and the installed
+// looptender's. Never a guess: a missing label is "version unknown", and no
+// claim is made about which build is newer.
+export function buildSummary(runtime: Runtime | undefined): { running?: string; installed?: string; differs: boolean; text: string } {
+  const running = runtime?.recordedBuild || undefined, installed = runtime?.installedBuild || undefined;
+  const differs = !!running && !!installed && runtime?.binaryComparison === "different";
+  const text = !running ? "version unknown" : differs ? `last check ran ${running} · installed ${installed}` : `last check ran ${running}`;
+  return { running, installed, differs, text };
+}
 
 export function dateLabel(value: string | null | undefined): string {
   if (!value || value.startsWith("0001-")) return "unavailable";
@@ -56,6 +80,7 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
     goalLabel(d.goal, d.goalState),
     `Task completion: ${d.completed ? "declared; not independently verified" : "not declared"}`,
     `Current target: ${d.targetThread ?? d.targetAdapter} (${target})${supervising ? "; this thread" : "; not this thread"}${d.targetConfigured === false ? "; missing or disabled in config" : ""}`,
+    `Build: ${buildSummary(d.runtime).text}${d.runtime?.installedBuild && !buildSummary(d.runtime).differs ? ` · installed ${d.runtime.installedBuild}` : ""}`,
     d.runtime ? `Check evidence: ${d.runtime.state} · ${d.runtime.freshness} · source ${d.runtime.source}` : "Check evidence: unavailable from this build",
   ];
   const daemon = d.daemon;
@@ -69,6 +94,21 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
   // Only a judged loop whose usual interval is known is said to be on time.
   else if (d.schedule?.judging && d.schedule.basis === "usual" && !d.schedule.slept) lines.push("Schedule: checks are running at their usual interval");
   else if (!d.schedule) lines.push("External scheduler health: not inspected; a daemon reply does not establish agent health");
+  const wait = d.limitWait;
+  if (wait && wait.state !== "none" && !wait.resetPassed && wait.held) {
+    lines.push(`Long limit wait: recorded before the loop was held (${wait.held}); a held loop observes nothing, so it may be out of date.`);
+  } else if (wait && wait.state !== "none" && !wait.resetPassed) {
+    const why: Record<string, string> = {
+      limit_failover_disabled: "automatic handoff is off for this error",
+      limit_no_fallback: "no other route is configured or none passed its check",
+      limit_refusal_unrecovered: "a refusal on this route is unrecovered",
+    };
+    const told = wait.state === "reported" ? "a report was requested (receipt unverified)"
+      : wait.state === "report_failed" ? "the report failed (delivery not confirmed)"
+      : wait.reportConfigured === false ? "nobody was told: no report section when it was recorded"
+      : wait.reportConfigured === true ? "nobody was told: limit_wait was not in report.events" : "no report was sent";
+    lines.push(`Long limit wait: no handoff possible (${why[wait.reason ?? ""] ?? "reason not recorded"}); resets ${dateLabel(wait.resetsAt)}${wait.resetIn ? ` (in ${wait.resetIn})` : ""}; ${told}. The loop is not held and sends nothing until then.`);
+  }
   if ((d.failedChecks ?? 0) > 0) lines.push(`Checks failing: ${d.failedChecks} failed checks recorded; a responsive daemon does not establish operational supervision`);
   const check = d.lastCheck;
   lines.push(check

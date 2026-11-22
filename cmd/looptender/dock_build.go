@@ -27,6 +27,11 @@ type dockBuild struct {
 	// last check's build against this panel's.
 	Order string `json:"order,omitempty"`
 	Text  string `json:"text"`
+	// Line is the short form shown under the loop's name: the build its last
+	// check ran, and this panel's when they differ ("last check ran v0.2.0-dev.ccd2310
+	// · panel v0.2.0"). "version unknown" when the label does not say. It
+	// never says which is newer.
+	Line string `json:"line"`
 }
 
 const dockMaxBuild = 64
@@ -101,7 +106,23 @@ func dockBuildOf(recorded, panel string) dockBuild {
 			b.Text = "Its last check ran looptender " + recorded + "; this panel is looptender " + panel + ". They are different builds."
 		}
 	}
+	b.Line = dockBuildLine(recorded, panel)
 	return b
+}
+
+// dockBuildLine is the short sentence for one loop: the build it runs, and
+// this panel's build too when the two are different or cannot be told apart.
+func dockBuildLine(recorded, panel string) string {
+	r, p := shortBuildPair(recorded, panel)
+	switch {
+	case r == "":
+		return "version unknown"
+	case p == "" || (recorded == panel && !strings.HasSuffix(recorded, "-dirty")):
+		return "last check ran " + r
+	case recorded == panel:
+		return "last check ran " + r + " (built with uncommitted changes)"
+	}
+	return "last check ran " + r + " · panel " + p
 }
 
 // dockLastBuild is the build label of the loop's last check: what state
@@ -129,4 +150,49 @@ func dockPanelVersionText(panel string) string {
 		return "This page is served by a looptender build with no version recorded (dev)."
 	}
 	return "This page is served by looptender " + panel + "."
+}
+
+var (
+	// buildLabelShape keeps a label that could carry a path, a name or any
+	// free text out of status output.
+	buildLabelShape = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$`)
+	devBuildSuffix  = regexp.MustCompile(`^(.*-dev\.)([0-9a-f]{8,40})(-dirty)?$`)
+	bareSHA         = regexp.MustCompile(`^([0-9a-f]{8,40})(-dirty)?$`)
+)
+
+// shortBuildLabel is a build label made short to show: a dev build's commit
+// is cut to seven characters (v0.2.0-dev.ccd2310, ccd2310). "" when the label
+// does not identify a build (empty, "dev", "unavailable" or unreadable). It
+// is for display only; builds are compared by their whole labels.
+func shortBuildLabel(label string) string { return shortBuildLabelN(label, 7) }
+
+// shortBuildLabelN cuts a commit to n characters.
+func shortBuildLabelN(label string, n int) string {
+	label = dockBuildLabel(label)
+	if !dockBuildKnown(label) || label == "unreadable" || label == "unavailable" || !buildLabelShape.MatchString(label) {
+		return ""
+	}
+	if m := devBuildSuffix.FindStringSubmatch(label); m != nil {
+		return m[1] + m[2][:min(n, len(m[2]))] + m[3]
+	}
+	if m := bareSHA.FindStringSubmatch(label); m != nil {
+		return m[1][:min(n, len(m[1]))] + m[2]
+	}
+	return label
+}
+
+// shortBuildPair shortens two labels to show side by side. Builds that
+// differ never read the same: when only their commits' first seven characters
+// agree, both are lengthened until they differ.
+func shortBuildPair(a, b string) (string, string) {
+	sa, sb := shortBuildLabel(a), shortBuildLabel(b)
+	if sa == "" || sb == "" || sa != sb || dockBuildLabel(a) == dockBuildLabel(b) {
+		return sa, sb
+	}
+	for n := 8; n <= 40; n++ {
+		if x, y := shortBuildLabelN(a, n), shortBuildLabelN(b, n); x != y {
+			return x, y
+		}
+	}
+	return dockBuildLabel(a), dockBuildLabel(b)
 }

@@ -267,6 +267,10 @@ func daemon(e env, cfg *config.Config, cfgPath string, dryRun bool, takeOver ...
 
 // The caller owns daemon.lock and the diagnostic endpoint for this entire loop.
 func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *ownerLease, monitor *daemoninfo.Server) int {
+	ctx, cancel := context.WithCancel(e.ctx)
+	e.ctx = ctx
+	defer cancel()
+	defer enableDaemonShutdown(monitor, cfg, cfgPath, lease, cancel)()
 	state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "started"})
 	defer state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "stopped"})
 	// stopDone is the control signature of the last saved stop this daemon
@@ -516,8 +520,12 @@ type statusOut struct {
 	// primary session right now, or one that is stuck holding it.
 	SessionClaim string           `json:"sessionClaim,omitempty"`
 	PromptSend   promptSendStatus `json:"promptSend"`
-	LimitWait    limitWaitStatus  `json:"limitWait"`
-	TurnRetry    turnRetryStatus  `json:"turnRetry"`
+	// WakePolicy says whether the standing wake policy comes from this
+	// build or from the loop's own prompt text; absent when the prompt
+	// cannot be read.
+	WakePolicy *wakePolicyStatus `json:"wakePolicy,omitempty"`
+	LimitWait  limitWaitStatus   `json:"limitWait"`
+	TurnRetry  turnRetryStatus   `json:"turnRetry"`
 	// ContextWindow is the active target's latest context window reading.
 	ContextWindow contextStatus `json:"contextWindow"`
 	// ContextWindowReset previews the context-threshold reset.
@@ -793,6 +801,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if !out.stateUnreadable {
 		printPromptSend(w, out.PromptSend)
 	}
+	printWakePolicy(w, out.WakePolicy)
 	if n := out.NewThreads; !out.stateUnreadable && (n.Created > 0 || n.Pending) {
 		fmt.Fprintf(w, "new threads: keepgoing has used %d of at most %d BB thread creation(s) for handoffs", n.Created, n.Max)
 		if n.Active != nil {
@@ -1065,7 +1074,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	var unreadable []unreadableRecord
 	ctl, err := control.Load(l.StateDir)
 	if err != nil {
-		unreadable = append(unreadable, unreadableControl(l.StateDir, err))
+		unreadable = append(unreadable, unreadableControl(cfg, err))
 		ctl = control.File{}
 	}
 	st, stateErr := state.Load(l.StateDir)
@@ -1146,10 +1155,11 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	}
 	out.Assignments = assignmentStatus(cfg, ctl)
 	out.PromptSend = describePromptSend(st.LastPromptSend, out.Goal)
+	out.WakePolicy = describeWakePolicy(l)
 	if st.GoalCopy != nil && st.GoalCopy.Valid() {
 		out.PromptSend.GoalCopy = st.GoalCopy
 	}
-	out.LimitWait = describeLimitWait(st.LimitWaitReport, l, now)
+	out.LimitWait = describeLimitWait(st.LimitWaitReport, l, loopHeld(ctl, out.controlUnreadable), now)
 	out.IdleSpacing = describeIdleSpacing(st, l.Progress)
 	out.TurnRetry = describeTurnRetry(st.LastTurnRetry)
 	out.ContextWindow = describeContext(st.Context, st.Target(), activeBB(cfg, st.Target()) != nil, now)
@@ -1426,6 +1436,11 @@ func controlCmd(e env, cfg *config.Config, cmd, note string, takeOver ...bool) i
 // cover the lanes as well, and dropQueued (with lanes) for the messages
 // queued in lanes that have not started to be deleted.
 func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQueued bool, takeOver ...bool) int {
+	if cmd == "pause" {
+		if handled, code := pauseDamagedControl(e, cfg); handled {
+			return code
+		}
+	}
 	if cmd == "enable" || cmd == "resume" || (cmd == "await-user" && cfg.Loop.AssignmentLifecycle) || (cmd == "complete" && cfg.Loop.AssignmentCompletion) {
 		acquire := lock.Acquire
 		takingOver := cmd == "enable" && len(takeOver) > 0 && takeOver[0]
@@ -1830,10 +1845,12 @@ func (r unreadableRecord) damaged() bool {
 // describe is the reason in words, for the text output.
 func (r unreadableRecord) describe() string {
 	what := map[string]string{
-		"not_json":    "its content is not JSON",
-		"wrong_shape": "its content is JSON of the wrong shape",
-		"not_a_file":  "it is not a regular file",
-		"cannot_open": "it could not be opened",
+		"frozen_control":      "it contains a restrictive freeze with preserved evidence",
+		"unsupported_control": "it contains an unsupported or unverifiable control envelope",
+		"not_json":            "its content is not JSON",
+		"wrong_shape":         "its content is JSON of the wrong shape",
+		"not_a_file":          "it is not a regular file",
+		"cannot_open":         "it could not be opened",
 	}[r.Problem]
 	if r.Offset != nil {
 		what += fmt.Sprintf(", at byte %d", *r.Offset)
@@ -1849,7 +1866,11 @@ func cannotReadRemedy(r unreadableRecord) string {
 	return "The file may be intact: keepgoing could not open it. Fix its permissions so keepgoing can read it; do not move it aside or delete it."
 }
 
-func unreadableControl(dir string, err error) unreadableRecord {
+func unreadableControl(cfg *config.Config, err error) unreadableRecord {
+	if problem, remedy := controlFreezeDiagnostic(cfg); problem != "" {
+		return unreadableRecord{File: control.FileName, Problem: problem, Remedy: remedy}
+	}
+	dir := cfg.Loop.StateDir
 	r := classifyRecord(dir, control.FileName, err)
 	if !r.damaged() {
 		r.Remedy = "Checks send nothing, and pause, stop and resume cannot be saved, until it can be read. " + cannotReadRemedy(r)

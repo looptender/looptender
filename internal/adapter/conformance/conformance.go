@@ -420,7 +420,14 @@ func (r *run) staged(s Situation) (decide.Observation, error) {
 }
 
 func caseKnown(r *run) error {
-	for situation, want := range map[Situation]decide.State{Idle: decide.Idle, Active: decide.Active} {
+	// Establish a completed identity before staging and stopping active work.
+	// Random map order could stop an unidentified first turn, then implicitly
+	// require a fresh conversation just to stage Idle for an exact-resume agent.
+	for _, c := range []struct {
+		situation Situation
+		want      decide.State
+	}{{Idle, decide.Idle}, {Active, decide.Active}} {
+		situation, want := c.situation, c.want
 		obs, err := r.staged(situation)
 		if err != nil {
 			return err
@@ -496,11 +503,18 @@ func caseErrors(r *run) error {
 
 func caseNotHealthy(r *run) error {
 	ran := false
-	for situation, what := range map[Situation]string{
-		ExitNonZero:     "output that looks healthy from a command that exited with a failure",
-		Crashed:         "a turn that ended without leaving a result",
-		MissingTerminal: "a valid stream that exited zero without a terminal event",
+	// Establish identity with a structured result before the incomplete stream
+	// and crash. Exact-resume fixtures must not implicitly start fresh after
+	// an unidentified attempt; runner tests cover that recovery hold separately.
+	for _, c := range []struct {
+		situation Situation
+		what      string
+	}{
+		{ExitNonZero, "output that looks healthy from a command that exited with a failure"},
+		{MissingTerminal, "a valid stream that exited zero without a terminal event"},
+		{Crashed, "a turn that ended without leaving a result"},
 	} {
+		situation, what := c.situation, c.what
 		if !r.s.Rig.Supports(situation) {
 			continue
 		}

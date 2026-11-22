@@ -39,6 +39,8 @@ Supervision (read -c FILE; default ./looptender.yaml, or ./keepgoing.yaml when o
   start                    Validate, enable, and run (--foreground or --background)
   service install|remove|status  Manage a macOS/Linux user service
   daemon                   Run passes on an interval; control changes act within seconds
+  daemon-shutdown          Shut down only the owned supervisor; preserve loop controls
+  legacy-retire prepare|execute|reconcile  Explicit Darwin legacy supervisor retirement; no replacement
   status                   Show control, active target, window, and fallback health
   context                  Show what a supervised session may know about its loop: owner, holds,
                            bounds used and remaining, lane policy, session commands and retained
@@ -75,6 +77,7 @@ Local client discovery:
 Goal metadata:
   assignment inventory|review|handoff|acknowledge|ready|reconcile-wake|show  Explicit BB assignment evidence (opt-in; no dispatch)
   goal create|revise|show   Record private, revisioned goal metadata
+  prompt-policy show|apply  Show whether the standing wake policy comes from this build; apply makes the prompt file follow it
 
 Control:
   enable | disable         Turn supervision on or off (nothing is sent while off)
@@ -162,6 +165,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
+	case "legacy-retire":
+		return legacyRetireCommand(e, rest)
 	case "client":
 		return clientCommand(e, rest)
 	case "registry":
@@ -186,10 +191,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return assignmentCommand(e, rest, doctorExecLimit(inventoryListLimit))
 	case "goal":
 		return goalCommand(e, rest)
+	case "prompt-policy":
+		return promptPolicyCommand(e, rest)
 	case "service":
 		return serviceCommand(e, rest, localServiceHost())
 	case "__service-daemon":
 		return serviceDaemon(e, rest)
+	case "daemon-shutdown":
+		return daemonShutdownCommand(e, rest)
 	case "start":
 		return startCommand(e, rest, nil)
 	case "__start-background":

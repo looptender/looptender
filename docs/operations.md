@@ -288,6 +288,8 @@ New ticks persist `state.lastCheck` with:
 
 `runtime.binaryComparison` compares the last recorded tick's build label with this status process: `match`, `different`, or `unknown`. Empty and `dev` labels are unknown. A different label can indicate a stale scheduler binary, but does not prove which build is newer or currently running. Doctor also flags a different recorded build. Manual and dry-run ticks can replace the latest history, so this is not a running-process inventory.
 
+`runtime.recordedBuild` and `runtime.installedBuild` (also in `client status --json`, in every mode including private mode) say which build that is, as display-short labels: the label of the loop's last recorded check, and the build answering the read. The recorded label is the last check's, not a running process's: a check from another binary replaces it, and a supervisor that has stopped still shows its last check's build. A dev label's commit is cut to seven characters (`v0.2.0-dev.ccd2310`); two different builds whose short labels would read the same are lengthened until they differ. Each field is absent when its label does not identify a build (none recorded, `dev`, or text that is not a plain label, which is checked against a fixed shape so a path or free text never appears). Neither says which build is newer. `panel list --json` carries `installedBuild` once and, per loop, `recordedBuild` and `buildDiffers`. The BB card reads `looptender: enabled v0.2.0-dev.ccd2310`, adding `(installed v…)` after it when they differ, and its detail says `Build: last check ran …` or `Build: version unknown`; the panel shows `last check ran …` or `version unknown` under the loop's name and the installed build in its footer; the macOS menu shows the build after the loop's state (`last check ran … · installed …` when they differ) and nothing when it is unknown, with `Build: …` lines in the loop's detail text and the installed build on its last line.
+
 Existing `control.note` output is retained for compatibility; status is a private operational report. Doctor continues to withhold control notes, task text, environment values, and raw errors. This feature is implemented on `main`, not in v0.1.1, and is covered by offline fixtures for control precedence, failures, dry runs, handoffs, version comparisons, and legacy state.
 
 ### Context window reading
@@ -756,7 +758,8 @@ Released in v0.2.0; **offline fixtures only**. A provider limit with a reported 
 - **Holds win.** A paused, disabled, completed, awaiting-user or stopped loop does not observe its target, so it neither sends this report nor forgets one already recorded. Dry runs send and record nothing.
 - **Turning it off.** There is no off value: `report_wait_after: 0` means the default. To receive nothing, give `report.events` an explicit list without `limit_wait`. The wait is then still recorded and shown as not sent.
 - **When it does not apply.** No report is sent when a handoff is possible. That includes a long wait you chose with a large `wait_if_reset_within` while a fallback is confirmed. The same setting with no confirmed fallback leaves no way out and is reported. With no reported reset time the supervisor does not wait at all: it re-prompts within `errors.max_reprompts` and then holds for a person, which reports `await_user`. So a limit without a reset time is never waited out silently.
-- **Where it shows.** `status` prints the recorded wait, its reset time and whether the report was requested, failed or not subscribed (`limitWait` in JSON). `timeline --kind limit_wait_report` shows the check that detected it, and the delivery appears as a `limit_wait` notification.
+- **Where it shows.** `status` prints the recorded wait, its reset time and whether the report was requested, failed or not subscribed (`limitWait` in JSON). While the reset is ahead it also prints a `LONG LIMIT WAIT` line saying why no handoff is possible and how long is left, says `NOBODY WAS TOLD` when the loop had no `report` section when the wait was recorded, and names what would let the loop continue sooner. A failed report is shown as failed with delivery not confirmed, never as nobody told: the server may have received it. The JSON adds `reason` (`limit_failover_disabled`, `limit_no_fallback`, `limit_refusal_unrecovered`, or `unavailable` for a wait recorded by an earlier build), `reportConfigured` (whether the loop had a `report` section when the wait was recorded; absent for a wait recorded by an earlier build), `resetIn` (for example `5d 12h`) and `held`. `doctor` reports the same wait as a `limit_wait` warning until the reset passes. When the loop is held (stopped, completed, awaiting a person, paused or disabled), it observes nothing, so the recorded wait is from before the hold: `status` and the BB plugin say so instead of describing a current wait, and `doctor` gives no `limit_wait` warning. The panel's card for the loop (`waiting_on_limit`) adds whether anyone was told (`limitWait.told`: `reported`, `report_failed`, `not_subscribed` or `no_report_section`) and the reason; the BB plugin's status details add a `Long limit wait` line. `timeline --kind limit_wait_report` shows the check that detected it, and the delivery appears as a `limit_wait` notification.
+- **A loop with a single route.** A loop that cannot hand off on a usage limit (no other route, or `errors.failover_on` without `rate_limit`) waits out any such limit for its full length, which can be days for a weekly limit. `init` prints a warning saying so when it creates one, and `doctor` reports it as a `routes.single` warning, adding that nobody is told when the loop has no `report` section. Neither changes the configuration: handoff stays off until you add a route (`fallbacks add`, with `--new-thread` to start a conversation on another provider) or follow the standard route list (`routes follow-standard`).
 
 - **Older builds.** Once a `limit_wait` delivery or a marked check is recorded, v0.1.5 and earlier refuse `deliveries.json` (unknown event label) and `incidents.json` (newer schema) rather than rewrite them. Do not run an older build against the same state directory.
 
@@ -1449,3 +1452,105 @@ marker. Prefer upgrading again to inspect that history. An intentionally fresh
 state directory loses diagnostic and episode continuity and must not be treated
 as permission to replay an uncertain delivery. No automatic migration, downcast
 or deletion occurs.
+
+## Shut down only the supervisor (unreleased source)
+
+`looptender daemon-shutdown -c looptender.yaml` asks one authenticated running
+supervisor to exit. It does not request target Stop, stop lanes, clear a hold,
+resume work, install a build or launch a replacement. Enabled, disabled, paused,
+stop, awaiting-user and completed controls remain unchanged. A scheduler may
+start supervision again; this command does not remove or disable its job.
+
+The command challenges the private loopback endpoint, then signs a request for
+that invocation's random identity, start, state identity and executing version. The daemon checks
+the exact configuration path and source digest, current control/goal/active-target
+binding, unchanged owner generation and caller under the check and control locks.
+It refuses retired/transferring loops, foreign owners, changed sources and busy
+checks. The source binding is the configuration loaded when this invocation
+started; an edited or unavailable startup source requires the original owned
+lifecycle manager. Caller identity is retained, with the same local-user trust
+boundary as existing CLI ownership checks; the endpoint is not person attestation.
+
+On acceptance it cancels its own context and retains the check lock until its
+loop returns. It starts no new provider work and does not cancel an in-flight
+provider command: a busy check is refused instead. Cancellation acknowledgement
+is only intent. The CLI waits at most five seconds for endpoint removal and
+release of `daemon.lock`, and otherwise reports exit unverified. A lost response
+is unknown: inspect the same invocation and lock before any later launch. Do not
+retry automatically, signal a saved PID, or infer absence from an unavailable
+endpoint. Completion is a point-in-time observation, not a reservation against
+another scheduler or caller starting a daemon.
+
+### Legacy bootstrap limit
+
+Installing a new executable or moving a `current` symlink cannot add this endpoint
+to an already running old process. A legacy daemon refuses this operation or has
+no endpoint. Its bootstrap shutdown must use its original foreground session or
+a separately verified owning service manager. If neither is available, migration
+is blocked pending an identity-safe operator procedure; there is no PID fallback.
+Service replacement must retain the existing owner checks and every hold. A
+retired predecessor must not be reinstalled by default.
+
+After a separately authorized shutdown and verified exit, an explicitly requested
+`looptender daemon -c looptender.yaml` starts supervision with existing controls.
+Re-read sources and ownership first. `start --background` enables supervision and
+is not a state-preserving restart; `stop` acts on the target and `resume` clears
+holds. This facility adds no combined restart operation. Source fixtures do not
+establish installed legacy migration, service restart or live-provider acceptance.
+
+## Damaged-control Pause freeze (unreleased)
+
+On macOS and Linux, CLI `pause` can persist a restrictive freeze when an existing
+regular `control.json` contains syntactically malformed JSON (including empty,
+truncated and garbage bytes, at most 1 MiB). This is not a repaired control or a
+normal paused record. Ownership, prior holds and target bindings remain unknown;
+all original bytes are retained privately in the canonical record. The command
+preserves the existing policy that any calling thread may add a restrictive
+Pause; it records the unchanged caller as provenance without granting ownership.
+Windows and other platforms explicitly refuse this freeze without changing the
+record. Their damaged-control Pause acceptance remains open.
+
+Pause waits at most two seconds to drain the existing tick lock, then takes the
+control lock without waiting. A busy/refused drain does not acknowledge Pause.
+After checking the exact bytes, native file/directory identity and loaded source
+bindings again, it writes private staging, syncs and closes it, atomically renames
+it over the canonical record, and syncs the containing directory before reporting
+success. No missing-file/default-control intermediate is published. A failure
+can leave either the damaged original or a published freeze with unconfirmed
+durability; it never restores a permissive record. A repeated Pause accepts only
+the same strictly validated incident and bindings, without rewriting or nesting
+its evidence. Ordinary output contains neither the raw bytes nor their private
+identities. Valid JSON with unsupported schema, permission/read errors, ordinary
+Pause write/history errors and nonregular inputs are not repaired or frozen.
+Ordinary records must use exact schema tag spelling recursively: duplicate keys,
+case/Unicode-fold aliases and scalar nulls refuse unchanged. Existing nullable
+pointer and slice fields remain supported; this check grants no new authority.
+The ordinary command Pause transaction revalidates current raw bytes under the
+control lock and decodes that same buffer before saving. A healthy preflight
+does not authorize rewriting a later unsupported replacement.
+
+The top-level array format deliberately makes ordinary control readers refuse.
+Frozen v0.2.0 and source f35a0a94 fixtures exercise refusal for tick, daemon,
+pause, stop, enable, resume and validate while it remains intact. Their isolated
+replay is pending after correcting the fixture environment; earlier inherited-
+environment runs do not establish isolated compatibility or installed-version
+acceptance. A check that already loaded the previous control may still
+act until drained; previously queued or accepted actions are not retracted.
+Freeze neither stops the target or its lanes nor shuts down the supervisor.
+Registered-client, panel and Telegram controls do not gain a freeze path.
+Ordinary command Pause saves, including the registered CLI command, share the
+locked raw validation; panel and Telegram origins retain their existing behavior.
+
+Status and offline doctor retain unavailable control/ownership and give no
+backup-restoration remedy for a frozen or unsupported array envelope. An unknown
+or wrong-binding array is unsupported, not a confirmed freeze. Old executables
+cannot receive this corrected guidance and may still suggest unsafe restoration.
+
+There is no repair, release or resume operation for this record. Valid external
+restoration, deletion followed by enable, or replacement of the state directory
+can bypass the freeze; a sidecar would not protect old readers from those actions.
+Do not treat a backup or incident journal as authenticated ownership. A future
+recovery protocol needs separate complete authority/evidence review, proven old
+scheduler/writer retirement or compatible enforcement, and explicit preservation
+of unrelated holds. Releasing a future fence must not imply resume. No such
+recovery or installed upgrade acceptance is claimed here.

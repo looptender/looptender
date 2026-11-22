@@ -2,7 +2,7 @@
 // supervises, and offers pause, resume, and stop. It only calls the keepgoing
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
-import { checkSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, scheduleSchema } from "./status-details.ts";
+import { checkSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
 import { execFile } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -40,6 +40,7 @@ const statusSchema = z.object({
   redundancy: z.object({ healthy: z.array(z.string()), distinct: z.number(), min: z.number(), meets: z.boolean() }).optional(),
   runtime: runtimeSchema.optional(),
   schedule: scheduleSchema.optional(),
+  limitWait: limitWaitSchema.optional(),
   daemon: daemonSchema.optional(),
   targetConfigured: z.boolean().optional(),
   primaryAgent: agentRef,
@@ -187,6 +188,7 @@ export default async function plugin(bb: BbPluginApi) {
       failedChecks: s.state.failedChecks ?? 0,
       daemon: s.daemon ?? null, lastCheck: s.state.lastCheck ?? null,
       schedule: s.schedule ?? null,
+      limitWait: s.limitWait ?? null,
     },
     loop: s.loop,
     configPath,
@@ -293,6 +295,12 @@ export default async function plugin(bb: BbPluginApi) {
     init: (bin, target, name, task, dryRun, withGoal, bounds, followStandard) => host.call("init", { bin, target, name, task, dryRun, withGoal, ...(bounds ? { bounds } : {}), ...(followStandard ? { followStandard: true as const } : {}) }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) }),
     standardRoutes: async (bin, target) => (await host.call("standardRoutes", { bin, target }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) })).available,
     command: hostCommand,
+    // Only thread metadata, never content: a thread BB reports as pending has
+    // not started its first turn. Anything else, the plugin cannot tell.
+    conversation: async threadId => {
+      const t = await bb.sdk.threads.get({ threadId, signal: AbortSignal.timeout(10_000) });
+      return t.status === "pending" || t.runtime?.displayStatus === "pending" || t.runtime?.displayStatus === "provisioning" ? "none" : "unknown";
+    },
     changed: () => bb.realtime.publish(CHANGED, { at: Date.now() }),
   });
   const transfer = createTransferController({

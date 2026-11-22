@@ -65,3 +65,23 @@ test("a following setup is offered, created, paused, resumed and inspected throu
     assert.equal(refused.canStart, false);
   } finally { await active.lifecycle.dispose(); }
 });
+
+// Only thread metadata decides: a thread BB reports as pending has had no
+// turn; any other thread is "unknown", never read for content.
+test("setup inspect reports no turn for a pending thread and unknown otherwise", async () => {
+  const environment = { id: "env_example", projectId: "proj_example", hostId: "host_example", path: "/projects/example", isGitRepo: true, status: "ready", hostLifecycle: "active", lifecycle: { phase: "active" } };
+  const host = makeHostResponse({ id: "host_example", status: "connected" });
+  for (const [status, expected] of [["pending", "none"], ["idle", "unknown"], ["active", "unknown"]] as const) {
+    const thread = { ...makeThreadResponse({ id: "thr_example", environmentId: "env_example", projectId: "proj_example", providerId: "codex" }), status };
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "keepgoing", settings: { keepgoingPath: "keepgoing", configs: "" },
+      sdk: { threads: { get: async () => thread }, environments: { get: async () => environment }, hosts: { get: async () => host } },
+      experimental_callHostRpc: async () => ({ available: false }),
+    });
+    try {
+      await plugin(bb);
+      const inspected = setupResult.parse(await harness.behavior.callRpc("setup", { action: "inspect", threadId: thread.id }));
+      assert.equal(inspected.conversation, expected, status);
+    } finally { await harness.lifecycle.dispose(); }
+  }
+});

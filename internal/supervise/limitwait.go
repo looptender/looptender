@@ -89,7 +89,18 @@ func (t *tick) reportLongLimitWait(target string, obs decide.Observation) {
 			}
 		}
 	}
-	rec := &state.LimitWaitReport{Target: target, ResetsAt: obs.ResetsAt.UTC(), DetectedAt: t.now, Outcome: state.LimitWaitNotSubscribed, Reports: reports}
+	reason := "no confirmed fallback"
+	cause := decide.WaitNoFallback
+	switch kind {
+	case decide.WaitFailoverDisabled:
+		reason, cause = "failover disabled", kind
+	case decide.WaitRefusalUnrecovered:
+		reason, cause = "a refusal on this route is unrecovered, so the work is not moved", kind
+	}
+	rec := &state.LimitWaitReport{Target: target, ResetsAt: obs.ResetsAt.UTC(), DetectedAt: t.now, Outcome: state.LimitWaitNotSubscribed, Reason: string(cause), Reports: reports, ReportSection: "present"}
+	if t.loop.Report == nil {
+		rec.ReportSection = "none"
+	}
 	if !subscribed {
 		t.st.LimitWaitReport = rec
 		t.incidentLimitWaitReport = rec.Outcome
@@ -115,14 +126,6 @@ func (t *tick) reportLongLimitWait(target string, obs decide.Observation) {
 		return
 	}
 	t.st.LimitWaitReport = rec
-	reason := "no confirmed fallback"
-	cause := decide.WaitNoFallback
-	switch kind {
-	case decide.WaitFailoverDisabled:
-		reason, cause = "failover disabled", kind
-	case decide.WaitRefusalUnrecovered:
-		reason, cause = "a refusal on this route is unrecovered, so the work is not moved", kind
-	}
 	text := fmt.Sprintf("%s: %s is waiting on a provider limit that resets in about %s, and no handoff is possible (%s). keepgoing keeps checking and continues when the limit lifts; a person may want to retarget or review failover.",
 		t.loop.Name, target, resetIn.Round(time.Minute), reason)
 	if rec.Reports > 1 {

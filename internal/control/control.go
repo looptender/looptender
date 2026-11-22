@@ -166,6 +166,21 @@ func Update(stateDir string, fn func(*File)) (File, error) {
 
 // UpdateChecked leaves control unchanged if the callback rejects the update.
 func UpdateChecked(stateDir string, fn func(*File) error) (File, error) {
+	return updateCheckedValidated(stateDir, 0, nil, fn)
+}
+
+// UpdateCheckedValidated validates the exact bounded raw record under the
+// control lock before decoding those same bytes and invoking fn. Missing
+// controls retain the existing disabled-default semantics; validate is not
+// called for absence. Validation failure never invokes fn or saves a record.
+func UpdateCheckedValidated(stateDir string, maxBytes int64, validate func([]byte) error, fn func(*File) error) (File, error) {
+	if maxBytes <= 0 || validate == nil {
+		return File{}, errors.New("control validation unavailable")
+	}
+	return updateCheckedValidated(stateDir, maxBytes, validate, fn)
+}
+
+func updateCheckedValidated(stateDir string, maxBytes int64, validate func([]byte) error, fn func(*File) error) (File, error) {
 	l, err := lock.AcquireNamed(stateDir, lock.Control)
 	if err != nil {
 		return File{}, err
@@ -177,7 +192,11 @@ func UpdateChecked(stateDir string, fn func(*File) error) (File, error) {
 	}
 	var f File
 	if !missing {
-		f, err = Load(stateDir)
+		if validate == nil {
+			f, err = Load(stateDir)
+		} else {
+			f, err = loadValidatedControl(stateDir, maxBytes, validate)
+		}
 	}
 	if err != nil {
 		return f, err
@@ -186,6 +205,39 @@ func UpdateChecked(stateDir string, fn func(*File) error) (File, error) {
 		return f, err
 	}
 	return f, Save(stateDir, f)
+}
+
+// Caller holds control.lock. Never reopen between validation and decoding.
+func loadValidatedControl(dir string, maxBytes int64, validate func([]byte) error) (File, error) {
+	var f File
+	path := filepath.Join(dir, FileName)
+	before, err := snapshot.LstatRecord(path)
+	if err != nil || !before.Mode().IsRegular() {
+		return f, errors.New("control.json regular snapshot unavailable")
+	}
+	reader, err := OpenSnapshot(dir)
+	if err != nil {
+		return f, err
+	}
+	defer reader.Close()
+	info, err := reader.Stat()
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) || info.Size() > maxBytes {
+		return f, errors.New("control.json bounded snapshot unavailable")
+	}
+	raw, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return f, err
+	}
+	if int64(len(raw)) > maxBytes {
+		return f, errors.New("control.json exceeds validation bound")
+	}
+	if err := validate(raw); err != nil {
+		return f, err
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return File{}, fmt.Errorf("%s: %w", FileName, err)
+	}
+	return f, nil
 }
 
 // CheckControlPath refuses file aliases whose lock would belong to a different

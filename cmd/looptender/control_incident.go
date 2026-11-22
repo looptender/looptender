@@ -47,7 +47,15 @@ func updateControlFromAnnotated(dir, operation, origin string, fn func(*control.
 		recorded = origin + "_" + operation
 	}
 	var r incident.Record
-	f, err := control.UpdateChecked(dir, func(f *control.File) error {
+	update := control.UpdateChecked
+	if operation == "pause" && origin == "" {
+		// Preflight selects the freeze path only. A cooperating writer can replace
+		// healthy control before this transaction, so validate current bytes here.
+		update = func(dir string, fn func(*control.File) error) (control.File, error) {
+			return control.UpdateCheckedValidated(dir, freezeWireLimit, validateOrdinaryPauseRecord, fn)
+		}
+	}
+	f, err := update(dir, func(f *control.File) error {
 		r = incident.Record{Kind: "control", CheckStartedAt: time.Now().UTC(), Build: version,
 			ControlBefore: incident.Gate(f.Gate()), ControlChange: &incident.ControlChange{Operation: recorded}}
 		owner, generation := ownerIdentity(*f)
