@@ -11,11 +11,6 @@ export const runtimeSchema = z.object({
   // label does not identify a build. Display-short labels, nothing more.
   recordedBuild: z.string().max(64).optional(), installedBuild: z.string().max(64).optional(), binaryComparison: z.string().optional(),
 });
-// The room left on the volume that holds the loop's state (status --json
-// diskSpace, from a later looptender): low or critical is shown.
-export const diskSpaceSchema = z.object({
-  level: z.string().max(16), message: z.string().max(400).optional(),
-});
 export const scheduleSchema = z.object({
   overdue: z.boolean(), message: z.string().optional(),
   // Present from the CLI that judges held loops and a fallback: "usual"
@@ -63,7 +58,6 @@ export const detailsSchema = z.object({
   targetThread: z.string().nullable(), targetAdapter: z.string(), targetConfigured: z.boolean().nullable(),
   runtime: runtimeSchema.nullable(), daemon: daemonSchema.nullable(), lastCheck: checkSchema.nullable(),
   schedule: scheduleSchema.nullable().optional(),
-  diskSpace: diskSpaceSchema.nullable().optional(),
   // Added by a later looptender; absent from older ones. Configured labels of
   // the current target, not verified identity.
   targetProvider: z.string().max(128).optional(), targetModel: z.string().max(128).optional(),
@@ -151,7 +145,6 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
   } else {
     lines.push(`Daemon: ${daemon?.state ?? "unavailable from this build"}; running supervisor not confirmed`);
   }
-  if (d.diskSpace && (d.diskSpace.level === "low" || d.diskSpace.level === "critical")) lines.push(`Disk: ${d.diskSpace.message ?? (d.diskSpace.level === "critical" ? "the volume that holds the state directory is nearly full" : "the volume that holds the state directory is filling")}`);
   if (d.schedule?.overdue) lines.push(`Schedule: ${d.schedule.message ?? "no check has run for longer than usual; the loop's scheduler may have stopped"}`);
   // Only a judged loop whose usual interval is known is said to be on time.
   else if (d.schedule?.checkedBy === "ticks") lines.push(`Schedule: checked by ticks run without a daemon (an external scheduler or by hand), about every ${d.schedule.cadence ?? "unknown interval"}`);
