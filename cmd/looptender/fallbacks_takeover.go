@@ -101,7 +101,7 @@ func fallbacksArm(e env, args []string, input io.Reader, lookPath func(string) (
 	if !*asJSON {
 		probe := config.Candidate{Agent: config.Agent{Provider: c.Provider, BB: &config.BB{NewThread: true, Model: c.Model, Reasoning: c.Reasoning, PermissionMode: c.Permission}}}
 		printNewThreadPlan(e.stdout, cfg.Loop.Provider, probe, "do not arm it; once armed, remove the fallback with keepgoing fallbacks remove, or turn handoff off with keepgoing fallbacks handoff off")
-		fmt.Fprintln(e.stdout, takeoverReadiness(cfg, c.Provider, time.Now()))
+		fmt.Fprintln(e.stdout, takeoverReadiness(cfg, c.Provider, c.Provider, time.Now()))
 		if n := otherFallbacksGainingHandoff(cfg); n > 0 {
 			fmt.Fprintf(e.stdout, "Arming turns handoff on for rate limits for the whole loop, so its %d other fallback(s) start taking handoffs too, in their current order, before this new conversation is tried.\n", n)
 		}

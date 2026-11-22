@@ -50,6 +50,9 @@ type routeChangeOut struct {
 	To      int    `json:"to,omitempty"`   // 1-based place after it
 	// Expect binds an apply to what this preview showed.
 	Expect string `json:"expect,omitempty"`
+	// CallerNotOwner: a dry-run preview by a caller that does not own the
+	// loop; the change itself must be made by the owner or from a terminal.
+	CallerNotOwner bool `json:"callerNotOwner,omitempty"`
 	// Before and After are the list's ids in order, switched-off ones included.
 	Before []string           `json:"before"`
 	After  []string           `json:"after"`
@@ -104,6 +107,9 @@ func refuseRoute(code, format string, a ...any) *routeRefusal {
 
 // routeChangeRequest is one change, as a person or a page asks for it.
 type routeChangeRequest struct {
+	// dryRun: a preview only, which a caller that does not own the loop
+	// may still see.
+	dryRun   bool
 	op       string
 	id       string
 	to       int          // move: the new 1-based place

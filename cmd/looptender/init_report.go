@@ -220,7 +220,7 @@ func printInitJSON(e env, o initOptions, cfg *config.Config, goal *control.Goal)
 				printNewThreadPlan(&b, cfg.Loop.Provider, c, initNewThreadOff)
 				ref.NewThread = &initNewThread{Provider: c.Provider, Model: c.BB.Model, Reasoning: c.BB.Reasoning, Permission: c.BB.NewThreadPermission(),
 					ChildrenFollow: c.BB.ChildrenFollow(), Successors: c.BB.ReplacesChildren(), Text: strings.TrimSpace(b.String()),
-					Readiness: takeoverReadiness(cfg, c.Provider, time.Now())}
+					Readiness: takeoverReadiness(cfg, c.Provider, c.Group, time.Now())}
 			}
 			r.Fallbacks = append(r.Fallbacks, ref)
 		}

@@ -326,3 +326,33 @@ func TestRoutesOwnRefusesACopyTheLoopCouldNotLoad(t *testing.T) {
 		t.Fatalf("check could not run: %d %+v", code, v)
 	}
 }
+
+// A dry run of follow-standard or own by a thread that does not own the loop
+// writes nothing, so it is shown and says who can make the change; the real
+// change is still refused to that thread.
+func TestRoutesSourceDryRunByAThreadThatDoesNotOwnTheLoop(t *testing.T) {
+	r := newRoutesFixture(t)
+	write(t, r.list, routesStandardList, 0o600)
+	t.Setenv("BB_THREAD_ID", "thr_example_owner")
+	var out, errb bytes.Buffer
+	if code := run(context.Background(), []string{"enable", "-c", r.own.cfg}, &out, &errb); code != exitOK {
+		t.Fatalf("enable: %s", errb.String())
+	}
+	t.Setenv("BB_THREAD_ID", "thr_example_visitor")
+	before, _ := os.ReadFile(r.own.cfg)
+	code, v, errs := r.change("follow-standard", "--loop", "example-loop", "--dry-run")
+	if code != 0 || v.Outcome != "preview" || !v.CallerNotOwner || strings.Contains(errs, "take-over") {
+		t.Fatalf("json dry run: %d %+v %s", code, v, errs)
+	}
+	out.Reset()
+	errb.Reset()
+	if code := run(context.Background(), []string{"routes", "follow-standard", "--loop", "example-loop", "--directory", r.registry, "--dry-run"}, &out, &errb); code != 0 || !strings.Contains(out.String(), notOwnerNote) || strings.Contains(out.String()+errb.String(), "take-over") {
+		t.Fatalf("text dry run: %d\n%s%s", code, out.String(), errb.String())
+	}
+	if code, v, _ = r.change("follow-standard", "--loop", "example-loop", "--yes"); code == 0 || v.Refusal == nil || v.Refusal.Code != "not_owner" {
+		t.Fatalf("real change: %d %+v", code, v)
+	}
+	if after, _ := os.ReadFile(r.own.cfg); string(after) != string(before) {
+		t.Fatal("written")
+	}
+}

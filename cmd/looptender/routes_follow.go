@@ -90,7 +90,7 @@ func routesFollow(e env, op string, args []string, input io.Reader) int {
 		e.errf("routes %s: --expect applies only with --yes", op)
 		return exitUsage
 	}
-	req := routeChangeRequest{op: strings.ReplaceAll(op, "-", "_"), loop: *loopName, expect: *expect, caller: os.Getenv("BB_THREAD_ID"), source: "cli", registry: *directory, now: time.Now().UTC()}
+	req := routeChangeRequest{dryRun: *dryRun, op: strings.ReplaceAll(op, "-", "_"), loop: *loopName, expect: *expect, caller: os.Getenv("BB_THREAD_ID"), source: "cli", registry: *directory, now: time.Now().UTC()}
 	path := *cfgPath
 	if path != "" {
 		if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
@@ -114,6 +114,9 @@ func routesFollow(e env, op string, args []string, input io.Reader) int {
 		if preview.Outcome != "preview" || *dryRun {
 			if *dryRun && preview.Outcome == "preview" && !*asJSON {
 				printRouteSource(e, preview)
+				if preview.CallerNotOwner {
+					fmt.Fprintln(e.stdout, "\n"+notOwnerNote)
+				}
 				fmt.Fprintln(e.stdout, "\nDry run: nothing written.")
 				return exitOK
 			}
@@ -177,8 +180,12 @@ func routeSourceChange(req routeChangeRequest, path, file string, apply bool) (r
 	if ref := ownListAuthority(cfg.Loop.StateDir, req.caller); ref != nil {
 		return routeChangeRefused(req, ref), exitUsage
 	}
+	notOwner := false
 	if code, err := fallbackAddAllowed(cfg); err != nil {
-		return routeChangeRefused(req, allowedRefusal(err)), code
+		if apply || !req.dryRun || !onlyNotOwner(cfg) {
+			return routeChangeRefused(req, allowedRefusal(err)), code
+		}
+		notOwner = true // a dry run writes nothing: shown, and said so
 	}
 	p, ref := planRouteSource(req, cfg, file)
 	if ref != nil {
@@ -190,6 +197,7 @@ func routeSourceChange(req routeChangeRequest, path, file string, apply bool) (r
 	if apply && req.expect != "" && req.expect != p.out.Expect {
 		return routeReviewAgain(p.out), exitSkipped
 	}
+	p.out.CallerNotOwner = notOwner
 	if !apply || p.out.Outcome == "unchanged" {
 		return p.out, exitOK
 	}

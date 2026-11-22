@@ -208,7 +208,7 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 			printInitAccount(e.stdout, c.Agent)
 			if isNewThreadCandidate(c) {
 				printNewThreadPlan(e.stdout, cfg.Loop.Provider, c, initNewThreadOff)
-				fmt.Fprintln(e.stdout, takeoverReadiness(cfg, c.Provider, time.Now()))
+				fmt.Fprintln(e.stdout, takeoverReadiness(cfg, c.Provider, c.Group, time.Now()))
 			}
 		}
 		fmt.Fprintf(e.stdout, "After enable: rate-limit handoffs only, exact probe required; scheduled probes every 12h, cap %d per fallback per UTC day. Exact/manual probes are additional model calls. Switch-back is off.\n", o.probeCap)
@@ -406,7 +406,7 @@ func collectInit(e env, o *initOptions, input io.Reader, lookPath func(string) (
 		if offer := detectNewThreadOffer(e.ctx, o.provider, lookPath); offer != nil {
 			// What yes means, before the question.
 			printNewThreadPlan(e.stdout, o.provider, offerCandidate(*offer, o.newThread.Permission), initNewThreadOff)
-			fmt.Fprintln(e.stdout, takeoverReadiness(nil, offer.Provider, time.Now()))
+			fmt.Fprintln(e.stdout, takeoverReadiness(nil, offer.Provider, offer.Provider, time.Now()))
 			choice, err := ask(fmt.Sprintf("On a usage limit, start a new conversation on %s that takes over this loop, with its child lanes? (yes/no)", offer.Provider), "yes")
 			if err != nil {
 				return err
