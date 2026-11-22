@@ -23,7 +23,17 @@ type promptCommandFinding struct {
 	Count   int    `json:"count"`
 	// LastChanged is how long ago the file last changed, for a file that exists.
 	LastChanged string `json:"lastChanged,omitempty"`
+	// Source says where the program was found: policy_prefix (the command
+	// prefix of a generated prompt's policy part, which prompt-policy apply
+	// --refresh-prefix can rewrite) or prompt_text (anywhere else in the
+	// prompt, changed by hand).
+	Source string `json:"source"`
 }
+
+const (
+	findingPolicyPrefix = "policy_prefix"
+	findingPromptText   = "prompt_text"
+)
 
 // controlSubcommands are the commands a prompt gives its agent to run on the
 // loop; a program followed by one of them and "-c <this loop's config>" is a
@@ -165,10 +175,11 @@ type promptCommandResult struct {
 }
 
 // promptCommandFindings compares each program a prompt names with the program
-// running now, and lists those that are another file or missing. skip is a
-// program already reported elsewhere (the generated wording's own prefix).
+// running now, and lists those that are another file or missing. prefix is the
+// program of a generated prompt's policy prefix, which is listed too and marked
+// as coming from there.
 // Only the first promptReadLimit bytes of text are read.
-func promptCommandFindings(text, cfgPath, skip string) promptCommandResult {
+func promptCommandFindings(text, cfgPath, prefix string) promptCommandResult {
 	var res promptCommandResult
 	if len(text) > promptReadLimit {
 		text, res.Unchecked = text[:promptReadLimit], true
@@ -180,9 +191,6 @@ func promptCommandFindings(text, cfgPath, skip string) promptCommandResult {
 		out := res
 		budget := &hashBudget{files: promptHashFiles}
 		for _, p := range paths {
-			if skip != "" && p == promptExpand(skip) {
-				continue
-			}
 			verdict, resolved := checkProgramWith(p, budget)
 			if verdict == prefixUnverified || verdict == prefixUnknown {
 				out.NotLooked++
@@ -195,7 +203,10 @@ func promptCommandFindings(text, cfgPath, skip string) promptCommandResult {
 				out.More++
 				continue
 			}
-			f := promptCommandFinding{Path: p, Verdict: verdict, Count: counts[p]}
+			f := promptCommandFinding{Path: p, Verdict: verdict, Count: counts[p], Source: findingPromptText}
+			if prefix != "" && p == promptExpand(prefix) {
+				f.Source = findingPolicyPrefix
+			}
 			if verdict == prefixOtherBuild {
 				if info, err := os.Stat(resolved); err == nil {
 					f.LastChanged = dockSpan(time.Since(info.ModTime())) + " ago"
@@ -219,7 +230,13 @@ func promptCommandFindings(text, cfgPath, skip string) promptCommandResult {
 // named programs were not run to ask their version: they are files named in
 // a prompt that anyone with access to it could have edited.
 func promptCommandsSentence(r promptCommandResult, generated bool) string {
-	fs := r.Findings
+	// The policy prefix's program is said once already, by the prefix note.
+	var fs []promptCommandFinding
+	for _, f := range r.Findings {
+		if f.Source != findingPolicyPrefix {
+			fs = append(fs, f)
+		}
+	}
 	if len(fs) == 0 {
 		var said []string
 		if r.NotLooked > 0 {
