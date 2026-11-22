@@ -44,6 +44,9 @@ func doctorRoutes(r *doctorReport, cfg *config.Config, st state.File, stateReada
 	if w := singleRouteWarning(cfg); w != "" {
 		r.add("routes.single", "warning", w, limitWaitWayOut)
 	}
+	for _, p := range successorPlans(cfg) {
+		r.add("routes.successors."+p.Candidate, "warning", p.Text(), "Leave it on to have blocked lanes continued on the new provider, or set bb.replace_blocked_children: false.")
+	}
 	if !stateReadable {
 		return
 	}

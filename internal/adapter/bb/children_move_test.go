@@ -83,3 +83,28 @@ func TestSetParentChangesOnlyTheParent(t *testing.T) {
 		}
 	}
 }
+
+func TestSpawnPassesTheParentAndInfoOfReadsTheProvider(t *testing.T) {
+	var ran [][]string
+	a, _ := newFake(`{}`, `[]`, false)
+	a.run = func(_ context.Context, stdin string, args ...string) ([]byte, error) {
+		ran = append(ran, args)
+		if args[1] == "show" {
+			return []byte(`{"thread":{"id":"thr_lane","projectId":"proj_example","environmentId":"env_example","providerId":"claude-code","title":"PRIVATE"}}`), nil
+		}
+		return []byte(`{"id":"thr_new","status":"active","projectId":"proj_example","environmentId":"env_example"}`), nil
+	}
+	if _, err := a.Spawn(context.Background(), SpawnRequest{Place: Place{Project: "proj_example", Environment: "env_example"}, Provider: "codex", Permission: "accept-edits", Title: "t", Prompt: "p", Parent: "thr_coordinator"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(ran[0], " "); !strings.HasSuffix(got, "--parent-thread thr_coordinator") {
+		t.Fatal(got)
+	}
+	info, err := a.InfoOf(context.Background(), "thr_lane")
+	if err != nil || info.Provider != "claude-code" || info.Project != "proj_example" {
+		t.Fatal(info, err)
+	}
+	if _, err := a.Spawn(context.Background(), SpawnRequest{Place: Place{Project: "proj_example", Environment: "env_example"}, Provider: "codex", Permission: "accept-edits", Title: "t", Prompt: "p", Parent: "--all"}); !errors.Is(err, ErrSpawnRefused) {
+		t.Fatal(err)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"time"
 
@@ -137,8 +138,11 @@ func recoverTransferChildren(e env, cfg *config.Config, ctl control.File, id str
 		fmt.Fprintf(e.stdout, "Transfer %s had already finished, and its child threads were left where they were.\n", id)
 		return exitOK, true
 	}
-	if err := transferCaller(ctl, st.ChildMove.To, takeOver); err != nil {
-		e.errf("transfer: %v", err)
+	// The transfer has finished: only the loop's current owner, or a
+	// terminal with no BB identity, may continue its child move. --take-over
+	// gives no authority here, because this path claims no ownership.
+	if err := control.CheckOwner(ctl, os.Getenv("BB_THREAD_ID"), false); err != nil {
+		e.errf("transfer: continuing a finished transfer's child move needs the loop's current owner")
 		return exitFailed, true
 	}
 	r := moveTransferChildren(e, cfg.Loop.StateDir, cfg.Loop.BB.Thread, cfg.Loop.BB.CLI, id, run)
@@ -181,6 +185,10 @@ type transferChildrenPreview struct {
 	ProviderUnknown int `json:"providerUnknown,omitempty"`
 }
 
+// previewChildrenBudget bounds all of a preview's child reads together; a
+// child not read in time counts as provider unknown.
+var previewChildrenBudget = time.Minute
+
 // previewTransferChildren lists source's children and reads the provider of
 // each that apply would move.
 func previewTransferChildren(ctx context.Context, cli, source, destProvider string, timeout time.Duration, run doctorRun) *transferChildrenPreview {
@@ -203,7 +211,13 @@ func previewTransferChildren(ctx context.Context, cli, source, destProvider stri
 		out.Beyond, live = len(live)-state.MaxMovedChildren, live[:state.MaxMovedChildren]
 	}
 	out.WouldMove = len(live)
+	ctx, cancel = context.WithTimeout(ctx, previewChildrenBudget)
+	defer cancel()
 	for _, id := range live {
+		if ctx.Err() != nil {
+			out.ProviderUnknown++ // out of time: not read
+			continue
+		}
 		t := inventoryShow(ctx, cli, id, timeout, run)
 		switch {
 		case !t.Available:

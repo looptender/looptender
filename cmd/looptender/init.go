@@ -140,6 +140,9 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 	if w := singleRouteWarning(cfg); w != "" {
 		e.errf("warning: %s %s", w, limitWaitWayOut)
 	}
+	for _, p := range successorPlans(cfg) {
+		e.errf("warning: %s", p.Text())
+	}
 	var goal *control.Goal
 	if asJSON {
 		if err := e.ctx.Err(); err != nil {

@@ -99,6 +99,8 @@ func (w *world) opts(now time.Time) Options {
 		// Each world has its own claims: worlds run in parallel and share
 		// fictional thread IDs.
 		SessionDir: w.sessions,
+		// Never the real bb: a world with no child lanes to replace.
+		Successors: func(string, string) ChildSuccessorMaker { return noSuccessors{} },
 		NewAdapter: func(a config.Agent, stateDir, target string) (adapter.Adapter, error) {
 			f, ok := w.adapters[target]
 			if !ok {

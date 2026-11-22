@@ -60,6 +60,14 @@ func New(cfg config.BB) *Adapter {
 	return a
 }
 
+// NewWithRunner is New with bb run by run instead of the CLI: for fixtures
+// and for commands that bring their own bb runner.
+func NewWithRunner(cfg config.BB, run func(ctx context.Context, stdin string, args ...string) ([]byte, error)) *Adapter {
+	a := New(cfg)
+	a.run = run
+	return a
+}
+
 // WithStateDir keeps the log cursor in dir so later ticks read only new events.
 func (a *Adapter) WithStateDir(dir string) *Adapter {
 	a.stateDir = dir

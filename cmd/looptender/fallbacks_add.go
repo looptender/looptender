@@ -1313,6 +1313,10 @@ func printFallbackAddPreview(w io.Writer, p *fallbackAddPlan) {
 	for _, warning := range p.warnings {
 		fallbackAddWrap(w, "  WARNING: ", "  ", warning)
 	}
+	if plan, ok := successorPlanOf(c); ok {
+		fmt.Fprintln(w)
+		fallbackAddWrap(w, "  Successor lanes (on by default): ", "  ", plan.Text())
+	}
 
 	fmt.Fprintln(w, "\nHandoff order")
 	active := ""

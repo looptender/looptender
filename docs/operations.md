@@ -1389,6 +1389,9 @@ Claims and transfers serialize with ticks and early polls. If a tick is in fligh
 
 Offline fixtures verify conflicting identities, preview and explicit takeover, shared-state config paths, simultaneous claiming processes, directory aliases, control-file symlink refusal, hold preservation, scheduler access, and old-daemon exit including a transfer back to its original owner. Live transfers between real threads remain unverified; the tests make no live model calls.
 
+
+A lane that has a [successor thread](transfer.md#replace-blocked-child-lanes-unreleased) on record is left alone (`left alone: replaced`): retrying it would put two threads on the same work.
+
 ### The supervised session cannot clear its own hold
 
 A reply in a conversation does not release an awaiting-user hold. Use explicit Resume in the menu/panel or `keepgoing resume -c <config>` from an ordinary terminal outside BB. In unreleased source, a resume carrying a different `BB_THREAD_ID` explains this recovery path instead of recommending `enable --take-over`. Older builds may still suggest takeover; resuming the existing loop does not require transferring its owner. The visible status can lag until the next client refresh.

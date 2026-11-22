@@ -236,7 +236,7 @@ func (a *Adapter) InspectLane(ctx context.Context, id string) decide.LaneFacts {
 	if !ok {
 		return f
 	}
-	f.ClassKnown, f.Class = true, decide.ErrUnknown
+	f.ClassKnown, f.Class, f.ResetsAt = true, decide.ErrUnknown, c.ResetsAt
 	sig := signals{class: decide.ErrUnknown, ok: true, blocked: c.Blocked, resetsAt: c.ResetsAt, lastEventAt: c.LastEventAt, turnStartedMs: c.TurnStartedMs}
 	if c.Error != nil {
 		sig.hasError, sig.class, sig.willRetry, sig.retryAt = true, c.Error.Class, c.Error.WillRetry, c.Error.At
