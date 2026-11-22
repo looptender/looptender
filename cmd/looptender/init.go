@@ -874,6 +874,15 @@ func writeInit(dir string, files map[string][]byte, spec *control.GoalSpec) (*co
 			return nil, closeErr
 		}
 	}
+	// The prompt file just written follows policy updates until it is
+	// edited (prompt.RecordPolicy).
+	if b, ok := files["prompt.md"]; ok {
+		promptFile := filepath.Join(dir, "prompt.md")
+		created = append(created, prompt.PolicyRecordPath(promptFile))
+		if err := prompt.RecordPolicy(promptFile, b); err != nil {
+			return nil, err
+		}
+	}
 	var goal *control.Goal
 	if spec != nil {
 		stateDir := filepath.Join(dir, "state")

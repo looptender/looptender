@@ -69,30 +69,34 @@ func printPromptSend(w io.Writer, r promptSendStatus) {
 }
 
 // wakePolicyStatus says where the loop's standing wake policy comes from:
-// this build (the prompt file holds a wording setup wrote) or the loop's own
-// text, which then receives no policy updates.
+// this build, for a prompt file recorded as following policy updates, or the
+// loop's own text, which then receives no policy updates.
 type wakePolicyStatus struct {
 	prompt.PolicyState
 	Message string `json:"message"`
 }
 
-const wakePolicyOptIn = "To receive policy updates, run `looptender prompt-policy apply -c CONFIG`: it rewrites the text above the line `Task:` to the current wording, keeps the task, and keeps the previous file beside it."
+const wakePolicyOptIn = "Run `looptender prompt-policy apply -c CONFIG` to follow them: it rewrites the text above the line `Task:` to the current wording, keeps the task, keeps the previous file beside it, and records the new file."
 
 func describeWakePolicy(l config.Loop) *wakePolicyStatus {
-	text, err := l.PromptText()
+	st, err := prompt.DescribePolicy(l)
 	if err != nil {
 		return nil
 	}
-	s := &wakePolicyStatus{PolicyState: prompt.DescribePolicy(text, l.PromptFile != "")}
+	s := &wakePolicyStatus{PolicyState: st}
 	switch {
 	case s.Source == prompt.PolicyInline:
 		s.Message = "The prompt is set in the configuration (loop.prompt) and sent exactly as written; it does not receive policy updates."
 	case s.Source == prompt.PolicyCustom:
-		s.Message = "The prompt file differs from every wording setup wrote, so it is sent exactly as written and does not receive policy updates. " + wakePolicyOptIn
+		s.Message = "The prompt file is hand-edited: it differs from every wording setup wrote, so it is sent exactly as written and does not receive policy updates. " + wakePolicyOptIn
+	case s.Source == prompt.PolicyGenerated && s.Recorded:
+		s.Message = fmt.Sprintf("The prompt file was edited after it was recorded as following policy updates (it now reads as generated wording version %d), so it is sent exactly as written and no longer follows them. %s", s.FileVersion, wakePolicyOptIn)
+	case s.Source == prompt.PolicyGenerated:
+		s.Message = fmt.Sprintf("The prompt file matches generated wording version %d but is not recorded as following policy updates, so it is sent exactly as written. %s", s.FileVersion, wakePolicyOptIn)
 	case s.FileVersion == s.CurrentVersion:
-		s.Message = fmt.Sprintf("Built in: the prompt file holds the current wording (version %d), followed by the task.", s.CurrentVersion)
+		s.Message = fmt.Sprintf("Follows policy updates: the prompt file holds the current wording (version %d), followed by the task.", s.CurrentVersion)
 	default:
-		s.Message = fmt.Sprintf("Built in: the prompt file holds version %d of the wording; each wake sends this build's version %d followed by the file's task. The file is not rewritten.", s.FileVersion, s.CurrentVersion)
+		s.Message = fmt.Sprintf("Follows policy updates: the prompt file holds version %d of the wording; each wake sends this build's version %d followed by the file's task. The file is not rewritten.", s.FileVersion, s.CurrentVersion)
 	}
 	return s
 }

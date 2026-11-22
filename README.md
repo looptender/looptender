@@ -207,7 +207,7 @@ Automatic model catalogue discovery and retirement/replacement policy remain [pl
 
 ## Looping and setup
 
-Task input is **copied once** into the generated `prompt.md`; changes to the original task file are not tracked. Future prompts reread the saved prompt file. The standing guidance above its `Task:` line comes from the running build, so loops get new wording when looptender is upgraded unless that part was edited by hand ([standing wake policy](docs/setup.md#standing-wake-policy)). Keep operating instructions stable and have the agent inspect current authorized sources before choosing work.
+Task input is **copied once** into the generated `prompt.md`; changes to the original task file are not tracked. Future prompts reread the saved prompt file. The standing guidance above its `Task:` line comes from the running build while the file is unedited since setup wrote it, so such loops get new wording when looptender is upgraded ([standing wake policy](docs/setup.md#standing-wake-policy)). Keep operating instructions stable and have the agent inspect current authorized sources before choosing work.
 
 New setup prompts ask the coordinator to assign authorized independent work to bounded child lanes, with visible BB child conversations when those are requested, separate ownership and one owner for shared resources. They ask the coordinator to advance independent work while lanes or CI run, and avoid duplicate assignments and repeated status checks.
 

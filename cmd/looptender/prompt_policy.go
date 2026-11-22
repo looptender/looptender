@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/prompt"
 )
 
@@ -60,7 +61,7 @@ func promptPolicyCommand(e env, args []string) int {
 		printWakePolicy(e.stdout, s)
 		return exitOK
 	}
-	r, err := applyPromptPolicy(cfg.Loop, abs, time.Now())
+	r, err := applyPromptPolicy(cfg, abs, time.Now())
 	if err != nil {
 		e.errf("prompt-policy apply: %v", err)
 		return exitFailed
@@ -76,6 +77,8 @@ type promptPolicyApplied struct {
 	Changed bool   `json:"changed"`
 	Backup  string `json:"backup,omitempty"`
 	Version int    `json:"version"`
+	// Prefix is the command prefix written into the file's commands.
+	Prefix  string `json:"prefix"`
 	Message string `json:"message"`
 }
 
@@ -88,16 +91,35 @@ func writeJSON(e env, v any) int {
 	return exitOK
 }
 
-// applyPromptPolicy rewrites the prompt file as setup would write it today:
-// the current wording, then the text after the file's first line reading
-// exactly "Task:". A file already on a built-in wording keeps its command
-// prefix and configuration path; it needs no rewrite and gets none. The
+// applyPromptPolicy makes the loop follow policy updates, on a person's
+// command: it rewrites the prompt file to the current wording followed by
+// its task, and records the result beside it (prompt.RecordPolicy).
+// The calling thread must own the loop, and no check may be running: the
+// tick lock is held while the file and the record are written. A file that
+// reads as a wording setup wrote keeps its command prefix and configuration
+// path; any other file keeps the text after its first line reading exactly
+// "Task:" and gets this command's own path, which is reported. The
 // previous file is kept beside it.
-func applyPromptPolicy(l config.Loop, cfgPath string, now time.Time) (promptPolicyApplied, error) {
+func applyPromptPolicy(cfg *config.Config, cfgPath string, now time.Time) (promptPolicyApplied, error) {
+	l := cfg.Loop
 	r := promptPolicyApplied{Version: prompt.CurrentPolicyVersion()}
 	if l.PromptFile == "" {
 		return r, errors.New("the prompt is set in the configuration (loop.prompt), not in a prompt file; move it to a file named by loop.prompt_file first")
 	}
+	if err := checkOwnership(l.StateDir, nil); err != nil {
+		return r, fmt.Errorf("%v; nothing written", err)
+	}
+	if err := checkTransferSources(cfg, false); err != nil {
+		return r, fmt.Errorf("%v; nothing written", err)
+	}
+	tick, err := lock.Acquire(l.StateDir)
+	if errors.Is(err, lock.ErrHeld) {
+		return r, errors.New("a check is running; nothing written. Try again in a moment")
+	}
+	if err != nil {
+		return r, fmt.Errorf("lock: %v; nothing written", err)
+	}
+	defer tick.Release()
 	info, err := os.Lstat(l.PromptFile)
 	if err != nil || !info.Mode().IsRegular() {
 		return r, errors.New("the prompt file is missing or not a regular file")
@@ -106,24 +128,39 @@ func applyPromptPolicy(l config.Loop, cfgPath string, now time.Time) (promptPoli
 	if err != nil {
 		return r, errors.New("the prompt file cannot be read")
 	}
+	var text string
 	if m, ok := prompt.MatchPolicy(string(raw)); ok {
-		r.Message = fmt.Sprintf("The prompt file already follows the built-in wake policy (it holds version %d; version %d is sent). Nothing was written.", m.Version, r.Version)
-		return r, nil
+		r.Prefix = m.Prefix
+		text = prompt.PolicyHead(m.Prefix, m.ConfigPath) + m.Task + "\n"
+	} else {
+		task, ok := taskAfterLine(string(raw))
+		if !ok {
+			return r, errors.New("the prompt file has no line reading exactly `Task:` with the task after it; put the task after such a line and run this again. Nothing was written")
+		}
+		r.Prefix = initCommandPrefix()
+		text = prompt.GeneratedPrompt(r.Prefix, commandQuote(cfgPath), task)
 	}
-	task, ok := taskAfterLine(string(raw))
-	if !ok {
-		return r, errors.New("the prompt file has no line reading exactly `Task:` with the task after it; put the task after such a line and run this again. Nothing was written")
+	if text != string(raw) {
+		backup := l.PromptFile + ".before-policy-" + now.UTC().Format("20060102T150405Z")
+		if err := os.WriteFile(backup, raw, info.Mode().Perm()); err != nil {
+			return r, errors.New("the previous prompt file could not be kept; nothing was written")
+		}
+		if err := replacePromptFile(l.PromptFile, []byte(text), info.Mode().Perm()); err != nil {
+			return r, fmt.Errorf("the prompt file could not be written (%v); the previous copy is %s", err, backup)
+		}
+		r.Changed, r.Backup = true, backup
 	}
-	text := prompt.GeneratedPrompt(initCommandPrefix(), commandQuote(cfgPath), task)
-	backup := l.PromptFile + ".before-policy-" + now.UTC().Format("20060102T150405Z")
-	if err := os.WriteFile(backup, raw, info.Mode().Perm()); err != nil {
-		return r, errors.New("the previous prompt file could not be kept; nothing was written")
+	if err := prompt.RecordPolicy(l.PromptFile, []byte(text)); err != nil {
+		if r.Changed {
+			return r, fmt.Errorf("the prompt file was rewritten but the record could not be saved (%v), so it does not follow policy updates yet; run this again. The previous copy is %s", err, r.Backup)
+		}
+		return r, fmt.Errorf("the record could not be saved (%v); nothing was written", err)
 	}
-	if err := replacePromptFile(l.PromptFile, []byte(text), info.Mode().Perm()); err != nil {
-		return r, fmt.Errorf("the prompt file could not be written (%v); the previous copy is %s", err, backup)
+	if r.Changed {
+		r.Message = fmt.Sprintf("The prompt file now follows policy updates (version %d) with its task kept; its commands run %s. The previous file is %s.", r.Version, r.Prefix, r.Backup)
+	} else {
+		r.Message = fmt.Sprintf("The prompt file already held the current wording (version %d); it now follows policy updates. The file was not changed.", r.Version)
 	}
-	r.Changed, r.Backup = true, backup
-	r.Message = fmt.Sprintf("The prompt file now follows the built-in wake policy (version %d) with its task kept. The previous file is %s.", r.Version, backup)
 	return r, nil
 }
 

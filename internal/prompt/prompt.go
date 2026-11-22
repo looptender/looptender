@@ -58,16 +58,16 @@ func ComposeWakeOnChange(loop config.Loop, choose func(id string, revision uint6
 	return Message{GoalID: m.GoalID, GoalRevision: m.GoalRevision, GoalForm: GoalShort, Text: shortGoalText(text, m.GoalID, m.GoalRevision)}, nil
 }
 
-// wakeText reads the configured prompt on each send. A prompt file whose
-// policy part is one setup wrote goes with the current wording and its own
-// task (see MatchPolicy); any other prompt is sent as written.
+// wakeText reads the configured prompt on each send. A prompt file the
+// loop follows policy updates for (followedText) goes with the current
+// wording and its own task; any other prompt is sent as written.
 func wakeText(loop config.Loop) (string, error) {
-	text, err := loop.PromptText()
-	if err != nil || loop.PromptFile == "" {
-		return text, err
+	if loop.PromptFile != "" {
+		if text, ok := followedText(loop); ok {
+			return text, nil
+		}
 	}
-	text, _, _ = CurrentWording(text)
-	return text, nil
+	return loop.PromptText()
 }
 
 // WakeHeader is the fixed first line of every message looptender sends to a

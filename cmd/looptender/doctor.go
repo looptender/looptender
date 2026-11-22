@@ -164,7 +164,7 @@ func doctor(e env, args []string, run doctorRun) int {
 	}
 	if s := describeWakePolicy(cfg.Loop); s != nil {
 		status := "ok"
-		if s.Source == prompt.PolicyCustom {
+		if s.Source == prompt.PolicyCustom || s.Source == prompt.PolicyGenerated {
 			status = "warning"
 		}
 		r.add("wake_policy", status, s.Message, "")

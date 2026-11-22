@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -94,39 +95,136 @@ func TestHandEditedPolicyIsSentAsWritten(t *testing.T) {
 		if got, _, ok := CurrentWording(text); ok || got != text {
 			t.Errorf("%s: changed", name)
 		}
-		if s := DescribePolicy(text, true); s.Source != PolicyCustom || s.CurrentVersion != CurrentPolicyVersion() {
-			t.Errorf("%s: %+v", name, s)
-		}
-	}
-	if s := DescribePolicy(base, false); s.Source != PolicyInline {
-		t.Errorf("inline: %+v", s)
-	}
-	if s := DescribePolicy(base, true); s.Source != PolicyBuiltIn || s.FileVersion != 2 {
-		t.Errorf("built in: %+v", s)
 	}
 }
 
-func TestComposeWakeSendsCurrentPolicyWithoutRewritingTheFile(t *testing.T) {
+// writePrompt writes a loop's prompt file and, when record is set, records
+// it as following policy updates, as setup does.
+func writePrompt(t *testing.T, text string, record bool) config.Loop {
+	t.Helper()
 	dir := t.TempDir()
 	file := filepath.Join(dir, "prompt.md")
-	old := oldPrompt(1, unixPrefix, quotedCfg, fictionTask)
-	if err := os.WriteFile(file, []byte(old), 0o600); err != nil {
+	if err := os.WriteFile(file, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	loop := config.Loop{Name: "fictional", StateDir: dir, PromptFile: file}
+	loop := config.Loop{Name: "fictional", StateDir: filepath.Join(dir, "state"), PromptFile: file}
+	if record {
+		if err := RecordPolicy(loop.PromptFile, []byte(text)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return loop
+}
+
+func sent(t *testing.T, loop config.Loop) string {
+	t.Helper()
 	m, err := ComposeWake(loop)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Text != strings.TrimSpace(GeneratedPrompt(unixPrefix, quotedCfg, fictionTask)) {
-		t.Fatalf("sent:\n%s", m.Text)
+	return m.Text
+}
+
+func TestOnlyTheRecordedFileFollowsPolicyUpdates(t *testing.T) {
+	old := oldPrompt(1, unixPrefix, quotedCfg, fictionTask)
+	current := strings.TrimSpace(GeneratedPrompt(unixPrefix, quotedCfg, fictionTask))
+	// Recorded: the current wording goes, and the file is not rewritten.
+	loop := writePrompt(t, old, true)
+	if got := sent(t, loop); got != current {
+		t.Fatalf("recorded file sent:\n%s", got)
 	}
-	if b, _ := os.ReadFile(file); string(b) != old {
+	if b, _ := os.ReadFile(loop.PromptFile); string(b) != old {
 		t.Fatal("prompt file was rewritten")
 	}
+	if s, err := DescribePolicy(loop); err != nil || s.Source != PolicyFollowing || s.FileVersion != 1 || !s.Recorded {
+		t.Fatalf("%+v %v", s, err)
+	}
+	// No record: a file that reads as an old wording is sent as written.
+	loop = writePrompt(t, old, false)
+	if got := sent(t, loop); got != strings.TrimSpace(old) {
+		t.Fatalf("unrecorded file upgraded:\n%s", got)
+	}
+	if s, _ := DescribePolicy(loop); s.Source != PolicyGenerated || s.FileVersion != 1 || s.Recorded {
+		t.Fatalf("%+v", s)
+	}
+	// Edited after it was recorded, even only in its task: no longer followed.
+	loop = writePrompt(t, old, true)
+	edited := old + "One more line of task.\n"
+	if err := os.WriteFile(loop.PromptFile, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := sent(t, loop); got != strings.TrimSpace(edited) {
+		t.Fatalf("edited file upgraded:\n%s", got)
+	}
+	if s, _ := DescribePolicy(loop); s.Source != PolicyGenerated || !s.Recorded {
+		t.Fatalf("%+v", s)
+	}
+	// Hand-edited and recorded nowhere: custom.
+	loop = writePrompt(t, "Keep going on the fictional task.", false)
+	if s, _ := DescribePolicy(loop); s.Source != PolicyCustom {
+		t.Fatalf("%+v", s)
+	}
 	// A prompt set in the configuration is never treated as generated.
-	inline := config.Loop{Name: "fictional", StateDir: dir, Prompt: strings.TrimSpace(old)}
-	if m, err := ComposeWake(inline); err != nil || m.Text != strings.TrimSpace(old) {
-		t.Fatalf("inline prompt changed: %v", err)
+	inline := config.Loop{Name: "fictional", StateDir: t.TempDir(), Prompt: strings.TrimSpace(old)}
+	if got := sent(t, inline); got != strings.TrimSpace(old) {
+		t.Fatal("inline prompt changed")
+	}
+	if s, _ := DescribePolicy(inline); s.Source != PolicyInline {
+		t.Fatalf("%+v", s)
+	}
+}
+
+// Deleting a paragraph from a current prompt makes it read exactly like an
+// older wording. That is an edit: the removed guidance must not come back.
+func TestTrimmedCurrentPromptIsNotUpgraded(t *testing.T) {
+	current := GeneratedPrompt(unixPrefix, quotedCfg, fictionTask)
+	const delegation = "At the start of substantial work"
+	i := strings.Index(current, delegation)
+	j := strings.Index(current[i:], "\n\n")
+	trimmed := current[:i] + current[i+j+2:]
+	if m, ok := MatchPolicy(trimmed); !ok || m.Version == CurrentPolicyVersion() {
+		t.Fatalf("the trim no longer reads as an older wording: %+v %v", m, ok)
+	}
+	for _, record := range []bool{false, true} {
+		loop := writePrompt(t, current, record)
+		if err := os.WriteFile(loop.PromptFile, []byte(trimmed), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got := sent(t, loop)
+		if strings.Contains(got, delegation) || got != strings.TrimSpace(trimmed) {
+			t.Fatalf("record %v: removed paragraph sent again", record)
+		}
+		if s, _ := DescribePolicy(loop); s.Source == PolicyFollowing {
+			t.Fatalf("record %v: trimmed prompt called following: %+v", record, s)
+		}
+	}
+}
+
+func TestPolicyRecordIsStrict(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "prompt.md")
+	if r, err := LoadPolicyRecord(file); r != nil || err != nil {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if err := os.WriteFile(PolicyRecordPath(file), []byte(`{"version":1,"sha256":"x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPolicyRecord(file); err == nil {
+		t.Fatal("malformed record accepted")
+	}
+	// A malformed record follows nothing.
+	loop := config.Loop{Name: "fictional", StateDir: dir, PromptFile: file}
+	old := oldPrompt(2, unixPrefix, quotedCfg, fictionTask)
+	if err := os.WriteFile(loop.PromptFile, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := sent(t, loop); got != strings.TrimSpace(old) {
+		t.Fatal("upgraded with a malformed record")
+	}
+	if err := RecordPolicy(file, []byte(old)); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(PolicyRecordPath(file)); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
+		t.Fatalf("%v %v", info, err)
 	}
 }

@@ -47,6 +47,10 @@ func TestGeneratedOldPromptSendsCurrentPolicyWithGoalAndTrueSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.cfg.Loop.Prompt, w.cfg.Loop.PromptFile, w.cfg.Loop.PromptGoal = "", file, true
+	// Recorded as setup records the file it writes.
+	if err := prompt.RecordPolicy(file, []byte(old)); err != nil {
+		t.Fatal(err)
+	}
 	p := w.primary(decide.Observation{State: decide.Idle})
 	if _, err := control.WriteGoal(w.dir, w.cfg.Loop.Name, "", control.GoalSpec{Title: "fictional goal", ObjectiveRefs: []string{"objective"}, AcceptanceRefs: []string{"acceptance"}}, "", 0); err != nil {
 		t.Fatal(err)
@@ -79,6 +83,10 @@ func TestHandEditedPromptIsSentExactlyAsWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.cfg.Loop.Prompt, w.cfg.Loop.PromptFile = "", file
+	// Recorded before the edit: the edit ends policy updates.
+	if err := prompt.RecordPolicy(file, []byte(versionOnePrompt(t))); err != nil {
+		t.Fatal(err)
+	}
 	p := w.primary(decide.Observation{State: decide.Idle})
 	runTick(t, w, t0)
 	if len(p.sent) != 1 || p.sent[0] != strings.TrimSpace(edited) || strings.Contains(p.sent[0], currentOnlyPolicy) {

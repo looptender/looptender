@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/control"
+	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/prompt"
 )
 
@@ -61,93 +63,179 @@ func statusWakePolicy(t *testing.T, f *doctorFixture) (*wakePolicyStatus, string
 	return parsed.WakePolicy, text.String()
 }
 
-func TestStatusAndDoctorSayWhereTheWakePolicyComesFrom(t *testing.T) {
-	f, file := policyFixture(t)
-	s, text := statusWakePolicy(t, f)
-	if s == nil || s.Source != prompt.PolicyBuiltIn || s.FileVersion != 1 || s.CurrentVersion != prompt.CurrentPolicyVersion() || !strings.Contains(text, "standing wake policy: Built in: the prompt file holds version 1") {
-		t.Fatalf("%+v\n%s", s, text)
-	}
-	old, _ := os.ReadFile(file)
-	edited := strings.Replace(string(old), "Continue the authorized task below.", "Continue the task below, carefully.", 1)
-	if err := os.WriteFile(file, []byte(edited), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	s, text = statusWakePolicy(t, f)
-	if s == nil || s.Source != prompt.PolicyCustom || !strings.Contains(text, "does not receive policy updates") || !strings.Contains(text, "looptender prompt-policy apply -c CONFIG") {
-		t.Fatalf("%+v\n%s", s, text)
-	}
+func doctorWakePolicy(t *testing.T, f *doctorFixture) doctorCheck {
+	t.Helper()
 	var out bytes.Buffer
 	run(context.Background(), []string{"doctor", "-c", f.config, "--json"}, &out, &out)
 	var report doctorReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(out.String())
 	}
-	found := false
 	for _, c := range report.Checks {
 		if c.ID == "wake_policy" {
-			found = c.Status == "warning" && strings.Contains(c.Message, "does not receive policy updates")
+			return c
 		}
 	}
-	if !found {
-		t.Fatalf("doctor: %s", out.String())
+	t.Fatalf("no wake_policy check: %s", out.String())
+	return doctorCheck{}
+}
+
+func TestStatusAndDoctorSayWhereTheWakePolicyComesFrom(t *testing.T) {
+	f, file := policyFixture(t)
+	old, _ := os.ReadFile(file)
+	// An existing loop: no record. Named, not followed.
+	s, text := statusWakePolicy(t, f)
+	if s == nil || s.Source != prompt.PolicyGenerated || s.FileVersion != 1 || s.Recorded || !strings.Contains(text, "matches generated wording version 1 but is not recorded as following policy updates") || !strings.Contains(text, "prompt-policy apply -c CONFIG") {
+		t.Fatalf("%+v\n%s", s, text)
 	}
-	if b, _ := os.ReadFile(file); string(b) != edited {
+	if c := doctorWakePolicy(t, f); c.Status != "warning" {
+		t.Fatalf("%+v", c)
+	}
+	// Recorded: followed.
+	if err := prompt.RecordPolicy(file, old); err != nil {
+		t.Fatal(err)
+	}
+	s, text = statusWakePolicy(t, f)
+	if s == nil || s.Source != prompt.PolicyFollowing || !strings.Contains(text, "Follows policy updates: the prompt file holds version 1") {
+		t.Fatalf("%+v\n%s", s, text)
+	}
+	if c := doctorWakePolicy(t, f); c.Status != "ok" {
+		t.Fatalf("%+v", c)
+	}
+	// Edited after the record: no longer followed.
+	edited := strings.Replace(string(old), policyFixtureTask, policyFixtureTask+" Carefully.", 1)
+	if err := os.WriteFile(file, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, text = statusWakePolicy(t, f)
+	if s == nil || s.Source != prompt.PolicyGenerated || !s.Recorded || !strings.Contains(text, "edited after it was recorded") {
+		t.Fatalf("%+v\n%s", s, text)
+	}
+	// Hand-edited policy part.
+	custom := strings.Replace(string(old), "Continue the authorized task below.", "Continue the task below, carefully.", 1)
+	if err := os.WriteFile(file, []byte(custom), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, text = statusWakePolicy(t, f)
+	if s == nil || s.Source != prompt.PolicyCustom || !strings.Contains(text, "hand-edited") || !strings.Contains(text, "does not receive policy updates") {
+		t.Fatalf("%+v\n%s", s, text)
+	}
+	if c := doctorWakePolicy(t, f); c.Status != "warning" || !strings.Contains(c.Message, "hand-edited") {
+		t.Fatalf("%+v", c)
+	}
+	if b, _ := os.ReadFile(file); string(b) != custom {
 		t.Fatal("status or doctor wrote the prompt file")
 	}
 }
 
-func TestPromptPolicyApplyKeepsTheTaskAndThePreviousFile(t *testing.T) {
+func applyPolicy(t *testing.T, f *doctorFixture, extra ...string) (int, string) {
+	t.Helper()
+	var out bytes.Buffer
+	code := run(context.Background(), append([]string{"prompt-policy", "apply", "-c", f.config}, extra...), &out, &out)
+	return code, out.String()
+}
+
+func TestPromptPolicyApplyRecordsAndKeepsTheFilesPrefix(t *testing.T) {
+	t.Setenv("BB_THREAD_ID", "")
 	f, file := policyFixture(t)
 	old, _ := os.ReadFile(file)
-	// A loop on a built-in wording needs nothing written.
-	var out bytes.Buffer
-	if code := run(context.Background(), []string{"prompt-policy", "apply", "-c", f.config}, &out, &out); code != exitOK || !strings.Contains(out.String(), "Nothing was written") {
-		t.Fatalf("%d %s", code, out.String())
-	}
-	if b, _ := os.ReadFile(file); !bytes.Equal(b, old) {
-		t.Fatal("rewritten")
-	}
-	edited := strings.Replace(string(old), "Continue the authorized task below.", "Continue the task below, carefully.", 1)
-	if err := os.WriteFile(file, []byte(edited), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out.Reset()
-	if code := run(context.Background(), []string{"prompt-policy", "apply", "-c", f.config, "--json"}, &out, &out); code != exitOK {
-		t.Fatalf("%d %s", code, out.String())
+	code, out := applyPolicy(t, f, "--json")
+	if code != exitOK {
+		t.Fatalf("%d %s", code, out)
 	}
 	var r promptPolicyApplied
-	if err := json.Unmarshal(out.Bytes(), &r); err != nil || !r.Changed || r.Backup == "" {
-		t.Fatalf("%v %s", err, out.String())
+	if err := json.Unmarshal([]byte(out), &r); err != nil || !r.Changed || r.Backup == "" || r.Prefix != `'/fictional/bin/looptender'` {
+		t.Fatalf("%v %s", err, out)
 	}
-	if b, _ := os.ReadFile(r.Backup); string(b) != edited {
+	if b, _ := os.ReadFile(r.Backup); !bytes.Equal(b, old) {
 		t.Fatal("previous file not kept")
 	}
 	b, _ := os.ReadFile(file)
 	m, ok := prompt.MatchPolicy(string(b))
-	if !ok || m.Version != prompt.CurrentPolicyVersion() || m.Task != policyFixtureTask || m.ConfigPath != commandQuote(f.config) {
+	if !ok || m.Version != prompt.CurrentPolicyVersion() || m.Task != policyFixtureTask || m.ConfigPath != commandQuote(f.config) || m.Prefix != `'/fictional/bin/looptender'` {
 		t.Fatalf("%+v %v\n%s", m, ok, b)
 	}
 	if info, _ := os.Stat(file); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", info.Mode())
 	}
-}
-
-func TestPromptPolicyApplyRefusesWithoutATaskLine(t *testing.T) {
-	f, file := policyFixture(t)
-	if err := os.WriteFile(file, []byte("Keep going on the fictional widget.\n"), 0o600); err != nil {
+	if s, _ := statusWakePolicy(t, f); s.Source != prompt.PolicyFollowing {
+		t.Fatalf("%+v", s)
+	}
+	// Again: nothing to rewrite.
+	if code, out := applyPolicy(t, f); code != exitOK || !strings.Contains(out, "The file was not changed") {
+		t.Fatalf("%d %s", code, out)
+	}
+	// A hand-edited file gets this command's path, and says so.
+	custom := "Keep the fictional widget working.\n\nTask:\n" + policyFixtureTask + "\n"
+	if err := os.WriteFile(file, []byte(custom), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var out bytes.Buffer
-	if code := run(context.Background(), []string{"prompt-policy", "apply", "-c", f.config}, &out, &out); code != exitFailed || !strings.Contains(out.String(), "Nothing was written") {
-		t.Fatalf("%d %s", code, out.String())
+	code, out = applyPolicy(t, f)
+	if code != exitOK || !strings.Contains(out, "its commands run "+initCommandPrefix()) {
+		t.Fatalf("%d %s", code, out)
 	}
-	if b, _ := os.ReadFile(file); string(b) != "Keep going on the fictional widget.\n" {
-		t.Fatal("written")
+	b, _ = os.ReadFile(file)
+	if m, ok := prompt.MatchPolicy(string(b)); !ok || m.Prefix != initCommandPrefix() || m.Task != policyFixtureTask {
+		t.Fatalf("%+v %v", m, ok)
 	}
-	entries, _ := os.ReadDir(f.root)
-	for _, e := range entries {
-		if strings.Contains(e.Name(), "before-policy") {
-			t.Fatal("backup written for a refused apply")
+}
+
+func TestPromptPolicyApplyRefusals(t *testing.T) {
+	t.Setenv("BB_THREAD_ID", "")
+	unchanged := func(t *testing.T, f *doctorFixture, file string, want []byte) {
+		t.Helper()
+		if b, _ := os.ReadFile(file); !bytes.Equal(b, want) {
+			t.Fatal("prompt written")
+		}
+		if _, err := os.Stat(prompt.PolicyRecordPath(file)); !os.IsNotExist(err) {
+			t.Fatal("record written")
+		}
+		entries, _ := os.ReadDir(f.root)
+		for _, e := range entries {
+			if strings.Contains(e.Name(), "before-policy") {
+				t.Fatal("backup written")
+			}
 		}
 	}
+	t.Run("no task line", func(t *testing.T) {
+		f, file := policyFixture(t)
+		text := []byte("Keep going on the fictional widget.\n")
+		if err := os.WriteFile(file, text, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if code, out := applyPolicy(t, f); code != exitFailed || !strings.Contains(out, "Nothing was written") {
+			t.Fatalf("%d %s", code, out)
+		}
+		unchanged(t, f, file, text)
+	})
+	t.Run("another thread owns the loop", func(t *testing.T) {
+		f, file := policyFixture(t)
+		old, _ := os.ReadFile(file)
+		if err := control.Save(f.state, control.File{Ownership: &control.Ownership{ThreadID: "thr_owner00001", Generation: 1}}); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("BB_THREAD_ID", "thr_other00001")
+		if code, out := applyPolicy(t, f); code != exitFailed || !strings.Contains(out, "owned by") || !strings.Contains(out, "nothing written") {
+			t.Fatalf("%d %s", code, out)
+		}
+		unchanged(t, f, file, old)
+		// The owner may.
+		t.Setenv("BB_THREAD_ID", "thr_owner00001")
+		if code, out := applyPolicy(t, f); code != exitOK {
+			t.Fatalf("owner refused: %d %s", code, out)
+		}
+	})
+	t.Run("a check is running", func(t *testing.T) {
+		f, file := policyFixture(t)
+		old, _ := os.ReadFile(file)
+		l, err := lock.Acquire(f.state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer l.Release()
+		if code, out := applyPolicy(t, f); code != exitFailed || !strings.Contains(out, "a check is running") {
+			t.Fatalf("%d %s", code, out)
+		}
+		unchanged(t, f, file, old)
+	})
 }
