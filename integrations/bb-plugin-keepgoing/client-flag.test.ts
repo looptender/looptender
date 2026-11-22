@@ -13,8 +13,9 @@ const refusal: R = { code: 2, emptyStdout: true, timedOut: false, out: "" };
 
 test("the reported version is package.json's, under a name with no product name", async () => {
   const pkg = JSON.parse(await readFile(new URL("./package.json", import.meta.url), "utf8")) as { version: string };
-  assert.equal(PLUGIN_VERSION, pkg.version);
-  assert.deepEqual(clientArgs(), ["--client", `bb-plugin@${pkg.version}`]);
+  // A stamped staged copy carries <base>-build.<label>; the base is what is compared.
+  assert.equal(PLUGIN_VERSION, pkg.version.split("-build.")[0]);
+  assert.deepEqual(clientArgs(), ["--client", `bb-plugin@${pkg.version.split("-build.")[0]}`]);
 });
 
 test("an older CLI that refuses --client is asked again without it, and not given it again", async () => {

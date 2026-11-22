@@ -2,7 +2,8 @@
 // supervises, and offers pause, resume, and stop. It only calls the keepgoing
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
-import { shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
+import { BUILD_LABEL } from "./build-label.ts";
+import { isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
 import { execFile } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -428,7 +429,14 @@ export default async function plugin(bb: BbPluginApi) {
           const parsed = z.object({ entries: z.array(z.object({ loop: z.string() })).max(1024) }).safeParse(JSON.parse(listed.stdout));
           if (listed.code === 0 && parsed.success) notShown = notShownLine(parsed.data.entries.map(e => e.loop), loops.map(l => l.loop));
         } catch { /* the registry could not be read: nothing is claimed */ }
-        return { exitCode: errors.length > 0 ? 1 : 0, stdout: `${lines.join("\n")}\n${notShown ? `${notShown}\n` : ""}References: explicit plugin settings and saved host references; CLI registry/menu coverage is separate. This is not a complete process inventory.\n`, stderr: errors.join("\n") };
+        let running: string | null = null;
+        try {
+          const { bin } = await configured();
+          const v = await run(bin, ["version"]);
+          if (v.code === 0 && isBuildLabel(v.stdout.trim())) running = v.stdout.trim();
+        } catch { /* not read */ }
+        const built = pluginBuildLine(BUILD_LABEL, running);
+        return { exitCode: errors.length > 0 ? 1 : 0, stdout: `${lines.join("\n")}\n${notShown ? `${notShown}\n` : ""}${built}\nReferences: explicit plugin settings and saved host references; CLI registry/menu coverage is separate. This is not a complete process inventory.\n`, stderr: errors.join("\n") };
       }
       const parsed = actionSchema.safeParse(command);
       if (!parsed.success || !name || rest.length > 0) return { exitCode: 2, stderr: "Usage: bb keepgoing status | pause <loop> | resume <loop> | stop <loop>" };
