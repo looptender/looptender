@@ -320,3 +320,52 @@ func TestConfigurationReportDeferredByBusyTickLockIsRetried(t *testing.T) {
 		}
 	}
 }
+
+// Once the episode's report has been attempted, a busy lock during the same
+// outage must not make the daemon poll at the control rate.
+func TestConfigurationReportBusyLockAfterAttemptIsNotDeferred(t *testing.T) {
+	f, cfg, _, e := configReportFixture(t)
+	if err := os.Remove(f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	since, deferred := updateDaemonConfigurationDeferred(e, cfg, false, false, nil, nil)
+	if since == nil || deferred || strings.Count(f.hooks.types(), "keepgoing.error") != 1 {
+		t.Fatalf("%v deferred=%v sent=%q", since, deferred, f.hooks.types())
+	}
+	held, err := lock.Acquire(cfg.Loop.StateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	if got, deferred := updateDaemonConfigurationDeferred(e, cfg, false, false, nil, since); got == nil || deferred {
+		t.Fatalf("%v deferred=%v after the report was attempted", got, deferred)
+	}
+}
+
+// Loop level: the daemon's pass finds the tick lock held, publishes the
+// diagnostic, and must retry the deferred report at its next control poll.
+// The fixture interval is 30s, so without the retry branch in the loop the
+// report would not arrive within the wait.
+func TestDaemonRetriesDeferredConfigurationReportAtControlPoll(t *testing.T) {
+	f, _, _, _ := configReportFixture(t)
+	g := startGoneDaemonFixture(t, f)
+	held, err := acquireWithin(context.Background(), filepath.Join(f.dir, "state"), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	if err := os.Rename(f.cfg, g.moved); err != nil {
+		t.Fatal(err)
+	}
+	g.control(t, "pause")
+	waitFor(t, func() bool {
+		return inspectDaemon(context.Background(), filepath.Join(f.dir, "state"), version, false).ConfigUnavailableSince != nil
+	}, "diagnostic while the tick lock is held")
+	if f.hooks.types() != "" {
+		t.Fatalf("reported while the tick lock was held: %s", f.hooks.types())
+	}
+	if err := held.Release(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return strings.Count(f.hooks.types(), "keepgoing.error") == 1 }, "deferred report at the next control poll")
+}

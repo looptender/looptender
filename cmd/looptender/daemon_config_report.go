@@ -36,7 +36,7 @@ func updateDaemonConfigurationDeferred(e env, cfg *config.Config, loaded, dryRun
 	}
 	l, err := lock.Acquire(cfg.Loop.StateDir)
 	if err != nil {
-		return since, since != nil && errors.Is(err, lock.ErrHeld)
+		return since, since != nil && errors.Is(err, lock.ErrHeld) && reportPending(cfg)
 	}
 	defer l.Release()
 	if checkOwnership(cfg.Loop.StateDir, lease) != nil {
@@ -78,4 +78,12 @@ func updateDaemonConfigurationDeferred(e env, cfg *config.Config, loaded, dryRun
 		e.errf("configuration error report attempt failed; it will not be repeated")
 	}
 	return since, false
+}
+
+// reportPending reads the saved episode without the tick lock: true until the
+// episode's one report has been attempted, so a long outage whose report was
+// already sent does not make the daemon poll at the control rate.
+func reportPending(cfg *config.Config) bool {
+	st, err := state.Load(cfg.Loop.StateDir)
+	return err == nil && (st.DaemonConfigUnavailable == nil || !st.DaemonConfigUnavailable.ReportAttempted)
 }
