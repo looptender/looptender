@@ -1306,8 +1306,9 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 		daemonBuild := l.Versions.Daemon != "" && dockBuildOf(l.Versions.Daemon, version).Availability == "different"
 		otherFile := l.Versions.Service == "different_file"
 		otherBuild := l.Build.Availability == "different" || daemonBuild || otherFile
-		// A loop held for a person is under "Needs you" already.
-		lanesFailed := l.LanesFailed != "" && l.State != "waiting_for_you"
+		// A loop held for a person, or paused and still waiting for one, is
+		// under "Needs you" already.
+		lanesFailed := l.LanesFailed != "" && l.State != "waiting_for_you" && l.AlsoWaiting == ""
 		if quiet[l.State] && l.Away == nil && !flagged && !otherBuild && !lanesFailed {
 			continue
 		}

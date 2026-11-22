@@ -398,4 +398,16 @@ final class MenuTests: XCTestCase {
         // A CLI that sends neither leaves the row as it was.
         XCTAssertTrue(rows.contains("example-site | Supervising"))
     }
+
+    func testAPausedLoopThatStillWaitsForYouHasTheNeedsYouSymbol() throws {
+        let json = """
+        {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":false,"needsYou":1,"unread":0,"omitted":0,
+         "loops":[{"key":"l000000000001","name":"example-paused-waiting","state":"paused","phrase":"Paused \u{00B7} also waiting for you","needsYou":true},
+                  {"key":"l000000000002","name":"example-paused","state":"paused","phrase":"Paused","needsYou":false}]}
+        """
+        let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
+        let rows = MenuBuilder.build(.read(decoded, at: now), now: now).rows.filter { $0.kind == .loop }
+        XCTAssertEqual(rows[0].symbol, "exclamationmark.circle.fill")
+        XCTAssertEqual(rows[1].symbol, "pause.circle")
+    }
 }

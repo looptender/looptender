@@ -103,7 +103,8 @@ func TestDockNoteHidesAbsolutePathsAndAddressesButShowsRelativePaths(t *testing.
 	if !hid || !strings.Contains(got, "docs/reference/PLAN.md") || strings.Contains(got, "/Users/example") || strings.Contains(got, "localhost") || strings.Contains(got, "~/notes") || strings.Contains(got, "www.example") {
 		t.Fatalf("%s", got)
 	}
-	if js := dockUIText(t, "dock.js"); !strings.Contains(js, "an absolute or home path (also one that contains .. or starts with Users/, home/ or root/") || !strings.Contains(js, "IPv4 or IPv6 address") || !strings.Contains(js, "user name and password before a host") || !strings.Contains(js, "another relative path such as docs/plan.md is shown") {
+	// The copy as it is written in the script (a backslash is doubled there).
+	if js := dockUIText(t, "dock.js"); !strings.Contains(js, `an absolute or home path (a /, ~/, ~name, C:\\ or \\ path, also one that contains .. or starts with Users, home or root, with / or \\ between its parts, and a \\\\server\\share path)`) || !strings.Contains(js, "IPv4 or IPv6 address") || !strings.Contains(js, "user name and password before a host") || !strings.Contains(js, `another relative path such as docs/plan.md or docs\\plan.md is shown`) {
 		t.Error("the page's copy does not say what is hidden")
 	}
 }
@@ -161,17 +162,25 @@ func TestDockPageVariantKeysExistInTheLoopJSON(t *testing.T) {
 // one is not.
 func TestDockNoteMaskingFollowsTheCopyExactly(t *testing.T) {
 	hidden := map[string]string{
-		"user name and password":       "see user:pass@host.example/path now",
-		"user name and password, port": "see admin:hunter2@db.example:5432 now",
-		"a path that goes up":          "see ../secret/b.txt now",
-		"a path that goes up, deeper":  "see docs/../../etc/passwd now",
-		"home directory without slash": "see Users/example/work/x.txt now",
-		"home directory, lower case":   "see home/example/x now",
-		"root's home":                  "see root/.ssh/id now",
-		"a UNC path":                   `see \\server\share\a.txt now`,
-		"a bracketed IPv6 address":     "listening on [::1]:80 now",
-		"a bare IPv6 address":          "see fe80::1 now",
-		"a full IPv6 address":          "see 2001:db8:0:0:0:0:0:1 now",
+		"user name and password":                "see user:pass@host.example/path now",
+		"user name and password, port":          "see admin:hunter2@db.example:5432 now",
+		"a path that goes up":                   "see ../secret/b.txt now",
+		"a path that goes up, deeper":           "see docs/../../etc/passwd now",
+		"home directory without slash":          "see Users/example/work/x.txt now",
+		"home directory, lower case":            "see home/example/x now",
+		"root's home":                           "see root/.ssh/id now",
+		"a UNC path":                            `see \\server\share\a.txt now`,
+		"a bracketed IPv6 address":              "listening on [::1]:80 now",
+		"a bare IPv6 address":                   "see fe80::1 now",
+		"a full IPv6 address":                   "see 2001:db8:0:0:0:0:0:1 now",
+		"a backslash path from the root":        `see \Users\example\work\x.txt now`,
+		"a backslash path that goes up":         `see ..\secret\b.txt now`,
+		"a backslash path that goes up, deeper": `see docs\..\..\etc\passwd now`,
+		"a home directory with backslashes":     `see Users\example\work\x.txt now`,
+		"a lower case home with backslashes":    `see home\example\x now`,
+		"another user's home":                   "see ~example/work/x.txt now",
+		"another user's home, alone":            "cd ~example then",
+		"another user's home, backslash":        `see ~example\work now`,
 	}
 	for name, note := range hidden {
 		got, hid := dockMaskNote(note)
@@ -188,6 +197,7 @@ func TestDockNoteMaskingFollowsTheCopyExactly(t *testing.T) {
 	shown := []string{
 		"see docs/reference/PLAN.md now", "version 1.2.3 and v0.2.0", "at 12:30:45 the check ran", "ratio 3:1 or 10:30",
 		"see src/app/main.go and pkg/x", "go to the home page", "root cause", "users like it", "a/b/c",
+		`see docs\plan.md and src\app\main.go`, "about ~5 min or ~3 times", "a ~ b and ~ c", "line one\\n and two",
 	}
 	for _, note := range shown {
 		got, hid := dockMaskNote(note)
@@ -376,5 +386,36 @@ func TestDockCheckedLineAndNextCheckNeverContradict(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Two consumers read the state string and missed a paused loop that is still
+// waiting for a person: the "Worth knowing" list (a failed lane on a loop that
+// is under "Needs you" is not listed again), and the loop's pill on its page
+// (checked in the jsdom test). A plain paused loop with a failed lane is listed.
+func TestDockPausedAndWaitingIsNotListedAgainForFailedLanes(t *testing.T) {
+	lanes := runsLoop{Blocker: runsBlocker{Availability: blockerListed, Children: []runsChild{{Ref: "child:example1", Status: "error"}}}}
+	waiting := dockEvidence{controls: &clientControls{Enabled: true, Paused: true, AwaitingUser: true}}.input()
+	waiting.Entry.ID, waiting.Entry.Loop = "loop_00000000000000000000000000000001", "example-paused-and-waiting"
+	waiting.RunsKnown, waiting.Runs = true, lanes
+	plain := dockEvidence{controls: &clientControls{Enabled: true, Paused: true}}.input()
+	plain.Entry.ID, plain.Entry.Loop = "loop_00000000000000000000000000000002", "example-paused"
+	plain.RunsKnown, plain.Runs = true, lanes
+	held := dockEvidence{controls: &clientControls{Enabled: true, AwaitingUser: true}}.input()
+	held.Entry.ID, held.Entry.Loop = "loop_00000000000000000000000000000003", "example-held"
+	held.RunsKnown, held.Runs = true, lanes
+	r := buildDockReport([]dockInput{waiting, plain, held}, dockNow, 15*time.Second, 30*time.Minute, false, true, 0, true)
+	if l := dockLoopNamed(t, r, "example-paused-and-waiting"); l.State != "paused" || l.AlsoWaiting == "" || l.LanesFailed == "" {
+		t.Fatalf("%+v", l)
+	}
+	listed := map[string]bool{}
+	for _, w := range r.Worth {
+		listed[w.Loop] = true
+	}
+	if listed["example-paused-and-waiting"] || listed["example-held"] {
+		t.Errorf("a loop under Needs you is listed again for its failed lane: %+v", r.Worth)
+	}
+	if !listed["example-paused"] {
+		t.Errorf("a paused loop with a failed lane is not listed: %+v", r.Worth)
 	}
 }

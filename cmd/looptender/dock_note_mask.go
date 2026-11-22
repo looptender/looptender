@@ -33,13 +33,14 @@ var dockNoteIdentifiers = []dockNoteShape{
 	{re: regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+`)},
 	// UNC paths (\\server\share\a), starting a word or after an opening quote or bracket.
 	{re: regexp.MustCompile(`(^|[\s"'` + "`" + `(\[{<=,;])(\\\\[^\s"'` + "`" + `)\]}>]+)`), lead: true},
-	// Absolute and home paths (/a/b, ~/a, C:\a), starting a word or after an
-	// opening quote, bracket or "=".
-	{re: regexp.MustCompile(`(^|[\s"'` + "`" + `(\[{<=,;])(~?/[^\s"'` + "`" + `)\]}>]+|[A-Za-z]:\\[^\s"'` + "`" + `)\]}>]+)`), lead: true},
+	// Absolute and home paths (/a/b, ~/a, C:\a, \a\b), and the home directory
+	// of a named user (~name, ~name/a), starting a word or after an opening
+	// quote, bracket or "=".
+	{re: regexp.MustCompile(`(^|[\s"'` + "`" + `(\[{<=,;])(~?/[^\s"'` + "`" + `)\]}>]+|[A-Za-z]:\\[^\s"'` + "`" + `)\]}>]+|\\[A-Za-z0-9._-]+[\\/][^\s"'` + "`" + `)\]}>]+|~[A-Za-z_][A-Za-z0-9._-]*(?:[/\\][^\s"'` + "`" + `)\]}>]*)?)`), lead: true},
 	// A relative path that reaches out (contains ..) or that names a home
 	// directory from its root without the leading slash (Users/, home/, root/).
 	// Other relative paths (docs/plan.md) are shown.
-	{re: regexp.MustCompile(`(^|[\s"'` + "`" + `(\[{<=,;])([^\s"'` + "`" + `)\]}>]*/[^\s"'` + "`" + `)\]}>]*)`), lead: true, when: dockNoteReachingPath},
+	{re: regexp.MustCompile(`(^|[\s"'` + "`" + `(\[{<=,;])([^\s"'` + "`" + `)\]}>]*[/\\][^\s"'` + "`" + `)\]}>]*)`), lead: true, when: dockNoteReachingPath},
 	// IPv6 addresses: bracketed with an optional port, or bare with "::" or
 	// eight groups. Clock times (12:30:45) and similar stay.
 	{re: regexp.MustCompile(`\[[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*\](:\d{1,5})?|(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}`), when: dockNoteIPv6},
@@ -105,7 +106,10 @@ func dockNoteLongCode(m string) bool {
 // (a ".." segment) or its first segment is a home directory root.
 func dockNoteReachingPath(m string) bool {
 	body := strings.TrimRight(m, ".,;:!?")
-	segs := strings.Split(body, "/")
+	segs := strings.FieldsFunc(body, func(r rune) bool { return r == '/' || r == '\\' })
+	if len(segs) == 0 {
+		return false
+	}
 	switch segs[0] {
 	case "Users", "home", "root":
 		return true
