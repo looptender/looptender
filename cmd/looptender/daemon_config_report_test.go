@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/state"
 )
 
@@ -171,6 +172,11 @@ func TestMissingConfigurationIsShownByStatusDoctorAndPanel(t *testing.T) {
 	if f.read("calls") != calls {
 		t.Fatal("configuration diagnostic observed or messaged an agent while paused")
 	}
+	// The attempt is persisted before delivery (see
+	// TestConfigurationReportIsBoundedAndSavedBeforeDelivery), so the diagnostic
+	// becomes visible while the webhook request is still in flight. Wait for the
+	// delivery; later steps assert that it is never repeated.
+	waitFor(t, func() bool { return strings.Contains(f.hooks.types(), "keepgoing.error") }, "configuration report delivery")
 	if strings.Count(f.hooks.types(), "keepgoing.error") != 1 {
 		t.Fatalf("configuration report: %s", f.hooks.types())
 	}
@@ -285,5 +291,32 @@ func TestSavedStopPrecedesConfigurationErrorDelivery(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no error report")
+	}
+}
+
+// A busy tick lock puts off the first persisted attempt, never the diagnostic.
+// The daemon is told so it retries at its next control poll, and the retry
+// sends exactly one report.
+func TestConfigurationReportDeferredByBusyTickLockIsRetried(t *testing.T) {
+	f, cfg, _, e := configReportFixture(t)
+	if err := os.Remove(f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	held, err := lock.Acquire(cfg.Loop.StateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	since, deferred := updateDaemonConfigurationDeferred(e, cfg, false, false, nil, nil)
+	if since == nil || !deferred || f.hooks.types() != "" {
+		t.Fatalf("%v deferred=%v sent=%q", since, deferred, f.hooks.types())
+	}
+	if err := held.Release(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		got, deferred := updateDaemonConfigurationDeferred(e, cfg, false, false, nil, since)
+		if got == nil || deferred || strings.Count(f.hooks.types(), "keepgoing.error") != 1 {
+			t.Fatalf("pass %d: %v deferred=%v sent=%q", i, got, deferred, f.hooks.types())
+		}
 	}
 }

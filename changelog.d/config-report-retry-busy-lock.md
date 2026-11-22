@@ -1,0 +1,1 @@
+- When the daemon cannot load its configuration file and the tick lock is busy at that moment, it now retries recording and sending the single configuration-unavailable report at its next control poll instead of after a whole interval, so the diagnostic is no longer shown for up to an interval before its report is sent.
