@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
@@ -73,10 +74,18 @@ func printPromptSend(w io.Writer, r promptSendStatus) {
 // loop's own text, which then receives no policy updates.
 type wakePolicyStatus struct {
 	prompt.PolicyState
-	Message string `json:"message"`
+	// CommandPrefix says what the commands in a prompt file that reads as a
+	// wording setup wrote would run, against the program running now:
+	// installed, other_build, missing or unknown. Absent for any other prompt.
+	CommandPrefix string `json:"commandPrefix,omitempty"`
+	Message       string `json:"message"`
 }
 
 const wakePolicyOptIn = "Run `looptender prompt-policy apply -c CONFIG` to follow them: it rewrites the text above the line `Task:` to the current wording, keeps the task, keeps the previous file beside it, and records the new file."
+
+// wakePolicyNeedsTask is said instead when the file has no such line, which
+// apply refuses to guess at.
+const wakePolicyNeedsTask = "To follow them, first put the task after a line reading exactly `Task:`: `looptender prompt-policy apply -c CONFIG` refuses a file without one and writes nothing."
 
 func describeWakePolicy(l config.Loop) *wakePolicyStatus {
 	st, err := prompt.DescribePolicy(l)
@@ -84,20 +93,36 @@ func describeWakePolicy(l config.Loop) *wakePolicyStatus {
 		return nil
 	}
 	s := &wakePolicyStatus{PolicyState: st}
+	optIn, prefixNote := wakePolicyOptIn, ""
+	if st.Source != prompt.PolicyInline {
+		if raw, err := os.ReadFile(l.PromptFile); err == nil {
+			if _, ok := taskAfterLine(string(raw)); !ok {
+				if _, matched := prompt.MatchPolicy(string(raw)); !matched {
+					optIn = wakePolicyNeedsTask
+				}
+			}
+			if m, ok := prompt.MatchPolicy(string(raw)); ok {
+				verdict, program := checkPromptPrefix(m.Prefix)
+				s.CommandPrefix = verdict
+				prefixNote = prefixSentence(verdict, program)
+			}
+		}
+	}
 	switch {
 	case s.Source == prompt.PolicyInline:
 		s.Message = "The prompt is set in the configuration (loop.prompt) and sent exactly as written; it does not receive policy updates."
 	case s.Source == prompt.PolicyCustom:
-		s.Message = "The prompt file is hand-edited: it differs from every wording setup wrote, so it is sent exactly as written and does not receive policy updates. " + wakePolicyOptIn
+		s.Message = "The prompt file is hand-edited: it differs from every wording setup wrote, so it is sent exactly as written and does not receive policy updates. " + optIn
 	case s.Source == prompt.PolicyGenerated && s.Recorded:
-		s.Message = fmt.Sprintf("The prompt file was edited after it was recorded as following policy updates (it now reads as generated wording version %d), so it is sent exactly as written and no longer follows them. %s", s.FileVersion, wakePolicyOptIn)
+		s.Message = fmt.Sprintf("The prompt file was edited after it was recorded as following policy updates (it now reads as generated wording version %d), so it is sent exactly as written and no longer follows them. %s", s.FileVersion, optIn)
 	case s.Source == prompt.PolicyGenerated:
-		s.Message = fmt.Sprintf("The prompt file matches generated wording version %d but is not recorded as following policy updates, so it is sent exactly as written. %s", s.FileVersion, wakePolicyOptIn)
+		s.Message = fmt.Sprintf("The prompt file matches generated wording version %d but is not recorded as following policy updates, so it is sent exactly as written. %s", s.FileVersion, optIn)
 	case s.FileVersion == s.CurrentVersion:
 		s.Message = fmt.Sprintf("Follows policy updates: the prompt file holds the current wording (version %d), followed by the task.", s.CurrentVersion)
 	default:
 		s.Message = fmt.Sprintf("Follows policy updates: the prompt file holds version %d of the wording; each wake sends this build's version %d followed by the file's task. The file is not rewritten.", s.FileVersion, s.CurrentVersion)
 	}
+	s.Message += prefixNote
 	return s
 }
 
@@ -105,4 +130,17 @@ func printWakePolicy(w io.Writer, s *wakePolicyStatus) {
 	if s != nil {
 		fmt.Fprintf(w, "standing wake policy: %s\n", s.Message)
 	}
+}
+
+// prefixSentence says what the commands in a wake prompt would run when that
+// is not this installation's program: a prompt that follows policy updates
+// has current wording but keeps the commands it was written with.
+func prefixSentence(verdict, program string) string {
+	switch verdict {
+	case prefixOtherBuild:
+		return fmt.Sprintf(" The commands in the prompt run %s, which is not the program file running now: the wording follows updates but the commands do not. `looptender prompt-policy apply -c CONFIG --refresh-prefix` previews rewriting them.", program)
+	case prefixMissing:
+		return fmt.Sprintf(" The commands in the prompt run %s, which does not exist or is not executable, so the agent's complete and await-user commands would fail. `looptender prompt-policy apply -c CONFIG --refresh-prefix` previews rewriting them.", program)
+	}
+	return ""
 }

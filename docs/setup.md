@@ -39,7 +39,11 @@ Loops set up before this have no record and are not changed. `status` and `docto
 ```sh
 looptender prompt-policy show -c CONFIG
 looptender prompt-policy apply -c CONFIG
+looptender prompt-policy apply -c CONFIG --refresh-prefix        # preview only
+looptender prompt-policy apply -c CONFIG --refresh-prefix --yes  # write it
 ```
+
+A prompt that follows policy updates keeps the command prefix it was written with, so a prompt written for another copy of the program can tell the agent to run that copy. `status`, `doctor` and `prompt-policy show` say when the prefix runs a program file other than the one running now, or one that does not exist (`wakePolicy.commandPrefix`: `installed`, `other_build`, `missing` or `unknown`), and `doctor` warns. `apply --refresh-prefix` previews rewriting the prefix of the policy part's commands to the running program's path and writes nothing; add `--yes` to write it, with the previous file kept beside it. The same path appearing in the task text is counted in the preview and never rewritten. A hand-edited prompt with no `Task:` line is told what `apply` needs instead of being offered a command that refuses.
 
 `apply` is how a loop starts following policy updates. It rewrites the prompt file to the current wording followed by the file's task, then records it. A file that reads as a generated wording keeps its own command path and configuration path. For any other file, the task is the text after its first line that reads exactly `Task:`, and the commands get the path of the looptender that ran `apply`, which it prints. The previous file is kept beside it as `prompt.md.before-policy-<time>`. It refuses a file with no `Task:` line, a caller other than the BB thread that owns the loop, and a moment when a check is running. Moving a loop from an older wording adds the guidance that wording lacked (see the changelog). Nothing else rewrites the file.
 

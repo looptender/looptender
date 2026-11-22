@@ -99,9 +99,22 @@ func TestStatusAndDoctorSayWhereTheWakePolicyComesFrom(t *testing.T) {
 	if s == nil || s.Source != prompt.PolicyFollowing || !strings.Contains(text, "Follows policy updates: the prompt file holds version 1") {
 		t.Fatalf("%+v\n%s", s, text)
 	}
+	// The fixture's commands run a program that does not exist: doctor says so.
+	if c := doctorWakePolicy(t, f); c.Status != "warning" || !strings.Contains(c.Message, "does not exist or is not executable") || !strings.Contains(c.Fix, "--refresh-prefix") {
+		t.Fatalf("%+v", c)
+	}
+	// With commands that run this program it is fine.
+	realText := strings.ReplaceAll(string(old), `'/fictional/bin/looptender'`, initCommandPrefix())
+	if err := os.WriteFile(file, []byte(realText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := prompt.RecordPolicy(file, []byte(realText)); err != nil {
+		t.Fatal(err)
+	}
 	if c := doctorWakePolicy(t, f); c.Status != "ok" {
 		t.Fatalf("%+v", c)
 	}
+	old = []byte(realText)
 	// Edited after the record: no longer followed.
 	edited := strings.Replace(string(old), policyFixtureTask, policyFixtureTask+" Carefully.", 1)
 	if err := os.WriteFile(file, []byte(edited), 0o600); err != nil {
