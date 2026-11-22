@@ -6,6 +6,8 @@ leaves PATTERN matching nothing, so a step that pins tests by name can quietly
 stop testing. Usage: ci-go-test-ran.py go test [flags] [packages]
 Every output line is passed through. Exit status is go's, or 1 if go succeeded
 but no package ran a test.
+With -json output there are no `ok` result lines to read, so it exits 1 even on a
+pass: that fails safe, and none of the wrapped steps uses -json.
 """
 import re
 import subprocess
