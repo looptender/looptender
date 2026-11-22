@@ -230,3 +230,29 @@ test("on a thread with no turn yet, the typed task stays the default through pre
     assert.equal(create.mode, "own"); assert.equal(create.task, "Fictional task"); assert.equal("note" in create, false);
   } finally { cleanup(); }
 });
+
+test("the preview shows the takeover, and the person can turn it off and preview again", async () => {
+  const sent: Array<string | undefined> = [];
+  const offer = { provider: "claude-code", model: "example-claude-model" };
+  const call = async (input: { action: string; takeover?: "on" | "off" }): Promise<SetupResult> => {
+    if (input.action !== "preview") return { ok: true, message: "Enter a task" };
+    sent.push(input.takeover);
+    const takeover = input.takeover !== "off" ? { takeover: { ...offer, permission: "accept-edits", text: "On a usage limit on codex: a new conversation on claude-code takes over." } } : {};
+    return { ok: true, message: input.takeover === "off" ? "Preview without takeover" : "Preview with takeover", plan: { ...plan, ...takeover, takeoverOffer: offer }, ticket: "example-ticket" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Enter a task");
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByText("Preview with takeover");
+    assert.ok(ui.getByText("On a usage limit on codex: a new conversation on claude-code takes over."));
+    const box = ui.getByRole("checkbox", { name: "Take over on a usage limit" }) as HTMLInputElement;
+    assert.equal(box.checked, true);
+    fireEvent.click(box);
+    assert.equal(ui.queryByRole("button", { name: "Create disabled setup" }), null, "turning it off invalidates the preview");
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByText("Preview without takeover");
+    assert.ok(ui.getByText("No fallbacks; automatic handoff is off."));
+    assert.deepEqual(sent, ["on", "off"]);
+  } finally { cleanup(); }
+});

@@ -300,6 +300,7 @@ func (w *World) Init(events ...string) {
 	dir := filepath.Join(w.Root, "setup")
 	w.Must("init", "--non-interactive", "--name", "example-loop", "--agent", "bb", "--thread", primaryThread,
 		"--provider", "claude-code", "--project", w.Project, "--directory", dir, "--task", scenarioTask)
+	w.initCalls()
 	w.Config = initConfig(dir)
 	w.Thread(primaryThread)
 	if len(events) > 0 {
@@ -307,6 +308,54 @@ func (w *World) Init(events ...string) {
 			loop["report"] = map[string]any{"events": events, "timeout": "5s"}
 		})
 	}
+}
+
+// Providers makes the stand-in bb report these providers as available, and
+// a default model for each: what init and fallbacks arm read to find a
+// provider a new conversation can take over on.
+func (w *World) Providers(models map[string]string) {
+	w.t.Helper()
+	var list []map[string]any
+	for _, p := range []string{"claude-code", "codex"} {
+		list = append(list, map[string]any{"id": p, "displayName": p, "available": models[p] != ""})
+		if m := models[p]; m != "" {
+			b, _ := json.Marshal([]map[string]any{{"id": m, "model": m, "displayName": m, "isDefault": true}})
+			if err := os.WriteFile(filepath.Join(w.world, "models."+p), b, 0o600); err != nil {
+				w.t.Fatal(err)
+			}
+		}
+	}
+	b, _ := json.Marshal(list)
+	if err := os.WriteFile(filepath.Join(w.world, "providers.list"), b, 0o600); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// InitWith creates the BB loop as Init does, with more init flags.
+func (w *World) InitWith(flags ...string) Result {
+	w.t.Helper()
+	dir := filepath.Join(w.Root, "setup")
+	r := w.Must(append([]string{"init", "--non-interactive", "--name", "example-loop", "--agent", "bb", "--thread", primaryThread,
+		"--provider", "claude-code", "--project", w.Project, "--directory", dir, "--task", scenarioTask}, flags...)...)
+	w.initCalls()
+	w.Config = initConfig(dir)
+	w.Thread(primaryThread)
+	return r
+}
+
+// initCalls marks the bb commands init made (only the provider metadata it
+// reads when asked to offer a takeover) as seen, so they are not charged to
+// the next step.
+func (w *World) initCalls() {
+	w.t.Helper()
+	var calls [][]string
+	readLines(w.t, filepath.Join(w.world, "calls.jsonl"), &calls)
+	for _, c := range calls[w.callsSeen:] {
+		if len(c) < 2 || c[0] != "provider" {
+			w.t.Fatalf("init ran bb %v", c)
+		}
+	}
+	w.callsSeen = len(calls)
 }
 
 // EditConfig rewrites the loop section of the configuration.
@@ -791,9 +840,11 @@ func (w *World) invariants(s *Step) {
 	}
 	for _, c := range s.Calls {
 		// Besides thread commands, only the two read-only questions to BB's
-		// retry plugin are expected.
+		// retry plugin, and the provider metadata init and fallbacks arm
+		// read, are expected.
 		plugin := len(c) == 4 && c[0] == "provider-retry" && (c[1] == "explain" || c[1] == "status") && c[3] == "--json"
-		if !plugin && (len(c) < 2 || c[0] != "thread") {
+		providers := (len(c) == 3 && c[0] == "provider" && c[1] == "list" && c[2] == "--json") || (len(c) == 4 && c[0] == "provider" && c[1] == "models" && c[3] == "--json")
+		if !plugin && !providers && (len(c) < 2 || c[0] != "thread") {
 			w.Failf(s, "unexpected bb command %v", c)
 		}
 	}

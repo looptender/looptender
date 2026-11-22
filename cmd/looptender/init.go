@@ -37,9 +37,16 @@ type initOptions struct {
 	accountID                                      string          // --account: a catalog entry the person names for the first route
 	accountEntry                                   *accounts.Entry // the entry named or picked; nil for none
 	fallbacks                                      []initFallback
-	stall, wake, backoff, interval                 time.Duration
-	nudges, reprompts, probeCap                    int
-	nonInteractive, dryRun, withGoal, allowShare   bool
+	// newThread is the takeover fallback asked for (Provider "none" when
+	// declined); offer is a usable provider found when none was asked for.
+	newThread newThreadChoice
+	offer     *newThreadOffer
+	// detectTakeover lets a script ask which provider is usable; without
+	// it, a script's init runs no bb command, as before.
+	detectTakeover                               bool
+	stall, wake, backoff, interval               time.Duration
+	nudges, reprompts, probeCap                  int
+	nonInteractive, dryRun, withGoal, allowShare bool
 }
 
 type initFallback struct {
@@ -80,6 +87,11 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 		o.fallbacks = append(o.fallbacks, initFallback{kind: kind, group: group, account: account})
 		return nil
 	})
+	fs.StringVar(&o.newThread.Provider, "new-thread-provider", "", "bb: on a usage limit, start a new conversation on this provider (claude-code or codex) that takes over; none declines it")
+	fs.StringVar(&o.newThread.Model, "new-thread-model", "", "bb: the model of that new conversation (required with --new-thread-provider)")
+	fs.StringVar(&o.newThread.Reasoning, "new-thread-reasoning", "", "bb: the reasoning level of that new conversation")
+	fs.BoolVar(&o.detectTakeover, "detect-takeover", false, "bb, with --non-interactive: ask bb which other provider is usable for a takeover and name it (newThreadOffer in --json); runs bb provider list and models, nothing else")
+	fs.StringVar(&o.newThread.Permission, "new-thread-permission-mode", "", "bb: its permission mode: accept-edits (default), auto or full")
 	fs.DurationVar(&o.stall, "stall-after", config.DefaultStallAfter, "time without Git progress before nudging")
 	fs.DurationVar(&o.wake, "wake-every", config.DefaultMinWakeInterval, "minimum time since last send before a stall nudge; idle wakes follow check interval")
 	fs.DurationVar(&o.backoff, "backoff", config.DefaultBackoff, "delay between error re-prompts")
@@ -111,6 +123,11 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 		e.errf("init: %v", err)
 		return exitUsage
 	}
+	// A script gets a takeover only by asking for it. When it did not, and
+	// another provider is usable, it is told how.
+	if o.nonInteractive && o.detectTakeover && o.agent == "bb" && !visited["new-thread-provider"] && len(o.fallbacks) == 0 && o.routes != config.RoutesStandard {
+		o.offer = detectNewThreadOffer(e.ctx, strings.TrimSpace(o.provider), lookPath)
+	}
 	if o.taskFile == "-" {
 		task, err := readInitTask(e.ctx, input)
 		if err != nil {
@@ -138,7 +155,7 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 		e.errf("warning: %s", w)
 	}
 	if w := singleRouteWarning(cfg); w != "" {
-		e.errf("warning: %s %s", w, limitWaitWayOut)
+		e.errf("warning: %s %s", w, singleRouteFix(cfg, filepath.Join(o.directory, config.FileName)))
 	}
 	for _, p := range successorPlans(cfg) {
 		e.errf("warning: %s", p.Text())
@@ -189,8 +206,14 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 		for i, c := range cfg.FallbackSet.Candidates {
 			fmt.Fprintf(e.stdout, "Fallback %d: %s; quota group: %s\n", i+1, c.Agent.Describe(), c.Group)
 			printInitAccount(e.stdout, c.Agent)
+			if isNewThreadCandidate(c) {
+				printNewThreadPlan(e.stdout, cfg.Loop.Provider, c, initNewThreadOff)
+			}
 		}
 		fmt.Fprintf(e.stdout, "After enable: rate-limit handoffs only, exact probe required; scheduled probes every 12h, cap %d per fallback per UTC day. Exact/manual probes are additional model calls. Switch-back is off.\n", o.probeCap)
+	}
+	if o.offer != nil {
+		fmt.Fprintf(e.stdout, "Takeover: not set up. %s is usable for a new conversation that would take over on a usage limit; add --new-thread-provider %s --new-thread-model %s to set it up, or --new-thread-provider none to say no.\n", o.offer.Provider, o.offer.Provider, o.offer.Model)
 	}
 	fmt.Fprintln(e.stdout, "Setup leaves supervision disabled. No agents, probes, logins, or schedulers are started. Existing provider permissions are inherited; account identity and access have not been verified.")
 	if o.dryRun {
@@ -376,7 +399,30 @@ func collectInit(e env, o *initOptions, input io.Reader, lookPath func(string) (
 			}
 		}
 	}
-	if !visited["fallback"] && o.agent != "cursor" && o.agent != "antigravity" && o.routes != config.RoutesStandard {
+	// A BB loop is offered a takeover on another provider, when one is
+	// usable: yes unless declined.
+	if o.agent == "bb" && !visited["new-thread-provider"] && !visited["fallback"] && o.routes != config.RoutesStandard {
+		if offer := detectNewThreadOffer(e.ctx, o.provider, lookPath); offer != nil {
+			// What yes means, before the question.
+			printNewThreadPlan(e.stdout, o.provider, offerCandidate(*offer, o.newThread.Permission), initNewThreadOff)
+			choice, err := ask(fmt.Sprintf("On a usage limit, start a new conversation on %s that takes over this loop, with its child lanes? (yes/no)", offer.Provider), "yes")
+			if err != nil {
+				return err
+			}
+			switch strings.ToLower(choice) {
+			case "yes", "y":
+				o.newThread.Provider = offer.Provider
+				if o.newThread.Model, err = ask("Model of that new conversation", offer.Model); err != nil {
+					return err
+				}
+			case "no", "n":
+				o.newThread.Provider = "none"
+			default:
+				return errors.New("takeover choice must be yes or no")
+			}
+		}
+	}
+	if !visited["fallback"] && o.agent != "cursor" && o.agent != "antigravity" && o.routes != config.RoutesStandard && (o.newThread.Provider == "" || o.newThread.Provider == "none") {
 		fmt.Fprintln(e.stdout, "Optional fallbacks use existing logins. Use the same quota label for accounts sharing limits. Blank keeps a single agent.")
 		for {
 			a, err := ask("Next fallback agent (claude/codex, blank to finish)", "")
@@ -605,6 +651,26 @@ func planInit(o *initOptions, lookPath func(string) (string, error)) (map[string
 		}
 		groups[a.Group] = true
 		fallbacks.Candidates = append(fallbacks.Candidates, config.Candidate{ID: fmt.Sprintf("fallback-%d", i+1), Agent: a, Probe: config.Probe{Kind: spec.kind}})
+	}
+	if p := o.newThread.Provider; p != "" && p != "none" {
+		switch {
+		case o.agent != "bb":
+			return fail(errors.New("--new-thread-provider is for bb loops: a takeover starts a new BB conversation"))
+		case len(o.fallbacks) > 0:
+			return fail(errors.New("--new-thread-provider and --fallback exclude each other"))
+		case o.routes == config.RoutesStandard:
+			return fail(errors.New("--new-thread-provider and --routes standard exclude each other: a loop follows the standard list or has its own"))
+		}
+		if err := validNewThreadChoice(o.newThread, primary.Provider); err != nil {
+			return fail(err)
+		}
+		c, err := newThreadCandidate(o.newThread, primary.BB.CLI, lookPath)
+		if err != nil {
+			return fail(err)
+		}
+		fallbacks.Candidates = append(fallbacks.Candidates, c)
+	} else if o.newThread.Model != "" || o.newThread.Reasoning != "" || o.newThread.Permission != "" {
+		return fail(errors.New("--new-thread-model, --new-thread-reasoning and --new-thread-permission-mode need --new-thread-provider"))
 	}
 	// Keep the output small and explicit, especially failover_on: [] (the
 	// config struct's omitempty would otherwise restore the default on reload).

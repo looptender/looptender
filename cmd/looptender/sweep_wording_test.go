@@ -65,7 +65,7 @@ func TestDoctorMentionsAWaitRecordedOnAHeldLoop(t *testing.T) {
 	now := time.Now().UTC()
 	st := state.File{LimitWaitReport: &state.LimitWaitReport{Target: "primary", ResetsAt: now.Add(60 * time.Hour), DetectedAt: now.Add(-time.Hour), Outcome: state.LimitWaitNotSubscribed, Reason: "limit_no_fallback"}}
 	r := &doctorReport{Checks: []doctorCheck{}}
-	doctorRoutes(r, cfg, st, true, "paused", now)
+	doctorRoutes(r, cfg, "loop.yaml", st, true, "paused", now)
 	var found *doctorCheck
 	for i := range r.Checks {
 		if r.Checks[i].ID == "limit_wait" {
@@ -76,7 +76,7 @@ func TestDoctorMentionsAWaitRecordedOnAHeldLoop(t *testing.T) {
 		t.Fatalf("%+v", r.Checks)
 	}
 	r = &doctorReport{Checks: []doctorCheck{}}
-	doctorRoutes(r, cfg, st, true, "", now)
+	doctorRoutes(r, cfg, "loop.yaml", st, true, "", now)
 	for _, c := range r.Checks {
 		if c.ID == "limit_wait" && c.Status != "warning" {
 			t.Errorf("an unheld loop's wait is %s", c.Status)
@@ -161,7 +161,7 @@ func TestSingleRouteWarningIsNotShownForACompletedOrDisabledLoop(t *testing.T) {
 	}
 	has := func(held string) bool {
 		r := &doctorReport{Checks: []doctorCheck{}}
-		doctorRoutes(r, cfg, state.File{}, true, held, time.Now())
+		doctorRoutes(r, cfg, "loop.yaml", state.File{}, true, held, time.Now())
 		for _, c := range r.Checks {
 			if c.ID == "routes.single" {
 				return true

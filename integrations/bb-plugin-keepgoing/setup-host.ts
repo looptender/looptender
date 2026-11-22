@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { z } from "zod";
-import { withClientFlag } from "./client-flag.ts";
+import { refusesFlag, withClientFlag } from "./client-flag.ts";
 import { goalSummarySchema } from "./status-details.ts";
 import { planSchema, refusedReportSchema, type Refusal, type SetupTarget, type SetupRecord } from "./setup-contract.ts";
 import { durationMs, type Bounds } from "./new-thread-contract.ts";
@@ -34,7 +34,17 @@ const cliPlan = z.object({
   primary: z.object({ agent: z.object({ adapter: z.literal("bb"), bbThread: z.string(), provider: z.string() }) }),
   fallbacks: z.array(z.unknown()).length(0),
   limits: planSchema.shape.limits.extend({ failoverOn: z.array(z.unknown()).length(0) }),
+  newThreadOffer: z.object({ provider: z.string().min(1).max(64), model: z.string().min(1).max(256) }).optional(),
 });
+// A setup with a takeover: one new-thread fallback, handoff on a rate limit.
+const takeoverPlan = cliPlan.extend({
+  routes: z.literal("own"),
+  fallbacks: z.tuple([z.object({ id: z.string().min(1).max(64), newThread: z.object({ provider: z.string().min(1).max(64), model: z.string().min(1).max(256), permission: z.string().max(32), text: z.string().min(1).max(4096) }) })]),
+  limits: planSchema.shape.limits.extend({ failoverOn: z.tuple([z.literal("rate_limit")]) }),
+});
+/** The takeover asked of init: a provider and model, none to decline, or
+ * detect to ask init which provider is usable (it then names one). */
+export type TakeoverChoice = { provider: string; model: string } | "none" | "detect";
 // A setup that follows the standard route list: the routes that apply now,
 // and handoff on a rate limit. Only id, model and group are read from each.
 const followingPlan = cliPlan.extend({
@@ -80,16 +90,25 @@ export async function standardRoutesOnHost(input: { bin: string; target: SetupTa
     return { available: false };
   }
 }
-export async function setupOnHost(input: { bin: string; target: SetupTarget; name: string; task: string; dryRun: boolean; withGoal?: boolean; bounds?: Bounds; followStandard?: true }, signal?: AbortSignal, run: Execute = execute): Promise<{ plan: z.infer<typeof planSchema>; registration?: Publication } | { refused: Refusal } | { noRoutes: true }> {
-  const { bin, target, name, task, dryRun, withGoal = false, bounds, followStandard } = input;
+export async function setupOnHost(input: { bin: string; target: SetupTarget; name: string; task: string; dryRun: boolean; withGoal?: boolean; bounds?: Bounds; followStandard?: true; takeover?: TakeoverChoice }, signal?: AbortSignal, run: Execute = execute): Promise<{ plan: z.infer<typeof planSchema>; registration?: Publication } | { refused: Refusal } | { noRoutes: true }> {
+  const { bin, target, name, task, dryRun, withGoal = false, bounds, followStandard, takeover } = input;
   const project = await realpath(target.project);
   const args = ["init", "--non-interactive", "--json", "--name", name, "--agent", "bb", "--thread", target.threadId, "--provider", target.provider, "--project", project, "--task-file", "-"];
   if (withGoal) args.push("--with-goal");
   // Loop-wide bounds are fixed values from a closed list, never free text.
   if (bounds) args.push("--max-sends", String(bounds.maxSends), "--no-progress-timeout", bounds.noProgressTimeout);
   if (followStandard) args.push("--routes", "standard");
+  // Provider and model labels only, from init's own offer.
+  if (takeover === "none") args.push("--new-thread-provider", "none");
+  else if (takeover === "detect") args.push("--detect-takeover");
+  else if (takeover) args.push("--new-thread-provider", takeover.provider, "--new-thread-model", takeover.model);
   if (dryRun) args.push("--dry-run");
-  const result = await run(bin, args, task, target.threadId, signal);
+  let result = await run(bin, args, task, target.threadId, signal);
+  // A CLI too old to know --detect-takeover refuses it as a usage error with
+  // nothing printed: asked again without it, it offers nothing, as before.
+  if (takeover === "detect" && refusesFlag({ code: result.code, emptyStdout: result.emptyStdout ?? false, timedOut: result.timedOut ?? false })) {
+    result = await run(bin, args.filter(a => a !== "--detect-takeover"), task, target.threadId, signal);
+  }
   // keepgoing's own refusal, when it reports one in a structured form. Only
   // the code and the other loop's name cross back; never its stderr.
   const refused = result.code !== 0 ? refusedReportSchema.safeParse(result.data) : undefined;
@@ -98,7 +117,12 @@ export async function setupOnHost(input: { bin: string; target: SetupTarget; nam
   // plainly, not as a setup failure.
   if (followStandard && result.code === 0 && followingPlan.extend({ fallbacks: z.array(z.unknown()).length(0) }).safeParse(result.data).success) return { noRoutes: true };
   const following = followStandard ? followingPlan.safeParse(result.data) : undefined;
-  const parsed = following ?? cliPlan.safeParse(result.data);
+  const taking = typeof takeover === "object" ? takeoverPlan.safeParse(result.data) : undefined;
+  if (taking && typeof takeover === "object" && result.code === 0) {
+    const nt = taking.success ? taking.data.fallbacks[0].newThread : undefined;
+    if (!nt || nt.provider !== takeover.provider || nt.model !== takeover.model) throw new Error("Setup did not report the takeover that was asked for. Nothing was created.");
+  }
+  const parsed = following ?? taking ?? cliPlan.safeParse(result.data);
   if (result.code !== 0 || !parsed.success) throw new Error("Setup failed or returned an unsupported result. " + (withGoal ? "Goal setup needs a CLI with init --with-goal (after v0.1.4); update the CLI or explicitly turn off goal creation and preview again. " : "") + "Check the setup destination; existing files are never overwritten.");
   const p = parsed.data;
   if (!isAbsolute(p.configPath) || !["looptender.yaml", "keepgoing.yaml"].includes(basename(p.configPath)) || p.stateDir !== join(dirname(p.configPath), "state")) throw new Error("Setup paths could not be verified.");
@@ -108,10 +132,12 @@ export async function setupOnHost(input: { bin: string; target: SetupTarget; nam
     const goal = z.object({ promptContext: z.literal(true), titleSource: z.literal("loop_name"), specificationSource: z.literal("task_snapshot"), record: goalSummarySchema.optional() }).safeParse(p.goal);
     if (!goal.success || p.taskPath !== join(dirname(p.configPath), "task.md") || (dryRun ? goal.data.record !== undefined : goal.data.record?.revision !== 1)) throw new Error("Goal setup could not be verified. A disabled setup may exist; inspect the destination before retrying.");
   } else if (p.goal !== undefined) throw new Error("Setup unexpectedly included a goal. No supervisor was started.");
-  const { startJson, fallbacks, routes: _routes, ...plan } = p as typeof p & { routes?: string };
+  const { startJson, fallbacks, routes: _routes, newThreadOffer, ...plan } = p as typeof p & { routes?: string; newThreadOffer?: { provider: string; model: string } };
+  const nt = taking?.success ? taking.data.fallbacks[0].newThread : undefined;
+  const takeoverFields = { ...(nt ? { takeover: { provider: nt.provider, model: nt.model, permission: nt.permission, text: nt.text } } : {}), ...(newThreadOffer ? { takeoverOffer: newThreadOffer } : {}) };
   const routes = following?.success ? { list: "standard" as const, handoffOn: "rate_limit" as const, apply: following.data.fallbacks.map(f => ({ id: f.id, model: f.target.agent.model ?? "", group: f.target.agent.group ?? "" })) } : undefined;
   void fallbacks;
-  return { ...(dryRun ? {} : { registration: await publishReference(bin, p.configPath, target.threadId, target.provider, signal, run) }), plan: planSchema.parse({ ...plan, ...(startJson === true ? { startJson: true } : {}), ...(withGoal ? { withGoal: true } : {}), ...(routes ? { routes } : {}), threadId: target.threadId, provider: target.provider }) };
+  return { ...(dryRun ? {} : { registration: await publishReference(bin, p.configPath, target.threadId, target.provider, signal, run) }), plan: planSchema.parse({ ...plan, ...(startJson === true ? { startJson: true } : {}), ...(withGoal ? { withGoal: true } : {}), ...(routes ? { routes } : {}), ...takeoverFields, threadId: target.threadId, provider: target.provider }) };
 }
 export async function commandOnHost(input: { bin: string; record: SetupRecord; operation: "status" | "doctor" | "start" | "pause" | "resume" | "stop"; json?: true }, signal?: AbortSignal, run: Execute = execute) {
   const { bin, record, operation } = input;

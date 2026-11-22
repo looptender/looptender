@@ -405,6 +405,8 @@ In v0.2.0, a candidate that passes its exact probe but then rejects the takeover
 
 ## Hand off to a new conversation
 
+**Setting one up.** For a BB loop, `init` offers this fallback when BB reports another usable provider, and `fallbacks arm` adds it to an existing loop; both turn handoff on. See [a takeover for a BB loop](setup.md#a-takeover-for-a-bb-loop-unreleased).
+
 Released in v0.2.0; **offline fixtures with a fake `bb` only, nothing live**. A BB fallback normally names a thread that already exists, and a BB thread cannot change provider. So moving from, say, a Codex primary to Claude inside BB needed a thread someone had created beforehand. A candidate can now say "start a new thread on this provider and model" instead:
 
 ```yaml
