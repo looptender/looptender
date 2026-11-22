@@ -1474,6 +1474,8 @@ func dockTestingOf(state string, st *statusOut, chain *dockChainInput) dockTesti
 	switch state {
 	case "paused":
 		t.notWhile = "while the loop is paused"
+	case "paused_and_waiting":
+		t.notWhile = "while the loop is paused and held for a person"
 	case "waiting_for_you":
 		t.notWhile = "while the loop is held for a person"
 	case "finished":
@@ -1778,7 +1780,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	}
 	use := dockUse(l, st)
 	l.Lanes = dockLaneList(in.Runs, in.RunsKnown, identifiers, use.Target != "", in.LaneTitles, now)
-	l.Chain = dockHandoffChain(in.Chain, use, dockTestingOf(l.State, st, in.Chain), l.Fallbacks, now, identifiers)
+	l.Chain = dockHandoffChain(in.Chain, use, dockTestingOf(dockNoteState(l), st, in.Chain), l.Fallbacks, now, identifiers)
 	l.Away = dockAwayOf(st, in.Chain, l.Chain.Entries, in.Timeline, now)
 	l.CheckedBy = dockCheckedByOf(snap, st, in.ServiceFile)
 	l.Build = dockBuildOf(dockLastBuild(st, in.Timeline), version)
@@ -1875,6 +1877,9 @@ func dockUse(l dockLoop, st *statusOut) dockRouteUse {
 		u.Phrase = "Current route, loop held"
 	case "paused":
 		u.Phrase = "Current route, loop paused"
+		if l.AlsoWaiting != "" {
+			u.Phrase = "Current route, loop paused and waiting for you"
+		}
 	case "stopped":
 		u.Phrase = "Current route, loop stopped"
 	case "finished":
@@ -2749,4 +2754,13 @@ func dockCheckedByOf(snap *clientSnapshot, st *statusOut, serviceFile string) do
 		return dockCheckedBy{"none", "Not checked yet."}
 	}
 	return dockCheckedBy{"none", "Nothing on record checks it."}
+}
+
+// dockNoteState is the state as the wording about tests and routes reads it: a
+// paused loop that is still waiting for a person is both.
+func dockNoteState(l dockLoop) string {
+	if l.State == "paused" && l.AlsoWaiting != "" {
+		return "paused_and_waiting"
+	}
+	return l.State
 }
