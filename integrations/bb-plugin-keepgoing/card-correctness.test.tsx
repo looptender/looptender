@@ -62,7 +62,7 @@ test("the confirmation for a target that is not a BB thread names the target, no
   const ui = card({ ...loop, supervising: false, target: "fallback-2", details: { ...loop.details, targetThread: null, targetAdapter: "example-adapter" } }, "thr_nonbb");
   try {
     fireEvent.click(await ui.findByRole("button", { name: "Pause…" }));
-    assert.ok(ui.getByText("Pause loop example-loop? Its current target is fallback-2, not this thread."));
+    assert.ok(ui.getByText("Pause loop example-loop? Its current target is example-adapter, not this thread."));
     assert.equal(ui.queryByText(/supervises example-adapter/), null);
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });

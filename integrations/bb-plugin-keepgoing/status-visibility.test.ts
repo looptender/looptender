@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server.ts";
-import { reasonLines, boundedTitle, diagnosticLines, type StatusDetails } from "./status-details.ts";
+import { reasonLines, boundedTitle, diagnosticLines, recordsUnreadable, type StatusDetails } from "./status-details.ts";
 
 // A stand-in looptender that prints the given status JSON and exits with the given code.
 async function loopWith(status: object, exit = 0) {
@@ -81,15 +81,61 @@ test("a held loop's note is a visible reason, cut short; an enabled loop's note 
 
 test("a title is cut to the length asked", () => { assert.equal(boundedTitle("a".repeat(2000), 600).length, 600); assert.equal(boundedTitle("short"), "short"); });
 
-test("a malformed optional field is ignored and the loop is kept", async () => {
+test("a malformed optional field is named as unreadable and the loop is kept, with exit 0 or 1", async () => {
   const bad = { ...healthy, diskSpace: "garbage", sendAllowance: { max: "x" }, unreadable: "nope", deadline: 5, deadlineReached: "yes", sendRecord: 7, control: { supersededBy: 3 } };
-  const w = await loopWith(bad);
+  for (const [exit, kept] of [[0, true], [1, false]] as const) {
+    const w = await loopWith(bad, exit);
+    try {
+      const r = await w.forThread();
+      // Exit 1 is accepted only when status names an unreadable list; "nope" is not one, so that stays an unavailable status.
+      assert.equal(r.loops.length, kept ? 1 : 0, `exit ${exit}`);
+      if (!kept) continue;
+      assert.deepEqual(r.errors, []); assert.equal(r.loops[0]!.controlState, "enabled"); assert.ok(recordsUnreadable(r.loops[0]!.details));
+      const d = r.loops[0]!.details as Record<string, unknown>;
+      for (const key of ["disk", "sends", "unreadable", "deadline", "sendRecord", "supersededBy"]) assert.equal(d[key], undefined, key);
+      assert.deepEqual(d.unparsed, ["supersededBy", "deadline", "deadlineReached", "sendAllowance", "sendRecord", "diskSpace", "unreadable"]);
+      // A malformed unreadable field still says records are unreadable, never healthy.
+      assert.deepEqual(reasonLines("enabled", null, d as unknown as StatusDetails), ["status reported records it could not read, and their details could not be read", "Status could not be read for: supersededBy, deadline, deadlineReached, sendAllowance, sendRecord, diskSpace, unreadable"]);
+    } finally { await w.dispose(); }
+  }
+});
+
+test("exit 1 with unreadable entries keeps the good ones and flags the bad; nothing parsed still reads as unreadable, never healthy", async () => {
+  const good = { file: "state.json", problem: "not_json", remedy: "Checks fail and send nothing until it is repaired. Restore it." };
+  const { state: _s, targetAgent: _t, ...rest } = healthy;
+  const mixed = await loopWith({ ...rest, unreadable: [good, { file: "control.json", problem: "not_json" }] }, 1);
   try {
-    const r = await w.forThread();
-    assert.deepEqual(r.errors, []); assert.equal(r.loops.length, 1); assert.equal(r.loops[0]!.controlState, "enabled");
-    const d = r.loops[0]!.details as Record<string, unknown>;
-    for (const key of ["disk", "sends", "unreadable", "deadline", "sendRecord", "supersededBy"]) assert.equal(d[key], undefined, key);
-  } finally { await w.dispose(); }
+    const d = (await mixed.forThread()).loops[0]!.details;
+    assert.deepEqual(d.unreadable?.map(u => u.file), ["state.json"]); assert.deepEqual(d.unparsed, ["unreadable"]);
+    assert.ok(recordsUnreadable(d));
+    assert.deepEqual(reasonLines("enabled", null, d), ["state.json could not be read (its content is not JSON). Checks fail and send nothing until it is repaired.", "Status could not be read for: unreadable"]);
+  } finally { await mixed.dispose(); }
+  const none = await loopWith({ ...rest, unreadable: [{ file: "control.json", problem: "not_json" }] }, 1);
+  try {
+    const { loops, errors } = await none.forThread();
+    assert.deepEqual(errors, []); assert.equal(loops.length, 1);
+    const d = loops[0]!.details;
+    assert.equal(d.unreadable, undefined); assert.ok(recordsUnreadable(d));
+    assert.deepEqual(reasonLines("enabled", null, d), ["status reported records it could not read, and their details could not be read", "Status could not be read for: unreadable"]);
+  } finally { await none.dispose(); }
+});
+
+test("a malformed deadlineReached never prints reached: false, and the reset-after-deadline claim is not made", () => {
+  const base: StatusDetails = { readAt: "2026-01-01T00:00:00Z", completed: false, targetThread: "thr_x", targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null, unparsed: ["deadlineReached"],
+    deadline: { at: "2026-01-03T00:00:00Z" }, limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2026-01-06T00:00:00Z", resetIn: "5 days", resetPassed: false } };
+  const lines = diagnosticLines(base, "primary", true);
+  assert.ok(lines.some(l => l.includes("(reached: could not be read; evaluated on next check)")));
+  assert.ok(!lines.some(l => l.includes("reached: false")));
+  assert.ok(!lines.some(l => /falls after this loop's deadline/i.test(l)));
+  assert.ok(!reasonLines("enabled", null, base).some(l => l.startsWith("Deadline reached")));
+});
+
+test("an unpunctuated remedy is cut to 240 characters in the reasons", () => {
+  const d: StatusDetails = { readAt: "2026-01-01T00:00:00Z", completed: false, targetThread: "thr_x", targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null,
+    unreadable: [{ file: "state.json", problem: "not_json", remedy: "word ".repeat(200).trim() }] };
+  const line = reasonLines("enabled", null, d)[0]!;
+  const remedy = line.slice("state.json could not be read (its content is not JSON). ".length);
+  assert.equal(remedy.length, 240); assert.ok(remedy.endsWith("…"));
 });
 
 test("the listing says a low disk once, as disk=low, and nothing for an ok one", async () => {

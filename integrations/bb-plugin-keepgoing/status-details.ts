@@ -68,7 +68,9 @@ export const detailsSchema = z.object({
   supersededBy: z.string().max(128).optional(),
   // status --json deadline/deadlineReached, sendAllowance, sendRecord, diskSpace
   // and unreadable. Each is present only when there is something to say.
-  deadline: z.object({ at: z.string().max(64), reached: z.boolean() }).optional(),
+  deadline: z.object({ at: z.string().max(64), reached: z.boolean().optional() }).optional(),
+  // Names of the fields above that status sent in a form this plugin could not read.
+  unparsed: z.array(z.string().max(32)).max(8).optional(),
   sends: z.object({ max: z.number().int().nonnegative(), used: z.number().int().nonnegative().optional(), remaining: z.number().int().nonnegative().optional(), reached: z.boolean(), unavailable: z.boolean().optional() }).optional(),
   sendRecord: z.string().max(600).optional(),
   disk: z.object({ level: z.enum(["low", "critical"]), message: z.string().max(400) }).optional(),
@@ -154,11 +156,15 @@ const firstSentence = (text: string): string => { const m = /^.*?[.!?](?=\s|$)/s
 const AFTER_DEADLINE = "the reset falls after this loop's deadline: the loop will be held by the deadline on its first check after it, before this wait can end";
 const resetAfterDeadline = (d: StatusDetails | undefined): boolean => {
   const reset = Date.parse(d?.limitWait?.resetsAt ?? ""), deadline = Date.parse(d?.deadline?.at ?? "");
-  return !!d?.deadline && !d.deadline.reached && Number.isFinite(reset) && Number.isFinite(deadline) && reset > deadline;
+  return !!d?.deadline && d.deadline.reached === false && Number.isFinite(reset) && Number.isFinite(deadline) && reset > deadline;
 };
 
 /** The send allowance as status prints it: `used/max attempts reserved; N remaining`. */
 const sendsText = (s: NonNullable<StatusDetails["sends"]>) => s.unavailable || s.used === undefined || s.remaining === undefined ? `${s.max} allowed; the count is unavailable` : `${s.used}/${s.max} attempts reserved; ${s.remaining} remaining`;
+
+/** status reported unreadable records, whether or not their details could be read. */
+export const recordsUnreadable = (d: StatusDetails | undefined): boolean => !!d?.unreadable?.length || !!d?.unparsed?.includes("unreadable");
+const unparsedLine = (names: readonly string[]) => `Status could not be read for: ${names.join(", ")}`;
 
 /**
  * Short, visible reasons a loop is not simply "enabled", most important first,
@@ -169,8 +175,10 @@ const sendsText = (s: NonNullable<StatusDetails["sends"]>) => s.unavailable || s
 export function reasonLines(controlState: string, note: string | null, d: StatusDetails | undefined): string[] {
   const out: string[] = [];
   for (const u of d?.unreadable ?? []) out.push(`${unreadableHead(u)}. ${firstSentence(u.remedy)}`);
+  if (recordsUnreadable(d) && !d?.unreadable?.length) out.push("status reported records it could not read, and their details could not be read");
+  if (d?.unparsed?.length) out.push(unparsedLine(d.unparsed));
   if (d?.sendRecord) out.push(`Send record: ${firstSentence(d.sendRecord)}`);
-  if (d?.deadline?.reached) out.push(`Deadline reached (${dateLabel(d.deadline.at)}); evaluated on the next check`);
+  if (d?.deadline?.reached === true) out.push(`Deadline reached (${dateLabel(d.deadline.at)}); evaluated on the next check`);
   if (d?.sends?.reached) out.push(`Send limit reached: ${sendsText(d.sends)}`);
   if (d?.disk) out.push(`Disk: ${d.disk.message}`);
   const wait = d?.limitWait;
@@ -232,7 +240,8 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
   }
   for (const u of d.unreadable ?? []) lines.push(`Unreadable record: ${unreadableHead(u)}. ${u.remedy}`);
   if (d.sendRecord) lines.push(`Send record: ${d.sendRecord}`);
-  if (d.deadline) lines.push(`Deadline: ${dateLabel(d.deadline.at)} (reached: ${d.deadline.reached}; evaluated on next check)`);
+  if (d.deadline) lines.push(`Deadline: ${dateLabel(d.deadline.at)} (reached: ${d.deadline.reached ?? "could not be read"}; evaluated on next check)`);
+  if (d.unparsed?.length) lines.push(unparsedLine(d.unparsed));
   if (d.sends) lines.push(`Sends: ${sendsText(d.sends)} (reached: ${d.sends.reached})`);
   if (d.disk) lines.push(`Disk: ${d.disk.message}`);
   if ((d.failedChecks ?? 0) > 0) lines.push(`Checks failing: ${d.failedChecks} failed checks recorded; a responsive daemon does not establish operational supervision`);

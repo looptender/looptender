@@ -13,7 +13,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
-import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle } from "./status-details";
+import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable } from "./status-details";
 import { SetupPanel } from "./setup-panel";
 import { AttachPanel } from "./attach-panel";
 import { TransferPanel } from "./transfer-panel";
@@ -77,7 +77,7 @@ function label(loop: LoopView): string {
 
 function stateLabel(loop: LoopView): string {
   // status exits 1 and says which record it could not read; the control state beside it cannot be trusted.
-  if (loop.details?.unreadable?.length) return "looptender: records unreadable";
+  if (recordsUnreadable(loop.details)) return "looptender: records unreadable";
   if (loop.imported && loop.controlState === "enabled" && ((loop.details?.failedChecks ?? 0) > 0 || ["failed", "error"].includes(loop.details?.lastCheck?.outcome ?? ""))) return "looptender: checks failing";
   if (loop.imported && loop.controlState === "enabled" && !loop.details?.lastCheck) return "looptender: no check recorded";
   if (loop.controlState === "enabled" && loop.details?.schedule?.overdue) return "looptender: checks have stopped";
@@ -115,7 +115,7 @@ const buttonStyle = {
 
 // A loop a person can resume: held in any way but superseded, and its records readable.
 function needsResume(loop: LoopView): boolean {
-  if (loop.controlState === "enabled" || loop.controlState === "superseded" || loop.details?.unreadable?.length) return false;
+  if (loop.controlState === "enabled" || loop.controlState === "superseded" || recordsUnreadable(loop.details)) return false;
   return !(loop.managedId && ["disabled", "move requires inspection"].includes(loop.controlState));
 }
 const RESUME_SHARED = "A person resumes a held loop from an ordinary terminal, or from the looptender panel started there. Each held loop's own command is under its name.";
@@ -128,7 +128,7 @@ function ToggleButton({ loop, threadId, onDone, compactResume = false }: { loop:
   const paused = loop.controlState !== "enabled";
   if (loop.managedId && ["disabled", "move requires inspection"].includes(loop.controlState)) return null;
   // Pause, stop and resume cannot be saved while the control record cannot be read.
-  if (loop.details?.unreadable?.length) return null;
+  if (recordsUnreadable(loop.details)) return null;
   // An enabled loop whose current target is another thread: this card belongs
   // to its primary, so pausing it is allowed, but only after it is said which
   // loop and which thread are meant.
@@ -154,7 +154,7 @@ function ToggleButton({ loop, threadId, onDone, compactResume = false }: { loop:
       ? <ResumeNote loop={loop} compact={compactResume} />
       : watching && confirming
         ? <span role="group" aria-label={`Confirm pausing ${loop.loop}`}>
-            <span>Pause loop {loop.loop}? {loop.details?.targetThread ? `It supervises ${loop.details.targetThread}, not this thread.` : `Its current target is ${loop.target}, not this thread.`}</span>{" "}
+            <span>Pause loop {loop.loop}? {loop.details?.targetThread ? `It supervises ${loop.details.targetThread}, not this thread.` : `Its current target is ${loop.details?.targetAdapter ?? loop.target}, not this thread.`}</span>{" "}
             <button type="button" disabled={busy} onClick={act} style={buttonStyle}>Pause loop {loop.loop}</button>{" "}
             <button type="button" disabled={busy} onClick={() => setConfirming(false)} style={buttonStyle}>Cancel</button>
           </span>

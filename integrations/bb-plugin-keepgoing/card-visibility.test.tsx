@@ -47,6 +47,7 @@ test("with several held loops the resume sentence is said once and each loop kee
     await ui.findByText(/^A person resumes a held loop from an ordinary terminal/);
     assert.equal(ui.getAllByText(/A person resumes/).length, 1);
     assert.equal(ui.container.querySelectorAll("code").length, 3, "one command per held loop; none for the superseded one");
+    assert.equal(ui.getAllByText("Command to resume (run in a terminal)").length, 3);
     assert.ok(ui.getByText(/Resume is refused for a superseded loop/));
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
@@ -65,4 +66,13 @@ test("the expanded banner is a labelled list per loop with the state word once, 
     assert.equal((region.getByRole("list", { name: "Details" }).textContent ?? "").includes("Note:"), false, "the note is in the reasons only");
     assert.equal((one.container.textContent ?? "").split("looptender: awaiting user").length - 1, 1, "state word once");
   } finally { one.lifecycle.unmount(); cleanup(); }
+});
+
+test("records status could not describe still read as unreadable on the card, with no pause", async () => {
+  const ui = card([loop({}, { unparsed: ["unreadable"] })]);
+  try {
+    await ui.findByText("looptender: records unreadable");
+    assert.ok(ui.getByText("status reported records it could not read, and their details could not be read"));
+    assert.equal(ui.queryByRole("button", { name: /pause/i }), null);
+  } finally { ui.lifecycle.unmount(); cleanup(); }
 });

@@ -27,7 +27,7 @@ const statusSchema = z.object({
   target: z.string(),
   controlState: z.string(),
   // Left out of status --json when control.json cannot be read.
-  control: z.object({ note: z.string().optional(), completed: z.boolean().optional(), supersededBy: z.string().optional().catch(undefined) }).passthrough().optional(),
+  control: z.object({ note: z.string().optional(), completed: z.boolean().optional(), supersededBy: z.unknown().optional() }).passthrough().optional(),
   window: z.string(),
   // Left out of status --json when state.json cannot be read.
   state: z
@@ -49,12 +49,9 @@ const statusSchema = z.object({
   targetConfigured: z.boolean().optional(),
   primaryAgent: agentRef,
   targetAgent: agentRef.optional(),
-  // A field status adds later that is malformed is ignored, never a reason to lose the loop.
-  deadline: z.string().optional().catch(undefined), deadlineReached: z.boolean().optional().catch(undefined),
-  sendAllowance: z.object({ max: z.number(), used: z.number().optional(), remaining: z.number().optional(), reached: z.boolean(), error: z.string().optional() }).optional().catch(undefined),
-  sendRecord: z.string().optional().catch(undefined),
-  diskSpace: z.object({ level: z.string(), message: z.string().optional() }).optional().catch(undefined),
-  unreadable: z.array(z.object({ file: z.string(), problem: z.string(), offset: z.number().optional(), remedy: z.string() })).optional().catch(undefined),
+  // Fields status adds later. Each is checked on its own in `lenient`: one that is
+  // malformed is named in details.unparsed, never taken for "nothing to say".
+  deadline: z.unknown().optional(), deadlineReached: z.unknown().optional(), sendAllowance: z.unknown().optional(), sendRecord: z.unknown().optional(), diskSpace: z.unknown().optional(), unreadable: z.unknown().optional(),
 });
 
 const loopSchema = z.object({
@@ -77,6 +74,43 @@ const loopSchema = z.object({
   fallbacks: z.string().nullable(),
 });
 export type LoopView = z.infer<typeof loopSchema>;
+
+const sendAllowanceShape = z.object({ max: z.number(), used: z.number().optional(), remaining: z.number().optional(), reached: z.boolean(), error: z.string().optional() });
+const unreadableShape = z.object({ file: z.string(), problem: z.string(), offset: z.number().optional(), remedy: z.string() });
+const diskShape = z.object({ level: z.string(), message: z.string().optional() });
+
+/**
+ * The fields status adds later, read one by one. A malformed one is left out
+ * and named in `unparsed`, so the card says it could not be read; it is never
+ * dropped as though there were nothing to say, and never costs the loop.
+ */
+function lenient(s: { control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown }) {
+  const unparsed: string[] = [];
+  const pick = <T>(name: string, schema: z.ZodType<T>, raw: unknown): T | undefined => {
+    if (raw === undefined) return undefined;
+    const r = schema.safeParse(raw);
+    if (r.success) return r.data;
+    unparsed.push(name);
+    return undefined;
+  };
+  const supersededBy = pick("supersededBy", z.string(), s.control?.supersededBy);
+  const deadline = pick("deadline", z.string(), s.deadline);
+  const deadlineReached = pick("deadlineReached", z.boolean(), s.deadlineReached);
+  const sends = pick("sendAllowance", sendAllowanceShape, s.sendAllowance);
+  const sendRecord = pick("sendRecord", z.string(), s.sendRecord);
+  const disk = pick("diskSpace", diskShape, s.diskSpace);
+  if (disk && (disk.level === "low" || disk.level === "critical") && !disk.message) unparsed.push("diskSpace");
+  // Entries are kept one by one: the well-formed ones are shown, and a bad one is named.
+  let unreadable: z.infer<typeof unreadableShape>[] = [];
+  if (s.unreadable !== undefined) {
+    if (!Array.isArray(s.unreadable)) unparsed.push("unreadable");
+    else {
+      unreadable = s.unreadable.flatMap(e => { const r = unreadableShape.safeParse(e); return r.success ? [r.data] : []; });
+      if (unreadable.length !== s.unreadable.length) unparsed.push("unreadable");
+    }
+  }
+  return { supersededBy, deadline, deadlineReached, sends, sendRecord, disk, unreadable, unparsed };
+}
 
 const actionSchema = z.enum(["pause", "resume", "stop"]);
 
@@ -204,8 +238,9 @@ export default async function plugin(bb: BbPluginApi) {
   };
 
   const view = (s: z.infer<typeof statusSchema>, configPath: string, threadId: string | null): LoopView => {
-    const control = s.control ?? {}, state = s.state ?? {}, target = s.targetAgent ?? s.primaryAgent;
-    const sa = s.sendAllowance;
+    const control: NonNullable<typeof s.control> = s.control ?? {}, state = s.state ?? {}, target = s.targetAgent ?? s.primaryAgent;
+    const f = lenient({ ...s, control });
+    const sa = f.sends;
     return {
     details: {
       ...goalDetails(s.goal, s.goalError),
@@ -218,14 +253,15 @@ export default async function plugin(bb: BbPluginApi) {
       ...(target.provider ? { targetProvider: target.provider.slice(0, 128) } : {}),
       ...(target.model ? { targetModel: target.model.slice(0, 128) } : {}),
       ...(s.moved ? { moved: s.moved } : {}),
-      ...(control.supersededBy ? { supersededBy: control.supersededBy.slice(0, 128) } : {}),
+      ...(f.supersededBy ? { supersededBy: f.supersededBy.slice(0, 128) } : {}),
       limitWait: s.limitWait ?? null,
       // What status prints only when there is something to say.
-      ...(s.deadline ? { deadline: { at: s.deadline.slice(0, 64), reached: s.deadlineReached === true } } : {}),
+      ...(f.deadline ? { deadline: { at: f.deadline.slice(0, 64), ...(f.deadlineReached !== undefined ? { reached: f.deadlineReached } : {}) } } : {}),
       ...(sa ? { sends: { max: sa.max, ...(sa.used !== undefined ? { used: sa.used } : {}), ...(sa.remaining !== undefined ? { remaining: sa.remaining } : {}), reached: sa.reached, ...(sa.error ? { unavailable: true } : {}) } } : {}),
-      ...(s.sendRecord ? { sendRecord: s.sendRecord.slice(0, 600) } : {}),
-      ...((s.diskSpace?.level === "low" || s.diskSpace?.level === "critical") && s.diskSpace.message ? { disk: { level: s.diskSpace.level, message: s.diskSpace.message.slice(0, 400) } } : {}),
-      ...(s.unreadable?.length ? { unreadable: s.unreadable.slice(0, 8).map(u => ({ file: u.file.slice(0, 64), problem: u.problem.slice(0, 40), ...(u.offset !== undefined ? { offset: u.offset } : {}), remedy: u.remedy.slice(0, 1200) })) } : {}),
+      ...(f.sendRecord ? { sendRecord: f.sendRecord.slice(0, 600) } : {}),
+      ...((f.disk?.level === "low" || f.disk?.level === "critical") && f.disk.message ? { disk: { level: f.disk.level, message: f.disk.message.slice(0, 400) } } : {}),
+      ...(f.unreadable.length ? { unreadable: f.unreadable.slice(0, 8).map(u => ({ file: u.file.slice(0, 64), problem: u.problem.slice(0, 40), ...(u.offset !== undefined ? { offset: u.offset } : {}), remedy: u.remedy.slice(0, 1200) })) } : {}),
+      ...(f.unparsed.length ? { unparsed: f.unparsed.slice(0, 8) } : {}),
     },
     loop: s.loop,
     configPath,
