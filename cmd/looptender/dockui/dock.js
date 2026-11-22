@@ -724,6 +724,9 @@
       pills.appendChild(tag("needs", l.lanesFailed));
     }
     pane.appendChild(paneHead(l.name, pills));
+    // The build its last check ran; "version unknown" when none is recorded.
+    // An older server sends no line, and then nothing is shown.
+    if (l.build && l.build.line) pane.appendChild(el("p", "sub build-line", l.build.line));
     var need = needFor(key);
     if (!need) pane.appendChild(el("p", "detail", l.detail));
     if (need) {
@@ -2455,6 +2458,9 @@
   function renderServed() {
     var m = $("changes");
     if (m && state.server && list(state.server.changesText).length) m.textContent = say(state.server.changesText);
+    // The build serving this page; nothing when an older server sends none.
+    var v = $("version");
+    if (v && state.server && typeof state.server.versionText === "string" && state.server.versionText) { v.textContent = state.server.versionText; v.hidden = false; }
   }
 
   // How long one read may take: a little under the refresh interval, from 4

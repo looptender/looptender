@@ -79,6 +79,8 @@ h1 { margin: 0; font-size: 1.5rem; line-height: 1.2; letter-spacing: -0.02em; fo
 h2 { margin: 0; font-size: 1.05rem; letter-spacing: -0.005em; font-weight: 650; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .sub { color: var(--ink-2); }
+.build-line { margin: 0.25rem 0 0; font-size: 0.8125rem; overflow-wrap: anywhere; }
+.foot #version { overflow-wrap: anywhere; }
 .sep { color: var(--ink-2); padding: 0 0.3rem; }
 .unknown { color: var(--ink-2); font-style: italic; font-weight: 400; }
 .lede, .detail { margin: 0.35rem 0 0; color: var(--ink-2); max-width: 65ch; }

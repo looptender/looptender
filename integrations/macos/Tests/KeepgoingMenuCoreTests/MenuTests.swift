@@ -352,4 +352,25 @@ final class MenuTests: XCTestCase {
         // It is never a need: no badge, and the icon says nothing needs you.
         XCTAssertEqual(model.badge, "")
     }
+
+    func testBuildsAreShownPerLoopAndOnceAtTheFoot() throws {
+        let json = """
+        {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":true,"needsYou":0,"unread":0,"omitted":0,
+         "installedBuild":"v0.2.0","futureField":1,
+         "loops":[{"key":"l000000000001","name":"example-api","state":"supervising","phrase":"Supervising","needsYou":false,"recordedBuild":"v0.1.0","buildDiffers":true},
+                  {"key":"l000000000002","name":"example-docs","state":"supervising","phrase":"Supervising","needsYou":false,"recordedBuild":"v0.2.0","buildDiffers":false},
+                  {"key":"l000000000003","name":"example-site","state":"supervising","phrase":"Supervising","needsYou":false}]}
+        """
+        let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
+        let model = MenuBuilder.build(.read(decoded, at: now), now: now)
+        XCTAssertEqual(text(model), [
+            "Open looptender Panel", "---",
+            "example-api | Supervising · running v0.1.0 · installed v0.2.0",
+            "example-docs | Supervising · v0.2.0",
+            "example-site | Supervising",
+            "---", "Quit looptender Menu", "---", "Read just now · looptender v0.2.0"])
+        // A CLI that sends none of it keeps the plain menu.
+        let plain = MenuBuilder.build(.read(three, at: now.addingTimeInterval(-130)), now: now)
+        XCTAssertFalse(text(plain).contains { $0.contains("looptender v") || $0.contains("running") })
+    }
 }

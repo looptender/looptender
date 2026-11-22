@@ -7,6 +7,9 @@ export const checkSchema = z.object({
 });
 export const runtimeSchema = z.object({
   state: z.string(), source: z.string(), freshness: z.string(),
+  // Added by a later looptender; absent from older ones, and absent when a
+  // label does not identify a build. Display-short labels, nothing more.
+  recordedBuild: z.string().max(64).optional(), installedBuild: z.string().max(64).optional(), binaryComparison: z.string().optional(),
 });
 export const scheduleSchema = z.object({
   overdue: z.boolean(), message: z.string().optional(),
@@ -43,6 +46,18 @@ export const detailsSchema = z.object({
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
 
+type Runtime = StatusDetails["runtime"];
+
+// The build the loop's supervisor last recorded running, and the installed
+// looptender's. Never a guess: a missing label is "version unknown", and no
+// claim is made about which build is newer.
+export function buildSummary(runtime: Runtime | undefined): { running?: string; installed?: string; differs: boolean; text: string } {
+  const running = runtime?.recordedBuild || undefined, installed = runtime?.installedBuild || undefined;
+  const differs = !!running && !!installed && runtime?.binaryComparison === "different";
+  const text = !running ? "version unknown" : differs ? `running ${running} · installed ${installed}` : `running ${running}`;
+  return { running, installed, differs, text };
+}
+
 export function dateLabel(value: string | null | undefined): string {
   if (!value || value.startsWith("0001-")) return "unavailable";
   const time = new Date(value);
@@ -56,6 +71,7 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
     goalLabel(d.goal, d.goalState),
     `Task completion: ${d.completed ? "declared; not independently verified" : "not declared"}`,
     `Current target: ${d.targetThread ?? d.targetAdapter} (${target})${supervising ? "; this thread" : "; not this thread"}${d.targetConfigured === false ? "; missing or disabled in config" : ""}`,
+    `Build: ${buildSummary(d.runtime).text}${d.runtime?.installedBuild && !buildSummary(d.runtime).differs ? ` · installed ${d.runtime.installedBuild}` : ""}`,
     d.runtime ? `Check evidence: ${d.runtime.state} · ${d.runtime.freshness} · source ${d.runtime.source}` : "Check evidence: unavailable from this build",
   ];
   const daemon = d.daemon;

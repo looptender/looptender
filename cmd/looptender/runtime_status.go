@@ -19,7 +19,15 @@ type runtimeStatus struct {
 	Freshness        string `json:"freshness"` // never, recent, stale, future
 	StaleAfter       string `json:"staleAfter"`
 	BinaryComparison string `json:"binaryComparison"` // unknown, match, different
-	NextCheck        string `json:"nextCheck"`
+	// RecordedBuild is the build the loop's supervisor last recorded running
+	// (its last check's label) and InstalledBuild the build answering this
+	// read, both shortened for display. Each is absent when its label does
+	// not identify a build (not recorded, "dev", or not a plain label), and
+	// then a surface says "version unknown". They say nothing about which is
+	// newer; BinaryComparison says whether they match.
+	RecordedBuild  string `json:"recordedBuild,omitempty"`
+	InstalledBuild string `json:"installedBuild,omitempty"`
+	NextCheck      string `json:"nextCheck"`
 }
 
 func compareCheckVersion(c *state.Check, current string) string {
@@ -33,7 +41,7 @@ func compareCheckVersion(c *state.Check, current string) string {
 }
 
 func describeRuntime(ctl control.File, st state.File, inWindow, targetConfigured bool, now time.Time, staleAfter time.Duration, currentVersion string) runtimeStatus {
-	r := runtimeStatus{State: "unknown", Source: "unavailable", Freshness: "never", StaleAfter: staleAfter.String(), BinaryComparison: compareCheckVersion(st.LastCheck, currentVersion), NextCheck: unknownNextCheck}
+	r := runtimeStatus{State: "unknown", Source: "unavailable", Freshness: "never", StaleAfter: staleAfter.String(), BinaryComparison: compareCheckVersion(st.LastCheck, currentVersion), RecordedBuild: shortBuildOf(st.LastCheck), InstalledBuild: shortBuildLabel(currentVersion), NextCheck: unknownNextCheck}
 	if !st.CheckedAt.IsZero() {
 		r.Freshness = "recent"
 		if now.Sub(st.CheckedAt) > staleAfter {

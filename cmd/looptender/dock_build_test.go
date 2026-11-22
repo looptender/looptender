@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/incident"
 	"github.com/looptender/looptender/internal/state"
 )
@@ -109,5 +110,60 @@ func TestDockBuildInTheReportAndTheServerInfo(t *testing.T) {
 	var served dockServed
 	if resp.StatusCode != http.StatusOK || json.Unmarshal([]byte(body), &served) != nil || served.Version != "v0.1.5" || served.VersionText != "This page is served by looptender v0.1.5." {
 		t.Errorf("%d %s", resp.StatusCode, body)
+	}
+}
+
+// The one-line build under a loop's name, and the short form of a label.
+func TestDockBuildLineAndShortLabels(t *testing.T) {
+	for _, c := range []struct{ recorded, panel, want string }{
+		{"", "v0.2.0", "version unknown"},
+		{"dev", "v0.2.0", "version unknown"},
+		{"v0.2.0\nx", "v0.2.0", "version unknown"},
+		{"v0.2.0", "v0.2.0", "running v0.2.0"},
+		{"v0.2.0-dev.ccd23105e0aa", "v0.2.0-dev.ccd23105e0aa", "running v0.2.0-dev.ccd2310"},
+		{"v0.2.0-dev.ccd2310", "v0.2.0", "running v0.2.0-dev.ccd2310 · panel v0.2.0"},
+		{"v0.1.0", "v0.2.0", "running v0.1.0 · panel v0.2.0"},
+		{"v0.2.0", "dev", "running v0.2.0"},
+		{"ccd23105e0aa-dirty", "ccd23105e0aa-dirty", "running ccd2310-dirty (built with uncommitted changes)"},
+	} {
+		if got := dockBuildOf(c.recorded, c.panel).Line; got != c.want {
+			t.Errorf("%q vs %q: %q, want %q", c.recorded, c.panel, got, c.want)
+		}
+	}
+	for in, want := range map[string]string{"": "", "dev": "", "unavailable": "", "/p/x": "", "a b": "", "v0.2.0": "v0.2.0", "v0.2.0-dev.ccd2310": "v0.2.0-dev.ccd2310",
+		"v0.2.0-dev.ccd23105e0aa": "v0.2.0-dev.ccd2310", "ccd23105e0aa": "ccd2310", "26f91db": "26f91db"} {
+		if got := shortBuildLabel(in); got != want {
+			t.Errorf("shortBuildLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The page draws the build line and the footer's build, and an older server
+// that sends neither shows nothing.
+func TestDockPageShowsBuilds(t *testing.T) {
+	js, html := dockUIText(t, "dock.js"), dockUIText(t, "index.html")
+	for _, want := range []string{
+		`if (l.build && l.build.line) pane.appendChild(el("p", "sub build-line", l.build.line));`,
+		`state.server && typeof state.server.versionText === "string" && state.server.versionText`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("dock.js lacks %q", want)
+		}
+	}
+	if !strings.Contains(html, `<p id="version" hidden></p>`) {
+		t.Error("index.html lacks the footer's build line, hidden until a server sends it")
+	}
+}
+
+// status --json carries the same two short labels as client status.
+func TestDescribeRuntimeCarriesBuilds(t *testing.T) {
+	chk := &state.Check{Version: "v0.2.0-dev.ccd23105e0aa"}
+	r := describeRuntime(control.File{}, state.File{LastCheck: chk}, true, true, time.Now(), time.Hour, "v0.2.0")
+	if r.RecordedBuild != "v0.2.0-dev.ccd2310" || r.InstalledBuild != "v0.2.0" || r.BinaryComparison != "different" {
+		t.Errorf("%+v", r)
+	}
+	raw, _ := json.Marshal(describeRuntime(control.File{}, state.File{}, true, true, time.Now(), time.Hour, "dev"))
+	if strings.Contains(string(raw), "uild\":\"") {
+		t.Errorf("unknown builds must be absent: %s", raw)
 	}
 }

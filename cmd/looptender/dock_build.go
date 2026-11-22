@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/looptender/looptender/internal/state"
 )
 
 // Which looptender build serves the panel, and which build ran each loop's
@@ -27,6 +29,11 @@ type dockBuild struct {
 	// last check's build against this panel's.
 	Order string `json:"order,omitempty"`
 	Text  string `json:"text"`
+	// Line is the short form shown under the loop's name: the build its last
+	// check ran, and this panel's when they differ ("running v0.2.0-dev.ccd2310
+	// · panel v0.2.0"). "version unknown" when the label does not say. It
+	// never says which is newer.
+	Line string `json:"line"`
 }
 
 const dockMaxBuild = 64
@@ -101,7 +108,23 @@ func dockBuildOf(recorded, panel string) dockBuild {
 			b.Text = "Its last check ran looptender " + recorded + "; this panel is looptender " + panel + ". They are different builds."
 		}
 	}
+	b.Line = dockBuildLine(recorded, panel)
 	return b
+}
+
+// dockBuildLine is the short sentence for one loop: the build it runs, and
+// this panel's build too when the two are different or cannot be told apart.
+func dockBuildLine(recorded, panel string) string {
+	r, p := shortBuildLabel(recorded), shortBuildLabel(panel)
+	switch {
+	case r == "":
+		return "version unknown"
+	case p == "" || (recorded == panel && !strings.HasSuffix(recorded, "-dirty")):
+		return "running " + r
+	case recorded == panel:
+		return "running " + r + " (built with uncommitted changes)"
+	}
+	return "running " + r + " · panel " + p
 }
 
 // dockLastBuild is the build label of the loop's last check: what state
@@ -129,4 +152,38 @@ func dockPanelVersionText(panel string) string {
 		return "This page is served by a looptender build with no version recorded (dev)."
 	}
 	return "This page is served by looptender " + panel + "."
+}
+
+var (
+	// buildLabelShape keeps a label that could carry a path, a name or any
+	// free text out of status output.
+	buildLabelShape = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$`)
+	devBuildSuffix  = regexp.MustCompile(`^(.*-dev\.)([0-9a-f]{8,40})(-dirty)?$`)
+	bareSHA         = regexp.MustCompile(`^([0-9a-f]{8,40})(-dirty)?$`)
+)
+
+// shortBuildLabel is a build label made short to show: a dev build's commit
+// is cut to seven characters (v0.2.0-dev.ccd2310, ccd2310). "" when the label
+// does not identify a build (empty, "dev", "unavailable" or unreadable). It
+// is for display only; builds are compared by their whole labels.
+func shortBuildLabel(label string) string {
+	label = dockBuildLabel(label)
+	if !dockBuildKnown(label) || label == "unreadable" || label == "unavailable" || !buildLabelShape.MatchString(label) {
+		return ""
+	}
+	if m := devBuildSuffix.FindStringSubmatch(label); m != nil {
+		return m[1] + m[2][:7] + m[3]
+	}
+	if m := bareSHA.FindStringSubmatch(label); m != nil {
+		return m[1][:7] + m[2]
+	}
+	return label
+}
+
+// shortBuildOf is the short label of a recorded check, "" when none.
+func shortBuildOf(c *state.Check) string {
+	if c == nil {
+		return ""
+	}
+	return shortBuildLabel(c.Version)
 }

@@ -39,7 +39,7 @@ private struct Controls: Decodable {
     let enabled, paused, stop, awaitingUser, completed: Bool
 }
 private struct Target: Decodable { let alias, adapter, identityEvidence: String; let bbThread: String? }
-private struct Runtime: Decodable { let state, source, freshness, binaryComparison: String; let checkedAt: String? }
+private struct Runtime: Decodable { let state, source, freshness, binaryComparison: String; let checkedAt: String?; let recordedBuild, installedBuild: String? }
 private struct Check: Decodable { let at: String?; let action, outcome: String; let dryRun: Bool }
 private struct Goal: Decodable { let id: String; let revision: UInt64; let state: String }
 private struct PrivateGoal: Decodable { let title: String; let nextAction: String? }
@@ -148,6 +148,10 @@ public enum Contract {
             lines.append("Freshness when read: \(known(r.freshness, ["recent", "stale", "never", "unknown", "future"]))")
             lines.append("Checked: \(stamp(r.checkedAt))")
             lines.append("Recorded build: \(known(r.binaryComparison, ["match", "different", "unknown"]))")
+            if let running = r.recordedBuild.map(text), !running.isEmpty {
+                let installed = r.installedBuild.map(text) ?? ""
+                lines.append(r.binaryComparison == "different" && !installed.isEmpty ? "Build: running \(running) · installed \(installed)" : "Build: running \(running)")
+            } else { lines.append("Build: version unknown") }
         } else { lines.append("Recorded activity: unavailable") }
         if let check = s.lastCheck {
             lines.append("Last action: \(known(check.action, ["none", "wake", "nudge", "reprompt", "await_user", "stop", "handoff", "switch_back"])) / \(known(check.outcome, ["succeeded", "failed", "skipped", "dry_run", "unknown"]))\(check.dryRun ? " (dry run)" : "")")

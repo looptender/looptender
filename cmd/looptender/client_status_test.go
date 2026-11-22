@@ -60,7 +60,7 @@ func TestClientStatusPrivacyHoldsAndGoalDisplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	st := state.File{CheckedAt: now.Add(-time.Hour), LastCheck: &state.Check{At: now.Add(-time.Hour), Target: "primary", ObservedTarget: "primary", ObservedState: "idle", Action: "wake", Outcome: "failed", Reason: "PRIVATE-REASON", Version: "PRIVATE-BUILD"}}
+	st := state.File{CheckedAt: now.Add(-time.Hour), LastCheck: &state.Check{At: now.Add(-time.Hour), Target: "primary", ObservedTarget: "primary", ObservedState: "idle", Action: "wake", Outcome: "failed", Reason: "PRIVATE-REASON", Version: "/private/PRIVATE-BUILD"}}
 	if err := state.Save(entry.StateDir, st); err != nil {
 		t.Fatal(err)
 	}
@@ -253,5 +253,43 @@ func TestClientStatusLocalDaemonChallengeAndOfflineSkip(t *testing.T) {
 	r = clientRead(t, dir, entry, false)
 	if r.Snapshot.Daemon.State != "skipped" || r.Snapshot.Daemon.ObservedAt != nil {
 		t.Fatal("offline queried responder")
+	}
+}
+
+func TestClientStatusCarriesRecordedAndInstalledBuilds(t *testing.T) {
+	old := version
+	defer func() { version = old }()
+	for _, tt := range []struct{ name, recorded, installed, wantRec, wantInst, wantCmp string }{
+		{"dev builds shorten to the short commit", "v0.2.0-dev.ccd23105e0aa", "v0.2.0-dev.ccd2310", "v0.2.0-dev.ccd2310", "v0.2.0-dev.ccd2310", "different"},
+		{"release builds as they are", "v0.2.0", "v0.2.0", "v0.2.0", "v0.2.0", "match"},
+		{"dev label says nothing", "dev", "v0.2.0", "", "v0.2.0", "unknown"},
+		{"not recorded", "", "v0.2.0", "", "v0.2.0", "unknown"},
+		{"a label shaped like a path is withheld", "/private/x", "v0.2.0", "", "v0.2.0", "different"},
+		{"installed build unknown", "v0.2.0", "dev", "v0.2.0", "", "unknown"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, entry := clientFixture(t)
+			if err := control.Save(entry.StateDir, control.File{Enabled: true}); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			chk := &state.Check{At: now, Target: "primary", Action: "wake", Outcome: "succeeded", Version: tt.recorded}
+			if err := state.Save(entry.StateDir, state.File{CheckedAt: now, LastCheck: chk}); err != nil {
+				t.Fatal(err)
+			}
+			version = tt.installed
+			r := clientRead(t, dir, entry, false)
+			rt := r.Snapshot.Runtime
+			if rt == nil || rt.RecordedBuild != tt.wantRec || rt.InstalledBuild != tt.wantInst || rt.BinaryComparison != tt.wantCmp {
+				t.Fatalf("%+v", rt)
+			}
+			raw, _ := json.Marshal(r)
+			if strings.Contains(string(raw), "/private") {
+				t.Fatal("a label shaped like a path escaped")
+			}
+			if tt.wantRec == "" && strings.Contains(string(raw), "recordedBuild") || tt.wantInst == "" && strings.Contains(string(raw), "installedBuild") {
+				t.Fatal("an unknown build must be absent, not a guess:", string(raw))
+			}
+		})
 	}
 }
