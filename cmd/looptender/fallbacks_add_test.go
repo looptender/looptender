@@ -775,7 +775,7 @@ func TestFallbacksAddKeepsCommentsAndModes(t *testing.T) {
 			}
 		}
 	}
-	if entries, _ := os.ReadDir(f.destination); len(entries) != 4 { // keepgoing.yaml, fallbacks.yaml, prompt.md, state
+	if entries, _ := os.ReadDir(f.destination); len(entries) != 5 { // keepgoing.yaml, fallbacks.yaml, prompt.md, its wake policy record, state
 		t.Errorf("temporary files left behind: %v", entries)
 	}
 }

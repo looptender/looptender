@@ -520,8 +520,12 @@ type statusOut struct {
 	// primary session right now, or one that is stuck holding it.
 	SessionClaim string           `json:"sessionClaim,omitempty"`
 	PromptSend   promptSendStatus `json:"promptSend"`
-	LimitWait    limitWaitStatus  `json:"limitWait"`
-	TurnRetry    turnRetryStatus  `json:"turnRetry"`
+	// WakePolicy says whether the standing wake policy comes from this
+	// build or from the loop's own prompt text; absent when the prompt
+	// cannot be read.
+	WakePolicy *wakePolicyStatus `json:"wakePolicy,omitempty"`
+	LimitWait  limitWaitStatus   `json:"limitWait"`
+	TurnRetry  turnRetryStatus   `json:"turnRetry"`
 	// ContextWindow is the active target's latest context window reading.
 	ContextWindow contextStatus `json:"contextWindow"`
 	// ContextWindowReset previews the context-threshold reset.
@@ -784,6 +788,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if !out.stateUnreadable {
 		printPromptSend(w, out.PromptSend)
 	}
+	printWakePolicy(w, out.WakePolicy)
 	if n := out.NewThreads; !out.stateUnreadable && (n.Created > 0 || n.Pending) {
 		fmt.Fprintf(w, "new threads: keepgoing has used %d of at most %d BB thread creation(s) for handoffs", n.Created, n.Max)
 		if n.Active != nil {
@@ -1134,6 +1139,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	}
 	out.Assignments = assignmentStatus(cfg, ctl)
 	out.PromptSend = describePromptSend(st.LastPromptSend, out.Goal)
+	out.WakePolicy = describeWakePolicy(l)
 	if st.GoalCopy != nil && st.GoalCopy.Valid() {
 		out.PromptSend.GoalCopy = st.GoalCopy
 	}
