@@ -209,6 +209,9 @@ func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, l
 		opts.Now = now
 	}
 	res, err := supervise.Tick(e.ctx, cfg, opts)
+	if res.Recorded && !dryRun {
+		clearStartRefused(cfg.Loop.StateDir) // a check ran: something supervises the loop
+	}
 	out, _ := json.Marshal(res)
 	fmt.Fprintln(e.stdout, string(out))
 	if err != nil {
@@ -1316,7 +1319,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		out.Runtime.NextCheck = t
 	}
 	out.BuildAdoption = describeBuildAdoption(l.StateDir, out.Daemon, now)
-	out.SupervisorStartRefused = loadStartRefusal(l.StateDir)
+	out.SupervisorStartRefused = currentStartRefusal(l.StateDir, st.CheckedAt, out.Daemon)
 	out.Builds = buildNames(st, out.Daemon)
 	out.FollowsInstalls, out.followsText = followsInstalls(out.Daemon)
 	if out.Daemon.State == "responsive" {

@@ -105,7 +105,7 @@ func overdueSentence(s state.Schedule) string {
 		if s.NotRecorded {
 			return "it is on, and its daemon is running passes but no check has been recorded " + since
 		}
-		return "it is on and not held, but nothing has checked it " + since + ", and no supervisor is running it: start supervision (`looptender start -c CONFIG`, or a service), or it will send nothing"
+		return "it is on and not held, but nothing has checked it " + since + ", and no supervisor is running it: start supervision (`looptender start -c CONFIG`, or a service), or it will send nothing. If an external scheduler runs its ticks less often than that, its first tick clears this"
 	}
 	measure := fmt.Sprintf("checks normally run every %s", state.ShortDuration(s.Usual))
 	if s.Basis == "fallback" {

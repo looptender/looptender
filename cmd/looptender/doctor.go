@@ -324,7 +324,7 @@ func doctor(e env, args []string, run doctorRun) int {
 	}
 	doctorCheckVersion(&r, st.LastCheck, stateErr == nil)
 	r.add("supervisor.builds", "ok", "Builds: "+buildNames(st, d)+".", "")
-	if answer, text := followsInstalls(d); answer != "unknown" {
+	if answer, text := followsInstalls(d); answer != "unknown" || d.State == "responsive" {
 		level, fix := "ok", ""
 		if answer == "no" && d.version != dockBuildLabel(version) {
 			level, fix = "warning", "Restart supervision to run the installed build: for a service, `looptender service install` again; otherwise end the daemon and start it with `looptender start --background`."
@@ -349,7 +349,7 @@ func doctor(e env, args []string, run doctorRun) int {
 	} else {
 		r.add("supervisor.send_record", "ok", "The send record sends.json is readable.", "")
 	}
-	if refusal := loadStartRefusal(cfg.Loop.StateDir); refusal != nil {
+	if refusal := currentStartRefusal(cfg.Loop.StateDir, st.CheckedAt, d); refusal != nil {
 		r.add("supervisor.start_refused", "warning", "Supervisor start refused: "+refusal.sentence()+".", "Start supervision from the BB thread that owns the loop, or transfer ownership deliberately first (enable --take-over from the new owning thread). A start from a terminal inherits that terminal's BB_THREAD_ID.")
 	}
 	if stateErr == nil && st.StartRefused != nil {

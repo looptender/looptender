@@ -195,20 +195,43 @@ func TestRefusedSupervisorStartIsRecorded(t *testing.T) {
 			t.Fatalf("%s: %d %s", cmd, code, out.String())
 		}
 		r := loadStartRefusal(f.state)
-		if r == nil || !strings.Contains(r.Reason, "owned by BB thread") || r.CallerThread != "set" || r.Mode == "" {
+		if r == nil || r.Reason != refusedOwner || r.CallerThread != "set" || r.Mode == "" || r.Count != 1 {
 			t.Fatalf("%s: %+v", cmd, r)
+		}
+		raw, _ := os.ReadFile(filepath.Join(f.state, startRefusalName))
+		if strings.Contains(string(raw), "thr_") {
+			t.Fatalf("%s: a thread ID in the record: %s", cmd, raw)
 		}
 		if after, _ := os.ReadFile(filepath.Join(f.state, control.FileName)); !bytes.Equal(before, after) {
 			t.Fatalf("%s: a refused start changed control", cmd)
 		}
 	}
 	runs, _ := os.ReadFile(filepath.Join(f.state, state.LogName))
-	if strings.Count(string(runs), `"start_refused"`) != 2 || strings.Contains(string(runs), "thr_other00001") {
+	if strings.Count(string(runs), `"start_refused"`) != 2 || strings.Contains(string(runs), "thr_") {
 		t.Fatalf("runs.jsonl: %s", runs)
 	}
+	// A service restarting into the same refusal: counted, logged once an hour.
+	for i := 0; i < 5; i++ {
+		var o bytes.Buffer
+		run(context.Background(), []string{"daemon", "-c", f.config}, &o, &o)
+	}
+	if r := loadStartRefusal(f.state); r == nil || r.Count != 6 {
+		t.Fatalf("%+v", r)
+	}
+	if runs, _ := os.ReadFile(filepath.Join(f.state, state.LogName)); strings.Count(string(runs), `"start_refused"`) != 2 {
+		t.Fatalf("repeated refusals each logged: %s", runs)
+	}
 	out, text := statusOf(t, f, time.Now())
-	if out.SupervisorStartRefused == nil || !strings.Contains(text, "supervisor start: the last supervisor start (start) was refused at") {
+	if out.SupervisorStartRefused == nil || !strings.Contains(text, "supervisor start: the last supervisor start (daemon) was refused at") ||
+		!strings.Contains(text, "another BB thread owns the loop") || strings.Contains(text, "supervisor start: the last supervisor start (daemon) was refused at "+"x") {
 		t.Fatalf("%s", text)
+	}
+	// Hidden while a daemon answers, and once a check is recorded after it.
+	if currentStartRefusal(f.state, time.Time{}, daemonStatus{State: "responsive"}) != nil {
+		t.Fatal("shown beside a running daemon")
+	}
+	if currentStartRefusal(f.state, time.Now().Add(time.Minute), daemonStatus{}) != nil {
+		t.Fatal("shown after a later check")
 	}
 	if _, r := doctorOf(t, f); doctorFinding(r, "supervisor.start_refused") == nil {
 		t.Fatal("doctor does not show the refusal")
@@ -243,7 +266,7 @@ func TestStatusNamesBuildsAndWhetherTheDaemonFollowsInstalls(t *testing.T) {
 		t.Fatal(got)
 	}
 	for mode, want := range map[string]string{
-		"":                                  "no: this daemon was built before daemons could switch builds",
+		"":                                  "unknown: the daemon does not report it",
 		"moved_link":                        "yes, after a check, when the link it was started through moves",
 		"any_install":                       "yes, after a check, for any new build",
 		"off":                               "no: loop.daemon.adopt_installed_build is false",
@@ -287,5 +310,51 @@ func TestStatusNamesBuildsAndWhetherTheDaemonFollowsInstalls(t *testing.T) {
 	if out.FollowsInstalls != "unknown" || !strings.Contains(text, "build:     last check ran v9.0.0-dev.fictional1; this command is v9.0.0-dev.fictional2 (last check's build versus this command's: different)") ||
 		!strings.Contains(text, "daemon follows new installs: unknown: no daemon answers") {
 		t.Fatalf("%s", text)
+	}
+}
+
+// A recorded check removes a refusal record: something supervises the loop.
+func TestRecordedCheckClearsARefusal(t *testing.T) {
+	f := newDoctorFixture(t)
+	if err := os.MkdirAll(f.state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := control.Save(f.state, control.File{}); err != nil { // disabled: the check records without the agent
+		t.Fatal(err)
+	}
+	noteStartRefused(f.state, "service", control.ErrTransferPending, time.Now().Add(-time.Minute))
+	if r := loadStartRefusal(f.state); r == nil || r.Reason != refusedTransfer {
+		t.Fatalf("%+v", r)
+	}
+	var out bytes.Buffer
+	run(context.Background(), []string{"tick", "-c", f.config}, &out, &out)
+	if st, err := state.Load(f.state); err != nil || st.CheckedAt.IsZero() {
+		t.Fatalf("no check recorded: %v %s", err, out.String())
+	}
+	if loadStartRefusal(f.state) != nil {
+		t.Fatal("a recorded check kept the refusal")
+	}
+}
+
+// The same refusal again is logged after an hour; a new reason at once.
+func TestRepeatedRefusalsAreLoggedSparingly(t *testing.T) {
+	dir := t.TempDir()
+	at := time.Date(2030, 1, 1, 9, 0, 0, 0, time.UTC)
+	lines := func() int {
+		b, _ := os.ReadFile(filepath.Join(dir, state.LogName))
+		return strings.Count(string(b), `"start_refused"`)
+	}
+	noteStartRefused(dir, "service", control.ErrSuperseded, at)
+	noteStartRefused(dir, "service", control.ErrSuperseded, at.Add(time.Minute))
+	if lines() != 1 {
+		t.Fatalf("%d", lines())
+	}
+	noteStartRefused(dir, "service", control.ErrSuperseded, at.Add(61*time.Minute))
+	if lines() != 2 {
+		t.Fatalf("%d", lines())
+	}
+	noteStartRefused(dir, "service", control.ErrOwnerConflict, at.Add(62*time.Minute))
+	if r := loadStartRefusal(dir); lines() != 3 || r.Reason != refusedOwner || r.Count != 1 {
+		t.Fatalf("%d %+v", lines(), r)
 	}
 }

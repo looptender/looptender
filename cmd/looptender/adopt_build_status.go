@@ -135,7 +135,9 @@ func followsInstalls(d daemonStatus) (answer, text string) {
 	case d.State != "responsive":
 		return "unknown", "unknown: no daemon answers"
 	case mode == "":
-		return "no", "no: this daemon was built before daemons could switch builds" + restart
+		// Daemons built before they could switch builds say nothing, and so
+		// do some that can; labels cannot tell which is older.
+		return "unknown", "unknown: the daemon does not report it (a daemon built before build adoption cannot switch builds; restarting supervision runs the installed build)"
 	case mode == "moved_link":
 		return "yes", "yes, after a check, when the link it was started through moves to a new build (the default)"
 	case mode == "any_install":

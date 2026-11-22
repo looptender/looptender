@@ -68,7 +68,11 @@ export function createSetupController(d: SetupDependencies) {
     if (!report.success || !matches(report.data.targetAgent)) return { ok: true, record: r, canStart: false, message: "Setup is saved, but diagnostics could not verify this target. Check host access and retry diagnostics." };
     const checks = report.data.checks;
     const goal = goalDetails(s.data.goal, s.data.goalError);
-    const canStart = !r.registryId && goal.goalState !== "unavailable" && result.code === 0 && checks.some(c => c.id === "agent.primary.target" && c.status === "ok") && !checks.some(c => c.status === "error") && ["disabled", "enabled"].includes(s.data.controlState) && s.data.daemon?.state !== "responsive";
+    // "Unsupervised" (supervisor.schedule) is the problem Start fixes, so it
+    // alone never blocks Start; every other error does.
+    const blocking = checks.filter(c => c.status === "error" && c.id !== "supervisor.schedule");
+    const onlyUnsupervised = result.code !== 0 && blocking.length === 0 && checks.some(c => c.status === "error");
+    const canStart = !r.registryId && goal.goalState !== "unavailable" && (result.code === 0 || onlyUnsupervised) && checks.some(c => c.id === "agent.primary.target" && c.status === "ok") && blocking.length === 0 && ["disabled", "enabled"].includes(s.data.controlState) && s.data.daemon?.state !== "responsive";
     return { ok: true, record: r, ...goal, checks, canStart, message: r.registryId ? "Imported loop reference saved. This panel does not start imported loops; inspect check evidence and use the host CLI separately when appropriate." : canStart ? "Review the diagnostics, then start background supervision when ready." : "Setup is saved. Existing holds, a responding daemon, or diagnostic failures prevent another start here." };
   };
   const handle = async (raw: z.infer<typeof setupInput>, bounds?: Bounds): Promise<SetupResult> => {
