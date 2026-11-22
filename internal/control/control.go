@@ -270,13 +270,13 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 // writeAtomicSync optionally flushes the temporary file before it replaces the
 // target, so a power loss cannot leave the target name on unwritten data.
 func writeAtomicSync(path string, data []byte, mode os.FileMode, sync bool) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
 	if err != nil {
 		return err
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
-	if _, err := tmp.Write(data); err != nil {
+	if err := snapshot.Write(tmp, data); err != nil {
 		tmp.Close()
 		return err
 	}

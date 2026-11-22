@@ -255,13 +255,13 @@ func Append(dir string, r Record) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".incidents-*")
+	f, err := os.CreateTemp(dir, "."+FileName+"-*")
 	if err != nil {
 		return ErrUnavailable
 	}
 	name := f.Name()
 	defer os.Remove(name)
-	if _, err = f.Write(append(b, '\n')); err != nil {
+	if err = snapshot.Write(f, append(b, '\n')); err != nil {
 		f.Close()
 		return ErrUnavailable
 	}

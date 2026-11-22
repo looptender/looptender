@@ -29,7 +29,7 @@ func TestWritePrivateFileReplacesUnderAnOpenSnapshot(t *testing.T) {
 	}
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".tmp-") {
+		if strings.HasPrefix(e.Name(), ".") && strings.Contains(e.Name(), "-") && !strings.HasSuffix(e.Name(), ".present") {
 			t.Fatalf("temporary file left behind: %s", e.Name())
 		}
 	}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/daemoninfo"
+	"github.com/looptender/looptender/internal/diskspace"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/snapshot"
 	"github.com/looptender/looptender/internal/state"
@@ -466,6 +467,9 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 		return
 	}
 	a.loop = cfg.Loop.Name
+	if diskspace.Of(a.stateDir).Level() == diskspace.Critical {
+		return // a switch writes records; not on a nearly full volume
+	}
 	c := a.candidate()
 	if c == nil {
 		return

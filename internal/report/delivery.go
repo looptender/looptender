@@ -184,13 +184,13 @@ func saveDelivery(dir string, d Delivery) (uint64, error) {
 	if err != nil || len(b)+1 > MaxDeliveryBytes {
 		return 0, ErrDeliveryHistory
 	}
-	f, err := os.CreateTemp(dir, ".deliveries-*")
+	f, err := os.CreateTemp(dir, "."+DeliveryFile+"-*")
 	if err != nil {
 		return 0, ErrDeliveryHistory
 	}
 	name := f.Name()
 	defer os.Remove(name)
-	if _, err = f.Write(append(b, '\n')); err != nil {
+	if err = snapshot.Write(f, append(b, '\n')); err != nil {
 		f.Close()
 		return 0, ErrDeliveryHistory
 	}

@@ -34,7 +34,7 @@ func NoteTurnedAway(stateDir string, at time.Time) error {
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
-	if _, err := tmp.Write(append(b, '\n')); err != nil {
+	if err := snapshot.Write(tmp, append(b, '\n')); err != nil {
 		tmp.Close()
 		return err
 	}

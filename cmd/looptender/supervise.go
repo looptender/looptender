@@ -308,6 +308,10 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 	clearStartRefused(cfg.Loop.StateDir) // a supervisor is running now
 	monitor.SetAdoption(adopter.followMode(cfg))
 	defer state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "stopped"})
+	var disk *diskWatch
+	if !dryRun {
+		disk = &diskWatch{}
+	}
 	// stopDone is the control signature of the last saved stop this daemon
 	// saw carried out, so the fast retry below is for a stop still to do.
 	stopDone := ""
@@ -379,6 +383,7 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 			}
 			continue
 		}
+		disk.check(e, cfg)
 		// A safe point: the check has finished and been saved.
 		adopter.atSafePoint(e.ctx, cfg, lease)
 		monitor.SetAdoption(adopter.followMode(cfg))
@@ -648,6 +653,9 @@ type statusOut struct {
 	// SupervisorStartRefused is the last supervisor start refused for
 	// ownership or a pending transfer, until a supervisor starts.
 	SupervisorStartRefused *startRefusal `json:"supervisorStartRefused,omitempty"`
+	// DiskSpace is the room left on the volume that holds the state
+	// directory.
+	DiskSpace diskSpaceStatus `json:"diskSpace"`
 	// Builds names the build of the last check, this command's and the
 	// daemon's, from what is recorded; FollowsInstalls is yes, no, unknown,
 	// or ticks (checked by ticks, no daemon): whether the daemon will move to
@@ -1124,6 +1132,9 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if b := out.BuildAdoption; b != nil {
 		fmt.Fprintf(w, "daemon build change: %s\n", b.Message)
 	}
+	if d := out.DiskSpace; d.Level == "low" || d.Level == "critical" {
+		fmt.Fprintf(w, "disk:      %s\n", d.Message)
+	}
 	if r := out.SupervisorStartRefused; r != nil {
 		fmt.Fprintf(w, "supervisor start: %s\n", r.sentence())
 	}
@@ -1411,6 +1422,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	}
 	out.BuildAdoption = describeBuildAdoption(l.StateDir, out.Daemon, now)
 	out.SupervisorStartRefused = currentStartRefusal(l.StateDir, st.CheckedAt, out.Daemon)
+	out.DiskSpace = describeDiskSpace(l.StateDir)
 	out.Builds = buildNames(st, out.Daemon)
 	out.FollowsInstalls, out.followsText = followsInstalls(out.Daemon, out.Schedule)
 	if out.Daemon.State == "responsive" {

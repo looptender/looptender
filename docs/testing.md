@@ -185,6 +185,15 @@ Fault injection (T3) is in its own section below. The suite runs in the macOS an
 
 Before (v0.2.0) the turn retry and the report were repeated, because a check saved what it did only at its end; each is now recorded in `sends.json` before it is made, and a record with no saved outcome is counted as sent, or, for a brief that may have put the task on a second conversation, holds for a person (see [a send recorded before it is made](operations.md#a-send-recorded-before-it-is-made)). A new conversation's first prompt is covered by `TestScenarioNewConversationHandoff` and its own record. No case lost a hold or put the task on two conversations; held checks, dry runs and checks that cannot read `sends.json` settle no record, so a kill followed by a pause and a resume still holds (`TestASendRecordedWithoutAnOutcomeAtEachKillPoint`). Kills inside a single file write cannot be placed from outside; every record is replaced atomically (written to a temporary file, then renamed), so a kill leaves either the old record or the new one.
 
+**A full disk partway through a check** (`TestFaultFullDisk`). The stand-in `bb` makes the state directory unwritable just before a command does anything (`readonly.<command>`) or once it has answered (`readonlyafter.<command>`), so every later record of that check fails as on a full disk; the directory is writable again before the next check.
+
+| Unwritable from | The check | The next check | |
+| --- | --- | --- | --- |
+| just before observing, so before the record of a turn retry | sends nothing, exits 1 and says why | makes the retry, once | enforced |
+| right after a turn retry, before the check is saved | made the retry, exits 1 and says why | counts it and does not repeat it inside the backoff | enforced |
+
+In-process, `snapshot.InjectWriteFaults` (test binaries only) makes chosen writes fail with `ENOSPC` after a short write: `TestFullDisk*` in `internal/supervise` covers the record of a send, `state.json` after a send, a hold the check raises, a move of child threads, and that every record is left whole or old; `internal/snapshot`, `internal/adapter/runner` and `cmd/looptender` cover the write helpers, the saved session ID, `pause`/`stop`/`await-user`, and the disk-space warnings and the daemon's once-per-episode report.
+
 **Damaged records** (`TestFaultDamagedRecord`). Each record is emptied, cut in half or overwritten with bytes that are not JSON, then a check, `status` and `pause` run. No damaged record is rewritten by any of them.
 
 | Record | The check | `status` | `pause` |

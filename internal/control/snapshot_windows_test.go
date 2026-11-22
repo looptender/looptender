@@ -73,7 +73,7 @@ func assertNoSnapshotTemps(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".tmp-") {
+		if strings.HasPrefix(entry.Name(), ".") && strings.Contains(entry.Name(), "-") && !strings.HasSuffix(entry.Name(), ".present") {
 			t.Fatalf("staging file not cleaned: %s", entry.Name())
 		}
 	}

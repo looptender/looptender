@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/looptender/looptender/internal/envvar"
+	"github.com/looptender/looptender/internal/snapshot"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,7 +68,7 @@ func MaybeRunTurn() {
 		}
 		os.Exit(2)
 	}
-	if os.WriteFile(filepath.Join(dir, startedName), []byte(key), 0o600) != nil {
+	if snapshot.WriteFileAtomic(filepath.Join(dir, startedName), []byte(key), 0o600, false) != nil {
 		os.Exit(2)
 	}
 	stopAll := func() error {
@@ -277,7 +278,7 @@ func publishExit(dir, tmp string) (result error) {
 		return errors.New("runner: exit publisher no longer owns the turn")
 	}
 	finishing := filepath.Join(dir, finishingName)
-	if err := os.WriteFile(finishing, []byte(turnKey), 0o600); err != nil {
+	if err := snapshot.WriteFileAtomic(finishing, []byte(turnKey), 0o600, false); err != nil {
 		return err
 	}
 	if beforeExitRename != nil {

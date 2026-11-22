@@ -30,6 +30,11 @@
 //	                       number N in it lets N-1 such calls through first
 //	killbefore.<command>   if present, the stand-in kills the keepgoing process
 //	                       that runs `thread <command>` before doing anything
+//	readonly.<command>     if present, holds a directory: before `thread
+//	                       <command>` does anything, the stand-in makes that
+//	                       directory unwritable, as a full disk would make
+//	                       every new record fail. The file is used up
+//	readonlyafter.<command> the same, once the command has answered
 //	fail.<command>         if present, holds a number N: the next N calls of
 //	                       `thread <command>` fail with no output, as a bb read
 //	                       that the host cut short would
@@ -149,7 +154,13 @@ func play(world, name string, args []string) int {
 		killParent()
 		os.Exit(1)
 	}
+	if len(args) > 1 && args[0] == "thread" {
+		unwritable(filepath.Join(world, "readonly."+args[1]))
+	}
 	code := run(world, args)
+	if len(args) > 1 && args[0] == "thread" {
+		unwritable(filepath.Join(world, "readonlyafter."+args[1]))
+	}
 	// kill.<command>: once the command has done its work and answered, the
 	// stand-in kills the keepgoing process that ran it, as a crash or a
 	// power cut would at that moment. The file is used up.
@@ -658,4 +669,15 @@ func failOnce(world, command string) bool {
 	}
 	os.WriteFile(path, []byte(strconv.Itoa(n-1)), 0o600)
 	return true
+}
+
+// unwritable makes the directory named in the file unwritable and uses the
+// file up: readonly.<command> and readonlyafter.<command>.
+func unwritable(path string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	os.Remove(path)
+	os.Chmod(strings.TrimSpace(string(b)), 0o500)
 }
