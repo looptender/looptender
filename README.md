@@ -58,7 +58,7 @@ Agent tools have their own loops, retries and background agents, and each of the
 
 ## Where it works best today
 
-BB threads get the most: lane awareness, retrying a failed turn by reference, and the BB plugin. Headless Claude Code and Codex sessions get the general behaviour (wakes, limited re-prompts with exact session resume, routes, limits and reports) but nothing for lanes. Cursor and Antigravity run as standalone first routes only and cannot be fallbacks ([Antigravity details](docs/antigravity.md)). Agents defined in configuration have been tested only with stand-ins. Much of the rest is fixture-tested and the full live walkthrough is unfinished; the table below says what has been verified where.
+BB threads get the most: lane awareness, retrying a failed turn by reference, and the BB plugin. Coordinators still own [reconciling existing lane obligations](docs/coordinating-lanes.md#reconcile-existing-lanes-before-parking-the-coordinator): idle/error/archive status is not completion, and newer owner direction requires explicit assignment review rather than automatic dispatch or hold clearing. Headless Claude Code and Codex sessions get the general behaviour (wakes, limited re-prompts with exact session resume, routes, limits and reports) but nothing for lanes. Cursor and Antigravity run as standalone first routes only and cannot be fallbacks ([Antigravity details](docs/antigravity.md)). Agents defined in configuration have been tested only with stand-ins. Much of the rest is fixture-tested and the full live walkthrough is unfinished; the table below says what has been verified where.
 
 In unreleased source, a recognized structured Claude error takes precedence over a success flag or exit zero in turn status and fallback probes. This is covered by local fixtures; it does not establish live provider behavior.
 
@@ -370,3 +370,14 @@ never automatically rearm. Ordinary task prompts, gates, cadence and send allowa
 This does not dispatch children, clear a saved hold or enforce handoffs at turn end.
 
 Unreleased delivery-history groundwork distinguishes HTTP acceptance from notification-command acceptance. Process outcomes promote the private history to schema 2; older readers refuse it. This does not yet enable a BB notification sender. See [delivery history compatibility](docs/operations.md#process-delivery-history-compatibility-unreleased).
+
+Unreleased agent tooling: the packaged keepgoing skill includes a bounded
+[coordinator-owned new-child workflow](integrations/bb-plugin-keepgoing/skills/keepgoing/references/coordinator-workflow.md).
+Under an existing explicit owner delegation grant it checks current controls and
+assignment evidence, reserves an attempt before a visible BB spawn, and records
+its assignment through the existing review command. Verified artifact settlement
+can advance the next independent task. Unknown creation/publication stays reserved;
+it is never retried. This Python 3/Unix agent path is separate from the supervisor;
+it adds no general supervisor creation, tell/reuse, hold clearing or global spend
+guarantee. A submitted host request can race a later hold. Fictional execution is
+not installed coordinator acceptance; overall automatic delegation remains open.
