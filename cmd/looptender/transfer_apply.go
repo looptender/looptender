@@ -89,6 +89,7 @@ func transferApply(e env, args []string, run doctorRun, afterStep func(string) e
 	to := fs.String("thread", "", "new existing BB primary (apply)")
 	id := fs.String("id", "", "pending transfer identity (recover)")
 	takeOver := fs.Bool("take-over", false, "explicitly authorize the destination BB caller to take ownership")
+	leaveChildren := fs.Bool("leave-children", false, "leave the source thread's child threads where they are (by default they move to the destination); recover uses it only when apply was interrupted before recording its choice")
 	asJSON := fs.Bool("json", false, "machine-readable result")
 	timeout := fs.Duration("timeout", 5*time.Second, "timeout per BB metadata query (at most 30s)")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -175,6 +176,12 @@ func transferApply(e env, args []string, run doctorRun, afterStep func(string) e
 			p.Version, p.FromProvider, p.ToProvider, p.Group, p.Model, p.Reasoning = 2, cfg.Loop.Provider, route.Provider, route.Group, route.Model, route.Reasoning
 		}
 	} else {
+		if ctl.PendingTransfer == nil {
+			// The transfer finished; only its child move may be left.
+			if code, handled := recoverTransferChildren(e, cfg, ctl, *id, *takeOver, *asJSON, run); handled {
+				return code
+			}
+		}
 		if ctl.PendingTransfer == nil || !ctl.PendingTransfer.Valid() || ctl.PendingTransfer.ID != *id || !ctl.AwaitingUser {
 			return fail(errors.New("pending transfer identity or recovery record does not match"))
 		}
@@ -257,6 +264,13 @@ func transferApply(e env, args []string, run doctorRun, afterStep func(string) e
 		e.errf("transfer remains pending: %s; use transfer recover with this --id", p.ID)
 		return fail(err)
 	}
+	// The child move is recorded with the transfer's identity once the
+	// transfer has begun, so recover can finish both; it runs only after the
+	// transfer finishes. Recover keeps a recorded choice and records its own
+	// only when apply stopped before recording one.
+	if err := recordTransferChildMove(cfg.Loop.StateDir, p, *leaveChildren); err != nil {
+		return pendingFail(errors.New("could not record the child thread move"))
+	}
 	if err := checkpoint("held"); err != nil {
 		return pendingFail(err)
 	}
@@ -298,15 +312,17 @@ func transferApply(e env, args []string, run doctorRun, afterStep func(string) e
 		return pendingFail(err)
 	}
 	markMoved(cfg.Loop.StateDir)
+	children := moveTransferChildren(e, cfg.Loop.StateDir, p.To, cfg.Loop.BB.CLI, p.ID, run)
 	result := struct {
-		Outcome                  string `json:"outcome"`
-		ID                       string `json:"id"`
-		From                     string `json:"from"`
-		To                       string `json:"to"`
-		AwaitingUser             bool   `json:"awaitingUser"`
-		Generation               uint64 `json:"ownerGeneration"`
-		ModelAccountVerification string `json:"modelAccountVerification"`
-	}{"applied", p.ID, p.From, p.To, true, f.Ownership.Generation, "unavailable"}
+		Outcome                  string               `json:"outcome"`
+		ID                       string               `json:"id"`
+		From                     string               `json:"from"`
+		To                       string               `json:"to"`
+		AwaitingUser             bool                 `json:"awaitingUser"`
+		Generation               uint64               `json:"ownerGeneration"`
+		ModelAccountVerification string               `json:"modelAccountVerification"`
+		Children                 *transferChildResult `json:"children,omitempty"`
+	}{"applied", p.ID, p.From, p.To, true, f.Ownership.Generation, "unavailable", children}
 	if *asJSON {
 		if json.NewEncoder(e.stdout).Encode(result) != nil {
 			return exitFailed
@@ -318,6 +334,7 @@ func transferApply(e env, args []string, run doctorRun, afterStep func(string) e
 		} else {
 			fmt.Fprintln(e.stdout, "Model/reasoning and quota-group labels were retained; account and model identity remain unverified.")
 		}
+		printTransferChildren(e.stdout, children, p.ID)
 	}
 	if err != nil {
 		return fail(err)

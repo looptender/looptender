@@ -59,6 +59,9 @@ type transferPreview struct {
 	// Plan is present only when the preview was asked about a move across
 	// environments or with changed labels.
 	Plan *transferPlan `json:"plan,omitempty"`
+	// Children is what apply would do with the source's child threads, in
+	// counts; absent offline.
+	Children *transferChildrenPreview `json:"children,omitempty"`
 }
 
 // transferChange is one configured label before and after a planned move.
@@ -336,6 +339,13 @@ func transferCommand(e env, args []string, run doctorRun) int {
 					add("workspace", "unavailable", "Whether the destination's working directory is inside a progress repository could not be established; add --accept-workspace-outside to proceed without it.")
 				}
 			}
+			// The source's children: advisory, appended directly.
+			destProvider := afterProvider
+			if route != nil {
+				destProvider = route.Provider
+			}
+			r.Children = previewTransferChildren(e.ctx, a.BB.CLI, a.BB.Thread, destProvider, *timeout, run)
+			r.Checks = append(r.Checks, transferChildrenCheck(r.Children))
 			// Advisory only: appended directly so that it never changes
 			// compatibility, whatever its status.
 			for _, side := range []struct{ id, path string }{{"workspace.from", fromPath}, {"workspace.to", toPath}} {

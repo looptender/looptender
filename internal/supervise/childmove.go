@@ -89,7 +89,7 @@ func (t *tick) heldNow() bool {
 // came from (childMoveCurrent); any other record is dropped.
 func (t *tick) completeChildMove() {
 	m := t.st.ChildMove
-	if m == nil || m.Done || t.opts.DryRun {
+	if m == nil || m.Done || m.Left || t.opts.DryRun {
 		return
 	}
 	switch t.childMoveCurrent(m) {
@@ -117,10 +117,18 @@ const (
 // primary, From is the created thread that was left. A move recorded for a
 // creation not yet settled waits for the reconcile that completes it.
 func (t *tick) childMoveCurrent(m *state.ChildMove) childMoveVerdict {
-	created := t.st.NewThreads[m.Candidate]
 	active := t.activeThread()
+	if m.Transfer != "" {
+		// A transfer's move: only while the loop is still on the primary
+		// it moved to, with that transfer finished and nothing pending.
+		if m.Candidate == "" && active != "" && active == m.To && t.st.Target() == state.Primary && TransferMoveCurrent(t.loop.StateDir, m) {
+			return childMoveRun
+		}
+		return childMoveDrop
+	}
+	created := t.st.NewThreads[m.Candidate]
 	switch {
-	case active != m.To || active == "":
+	case m.Candidate == "" || active != m.To || active == "":
 	case t.st.Target() == m.Candidate && created.Thread == m.To && created.Continues == m.From:
 		return childMoveRun
 	case t.st.Target() == state.Primary && created.Thread == m.From:
@@ -130,6 +138,14 @@ func (t *tick) childMoveCurrent(m *state.ChildMove) childMoveVerdict {
 		return childMoveDefer
 	}
 	return childMoveDrop
+}
+
+// TransferMoveCurrent reports whether a transfer's child move still belongs
+// to the loop: the control record shows that transfer finished (no transfer
+// pending) and the loop bound to the move's destination.
+func TransferMoveCurrent(stateDir string, m *state.ChildMove) bool {
+	c, err := control.Load(stateDir)
+	return err == nil && m.Transfer != "" && c.PendingTransfer == nil && c.SupersededBy == "" && c.BBTarget == m.To
 }
 
 // childPlace is where a listed child is: still under the left thread, under
@@ -143,27 +159,53 @@ const (
 	childGone
 )
 
-// runChildMove lists the children once, then moves as many as time allows,
-// then lists both threads to confirm: a child counts as moved only when it is
-// listed under the thread that took over, whatever bb answered. One still
-// under the left thread is tried again up to state.MaxChildMoveAttempts
-// times; one archived, deleted or moved elsewhere is counted as skipped.
+// ChildMover lists and re-parents BB child threads.
+type ChildMover interface {
+	ListChildren(ctx context.Context, parent string) ([]bb.ListedChild, error)
+	SetParent(ctx context.Context, child, parent string) error
+}
+
+// ChildMoveEnv is what a child move needs from its caller: the time it may
+// still use, whether a hold now ends the moves, how to save the record, and
+// where warnings go.
+type ChildMoveEnv struct {
+	Left func() time.Duration
+	Held func() bool
+	Save func()
+	Warn func(string)
+}
+
 func (t *tick) runChildMove() {
 	m := t.st.ChildMove
 	cli := config.DefaultBBCLI
-	if c, ok := t.fb.Find(m.Candidate); ok && c.BB != nil && c.BB.CLI != "" {
-		cli = c.BB.CLI
+	if t.fb != nil {
+		if c, ok := t.fb.Find(m.Candidate); ok && c.BB != nil && c.BB.CLI != "" {
+			cli = c.BB.CLI
+		}
 	}
-	threads := t.opts.Threads(cli)
+	if m.Candidate == "" && t.loop.Agent.BB != nil && t.loop.Agent.BB.CLI != "" {
+		cli = t.loop.Agent.BB.CLI // a transfer's move: the primary's bb
+	}
+	MoveChildren(t.ctx, t.opts.Threads(cli), m, ChildMoveEnv{Left: t.left, Held: t.heldNow, Save: t.saveChildMove, Warn: func(s string) { t.warn("%s", s) }})
+	t.res.ChildrenMoved, t.res.ChildrenPending = m.Moved, len(m.Remaining)
+}
+
+// MoveChildren lists the children of m.From once, then moves as many as time
+// allows to m.To, then lists both threads to confirm: a child counts as moved
+// only when it is listed under m.To, whatever bb answered. One still under
+// m.From is tried again up to state.MaxChildMoveAttempts times; one archived,
+// deleted or moved elsewhere is counted as skipped. The handoff check and
+// transfer apply both use it; callers decide whether m is still current.
+func MoveChildren(ctx context.Context, threads ChildMover, m *state.ChildMove, env ChildMoveEnv) {
 	listOf := func(parent string) ([]bb.ListedChild, bool) {
-		if t.left() < childListTime {
+		if env.Left() < childListTime {
 			return nil, false
 		}
-		ctx, cancel := context.WithTimeout(t.ctx, childListTime)
+		ctx, cancel := context.WithTimeout(ctx, childListTime)
 		children, err := threads.ListChildren(ctx, parent)
 		cancel()
 		if err != nil {
-			t.warn("moving children to the new thread: could not list them; a later check tries again")
+			env.Warn("moving children to the new thread: could not list them; a later check tries again")
 			return nil, false
 		}
 		return children, true
@@ -243,7 +285,7 @@ func (t *tick) runChildMove() {
 			live = live[:state.MaxMovedChildren]
 		}
 		m.Remaining, m.Listed = live, true
-		t.saveChildMove()
+		env.Save()
 	} else if len(m.Remaining) > 0 {
 		// Continuing an earlier check's move, which may have ended between an
 		// update and its record: a child already moved is not asked again.
@@ -252,18 +294,18 @@ func (t *tick) runChildMove() {
 			return
 		}
 		settle(place, 0)
-		t.saveChildMove()
+		env.Save()
 	}
 	tried := 0
 	for tried < len(m.Remaining) {
-		if t.left() < childMoveTime+2*childListTime || t.heldNow() {
+		if env.Left() < childMoveTime+2*childListTime || env.Held() {
 			break
 		}
-		ctx, cancel := context.WithTimeout(t.ctx, childMoveTime)
+		ctx, cancel := context.WithTimeout(ctx, childMoveTime)
 		err := threads.SetParent(ctx, m.Remaining[tried], m.To)
 		cancel()
 		if err != nil {
-			t.warn("moving a child to the new thread failed: %v", err)
+			env.Warn(fmt.Sprintf("moving a child to the new thread failed: %v", err))
 		}
 		tried++
 	}
@@ -277,8 +319,7 @@ func (t *tick) runChildMove() {
 		settle(place, tried)
 	}
 	m.Done = len(m.Remaining) == 0
-	t.res.ChildrenMoved, t.res.ChildrenPending = m.Moved, len(m.Remaining)
-	t.saveChildMove()
+	env.Save()
 }
 
 // childrenNote is appended to a created thread's first prompt when the left
