@@ -1,0 +1,1 @@
+- Pin CI and release builds to Go 1.26.11 instead of selecting the known-broken Go 1.24.0 ARM64 compiler from the module minimum. Declared Go 1.24 compatibility and required platform checks remain unchanged.
