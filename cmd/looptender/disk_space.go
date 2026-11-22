@@ -55,7 +55,8 @@ func capitalize(s string) string {
 // hovering at a threshold is one episode, not one per crossing. Within an
 // episode each level (filling, nearly full) is recorded in runs.jsonl and
 // reported through the error event at most once, and no two reports are
-// closer than diskReportEvery; the end of an episode is recorded. A
+// closer than diskReportEvery, except that "nearly full" is told at once;
+// the end of an episode is recorded. A
 // restarted daemon tells again once.
 type diskWatch struct {
 	level      string // the episode's worst level so far; ok outside one
@@ -117,7 +118,10 @@ func (w *diskWatch) check(e env, cfg *config.Config) {
 		if rank[level] > rank[w.level] {
 			w.level = level
 		}
-		if w.told[level] || (!w.lastReport.IsZero() && now().Sub(w.lastReport) < diskReportEvery) {
+		// "Nearly full" is told at once, even within the hour: it is the one
+		// that cannot wait, and it is told at most once an episode anyway.
+		soon := !w.lastReport.IsZero() && now().Sub(w.lastReport) < diskReportEvery && level != diskspace.Critical
+		if w.told[level] || soon {
 			return // told already, or too soon after the last report
 		}
 		if w.told == nil {

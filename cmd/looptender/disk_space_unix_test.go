@@ -35,11 +35,11 @@ func TestDaemonTellsOfALowVolumeOncePerEpisode(t *testing.T) {
 	if reports() != 1 || lines("disk_low") != 1 {
 		t.Fatalf("filling: %d reports, %d disk_low", reports(), lines("disk_low"))
 	}
-	// Nearly full within the hour of that report: told once the hour is up,
-	// and only once however long it hovers at 100 MiB.
+	// Nearly full within the hour of that report: told at once, the hour
+	// notwithstanding, and only once however long it hovers at 100 MiB.
 	pass(90 * mib)
-	if reports() != 1 {
-		t.Fatalf("a second report within the hour: %d", reports())
+	if reports() != 2 || lines("disk_critical") != 1 {
+		t.Fatalf("nearly full within the hour: %d reports, %d disk_critical", reports(), lines("disk_critical"))
 	}
 	for i := 0; i < 12; i++ {
 		pass(95 * mib)

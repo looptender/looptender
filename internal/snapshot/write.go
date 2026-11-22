@@ -7,6 +7,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // Writes to a loop's records go through Write, so that a full disk, a
@@ -102,17 +103,42 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode, sync bool) erro
 // gets a line break first. Every appender holds an exclusive lock on the
 // log, only across the length read, the write and the cut, so the cut can
 // only ever remove this call's own bytes, never another process's line.
+//
+// The lock is waited for at most AppendLockWait: a holder that is suspended,
+// or stuck on a hung file system, must not stall every appender, a check
+// among them. Without the lock the line is still appended, whole if the
+// write succeeds, but a failed write is not cut back (it could cut another
+// appender's line); the next line then starts on a line of its own.
 func AppendLine(path string, line []byte, perm os.FileMode) error {
-	return appendLine(path, line, perm, false)
+	return appendLine(path, func(bool) []byte { return line }, perm, false)
 }
 
 // AppendLineSync is AppendLine, flushing the line to the device before it
 // returns.
 func AppendLineSync(path string, line []byte, perm os.FileMode) error {
-	return appendLine(path, line, perm, true)
+	return appendLine(path, func(bool) []byte { return line }, perm, true)
 }
 
-func appendLine(path string, line []byte, perm os.FileMode, sync bool) error {
+// AppendLineNoting is AppendLine for a log whose line can say how it was
+// written: line is called with whether the lock was obtained.
+func AppendLineNoting(path string, line func(locked bool) []byte, perm os.FileMode) error {
+	return appendLine(path, line, perm, false)
+}
+
+// AppendLockWait is how long an appender waits for the log's lock.
+var AppendLockWait = 3 * time.Second
+
+// AppendLockSkip is how long, after a wait for a log's lock ran out, this
+// process tries the lock only once instead of waiting again: a stuck holder
+// costs one wait per check, not one per event.
+var AppendLockSkip = time.Minute
+
+var (
+	unobtainableMu sync.Mutex
+	unobtainable   = map[string]time.Time{} // log path → until when not to wait
+)
+
+func appendLine(path string, build func(locked bool) []byte, perm os.FileMode, sync bool) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, perm)
 	if err != nil {
 		return err
@@ -125,10 +151,37 @@ func appendLine(path string, line []byte, perm os.FileMode, sync bool) error {
 		return err
 	}
 	defer l.Close()
-	if err := lockAppend(l); err != nil {
-		return err
+	wait := AppendLockWait
+	unobtainableMu.Lock()
+	if until, ok := unobtainable[path]; ok && time.Now().Before(until) {
+		wait = 0 // it was unobtainable a moment ago: one try only
 	}
-	defer unlockAppend(l)
+	unobtainableMu.Unlock()
+	locked := false
+	for deadline := time.Now().Add(wait); ; time.Sleep(20 * time.Millisecond) {
+		ok, err := tryLockAppend(l)
+		if err != nil {
+			return err
+		}
+		if ok {
+			locked = true
+			break
+		}
+		if !time.Now().Before(deadline) {
+			break // held elsewhere for too long: append without it
+		}
+	}
+	unobtainableMu.Lock()
+	if locked {
+		delete(unobtainable, path)
+	} else if wait > 0 {
+		unobtainable[path] = time.Now().Add(AppendLockSkip)
+	}
+	unobtainableMu.Unlock()
+	if locked {
+		defer unlockAppend(l)
+	}
+	line := build(locked)
 	info, err := f.Stat()
 	if err != nil {
 		return err
@@ -146,8 +199,13 @@ func appendLine(path string, line []byte, perm os.FileMode, sync bool) error {
 	if len(line) == 0 || line[len(line)-1] != '\n' {
 		line = append(line, '\n')
 	}
+	// Without the lock another appender can end its line between the length
+	// read above and this write, so a line break added for a torn line may
+	// leave an empty line instead. That is accepted: nothing is lost or
+	// joined, the routes history reader skips empty lines, and runs.jsonl
+	// has no reader in the product.
 	if err := Write(f, line); err != nil {
-		if now, serr := f.Stat(); serr == nil && now.Size() > end {
+		if now, serr := f.Stat(); locked && serr == nil && now.Size() > end {
 			// Only this call's bytes are past end: the lock keeps every
 			// other appender out. Cut by a handle of its own: on Windows one
 			// opened for appending cannot change a file's length.
@@ -162,4 +220,26 @@ func appendLine(path string, line []byte, perm os.FileMode, sync bool) error {
 		return Sync(f)
 	}
 	return nil
+}
+
+// HoldAppendLockForTest takes the appenders' lock on the log at path, as
+// another process holding it would, until release is called. It panics
+// outside a test binary.
+func HoldAppendLockForTest(path string) (release func(), err error) {
+	if !testing.Testing() {
+		panic("snapshot: HoldAppendLockForTest called outside a test binary")
+	}
+	l, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	ok, err := tryLockAppend(l)
+	if err != nil || !ok {
+		l.Close()
+		if err == nil {
+			err = errors.New("lock held")
+		}
+		return nil, err
+	}
+	return func() { unlockAppend(l); l.Close() }, nil
 }

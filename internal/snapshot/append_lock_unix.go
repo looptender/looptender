@@ -8,14 +8,20 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// lockAppend takes the log's appenders' lock, waiting for it: it is held
+// tryLockAppend takes the log's appenders' lock if it is free; it is held
 // only across one line's write.
-func lockAppend(f *os.File) error {
+func tryLockAppend(f *os.File) (bool, error) {
 	for {
-		err := unix.Flock(int(f.Fd()), unix.LOCK_EX)
-		if err != unix.EINTR {
-			return err
+		err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		switch err {
+		case nil:
+			return true, nil
+		case unix.EWOULDBLOCK:
+			return false, nil
+		case unix.EINTR:
+			continue
 		}
+		return false, err
 	}
 }
 
