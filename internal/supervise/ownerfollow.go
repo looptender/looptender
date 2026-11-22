@@ -43,6 +43,10 @@ func (t *tick) followOwner(from, to, reason string) {
 	if t.opts.DryRun || from == "" || to == "" || from == to {
 		return
 	}
+	// A move not yet applied is about a target the loop is now leaving:
+	// it must never apply later. The owner it would have moved is still the
+	// owner, and the rule below decides afresh from that.
+	t.dropOwnerMove("the loop moved again before it was applied")
 	owner, generation := t.ownerOf()
 	if owner != from {
 		return
@@ -57,6 +61,13 @@ func (t *tick) followOwner(from, to, reason string) {
 func (t *tick) applyOwnerMove() {
 	m := t.st.PendingOwnerMove
 	if m == nil || t.opts.DryRun {
+		return
+	}
+	// Only while the thread it moves ownership to is still the active
+	// target: a target changed by anything else (a manual retarget, a
+	// return to the primary) makes it stale.
+	if t.activeThread() != m.To {
+		t.dropOwnerMove("the active target is no longer the thread it was for")
 		return
 	}
 	var r incident.Record
@@ -87,6 +98,42 @@ func (t *tick) applyOwnerMove() {
 		saved.PendingOwnerMove = nil
 		_ = state.Save(t.loop.StateDir, saved)
 	}
+}
+
+// dropOwnerMove forgets a pending move, in this check's state and on disk.
+func (t *tick) dropOwnerMove(why string) {
+	if t.st.PendingOwnerMove == nil {
+		return
+	}
+	t.warn("a pending move of loop ownership was dropped: %s; the owner is unchanged", why)
+	t.st.PendingOwnerMove = nil
+	if saved, err := state.Load(t.loop.StateDir); err == nil && saved.PendingOwnerMove != nil {
+		saved.PendingOwnerMove = nil
+		_ = state.Save(t.loop.StateDir, saved)
+	}
+}
+
+// activeThread is the BB thread of the active target as recorded, or "".
+// It warns about nothing: resolving and returning are the check's own work.
+func (t *tick) activeThread() string {
+	target := t.st.Target()
+	agent := t.loop.Agent
+	if target != state.Primary {
+		if t.fb == nil {
+			return ""
+		}
+		c, ok := t.fb.Find(target)
+		if !ok || c.Disabled {
+			return ""
+		}
+		if agent, ok = t.st.CandidateAgent(c); !ok {
+			return ""
+		}
+	}
+	if agent.Adapter != "bb" || agent.BB == nil {
+		return ""
+	}
+	return agent.BB.Thread
 }
 
 // completeOwnerMove finishes a move left pending by an earlier check that

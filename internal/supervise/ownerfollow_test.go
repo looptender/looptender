@@ -9,6 +9,7 @@ import (
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/decide"
 	"github.com/looptender/looptender/internal/incident"
+	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/state"
 )
 
@@ -218,5 +219,102 @@ func TestOwnershipFollowsSwitchBack(t *testing.T) {
 	mustThreadTick(t, w, f, t0.Add(5*time.Hour))
 	if o := ownership(t, w.dir); o.ThreadID != "thr_created_2" || o.Generation != 4 || strings.Join(o.Followed.From, ",") != "thr_created_1,thr_primary" {
 		t.Fatalf("second handoff: %+v %+v", o, o.Followed)
+	}
+}
+
+// Review regression: the control lock is held (a concurrent writer, or a
+// crash) through both the handoff check and the switch-back check, so the
+// pending move to the created thread is never applied. The switch-back must
+// drop it: after the lock is released the primary still owns the loop.
+func TestStalePendingOwnerMoveDoesNotOverrideSwitchBack(t *testing.T) {
+	w, p, f := newThreadWorld(t)
+	ownedBy(t, w.dir, "thr_primary")
+	w.cfg.Loop.SwitchBack = config.SwitchBack{Enabled: true, MinAfter: config.Duration{Duration: time.Hour}, RetryEvery: config.Duration{Duration: 30 * time.Minute}}
+	w.cfg.Loop.Probe = config.Probe{Kind: "command", Command: []string{"x"}}
+	obs := limited
+	obs.ResetsAt = t0.Add(2 * time.Hour)
+	p.obs = obs
+	held, err := lock.AcquireNamed(w.dir, lock.Control)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := mustThreadTick(t, w, f, t0); res.Target != "claude-other" || res.OwnerMovedTo != "" {
+		t.Fatalf("%+v", res)
+	}
+	if st, _ := state.Load(w.dir); st.PendingOwnerMove == nil || st.PendingOwnerMove.To != "thr_created_1" {
+		t.Fatalf("no pending move: %+v", st.PendingOwnerMove)
+	}
+	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	w.probeOK["primary"] = true
+	p.obs = decide.Observation{State: decide.Idle}
+	if res := mustThreadTick(t, w, f, t0.Add(2*time.Hour+time.Minute)); res.Action != "switch_back" {
+		t.Fatalf("%+v", res)
+	}
+	if st, _ := state.Load(w.dir); st.PendingOwnerMove != nil {
+		t.Fatalf("stale pending move kept: %+v", st.PendingOwnerMove)
+	}
+	held.Release()
+	mustThreadTick(t, w, f, t0.Add(2*time.Hour+2*time.Minute))
+	if o := ownership(t, w.dir); o.ThreadID != "thr_primary" || o.Generation != 1 {
+		t.Fatalf("owner moved away from the active primary: %+v", o)
+	}
+}
+
+// Review regression: a pending move outstanding while control.json has a
+// pending BB transfer is refused every check. A later move of the target
+// drops it, so cancelling the transfer cannot apply it. While the target is
+// unchanged it applies once the transfer is gone.
+func TestPendingOwnerMoveAcrossAPendingTransfer(t *testing.T) {
+	transfer := &control.PendingBBTransfer{Version: 1, ID: "move_" + strings.Repeat("a", 32), From: "thr_example_a", To: "thr_example_b",
+		Before: strings.Repeat("1", 64), After: strings.Repeat("2", 64)}
+	for _, moveAgain := range []bool{true, false} {
+		t.Run(map[bool]string{true: "the target moves again", false: "the target stays"}[moveAgain], func(t *testing.T) {
+			w, p, f := newThreadWorld(t)
+			ownedBy(t, w.dir, "thr_primary")
+			w.cfg.Loop.SwitchBack = config.SwitchBack{Enabled: true, MinAfter: config.Duration{Duration: time.Hour}, RetryEvery: config.Duration{Duration: 30 * time.Minute}}
+			w.cfg.Loop.Probe = config.Probe{Kind: "command", Command: []string{"x"}}
+			obs := limited
+			obs.ResetsAt = t0.Add(2 * time.Hour)
+			p.obs = obs
+			held, _ := lock.AcquireNamed(w.dir, lock.Control)
+			mustThreadTick(t, w, f, t0)
+			held.Release()
+			control.Update(w.dir, func(c *control.File) { c.PendingTransfer = transfer })
+			w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+			mustThreadTick(t, w, f, t0.Add(time.Minute))
+			if st, _ := state.Load(w.dir); st.PendingOwnerMove == nil || ownership(t, w.dir).ThreadID != "thr_primary" {
+				t.Fatal("the move applied, or was dropped, while the transfer was pending")
+			}
+			if moveAgain {
+				w.probeOK["primary"] = true
+				p.obs = decide.Observation{State: decide.Idle}
+				if res := mustThreadTick(t, w, f, t0.Add(2*time.Hour+time.Minute)); res.Action != "switch_back" {
+					t.Fatalf("%+v", res)
+				}
+			}
+			control.Update(w.dir, func(c *control.File) { c.PendingTransfer = nil })
+			mustThreadTick(t, w, f, t0.Add(3*time.Hour))
+			o := ownership(t, w.dir)
+			if moveAgain && (o.ThreadID != "thr_primary" || o.Generation != 1) || !moveAgain && (o.ThreadID != "thr_created_1" || o.Generation != 2) {
+				t.Fatalf("%+v", o)
+			}
+		})
+	}
+}
+
+// A pending move whose thread is no longer the active target (here a person
+// retargeted by hand, which records no move) is dropped, not applied.
+func TestPendingOwnerMoveForAnotherTargetIsDropped(t *testing.T) {
+	w, _, f := newThreadWorld(t)
+	ownedBy(t, w.dir, "thr_primary")
+	held, _ := lock.AcquireNamed(w.dir, lock.Control)
+	mustThreadTick(t, w, f, t0)
+	held.Release()
+	st, _ := state.Load(w.dir)
+	st.ActiveTarget = state.Primary
+	state.Save(w.dir, st)
+	res := mustThreadTick(t, w, f, t0.Add(time.Minute))
+	if o := ownership(t, w.dir); o.ThreadID != "thr_primary" || !strings.Contains(strings.Join(res.Warnings, "\n"), "no longer the thread it was for") {
+		t.Fatalf("%+v %v", o, res.Warnings)
 	}
 }

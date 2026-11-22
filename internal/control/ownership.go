@@ -174,6 +174,12 @@ func ClaimOwner(f *File, caller string, takeOver bool) error {
 	}
 	old := f.Ownership
 	if old.ThreadID == caller {
+		if takeOver {
+			// An explicit claim, even by the current owner, ends any run of
+			// supervisor-made moves: earlier owners lose their check access
+			// and daemons bound to them stop following.
+			old.Followed = nil
+		}
 		return nil
 	}
 	if old.Generation == ^uint64(0) {
