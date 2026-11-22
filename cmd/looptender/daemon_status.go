@@ -23,7 +23,13 @@ type daemonStatus struct {
 	LastPassAt             *time.Time `json:"lastPassAt,omitempty"`
 	LastPassStartedAt      *time.Time `json:"lastPassStartedAt,omitempty"`
 	NextCheck              string     `json:"nextCheck"`
-	BinaryComparison       string     `json:"binaryComparison"`
+	// CheckedBy is "ticks" when no daemon answers and recent checks show
+	// the loop is ticked by an external scheduler or by hand; Cadence is
+	// how often recent checks ran (past checks, not a forecast). Both are
+	// set only then (noteTickCadence).
+	CheckedBy        string `json:"checkedBy,omitempty"`
+	Cadence          string `json:"cadence,omitempty"`
+	BinaryComparison string `json:"binaryComparison"`
 	// version is the build label the daemon reported, made safe to show.
 	// Status JSON carries only the comparison for the daemon's label; the
 	// panel's Versions view reads the label. The last recorded check's label
@@ -52,7 +58,7 @@ func inspectDaemon(ctx context.Context, dir, current string, offline bool) daemo
 		return d
 	}
 	d.processID, d.invocationID = s.ProcessID, s.InvocationID
-	d.State, d.Message = "responsive", "A keepgoing daemon answered a fresh local challenge. This does not establish agent health or future execution."
+	d.State, d.Message = "responsive", "A looptender daemon answered a fresh local challenge. This does not establish agent health or future execution."
 	d.Phase, d.StartedAt, d.ObservedAt, d.NextCheckAt, d.LastPassAt, d.LastPassStartedAt, d.DryRun = s.Phase, &s.StartedAt, &s.ObservedAt, s.NextCheckAt, s.LastPassAt, s.LastPassStartedAt, s.DryRun
 	d.BinaryComparison = compareCheckVersion(&state.Check{Version: s.Version}, current)
 	d.version = dockBuildLabel(s.Version)

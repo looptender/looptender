@@ -40,7 +40,7 @@ type serviceReport struct {
 
 func serviceCommand(e env, args []string, h serviceHost) int {
 	if len(args) == 0 {
-		e.errf("usage: keepgoing service install|remove|status [-c config] [--dry-run] [--json]")
+		e.errf("usage: looptender service install|remove|status [-c config] [--dry-run] [--json]")
 		return exitUsage
 	}
 	op, args := args[0], args[1:]
@@ -100,7 +100,7 @@ func serviceCommand(e env, args []string, h serviceHost) int {
 	}
 	if op == "install" {
 		if _, err := exec.LookPath(h.executable); err != nil {
-			e.errf("service: current executable is unavailable; install a stable keepgoing binary first")
+			e.errf("service: current executable is unavailable; install a stable looptender binary first")
 			return exitFailed
 		}
 		path, err = filepath.EvalSymlinks(path)

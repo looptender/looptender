@@ -377,7 +377,7 @@ func printRouteLists(e env, out routeListsOut) {
 	for _, l := range out.Loops {
 		fmt.Fprintln(w)
 		if l.Problem != "" {
-			fmt.Fprintf(w, "%s: configuration unavailable; inspect it with keepgoing validate.\n", l.Loop)
+			fmt.Fprintf(w, "%s: configuration unavailable; inspect it with looptender validate.\n", l.Loop)
 			continue
 		}
 		list := map[string]string{"standard": "follows the standard list", "own": "has its own list", "none": "has no other routes"}[l.List]
@@ -448,7 +448,7 @@ func followsStandardRefusal(sub string) string {
 	if sub == "handoff" {
 		return "This loop follows the standard route list. To turn handoff on or off, edit errors.failover_on in the loop's configuration file."
 	}
-	return "This loop follows the standard route list. Change that list instead with keepgoing routes add, move, remove, off or on."
+	return "This loop follows the standard route list. Change that list instead with looptender routes add, move, remove, off or on."
 }
 
 // loopCan is what this caller may do to a loop with routes --loop, offering
@@ -518,7 +518,7 @@ func routesProblemText(code string) string {
 	case "missing":
 		return "no list has been written"
 	case config.RoutesInvalid:
-		return "its contents are not a valid route list; keepgoing validate shows why"
+		return "its contents are not a valid route list; looptender validate shows why"
 	}
 	return "it could not be read"
 }

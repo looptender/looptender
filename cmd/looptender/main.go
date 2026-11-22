@@ -29,10 +29,10 @@ const (
 	exitSkipped = 75
 )
 
-const usage = `keepgoing keeps a coding-agent loop going.
+const usage = `looptender keeps a coding-agent loop going.
 
 Usage:
-  keepgoing <command> [flags]
+  looptender <command> [flags]
 
 Supervision (read -c FILE; default ./looptender.yaml, or ./keepgoing.yaml when only that is there):
   tick                     Run one pass and exit (cron, launchd, CI, BB automations)
@@ -72,8 +72,8 @@ Local client discovery:
   registry add|list|remove|reconcile  Register private loop references; never start supervision
   migrate                  Say what moving the per-user directories from keepgoing/ to looptender/ would do;
                            --apply moves them and leaves a link, --undo --apply moves them back
-  dock                     Serve the read-only keepgoing panel for every registered loop on 127.0.0.1
-  panel                    Open the keepgoing panel in your browser, starting it when needed; also status, stop, list
+  dock                     Serve the read-only looptender panel for every registered loop on 127.0.0.1
+  panel                    Open the looptender panel in your browser, starting it when needed; also status, stop, list
 
 Goal metadata:
   assignment inventory|review|handoff|acknowledge|ready|reconcile-wake|show  Explicit BB assignment evidence (opt-in; no dispatch)
@@ -236,7 +236,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return netRetry(e, rest)
 	case "fallbacks", "report", "session":
 		if len(rest) == 0 {
-			e.errf("%s needs a subcommand; see keepgoing help", cmd)
+			e.errf("%s needs a subcommand; see looptender help", cmd)
 			return exitUsage
 		}
 		if cmd == "fallbacks" {
@@ -324,7 +324,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if *f.here {
 		// The caller, not a configuration, says which loop: -c is not read.
 		if len(positional) != 0 || *f.cfgPath != "" {
-			e.errf("usage: keepgoing context --here [--json]")
+			e.errf("usage: looptender context --here [--json]")
 			return exitUsage
 		}
 		now := time.Now()
@@ -398,7 +398,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return code
 	case "context":
 		if len(positional) != 0 {
-			e.errf("usage: keepgoing context [-c looptender.yaml | --here] [--json]")
+			e.errf("usage: looptender context [-c looptender.yaml | --here] [--json]")
 			return exitUsage
 		}
 		return contextCmd(e, cfg, *f.cfgPath, now, *f.asJSON)
@@ -442,7 +442,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return sessionClearUnconfirmed(e, cfg, *f.target, *f.note, *f.asJSON)
 	case "retarget":
 		if len(positional) != 1 {
-			e.errf("usage: keepgoing retarget <candidate-id|primary> [--discard-pending-thread] [-c looptender.yaml]")
+			e.errf("usage: looptender retarget <candidate-id|primary> [--discard-pending-thread] [-c looptender.yaml]")
 			return exitUsage
 		}
 		return retarget(e, cfg, positional[0], *f.note, *f.discard)
@@ -456,7 +456,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return fallbacksList(e, cfg, now, *f.asJSON)
 	case "report resume":
 		if *f.dryRun || len(positional) != 0 {
-			e.errf("usage: keepgoing report resume [-c looptender.yaml]; sends nothing")
+			e.errf("usage: looptender report resume [-c looptender.yaml]; sends nothing")
 			return exitUsage
 		}
 		return resumeReport(e, cfg)

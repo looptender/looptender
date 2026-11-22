@@ -391,7 +391,7 @@ func TestPanelModeIsFixedAndStatusSaysIt(t *testing.T) {
 		t.Fatalf("%d %s %s", code, out.String(), errs.String())
 	}
 	out.Reset()
-	if code := panelStatusCommand(env{context.Background(), &out, &errs}, []string{"--panel-directory", w.dir}); code != exitOK || !strings.Contains(out.String(), "Changes allowed for") || !strings.Contains(out.String(), "keepgoing panel stop turns them off") {
+	if code := panelStatusCommand(env{context.Background(), &out, &errs}, []string{"--panel-directory", w.dir}); code != exitOK || !strings.Contains(out.String(), "Changes allowed for") || !strings.Contains(out.String(), "looptender panel stop turns them off") {
 		t.Fatalf("%d %s", code, out.String())
 	}
 	out.Reset()

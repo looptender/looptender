@@ -217,7 +217,7 @@ func TestFallbacksHandoffOnAndOff(t *testing.T) {
 	if err := state.Save(cfg.Loop.StateDir, state.File{ActiveTarget: "second"}); err != nil {
 		t.Fatal(err)
 	}
-	if code, out, _ := f.manage(t, "", "handoff", "off", "--dry-run"); code != exitOK || !strings.Contains(out, "The loop stays on second, where it is now. This does not move it\n  back; use keepgoing retarget primary for that.") || !strings.Contains(out, "in use now") {
+	if code, out, _ := f.manage(t, "", "handoff", "off", "--dry-run"); code != exitOK || !strings.Contains(out, "The loop stays on second, where it is now. This does not move it\n  back; use looptender retarget primary for that.") || !strings.Contains(out, "in use now") {
 		t.Fatalf("%d %s", code, out)
 	}
 }
@@ -318,7 +318,7 @@ func TestFallbacksRemove(t *testing.T) {
 	}
 	before = f.records(t)
 	for name, tc := range map[string]struct{ id, want string }{
-		"in use":  {"third", "The loop is running on \"third\" right now. Move it first with:\n    keepgoing retarget primary"},
+		"in use":  {"third", "The loop is running on \"third\" right now. Move it first with:\n    looptender retarget primary"},
 		"unknown": {"absent", "No fallback has the id \"absent\". This loop has: first, third."},
 	} {
 		code, out, errOut := f.manage(t, "yes\n", "remove", tc.id)
@@ -334,7 +334,7 @@ func TestFallbacksRemove(t *testing.T) {
 	}
 	before = f.files(t)
 	code, out, errOut = f.manage(t, "", "remove", "first", "--yes")
-	if code != exitUsage || out != "" || !strings.Contains(errOut, "only fallback") || !strings.Contains(errOut, "keepgoing fallbacks handoff off") || f.files(t) != before {
+	if code != exitUsage || out != "" || !strings.Contains(errOut, "only fallback") || !strings.Contains(errOut, "looptender fallbacks handoff off") || f.files(t) != before {
 		t.Fatalf("last fallback: %d %s", code, errOut)
 	}
 }
@@ -406,10 +406,10 @@ func TestFallbacksManageGuards(t *testing.T) {
 			args []string
 			want string
 		}{
-			"handoff word":  {"handoff", []string{"maybe"}, "usage: keepgoing fallbacks handoff on|off"},
-			"handoff none":  {"handoff", nil, "usage: keepgoing fallbacks handoff on|off"},
-			"remove none":   {"remove", nil, "usage: keepgoing fallbacks remove ID"},
-			"remove two":    {"remove", []string{"first", "second"}, "usage: keepgoing fallbacks remove ID"},
+			"handoff word":  {"handoff", []string{"maybe"}, "usage: looptender fallbacks handoff on|off"},
+			"handoff none":  {"handoff", nil, "usage: looptender fallbacks handoff on|off"},
+			"remove none":   {"remove", nil, "usage: looptender fallbacks remove ID"},
+			"remove two":    {"remove", []string{"first", "second"}, "usage: looptender fallbacks remove ID"},
 			"to elsewhere":  {"remove", []string{"first", "--to", "2"}, "--to applies only to fallbacks move"},
 			"json alone":    {"handoff", []string{"off", "--json"}, "--json requires --yes or --dry-run"},
 			"unknown flag":  {"move", []string{"first", "--sideways"}, "flag provided but not defined"},
@@ -436,7 +436,7 @@ func TestFallbacksManageGuards(t *testing.T) {
 		before := f.files(t)
 		for sub, args := range commands {
 			code, out, errOut := f.manage(t, "yes\n", sub, args...)
-			if code != exitUsage || out != "" || !strings.Contains(errOut, "This loop has no fallbacks. Add one first with: keepgoing fallbacks add") || f.files(t) != before {
+			if code != exitUsage || out != "" || !strings.Contains(errOut, "This loop has no fallbacks. Add one first with: looptender fallbacks add") || f.files(t) != before {
 				t.Fatalf("%s: %d %s", sub, code, errOut)
 			}
 		}

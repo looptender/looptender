@@ -12,6 +12,7 @@ import (
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
+	"github.com/looptender/looptender/internal/registry"
 	"github.com/looptender/looptender/internal/state"
 )
 
@@ -160,15 +161,36 @@ func TestTickedLoopSaysItIsCheckedByTicks(t *testing.T) {
 		out.FollowsInstalls != "ticks" || !strings.Contains(text, "daemon follows new installs: no daemon to follow them: the loop is checked by ticks") {
 		t.Fatalf("%s", text)
 	}
-	if _, r := doctorOf(t, f); doctorFinding(r, "supervisor.ticks") == nil {
-		t.Fatal("doctor says nothing about the ticks")
+	// One sentence for the text, both JSON fields, doctor and the client
+	// status the card and the menu read.
+	const sentence = "not scheduled by a daemon: checks are run by an external scheduler or ticks run by hand; recent checks ran about every 10m, the last 4m ago"
+	if !strings.HasPrefix(out.Daemon.NextCheck, sentence) || out.Runtime.NextCheck != out.Daemon.NextCheck || out.Daemon.CheckedBy != "ticks" || out.Daemon.Cadence != "10m" {
+		t.Fatalf("status JSON: daemon %+v runtime next check %q", out.Daemon, out.Runtime.NextCheck)
+	}
+	if _, r := doctorOf(t, f); doctorFinding(r, "supervisor.ticks") == nil || !strings.HasPrefix(r.NextCheck, "not scheduled by a daemon") || r.Daemon == nil || r.Daemon.CheckedBy != "ticks" {
+		t.Fatalf("doctor: %+v", r)
+	}
+	dir := filepath.Join(t.TempDir(), "registry")
+	if code, o, errs := registryRun(t, dir, "add", "-c", f.config); code != 0 {
+		t.Fatal(o, errs)
+	}
+	reg, err := registry.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := readClientStatus(context.Background(), dir, reg.Entries[0].ID, false, true, time.Minute, now, inspectDaemon)
+	if c.Snapshot == nil || !strings.HasPrefix(c.Snapshot.Daemon.NextCheck, sentence) || c.Snapshot.Daemon.CheckedBy != "ticks" || c.Snapshot.Daemon.Cadence != "10m" {
+		t.Fatalf("client status: %+v", c)
 	}
 	// Checks that stopped long ago are not "being checked".
 	if err := state.Save(f.state, state.File{CheckedAt: now.Add(-6 * time.Hour), ScheduleGaps: gaps}); err != nil {
 		t.Fatal(err)
 	}
-	if out, text := statusOf(t, f, now); out.Schedule.CheckedBy != "" || strings.Contains(text, "not scheduled by a daemon") {
-		t.Fatalf("%+v", out.Schedule)
+	if out, text := statusOf(t, f, now); out.Schedule.CheckedBy != "" || strings.Contains(text, "not scheduled by a daemon") || out.Daemon.CheckedBy != "" || out.Daemon.NextCheck != unknownNextCheck {
+		t.Fatalf("%+v %+v", out.Schedule, out.Daemon)
+	}
+	if c := readClientStatus(context.Background(), dir, reg.Entries[0].ID, false, true, time.Minute, now, inspectDaemon); c.Snapshot == nil || c.Snapshot.Daemon.CheckedBy != "" {
+		t.Fatalf("client status: %+v", c)
 	}
 }
 

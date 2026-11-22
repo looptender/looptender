@@ -98,7 +98,7 @@ var (
 // work everywhere. A test replaces it.
 var panelSupported = func() bool { return runtime.GOOS != "windows" }
 
-const panelUnsupported = "keepgoing panel has not been verified on Windows yet, so it does not start there. Run keepgoing dock and open the address it prints."
+const panelUnsupported = "looptender panel has not been verified on Windows yet, so it does not start there. Run looptender dock and open the address it prints."
 
 // panelSocketLimit is the longest socket path the platform accepts.
 func panelSocketLimit() int {
@@ -205,7 +205,7 @@ func panelSameDefaultRegistry(a, b string) bool {
 
 // panelLegacyNotice is what a read-only command says when it finds a server
 // an earlier build started at the old location. It does not act on it.
-const panelLegacyNotice = "A panel started by an earlier build is running at %s; keepgoing panel stop ends it."
+const panelLegacyNotice = "A panel started by an earlier build is running at %s; looptender panel stop ends it."
 
 // panelLegacy returns the directory an earlier build used, when it is a
 // different place from the default one now and is a private directory of
@@ -489,7 +489,7 @@ func acquirePanelOpenLock(ctx context.Context, dir string) (*lock.Lock, error) {
 			return lk, nil
 		}
 		if !errors.Is(err, lock.ErrHeld) || time.Now().After(deadline) || ctx.Err() != nil {
-			return nil, errors.New("another keepgoing panel command is still running")
+			return nil, errors.New("another looptender panel command is still running")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -518,7 +518,7 @@ func panelServerEnvironment() []string {
 	return env
 }
 
-const panelNotAnsweringText = "the panel is running but not answering. Try again in a moment; keepgoing panel status says whether it has recovered"
+const panelNotAnsweringText = "the panel is running but not answering. Try again in a moment; looptender panel status says whether it has recovered"
 
 // panelEnsure returns a running server, starting one when none is running.
 // The caller holds the panel-open lock.
@@ -665,17 +665,17 @@ func panelLoopKey(registryDir, value string) (string, error) {
 	}
 	switch len(found) {
 	case 0:
-		return "", errors.New("no registered loop has that name; see keepgoing panel list")
+		return "", errors.New("no registered loop has that name; see looptender panel list")
 	case 1:
 		return dockKey(found[0]), nil
 	}
-	return "", errors.New("more than one registered loop has that name; pass its registration ID from keepgoing registry list")
+	return "", errors.New("more than one registered loop has that name; pass its registration ID from looptender registry list")
 }
 
-const panelUsage = `Usage: keepgoing panel [--loop NAME | --account ID] [--no-open] [--idle 30m] [--allow-changes] [--directory private-registry]
-       keepgoing panel status [--json]
-       keepgoing panel stop
-       keepgoing panel list [--json] [--directory private-registry]
+const panelUsage = `Usage: looptender panel [--loop NAME | --account ID] [--no-open] [--idle 30m] [--allow-changes] [--directory private-registry]
+       looptender panel status [--json]
+       looptender panel stop
+       looptender panel list [--json] [--directory private-registry]
 
 Open the looptender panel, the page about every registered loop, in your
 browser. The panel's background process, for this computer only, is started when
@@ -777,16 +777,16 @@ func panelCommand(e env, args []string) int {
 		// serves the default registry under the other name: it is the
 		// running panel all the same, not one for another registry.
 		if want, _ := registryDirectory(*directory); rec.Registry != want && !panelSameDefaultRegistry(rec.Registry, want) {
-			e.errf("panel: a panel for another registry is already running; run keepgoing panel stop first")
+			e.errf("panel: a panel for another registry is already running; run looptender panel stop first")
 			return exitFailed
 		}
 		// A running server never changes mode, in either direction.
 		switch {
 		case *changes && !rec.Changes:
-			e.errf("panel: a read-only panel is already running; run keepgoing panel stop, then keepgoing panel --allow-changes")
+			e.errf("panel: a read-only panel is already running; run looptender panel stop, then looptender panel --allow-changes")
 			return exitFailed
 		case !*changes && rec.Changes:
-			e.errf("panel: the running panel allows changes (it was started with --allow-changes); run keepgoing panel stop first to open it read-only, or keepgoing panel --allow-changes to open it as it is")
+			e.errf("panel: the running panel allows changes (it was started with --allow-changes); run looptender panel stop first to open it read-only, or looptender panel --allow-changes to open it as it is")
 			return exitFailed
 		}
 	}
@@ -806,10 +806,10 @@ func panelCommand(e env, args []string) int {
 	}
 	mode := ""
 	if rec.Changes {
-		mode = " Changes are allowed from the page: pause, stop, resume and replace a loop’s own build, each after a review. " + panelExposure + " keepgoing panel stop turns them off."
+		mode = " Changes are allowed from the page: pause, stop, resume and replace a loop’s own build, each after a review. " + panelExposure + " looptender panel stop turns them off."
 	}
 	if browser == nil {
-		fmt.Fprintf(e.stdout, why+"Open this address in a browser on this computer within 30 seconds. It works once:\n\n  %s\n\nAnyone who can read this terminal can use it during those 30 seconds. Run keepgoing panel again for a new one. keepgoing panel stop ends the panel's background process; supervision is not affected.%s\n", opening, mode)
+		fmt.Fprintf(e.stdout, why+"Open this address in a browser on this computer within 30 seconds. It works once:\n\n  %s\n\nAnyone who can read this terminal can use it during those 30 seconds. Run looptender panel again for a new one. looptender panel stop ends the panel's background process; supervision is not affected.%s\n", opening, mode)
 		return exitOK
 	}
 	// The browser is given the path of a private page that goes to the
@@ -820,7 +820,7 @@ func panelCommand(e env, args []string) int {
 	argv := browser(opening)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if err := cmd.Start(); err != nil {
-		e.errf("panel: could not start a browser. Run keepgoing panel --no-open and open the address it prints.")
+		e.errf("panel: could not start a browser. Run looptender panel --no-open and open the address it prints.")
 		return exitFailed
 	}
 	go func() { _ = cmd.Wait() }()
@@ -866,7 +866,7 @@ func panelStatusCommand(e env, args []string) int {
 	asJSON := fs.Bool("json", false, "print JSON")
 	panelDir := fs.String("panel-directory", "", "private directory for the panel's runtime record and socket")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		e.errf("panel status: invalid arguments; usage: keepgoing panel status [--json]")
+		e.errf("panel status: invalid arguments; usage: looptender panel status [--json]")
 		return exitUsage
 	}
 	dir, err := panelDirectory(*panelDir)
@@ -901,7 +901,7 @@ func panelStatusCommand(e env, args []string) int {
 	}
 	switch {
 	case !st.Running:
-		fmt.Fprintln(e.stdout, "The looptender panel is not running. Run keepgoing panel to start and open it.")
+		fmt.Fprintln(e.stdout, "The looptender panel is not running. Run looptender panel to start and open it.")
 	case !st.Answering:
 		fmt.Fprintln(e.stdout, "The looptender panel is running but not answering. It may be starting or stopping; if this does not change, it is stuck, and ending its process is the way out. Supervision is not affected.")
 	default:
@@ -913,11 +913,11 @@ func panelStatusCommand(e env, args []string) int {
 			fmt.Fprintf(e.stdout, "It stops by itself after %s without a page reading from it: in about %s if nothing does.\n", idle, (time.Duration(*st.IdleRemainingSeconds) * time.Second).Round(time.Minute))
 		}
 		if st.ChangesAllowed {
-			fmt.Fprintf(e.stdout, "Changes allowed for %s: the page can pause, stop and resume loops, and replace a loop's own build, each after a review. %s keepgoing panel stop turns them off.\n", dockSpan(time.Duration(*st.ChangesAllowedSeconds)*time.Second), panelExposure)
+			fmt.Fprintf(e.stdout, "Changes allowed for %s: the page can pause, stop and resume loops, and replace a loop's own build, each after a review. %s looptender panel stop turns them off.\n", dockSpan(time.Duration(*st.ChangesAllowedSeconds)*time.Second), panelExposure)
 		} else {
 			fmt.Fprintln(e.stdout, "Read-only: started without --allow-changes.")
 		}
-		fmt.Fprintln(e.stdout, "keepgoing panel opens it; keepgoing panel stop ends it. Supervision is not affected either way.")
+		fmt.Fprintln(e.stdout, "looptender panel opens it; looptender panel stop ends it. Supervision is not affected either way.")
 	}
 	return exitOK
 }
@@ -931,7 +931,7 @@ func panelStopCommand(e env, args []string) int {
 	fs.SetOutput(io.Discard)
 	panelDir := fs.String("panel-directory", "", "private directory for the panel's runtime record and socket")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		e.errf("panel stop: invalid arguments; usage: keepgoing panel stop")
+		e.errf("panel stop: invalid arguments; usage: looptender panel stop")
 		return exitUsage
 	}
 	dir, err := panelDirectory(*panelDir)
@@ -1103,7 +1103,7 @@ func panelListCommand(e env, args []string) int {
 	offline := fs.Bool("offline", false, "do not ask each loop's local daemon for its next check")
 	client := fs.String("client", "", "the calling program's NAME@VERSION (bb-plugin, macos-menu), recorded for the panel's Versions view in a panel directory that already exists")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *staleAfter <= 0 {
-		e.errf("panel list: invalid arguments; usage: keepgoing panel list [--json] [--directory private-registry] [--client NAME@VERSION]")
+		e.errf("panel list: invalid arguments; usage: looptender panel list [--json] [--directory private-registry] [--client NAME@VERSION]")
 		return exitUsage
 	}
 	// Recorded after the answer, and never changing it.
@@ -1138,16 +1138,16 @@ func panelListCommand(e env, args []string) int {
 		case list.Registry != "available":
 			fmt.Fprintln(w, "The registry could not be read.")
 		case len(list.Loops) == 0:
-			fmt.Fprintln(w, "No loops are registered. Register one with keepgoing registry add.")
+			fmt.Fprintln(w, "No loops are registered. Register one with looptender registry add.")
 		}
 		for _, l := range list.Loops {
 			fmt.Fprintf(w, "%s: %s\n", l.Name, l.Phrase)
 		}
 		switch {
 		case list.NeedsYou == 1:
-			fmt.Fprintln(w, "1 loop needs you or could not be read. Run keepgoing panel to see why.")
+			fmt.Fprintln(w, "1 loop needs you or could not be read. Run looptender panel to see why.")
 		case list.NeedsYou > 1:
-			fmt.Fprintf(w, "%d loops need you or could not be read. Run keepgoing panel to see why.\n", list.NeedsYou)
+			fmt.Fprintf(w, "%d loops need you or could not be read. Run looptender panel to see why.\n", list.NeedsYou)
 		case list.AllClear:
 			fmt.Fprintln(w, "Nothing needs you.")
 		case list.Registry == "available":
