@@ -3,19 +3,24 @@ package main
 import (
 	"bytes"
 	"context"
-	"image"
-	"image/color"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/looptender/looptender/internal/telegram"
 	"github.com/makiuchi-d/gozxing"
-	"github.com/makiuchi-d/gozxing/qrcode"
+	"github.com/makiuchi-d/gozxing/qrcode/decoder"
 )
 
 // Decode the actual terminal glyphs, not the encoder's matrix. One character
 // cell represents two vertically stacked square modules with explicit colors.
+// The glyphs are turned back into a module matrix, the four-module quiet zone
+// is checked, and gozxing's QR decoder (format/version, unmasking, Reed-Solomon)
+// decodes it. gozxing's image finder-pattern detector is deliberately not used:
+// it fails on about 1% of valid symbols whatever the pixel scale or binarizer
+// (OpenCV reads every one of them), which made this test flake. On failure the
+// whole output, including the pairing link, is printed so it can be replayed.
 func decodeTelegramTerminalQR(t *testing.T, output string) string {
 	t.Helper()
 	var rows [][]rune
@@ -30,37 +35,90 @@ func decodeTelegramTerminalQR(t *testing.T, output string) string {
 	if len(rows) == 0 || len(rows[0]) > 80 {
 		t.Fatal("missing QR or pairing QR exceeds 80 columns")
 	}
-	const scale = 6
-	img := image.NewGray(image.Rect(0, 0, len(rows[0])*scale, len(rows)*2*scale))
+	w, h := len(rows[0]), len(rows)*2
+	full, err := gozxing.NewBitMatrix(w, h)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for y, row := range rows {
-		if len(row) != len(rows[0]) {
+		if len(row) != w {
 			t.Fatal("unequal QR row widths")
 		}
 		for x, ch := range row {
 			if !strings.ContainsRune(" █▀▄", ch) {
 				t.Fatalf("unexpected terminal glyph %q", ch)
 			}
-			for dy := 0; dy < 2*scale; dy++ {
-				dark := ch == '█' || (ch == '▀' && dy < scale) || (ch == '▄' && dy >= scale)
-				c := color.Gray{Y: 255}
-				if dark {
-					c.Y = 0
-				}
-				for dx := 0; dx < scale; dx++ {
-					img.SetGray(x*scale+dx, y*2*scale+dy, c)
-				}
+			if ch == '█' || ch == '▀' {
+				full.Set(x, 2*y)
+			}
+			if ch == '█' || ch == '▄' {
+				full.Set(x, 2*y+1)
 			}
 		}
 	}
-	bitmap, err := gozxing.NewBinaryBitmapFromImage(img)
+	left, top, right, bottom := w, h, -1, -1
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if full.Get(x, y) {
+				left, right = min(left, x), max(right, x)
+				top, bottom = min(top, y), max(bottom, y)
+			}
+		}
+	}
+	n := right - left + 1
+	if right < 0 || bottom-top+1 != n {
+		t.Fatalf("QR symbol is not square\n%s", output)
+	}
+	if left < 4 || top < 4 || w-1-right < 4 || h-1-bottom < 4 {
+		t.Fatalf("QR quiet zone is under four modules\n%s", output)
+	}
+	sym, err := gozxing.NewBitMatrix(n, n)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := qrcode.NewQRCodeReader().DecodeWithoutHints(bitmap)
+	for y := 0; y < n; y++ {
+		for x := 0; x < n; x++ {
+			if full.Get(left+x, top+y) {
+				sym.Set(x, y)
+			}
+		}
+	}
+	result, err := decoder.NewDecoder().Decode(sym, nil)
 	if err != nil {
-		t.Fatalf("independent decoder refused terminal QR: %v", err)
+		t.Fatalf("independent decoder refused terminal QR: %v\n%s", err, output)
 	}
 	return result.GetText()
+}
+
+// Links captured from random-nonce runs whose symbols gozxing's image detector
+// could not locate (NotFoundException) although the matrix is valid.
+var telegramQRDetectorMissLinks = []string{
+	"https://t.me/example_looptender_bot?start=pair_3aLERtGIaNPs--rxvYGHjOup",
+	"https://t.me/example_looptender_bot?start=pair_kWTURn_CCoaFGd2ibXsz_yqh",
+	"https://t.me/example_looptender_bot?start=pair_maHTE-nsXcrOXuzJdBXG7I3M",
+	"https://t.me/example_looptender_bot?start=pair_kCc-KvVgoDrENoOhfUTIREdH",
+}
+
+func TestTelegramTerminalQRFixedAndRandomLinks(t *testing.T) {
+	links := slices.Clone(telegramQRDetectorMissLinks)
+	for i := 0; i < 300; i++ {
+		nonce, err := telegram.NewPairingNonce()
+		if err != nil {
+			t.Fatal(err)
+		}
+		link, err := telegram.DeepLink("example_looptender_bot", nonce)
+		if err != nil {
+			t.Fatal(err)
+		}
+		links = append(links, link)
+	}
+	for _, link := range links {
+		var out bytes.Buffer
+		printTelegramPairingLink(&out, link, time.Minute, true)
+		if got := decodeTelegramTerminalQR(t, out.String()); got != link {
+			t.Fatalf("decoded %q; want pairing link %q", got, link)
+		}
+	}
 }
 
 func TestTelegramTerminalQRRoundTrip(t *testing.T) {
