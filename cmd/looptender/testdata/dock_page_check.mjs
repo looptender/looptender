@@ -61,6 +61,8 @@ variants.push(["no limit wait", (l) => { delete l.limitWait; }]);
 variants.push(["next check unknown with detail", (l) => { l.nextCheck = { availability: "unknown", detail: "the last check ran 9 min ago" }; }]);
 variants.push(["next check known", (l) => { l.nextCheck = { availability: "known", text: [{ t: "in 5 minutes" }] }; }]);
 variants.push(["next check in progress", (l) => { l.nextCheck = { availability: "in_progress", phrase: "A check is running" }; }]);
+variants.push(["checked by ticks, paused", (l) => { l.state = "paused"; l.phrase = "Paused"; l.checkedBy = { kind: "ticks", text: "Checked by ticks from a scheduler that is not recorded." }; }]);
+variants.push(["checked by nothing", (l) => { l.checkedBy = { kind: "none", text: "Nothing is on record to check it." }; }]);
 variants.push(["long detail", (l) => { l.detail = long; }]);
 
 function scenario(mutateData) {
@@ -151,6 +153,9 @@ const expectations = [
     [{ hash: "loop", fn: (w, h) => h.endsWith(fixture.dock.loops[0].key) ? (/Configured provider: claude-code · model not configured/.test(text(w, "#pane .build-line")) ? null : "the provider header is not the agreed wording") : null }]],
   ["a wait that is in effect is not tagged Reached", (d) => target(d, (l) => { l.limitWait = { passed: false, text: [{ t: "Provider limit resets in 5 days" }] }; l.limits = [{ label: "Time without Git progress", text: [{ t: "26 h of 24 h" }], reached: true }]; l.noProgress = { availability: "clear", text: "Progress: Clear", lines: [] }; l.hold = { state: "held", phrase: "Held" }; }),
     [{ hash: "loop", fn: (w, h) => { if (!h.endsWith(fixture.dock.loops[0].key)) return null; const t = text(w, "#pane"); return /In effect/.test(t) && /no-progress limit is reached/.test(t) ? null : "the wait tag or the progress note is wrong: " + t.slice(0, 200); } }]],
+  ["a paused loop checked by ticks says how it is checked on its page and in the tree", (d) => target(d, (l) => { l.state = "paused"; l.phrase = "Paused"; l.checkedBy = { kind: "ticks", text: "Checked by ticks from a scheduler not on record." }; }),
+    [{ hash: "loop", fn: (w, h) => h.endsWith(fixture.dock.loops[0].key) ? (/Checked by ticks/.test(text(w, "#pane .checked-by")) ? null : "the loop page does not say how the loop is checked") : null },
+     { hash: "#/", fn: (w) => (/Checked by ticks/.test(text(w, "#pane .work-tree")) ? null : "the Overview tree does not say how the loop is checked") }]],
   ["the Overview tree names an unsupervised loop", (d) => target(d, (l) => { l.state = "not_checked_recently"; l.phrase = "Not supervised"; }),
     [{ hash: "#/", fn: (w) => (/Not supervised/.test(text(w, "#pane .work-tree")) ? null : "no 'Not supervised' row in the Overview tree") }]],
 ];

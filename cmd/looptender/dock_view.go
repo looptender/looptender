@@ -279,6 +279,10 @@ type dockLoop struct {
 	// question or a hold's reason): the state word stays "paused", as status
 	// says, and the loop stays under "Needs you".
 	AlsoWaiting string `json:"alsoWaiting,omitempty"`
+	// CheckedBy says how the loop is checked, whatever its holds: Kind is
+	// daemon, service, ticks (a scheduler that is not recorded), none or
+	// unknown. It is information, never a need.
+	CheckedBy dockCheckedBy `json:"checkedBy"`
 	// Versions is what else the read found about the builds the loop runs:
 	// its daemon's label and its service's file. The Versions view lists them.
 	Versions dockLoopVersions `json:"versions"`
@@ -1762,6 +1766,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	l.Lanes = dockLaneList(in.Runs, in.RunsKnown, identifiers, use.Target != "", in.LaneTitles, now)
 	l.Chain = dockHandoffChain(in.Chain, use, dockTestingOf(l.State, st, in.Chain), l.Fallbacks, now, identifiers)
 	l.Away = dockAwayOf(st, in.Chain, l.Chain.Entries, in.Timeline, now)
+	l.CheckedBy = dockCheckedByOf(snap, st, in.ServiceFile)
 	l.Build = dockBuildOf(dockLastBuild(st, in.Timeline), version)
 	if st != nil {
 		l.WakePolicy = dockWakePolicyText(st.WakePolicy)
@@ -2206,12 +2211,22 @@ func dockUnscheduledDetail(st *statusOut, now time.Time) string {
 	if r := st.Schedule.StartedBy; r != nil && r.Source == state.RoutineBBAutomation {
 		last += ", started by a BB automation"
 	}
-	const ticks = " Checks come from a scheduler that is not recorded (ticks): each tick runs the build at the path that scheduler calls."
+	// The ticks claim is made only when status makes it (schedule.checkedBy),
+	// so this line and the Checked line never say opposite things.
+	ticks := st.Schedule.CheckedBy == "ticks"
 	if g := st.Schedule.sch.Recent; g > 0 {
-		return last + ", and recent checks ran about " + dockSpan(g) + " apart (past checks, not a forecast). " + dockCapital(next) + "." + ticks
+		out := last + ", and recent checks ran about " + dockSpan(g) + " apart (past checks, not a forecast). " + dockCapital(next) + "."
+		if ticks {
+			out += " Checks come from a scheduler that is not recorded (ticks): each tick runs the build at the path that scheduler calls."
+		}
+		return out
 	}
-	// Short, because the menu shows this line within a fixed length.
-	return last + ". " + dockCapital(next) + ". Its checks are ticks from a scheduler not on record."
+	out := last + ". " + dockCapital(next) + "."
+	if ticks {
+		// Short, because the menu shows this line within a fixed length.
+		out += " Its checks are ticks from a scheduler not on record."
+	}
+	return out
 }
 
 func dockFallbackReadiness(st *statusOut, chain *dockChainInput) dockFallbacks {
@@ -2678,4 +2693,42 @@ func dockLoopPriority(l dockLoop) int {
 		return dockStatePriority["waiting_for_you"]
 	}
 	return dockStatePriority[l.State]
+}
+
+// dockCheckedBy is how a loop is checked, in the page's words.
+type dockCheckedBy struct {
+	Kind string `json:"kind"` // daemon, service, ticks, none or unknown
+	Text string `json:"text"`
+}
+
+// dockCheckedByOf says what checks the loop, from what is on record and by the
+// rule status uses: a looptender daemon that answered (run as a service when
+// one is recorded); ticks when status says so (no daemon answers, a cadence is
+// known, and the last check is within the time that cadence allows); nothing
+// otherwise, said as "not checked yet" while no check is recorded and the
+// unsupervised alarm has not fired; or not known. A hold does not change it: a
+// held loop is still checked, and only observes.
+func dockCheckedByOf(snap *clientSnapshot, st *statusOut, serviceFile string) dockCheckedBy {
+	// The sentences are short: every loop carries one, and the report has a size bound.
+	if snap == nil {
+		return dockCheckedBy{"unknown", "How it is checked is unknown."}
+	}
+	switch d := snap.Daemon; {
+	case d.State == "skipped":
+		return dockCheckedBy{"unknown", "Its scheduler was not asked."}
+	case d.State == "responsive":
+		if serviceFile != "" {
+			return dockCheckedBy{"service", "Checked by its daemon, as a service."}
+		}
+		return dockCheckedBy{"daemon", "Checked by its daemon."}
+	case d.State != "not_recorded":
+		return dockCheckedBy{"unknown", "Its scheduler did not answer."}
+	}
+	if st != nil && st.Schedule.CheckedBy == "ticks" {
+		return dockCheckedBy{"ticks", "Checked by ticks from a scheduler not on record."}
+	}
+	if st != nil && st.Schedule.LastCheckAt == nil && !st.Schedule.Overdue {
+		return dockCheckedBy{"none", "Not checked yet."}
+	}
+	return dockCheckedBy{"none", "Nothing on record checks it."}
 }

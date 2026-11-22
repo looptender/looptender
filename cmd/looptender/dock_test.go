@@ -464,10 +464,13 @@ func TestDockPhrasesFollowEvidence(t *testing.T) {
 	}{
 		{"never checked", scheduleStatus{}, "no looptender scheduler is on record for this loop, and one outside looptender is not visible"},
 		{"a last check dated ahead of the clock", scheduleStatus{LastCheckAt: &future}, "no looptender scheduler is on record for this loop, and one outside looptender is not visible"},
-		{"too few gaps to say how often", scheduleStatus{LastCheckAt: &minuteAgo, sch: state.Schedule{GapsSeen: 2}}, "the last check ran 1 min ago. " + noNext + " Its checks are ticks from a scheduler not on record."},
-		{"held, with checks about every 10 min", scheduleStatus{LastCheckAt: &minuteAgo, NotJudged: "held", sch: state.Schedule{Recent: 10 * time.Minute}},
+		{"too few gaps to say how often, status says ticks", scheduleStatus{LastCheckAt: &minuteAgo, CheckedBy: "ticks", sch: state.Schedule{GapsSeen: 2}}, "the last check ran 1 min ago. " + noNext + " Its checks are ticks from a scheduler not on record."},
+		{"too few gaps, status does not say ticks", scheduleStatus{LastCheckAt: &minuteAgo, sch: state.Schedule{GapsSeen: 2}}, "the last check ran 1 min ago. " + noNext},
+		{"a cadence known but status does not say ticks", scheduleStatus{LastCheckAt: &minuteAgo, sch: state.Schedule{Recent: 5 * time.Minute}},
+			"the last check ran 1 min ago, and recent checks ran about 5 min apart (past checks, not a forecast). " + noNext},
+		{"held, with checks about every 10 min", scheduleStatus{LastCheckAt: &minuteAgo, NotJudged: "held", CheckedBy: "ticks", sch: state.Schedule{Recent: 10 * time.Minute}},
 			"the last check ran 1 min ago, and recent checks ran about 10 min apart (past checks, not a forecast). " + noNext + ticks},
-		{"started by a BB automation", scheduleStatus{LastCheckAt: &minuteAgo, StartedBy: &state.Routine{Source: state.RoutineBBAutomation, Routine: "auto_example"}, sch: state.Schedule{Recent: 15 * time.Minute}},
+		{"started by a BB automation", scheduleStatus{LastCheckAt: &minuteAgo, CheckedBy: "ticks", StartedBy: &state.Routine{Source: state.RoutineBBAutomation, Routine: "auto_example"}, sch: state.Schedule{Recent: 15 * time.Minute}},
 			"the last check ran 1 min ago, started by a BB automation, and recent checks ran about 15 min apart (past checks, not a forecast). " + noNext + ticks},
 	} {
 		st := &statusOut{Schedule: c.schedule}
