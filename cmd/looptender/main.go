@@ -223,7 +223,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return doctor(e, rest, doctorExec)
 	case "init":
 		return initLoop(e, rest)
-	case "version":
+	case "version", "--version":
 		fmt.Fprintln(stdout, version)
 		return exitOK
 	case "pr-backlog":

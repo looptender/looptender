@@ -46,7 +46,11 @@ func describeChildReport(r *state.ChildErrorReport, loop config.Loop) childRepor
 	return out
 }
 
-func printChildReport(w io.Writer, s childReportStatus) {
+// printChildReport says what the child-error check found. held is the hold on
+// the loop now ("" when supervising): a held loop observes nothing, so the
+// record is from the last check before the hold and the loop is not called
+// "not held".
+func printChildReport(w io.Writer, s childReportStatus, held string) {
 	if s.State == "none" {
 		return
 	}
@@ -55,13 +59,17 @@ func printChildReport(w io.Writer, s childReportStatus) {
 		bound = " (child listing incomplete: lower bounds)"
 	}
 	fmt.Fprintf(w, "child errors: %d direct child thread(s) in error and %d still running at the check of %s%s\n", s.ErroredChildren, s.RunningChildren, when(*s.DetectedAt), bound)
+	notHeld := " The loop is not held."
+	if held != "" {
+		notHeld = fmt.Sprintf(" The loop is held now (%s); this record is from the last check before the hold.", held)
+	}
 	switch s.State {
 	case "reported":
-		fmt.Fprintf(w, "  a child_error report was requested (report %d of at most 3 in this episode); receipt unverified, see notifications. The loop is not held.\n", max(1, s.Reports))
+		fmt.Fprintf(w, "  a child_error report was requested (report %d of at most 3 in this episode); receipt unverified, see notifications.%s\n", max(1, s.Reports), notHeld)
 	case "report_failed":
-		fmt.Fprintln(w, "  the child_error report FAILED and is not retried; see notifications. The loop is not held.")
+		fmt.Fprintln(w, "  the child_error report FAILED and is not retried; see notifications."+notHeld)
 	case "capped":
-		fmt.Fprintf(w, "  more children failed after %d reports; no further child_error report is sent until every child has recovered. The loop is not held.\n", s.Reports)
+		fmt.Fprintf(w, "  more children failed after %d reports; no further child_error report is sent until every child has recovered.%s\n", s.Reports, notHeld)
 	default:
 		why := "report.events does not include child_error"
 		if !s.ReportConfigured {
@@ -69,9 +77,9 @@ func printChildReport(w io.Writer, s childReportStatus) {
 		}
 		if s.Reports > 0 {
 			// Unsubscribed part-way through: earlier reports of this episode went out.
-			fmt.Fprintf(w, "  %d child_error report(s) were requested earlier in this episode; the latest failure was not sent: %s. The loop is not held.\n", s.Reports, why)
+			fmt.Fprintf(w, "  %d child_error report(s) were requested earlier in this episode; the latest failure was not sent: %s.%s\n", s.Reports, why, notHeld)
 		} else {
-			fmt.Fprintf(w, "  nothing was sent: %s. The loop is not held.\n", why)
+			fmt.Fprintf(w, "  nothing was sent: %s.%s\n", why, notHeld)
 		}
 	}
 }

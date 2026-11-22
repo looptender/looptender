@@ -72,13 +72,13 @@ func TestBuildComparisonIsHistoricalAndPrivate(t *testing.T) {
 			t.Fatalf("%+v: %s", tc, got)
 		}
 		r := doctorReport{Version: tc.current}
-		doctorCheckVersion(&r, check, true)
+		doctorCheckVersion(&r, check, true, false)
 		if doctorCheckByID(t, r, "supervisor.version").Status != tc.status {
 			t.Fatalf("%+v", r)
 		}
 	}
 	r := doctorReport{Version: "new"}
-	doctorCheckVersion(&r, &state.Check{Version: doctorPrivate}, true)
+	doctorCheckVersion(&r, &state.Check{Version: doctorPrivate}, true, false)
 	b, _ := json.Marshal(r)
 	if strings.Contains(string(b), doctorPrivate) {
 		t.Fatal("doctor exposed raw build history")

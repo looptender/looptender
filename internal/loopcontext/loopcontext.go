@@ -8,6 +8,7 @@
 package loopcontext
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -79,6 +80,10 @@ type Input struct {
 	ProgressError string
 	Window        Window
 	Now           time.Time
+	// Caller is the caller's BB_THREAD_ID, "" for none. It is only compared
+	// with the recorded owner to say whether the commands below would be
+	// refused for this caller; it is not echoed.
+	Caller string
 }
 
 // Window is the operating window as evaluated at Now.
@@ -94,11 +99,15 @@ type View struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	Loop          string `json:"loop"`
 	// Adapter is the adapter kind of the loop's first route (loop.adapter).
-	Adapter           string      `json:"adapter"`
-	Target            *Target     `json:"target,omitempty"`
-	TargetUnavailable string      `json:"targetUnavailable,omitempty"`
-	Owner             Owner       `json:"owner"`
-	CallerIdentity    string      `json:"callerIdentity"`
+	Adapter           string  `json:"adapter"`
+	Target            *Target `json:"target,omitempty"`
+	TargetUnavailable string  `json:"targetUnavailable,omitempty"`
+	Owner             Owner   `json:"owner"`
+	CallerIdentity    string  `json:"callerIdentity"`
+	// CallerStatus says how this caller relates to the recorded owner:
+	// owner, not_owner (the control commands below would be refused for it),
+	// no_identity (an ordinary terminal), no_owner_recorded or unknown.
+	CallerStatus      string      `json:"callerStatus"`
 	ControlState      string      `json:"controlState"`
 	Holds             []string    `json:"holds"`
 	Note              string      `json:"note,omitempty"`
@@ -212,6 +221,7 @@ func Build(in Input) View {
 		Loop:              l.Name,
 		Adapter:           l.Adapter,
 		CallerIdentity:    CallerIdentity,
+		CallerStatus:      "unknown",
 		Holds:             []string{},
 		RetainedAuthority: append([]string(nil), RetainedAuthority...),
 		Unavailable:       []string{},
@@ -225,6 +235,7 @@ func Build(in Input) View {
 		v.Holds = holds(*in.Control)
 		v.Note = in.Control.Note
 		v.Owner = owner(*in.Control)
+		v.CallerStatus = callerStatus(*in.Control, in.Caller)
 	}
 	if in.State == nil {
 		v.Unavailable = append(v.Unavailable, state.FileName)
@@ -255,6 +266,20 @@ func holds(c control.File) []string {
 		h = append(h, "completed")
 	}
 	return h
+}
+
+func callerStatus(c control.File, caller string) string {
+	switch {
+	case c.Ownership == nil:
+		return "no_owner_recorded"
+	case caller == "":
+		return "no_identity"
+	case control.CheckOwner(c, caller, false) == nil || c.Ownership.FollowedFrom(caller):
+		return "owner"
+	case errors.Is(control.CheckOwner(c, caller, false), control.ErrOwnerConflict):
+		return "not_owner"
+	}
+	return "unknown"
 }
 
 func owner(c control.File) Owner {
@@ -474,6 +499,9 @@ func (v View) Text() string {
 	}
 	line("owner", "%s", v.Owner.Text)
 	line("caller", "%s", v.CallerIdentity)
+	if v.CallerStatus == "not_owner" {
+		line("caller", "this caller is not the owner: the control commands below would be refused for it. They are for the owning conversation; use context --here there.")
+	}
 	line("control", "%s", v.ControlState)
 	switch {
 	case v.ControlState == "unavailable":

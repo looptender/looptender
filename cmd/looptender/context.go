@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -45,5 +46,7 @@ func readContextInput(cfg *config.Config, cfgPath string, now time.Time) loopcon
 	if s, err := state.Load(l.StateDir); err == nil {
 		st = &s
 	}
-	return supervise.ContextInput(cfg, initCommandPrefix(), commandQuote(cfgPath), ctl, st, now)
+	in := supervise.ContextInput(cfg, initCommandPrefix(), commandQuote(cfgPath), ctl, st, now)
+	in.Caller = os.Getenv("BB_THREAD_ID")
+	return in
 }

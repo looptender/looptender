@@ -75,6 +75,25 @@ export function buildSummary(runtime: Runtime | undefined): { running?: string; 
   return { running, installed, differs, text };
 }
 
+/**
+ * The line `bb keepgoing status` adds when the CLI's registry lists loops this
+ * plugin does not show: how many, which, and how to show them. Empty when
+ * every registered loop is shown. Names only; loops are matched by name.
+ */
+/** A control note cut to one short line for a listing; the full note stays in the loop's own detail. */
+export function shortNote(note: string, max = 120): string {
+  const one = note.replace(/\s+/g, " ").trim();
+  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
+}
+
+export function notShownLine(registered: readonly string[], shown: readonly string[]): string {
+  const have = new Set(shown);
+  const missing = [...new Set(registered)].filter(name => !have.has(name));
+  if (missing.length === 0) return "";
+  const names = missing.length > 8 ? `${missing.slice(0, 8).join(", ")}, and ${missing.length - 8} more` : missing.join(", ");
+  return `${missing.length} registered loop${missing.length === 1 ? " is" : "s are"} not shown here (${names}). To show ${missing.length === 1 ? "it" : "one"}, add its configuration path to this plugin's configs setting, one path per line; a loop created from the CLI is not added there for you, and its thread's card needs the same entry. looptender registry list names every registered loop.`;
+}
+
 /** What `bb keepgoing status` prints after `last=`: a moved loop has history
  * but nothing checked on its new target, which is not "never". */
 export function lastLabel(lastState: string | null | undefined, details: { moved?: unknown } | null | undefined): string {
