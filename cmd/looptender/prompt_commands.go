@@ -152,8 +152,13 @@ const (
 // promptCommandResult is what a scan found, within the bounds.
 type promptCommandResult struct {
 	Findings []promptCommandFinding
-	// More counts programs found past the bounds and not listed.
+	// More counts findings past the cap of 16, found but not listed.
 	More int
+	// NotLooked counts programs the prompt names that were not looked at or
+	// could not be compared: past the 64 examined, or a same-size file the
+	// hashing budget did not allow comparing. The result is then not an
+	// unqualified all-clear.
+	NotLooked int
 	// Unchecked is set when the file system did not answer in time or the
 	// prompt was longer than was read: what is listed may be incomplete.
 	Unchecked bool
@@ -169,7 +174,7 @@ func promptCommandFindings(text, cfgPath, skip string) promptCommandResult {
 		text, res.Unchecked = text[:promptReadLimit], true
 	}
 	paths, counts, dropped := scanPromptPrograms(text, cfgPath)
-	res.More = dropped
+	res.NotLooked = dropped
 	done := make(chan promptCommandResult, 1)
 	go func() {
 		out := res
@@ -179,6 +184,10 @@ func promptCommandFindings(text, cfgPath, skip string) promptCommandResult {
 				continue
 			}
 			verdict, resolved := checkProgramWith(p, budget)
+			if verdict == prefixUnverified || verdict == prefixUnknown {
+				out.NotLooked++
+				continue
+			}
 			if verdict != prefixOtherBuild && verdict != prefixMissing {
 				continue
 			}
@@ -212,10 +221,17 @@ func promptCommandFindings(text, cfgPath, skip string) promptCommandResult {
 func promptCommandsSentence(r promptCommandResult, generated bool) string {
 	fs := r.Findings
 	if len(fs) == 0 {
-		if r.Unchecked {
-			return " Programs the prompt names for the loop's commands could not all be checked (the prompt is longer than is read, or a path did not answer)."
+		var said []string
+		if r.NotLooked > 0 {
+			said = append(said, fmt.Sprintf("%d program(s) the prompt names for the loop's commands were not looked at (a scan looks at 64 distinct programs and compares at most four files of this build's size), so this is not an all-clear", r.NotLooked))
 		}
-		return ""
+		if r.Unchecked {
+			said = append(said, "programs the prompt names for the loop's commands could not all be checked (the prompt is longer than is read, or a path did not answer)")
+		}
+		if len(said) == 0 {
+			return ""
+		}
+		return " " + strings.ToUpper(said[0][:1]) + said[0][1:] + strings.Join(append([]string{""}, said[1:]...), "; ") + "."
 	}
 	var parts []string
 	for _, f := range fs {
@@ -232,6 +248,9 @@ func promptCommandsSentence(r promptCommandResult, generated bool) string {
 	}
 	if r.More > 0 {
 		parts = append(parts, fmt.Sprintf("and %d more not listed", r.More))
+	}
+	if r.NotLooked > 0 {
+		parts = append(parts, fmt.Sprintf("%d more program(s) were not looked at", r.NotLooked))
 	}
 	if r.Unchecked {
 		parts = append(parts, "the check was cut short, so there may be others")

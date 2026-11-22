@@ -84,6 +84,10 @@ type wakePolicyStatus struct {
 	// CommandProgramsMore counts programs found past the bounds of one scan
 	// (at most 16 are listed); CommandProgramsUnchecked says the scan was cut
 	// short or the prompt was longer than the 1 MiB read.
+	// CommandProgramsNotLooked counts programs the prompt names that were not
+	// looked at (past 64, or a same-size file not compared); with no findings
+	// it still means the result is not an all-clear.
+	CommandProgramsNotLooked int    `json:"commandProgramsNotLooked,omitempty"`
 	CommandProgramsMore      int    `json:"commandProgramsMore,omitempty"`
 	CommandProgramsUnchecked bool   `json:"commandProgramsUnchecked,omitempty"`
 	Message                  string `json:"message"`
@@ -145,7 +149,7 @@ func describeWakePolicy(l config.Loop, cfgPath ...string) *wakePolicyStatus {
 		cfg = cfgPath[0]
 	}
 	res := promptCommandFindings(text, cfg, skip)
-	s.CommandPrograms, s.CommandProgramsMore, s.CommandProgramsUnchecked = res.Findings, res.More, res.Unchecked
+	s.CommandPrograms, s.CommandProgramsMore, s.CommandProgramsNotLooked, s.CommandProgramsUnchecked = res.Findings, res.More, res.NotLooked, res.Unchecked
 	s.Message += prefixNote + promptCommandsSentence(res, skip != "")
 	return s
 }

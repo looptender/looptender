@@ -252,3 +252,25 @@ func TestPromptPolicyApplyRefusals(t *testing.T) {
 		unchanged(t, f, file, old)
 	})
 }
+
+// doctor warns when not every program a prompt names was looked at, even with nothing found.
+func TestDoctorWarnsWhenNotEveryNamedProgramWasLookedAt(t *testing.T) {
+	f, file := policyFixture(t)
+	dir := t.TempDir()
+	var body strings.Builder
+	for i := 0; i < promptMaxPrograms+2; i++ {
+		link := filepath.Join(dir, string(rune('a'+i/26)), string(rune('a'+i%26)), "looptender")
+		os.MkdirAll(filepath.Dir(link), 0o700)
+		if err := os.Symlink(keepgoingExecutable(), link); err != nil {
+			t.Fatal(err)
+		}
+		body.WriteString("run '" + link + "' status\n")
+	}
+	if err := os.WriteFile(file, []byte(body.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := doctorWakePolicy(t, f)
+	if c.Status != "warning" || !strings.Contains(c.Message, "2 program(s) the prompt names for the loop's commands were not looked at") {
+		t.Fatalf("%+v", c)
+	}
+}

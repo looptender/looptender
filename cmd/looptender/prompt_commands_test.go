@@ -263,7 +263,40 @@ func TestTheScanIsBounded(t *testing.T) {
 		os.WriteFile(p, append([]byte{}, same...), 0o700)
 		copies.WriteString("run '" + p + "' status\n")
 	}
-	if s := describeWakePolicy(l.promptFor(t, copies.String()), l.cfg); len(s.CommandPrograms) != 0 {
+	s = describeWakePolicy(l.promptFor(t, copies.String()), l.cfg)
+	if len(s.CommandPrograms) != 0 {
 		t.Fatalf("copies of the same bytes were reported: %+v", s.CommandPrograms)
+	}
+	// But they were not compared, so the result is not an all-clear.
+	if s.CommandProgramsNotLooked != 3 || !strings.Contains(s.Message, "3 program(s) the prompt names for the loop's commands were not looked at") || !strings.Contains(s.Message, "not an all-clear") {
+		t.Fatalf("%d %q", s.CommandProgramsNotLooked, s.Message)
+	}
+}
+
+// More than 64 distinct programs, none of the first 64 a finding: the result
+// says how many were not looked at instead of staying silent, in status and
+// in doctor.
+func TestProgramsPastTheScanLimitAreSaidNotSilent(t *testing.T) {
+	l := newLayout(t)
+	defer func(f func() string) { promptExecutable = f }(promptExecutable)
+	promptExecutable = func() string { return l.current }
+	var body strings.Builder
+	for i := 0; i < promptMaxPrograms+6; i++ {
+		link := filepath.Join(l.home, "links", string(rune('a'+i/26)), string(rune('a'+i%26)), "looptender")
+		os.MkdirAll(filepath.Dir(link), 0o700)
+		if err := os.Symlink(l.current, link); err != nil {
+			t.Fatal(err)
+		}
+		body.WriteString("run '" + link + "' status\n")
+	}
+	s := describeWakePolicy(l.promptFor(t, body.String()), l.cfg)
+	if s == nil || len(s.CommandPrograms) != 0 || s.CommandProgramsNotLooked != 6 || !strings.Contains(s.Message, "6 program(s) the prompt names for the loop's commands were not looked at") {
+		t.Fatalf("%+v", s)
+	}
+	// With a finding among those looked at, the rest is still counted.
+	body.WriteString("run '" + l.oldBuild + "' complete\n")
+	s = describeWakePolicy(l.promptFor(t, "run '"+l.oldBuild+"' complete\n"+body.String()), l.cfg)
+	if len(s.CommandPrograms) != 1 || s.CommandProgramsNotLooked < 6 || !strings.Contains(s.Message, "more program(s) were not looked at") {
+		t.Fatalf("%+v", s)
 	}
 }

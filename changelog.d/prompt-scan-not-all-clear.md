@@ -1,0 +1,1 @@
+- The prompt command-program check says how many programs it did not look at (past its 64-program limit, or a same-size file its hashing budget did not allow comparing), in `status`, `prompt-policy show` and `doctor` (`wakePolicy.commandProgramsNotLooked`), so a scan that did not finish is never read as an all-clear.

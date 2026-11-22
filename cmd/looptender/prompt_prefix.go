@@ -24,6 +24,10 @@ const (
 	// prefixNotProgram: the path is a directory, such as a state directory
 	// named looptender. It is not a program and is not reported.
 	prefixNotProgram = "not_program"
+	// prefixUnverified: a file of the same size as this build's that the
+	// scan's hashing budget did not allow comparing. It is not called another
+	// program, and it is counted as not looked at.
+	prefixUnverified = "unverified"
 )
 
 // promptPrefixProgram is the program path a command prefix names: the prefix
@@ -107,7 +111,7 @@ func checkProgramWith(program string, b *hashBudget) (verdict, resolved string) 
 	case info.Size() != self.Size():
 		return prefixOtherBuild, resolved
 	case b.files <= 0 || info.Size() > hashFileLimit:
-		return prefixUnknown, resolved
+		return prefixUnverified, resolved
 	}
 	b.files--
 	if sameFileBytes(path, realPath(promptExecutable())) {
