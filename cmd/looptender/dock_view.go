@@ -1766,7 +1766,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	l.Lanes = dockLaneList(in.Runs, in.RunsKnown, identifiers, use.Target != "", in.LaneTitles, now)
 	l.Chain = dockHandoffChain(in.Chain, use, dockTestingOf(l.State, st, in.Chain), l.Fallbacks, now, identifiers)
 	l.Away = dockAwayOf(st, in.Chain, l.Chain.Entries, in.Timeline, now)
-	l.CheckedBy = dockCheckedByOf(snap, st, in.ServiceFile, now, staleAfter)
+	l.CheckedBy = dockCheckedByOf(snap, st, in.ServiceFile)
 	l.Build = dockBuildOf(dockLastBuild(st, in.Timeline), version)
 	if st != nil {
 		l.WakePolicy = dockWakePolicyText(st.WakePolicy)
@@ -2691,19 +2691,21 @@ type dockCheckedBy struct {
 	Text string `json:"text"`
 }
 
-// dockCheckedByOf says what checks the loop, from what is on record: a
-// looptender daemon that answered (run as a service when one is recorded),
-// checks that arrive with no scheduler on record (ticks from outside
-// looptender), nothing, or not known. A hold does not change it: a held loop
-// is still checked, and only observes.
-func dockCheckedByOf(snap *clientSnapshot, st *statusOut, serviceFile string, now time.Time, staleAfter time.Duration) dockCheckedBy {
+// dockCheckedByOf says what checks the loop, from what is on record and by the
+// rule status uses: a looptender daemon that answered (run as a service when
+// one is recorded); ticks when status says so (no daemon answers, a cadence is
+// known, and the last check is within the time that cadence allows); nothing
+// otherwise, said as "not checked yet" while no check is recorded and the
+// unsupervised alarm has not fired; or not known. A hold does not change it: a
+// held loop is still checked, and only observes.
+func dockCheckedByOf(snap *clientSnapshot, st *statusOut, serviceFile string) dockCheckedBy {
 	// The sentences are short: every loop carries one, and the report has a size bound.
 	if snap == nil {
 		return dockCheckedBy{"unknown", "How it is checked is unknown."}
 	}
 	switch d := snap.Daemon; {
 	case d.State == "skipped":
-		return dockCheckedBy{"unknown", "How it is checked is unknown."}
+		return dockCheckedBy{"unknown", "Its scheduler was not asked."}
 	case d.State == "responsive":
 		if serviceFile != "" {
 			return dockCheckedBy{"service", "Checked by its daemon, as a service."}
@@ -2712,8 +2714,11 @@ func dockCheckedByOf(snap *clientSnapshot, st *statusOut, serviceFile string, no
 	case d.State != "not_recorded":
 		return dockCheckedBy{"unknown", "Its scheduler did not answer."}
 	}
-	if st != nil && st.Schedule.LastCheckAt != nil && !st.Schedule.LastCheckAt.After(now.Add(time.Minute)) && now.Sub(*st.Schedule.LastCheckAt) <= staleAfter {
+	if st != nil && st.Schedule.CheckedBy == "ticks" {
 		return dockCheckedBy{"ticks", "Checked by ticks from a scheduler not on record."}
+	}
+	if st != nil && st.Schedule.LastCheckAt == nil && !st.Schedule.Overdue {
+		return dockCheckedBy{"none", "Not checked yet."}
 	}
 	return dockCheckedBy{"none", "Nothing on record checks it."}
 }

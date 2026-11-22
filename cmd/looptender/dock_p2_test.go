@@ -264,40 +264,62 @@ func TestDockPausedAndWaitingSortsWithTheLoopsThatNeedYou(t *testing.T) {
 	}
 }
 
-// How a loop is checked is said on every loop, held or not: a daemon, a
-// service, ticks from a scheduler that is not recorded, nothing, or unknown.
+// How a loop is checked is said on every loop, held or not, by the rule status
+// uses (scheduleStatus.CheckedBy): a daemon, a service, ticks, nothing (or not
+// checked yet), or unknown.
 func TestDockSaysHowALoopIsCheckedWhateverItsHolds(t *testing.T) {
-	recent := dockNow.Add(-9 * time.Minute)
-	old := dockNow.Add(-5 * time.Hour)
-	at := func(c *clientControls, daemon daemonStatus, last *time.Time, service string) dockCheckedBy {
-		in := dockEvidence{controls: c, status: func(s *statusOut) { s.Schedule = scheduleStatus{LastCheckAt: last} }}.input()
+	at := func(c *clientControls, daemon daemonStatus, sch scheduleStatus, service string) dockCheckedBy {
+		in := dockEvidence{controls: c, status: func(s *statusOut) { s.Schedule = sch }}.input()
 		in.Client.Snapshot.Daemon = daemon
 		in.ServiceFile = service
 		l, _ := projectDockLoop(in, dockNow, defaultStaleAfter, false)
 		return l.CheckedBy
 	}
+	ago := func(d time.Duration) *time.Time { x := dockNow.Add(-d); return &x }
+	none, notRec := daemonStatus{State: "not_recorded"}, daemonStatus{State: "not_recorded"}
 	for name, held := range map[string]*clientControls{"paused": {Enabled: true, Paused: true}, "awaiting": {Enabled: true, AwaitingUser: true}, "stopped": {Enabled: true, Stop: true}, "finished": {Enabled: true, Completed: true}, "off": {Enabled: false}, "running": {Enabled: true}} {
-		// Ticks: no daemon on record, and a check within the stale window.
-		if got := at(held, daemonStatus{State: "not_recorded"}, &recent, ""); got.Kind != "ticks" || !strings.Contains(got.Text, "Checked by ticks from a scheduler not on record") {
-			t.Errorf("%s with ticks: %+v", name, got)
+		// Ticks exactly when status says so, whatever the age of the last check.
+		for label, sch := range map[string]scheduleStatus{
+			"a cadence known and a recent check":      {CheckedBy: "ticks", LastCheckAt: ago(9 * time.Minute)},
+			"a weekly cadence, checked two hours ago": {CheckedBy: "ticks", LastCheckAt: ago(2 * time.Hour)},
+		} {
+			if got := at(held, notRec, sch, ""); got.Kind != "ticks" || !strings.Contains(got.Text, "Checked by ticks from a scheduler not on record") {
+				t.Errorf("%s, %s: %+v", name, label, got)
+			}
 		}
-		if got := at(held, daemonStatus{State: "responsive"}, &recent, ""); got.Kind != "daemon" {
+		// Not ticks where status does not say ticks, however recent the check.
+		for label, sch := range map[string]scheduleStatus{
+			"one manual tick 20 minutes ago (no cadence)":      {LastCheckAt: ago(20 * time.Minute)},
+			"a 5-minute scheduler that stopped 25 minutes ago": {LastCheckAt: ago(25 * time.Minute), GapsSeen: 5},
+			"a check long ago": {LastCheckAt: ago(5 * time.Hour)},
+		} {
+			if got := at(held, notRec, sch, ""); got.Kind != "none" || got.Text != "Nothing on record checks it." {
+				t.Errorf("%s, %s: %+v", name, label, got)
+			}
+		}
+		// No check recorded: not yet checked until the alarm fires, then nothing.
+		if got := at(held, none, scheduleStatus{}, ""); got.Kind != "none" || got.Text != "Not checked yet." {
+			t.Errorf("%s never checked, in the grace period: %+v", name, got)
+		}
+		if got := at(held, none, scheduleStatus{Overdue: true}, ""); got.Kind != "none" || got.Text != "Nothing on record checks it." {
+			t.Errorf("%s never checked, overdue: %+v", name, got)
+		}
+		// A daemon that answers wins over everything else.
+		if got := at(held, daemonStatus{State: "responsive"}, scheduleStatus{CheckedBy: "ticks"}, ""); got.Kind != "daemon" || got.Text != "Checked by its daemon." {
 			t.Errorf("%s with a daemon: %+v", name, got)
 		}
-		if got := at(held, daemonStatus{State: "responsive"}, &recent, "same_file"); got.Kind != "service" {
+		if got := at(held, daemonStatus{State: "responsive"}, scheduleStatus{}, "same_file"); got.Kind != "service" {
 			t.Errorf("%s with a service: %+v", name, got)
 		}
-		if got := at(held, daemonStatus{State: "not_recorded"}, &old, ""); got.Kind != "none" || !strings.Contains(got.Text, "Nothing on record checks it") {
-			t.Errorf("%s with nothing: %+v", name, got)
+		// Not asked (offline) and not answering say different things.
+		if got := at(held, daemonStatus{State: "skipped"}, scheduleStatus{}, ""); got.Kind != "unknown" || got.Text != "Its scheduler was not asked." {
+			t.Errorf("%s offline: %+v", name, got)
 		}
-		if got := at(held, daemonStatus{State: "not_recorded"}, nil, ""); got.Kind != "none" {
-			t.Errorf("%s never checked: %+v", name, got)
-		}
-		if got := at(held, daemonStatus{State: "unavailable"}, &recent, ""); got.Kind != "unknown" {
+		if got := at(held, daemonStatus{State: "unavailable"}, scheduleStatus{CheckedBy: "ticks"}, ""); got.Kind != "unknown" || got.Text != "Its scheduler did not answer." {
 			t.Errorf("%s with a scheduler that did not answer: %+v", name, got)
 		}
 	}
-	if l, _ := projectDockLoop(dockEvidence{controls: &clientControls{Enabled: true}, noSnap: true}.input(), dockNow, defaultStaleAfter, false); l.CheckedBy.Kind != "unknown" {
+	if l, _ := projectDockLoop(dockEvidence{controls: &clientControls{Enabled: true}, noSnap: true}.input(), dockNow, defaultStaleAfter, false); l.CheckedBy.Kind != "unknown" || l.CheckedBy.Text != "How it is checked is unknown." {
 		t.Errorf("an unread loop: %+v", l.CheckedBy)
 	}
 }
