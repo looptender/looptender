@@ -186,7 +186,12 @@ func TestAccountQuotaMutationAndUnavailableFences(t *testing.T) {
 						t.Fatal(err)
 					}
 				case "executable":
-					if err := os.WriteFile(e.CLI, []byte("replacement binary"), 0700); err != nil {
+					// The replacement must differ in size from the fixture's
+					// "fictional stand-in" (18 bytes). The fence compares size,
+					// mtime and mode, and Windows file times advance in clock
+					// ticks of up to ~16 ms, so an equal-length rewrite made
+					// right after the fixture can leave all three unchanged.
+					if err := os.WriteFile(e.CLI, []byte("replacement binary with a different length"), 0700); err != nil {
 						t.Fatal(err)
 					}
 				case "executable_replaced":
