@@ -1786,6 +1786,9 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	}
 	if st != nil {
 		np := st.NoProgress
+		// The words status uses: on a held loop the flag is from before
+		// the hold, not current.
+		np.Text = noProgressText(np, loopHeld(st.Control, st.controlUnreadable))
 		l.NoProgress = &np
 		if r := st.Refusals; r.Total > 0 || r.Question != "" {
 			l.Refusals = &r
