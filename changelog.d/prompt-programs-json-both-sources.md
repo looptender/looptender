@@ -1,0 +1,1 @@
+- `status --json` `wakePolicy.commandPrograms` now lists every flagged program of a prompt, including the command prefix of a generated prompt's policy part, each marked with its `source` (`policy_prefix` or `prompt_text`); before, the prefix program appeared only in the message text, so a tool reading the JSON saw one of two.
