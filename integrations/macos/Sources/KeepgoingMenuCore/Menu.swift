@@ -374,7 +374,7 @@ public enum MenuBuilder {
     static func buildText(_ loop: PanelLoop, installed: String?) -> String {
         guard let running = loop.recordedBuild.map(Contract.text), !running.isEmpty else { return "" }
         if loop.buildDiffers == true, let installed = installed.map(Contract.text), !installed.isEmpty {
-            return "running \(running) · installed \(installed)"
+            return "last check ran \(running) · installed \(installed)"
         }
         return running
     }

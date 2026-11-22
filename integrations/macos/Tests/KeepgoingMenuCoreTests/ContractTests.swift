@@ -49,8 +49,8 @@ final class ContractTests: XCTestCase {
             return Contract.lines(try Contract.status(data(r), exit: 0, entry: entry), privateText: false).joined(separator: "\n")
         }
         let base: [String: Any] = ["state": "recorded_active", "source": "last_check", "freshness": "recent"]
-        XCTAssertTrue(try lines(base.merging(["binaryComparison": "different", "recordedBuild": "v0.1.0", "installedBuild": "v0.2.0"]) { $1 }).contains("Build: running v0.1.0 · installed v0.2.0"))
-        XCTAssertTrue(try lines(base.merging(["binaryComparison": "match", "recordedBuild": "v0.2.0", "installedBuild": "v0.2.0"]) { $1 }).contains("Build: running v0.2.0\n"))
+        XCTAssertTrue(try lines(base.merging(["binaryComparison": "different", "recordedBuild": "v0.1.0", "installedBuild": "v0.2.0"]) { $1 }).contains("Build: last check ran v0.1.0 · installed v0.2.0"))
+        XCTAssertTrue(try lines(base.merging(["binaryComparison": "match", "recordedBuild": "v0.2.0", "installedBuild": "v0.2.0"]) { $1 }).contains("Build: last check ran v0.2.0\n"))
         // A CLI that sends no labels, or a build with no version.
         XCTAssertTrue(try lines(base.merging(["binaryComparison": "unknown"]) { $1 }).contains("Build: version unknown"))
     }

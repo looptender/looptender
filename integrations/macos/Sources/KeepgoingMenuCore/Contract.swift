@@ -150,7 +150,7 @@ public enum Contract {
             lines.append("Recorded build: \(known(r.binaryComparison, ["match", "different", "unknown"]))")
             if let running = r.recordedBuild.map(text), !running.isEmpty {
                 let installed = r.installedBuild.map(text) ?? ""
-                lines.append(r.binaryComparison == "different" && !installed.isEmpty ? "Build: running \(running) · installed \(installed)" : "Build: running \(running)")
+                lines.append(r.binaryComparison == "different" && !installed.isEmpty ? "Build: last check ran \(running) · installed \(installed)" : "Build: last check ran \(running)")
             } else { lines.append("Build: version unknown") }
         } else { lines.append("Recorded activity: unavailable") }
         if let check = s.lastCheck {

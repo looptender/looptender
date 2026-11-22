@@ -1073,7 +1073,13 @@ func buildPanelList(r dockReport) panelList {
 			}
 		}
 		row := panelListLoop{Key: l.Key, Name: l.Name, State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key],
-			RecordedBuild: shortBuildLabel(l.Build.Recorded), BuildDiffers: l.Build.Availability == "different"}
+			BuildDiffers: l.Build.Availability == "different"}
+		// Lengthened with the installed label when the two would read the same.
+		var inst string
+		row.RecordedBuild, inst = shortBuildPair(l.Build.Recorded, version)
+		if len(inst) > len(out.InstalledBuild) {
+			out.InstalledBuild = inst
+		}
 		if np := l.NoProgress; np != nil && np.Availability == "flagged" {
 			row.NoProgress = np.Text
 		}

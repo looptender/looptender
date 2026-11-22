@@ -260,7 +260,8 @@ func TestClientStatusCarriesRecordedAndInstalledBuilds(t *testing.T) {
 	old := version
 	defer func() { version = old }()
 	for _, tt := range []struct{ name, recorded, installed, wantRec, wantInst, wantCmp string }{
-		{"dev builds shorten to the short commit", "v0.2.0-dev.ccd23105e0aa", "v0.2.0-dev.ccd2310", "v0.2.0-dev.ccd2310", "v0.2.0-dev.ccd2310", "different"},
+		{"dev builds shorten to the short commit", "v0.2.0-dev.ccd23105e0aa", "v0.2.0", "v0.2.0-dev.ccd2310", "v0.2.0", "different"},
+		{"builds that differ never read the same", "v0.2.0-dev.ccd2310a1111", "v0.2.0-dev.ccd2310b2222", "v0.2.0-dev.ccd2310a", "v0.2.0-dev.ccd2310b", "different"},
 		{"release builds as they are", "v0.2.0", "v0.2.0", "v0.2.0", "v0.2.0", "match"},
 		{"dev label says nothing", "dev", "v0.2.0", "", "v0.2.0", "unknown"},
 		{"not recorded", "", "v0.2.0", "", "v0.2.0", "unknown"},

@@ -365,12 +365,12 @@ final class MenuTests: XCTestCase {
         let model = MenuBuilder.build(.read(decoded, at: now), now: now)
         XCTAssertEqual(text(model), [
             "Open looptender Panel", "---",
-            "example-api | Supervising · running v0.1.0 · installed v0.2.0",
+            "example-api | Supervising · last check ran v0.1.0 · installed v0.2.0",
             "example-docs | Supervising · v0.2.0",
             "example-site | Supervising",
             "---", "Quit looptender Menu", "---", "Read just now · looptender v0.2.0"])
         // A CLI that sends none of it keeps the plain menu.
         let plain = MenuBuilder.build(.read(three, at: now.addingTimeInterval(-130)), now: now)
-        XCTAssertFalse(text(plain).contains { $0.contains("looptender v") || $0.contains("running") })
+        XCTAssertFalse(text(plain).contains { $0.contains("looptender v") || $0.contains("last check ran") })
     }
 }

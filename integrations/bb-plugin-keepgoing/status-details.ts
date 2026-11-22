@@ -54,7 +54,7 @@ type Runtime = StatusDetails["runtime"];
 export function buildSummary(runtime: Runtime | undefined): { running?: string; installed?: string; differs: boolean; text: string } {
   const running = runtime?.recordedBuild || undefined, installed = runtime?.installedBuild || undefined;
   const differs = !!running && !!installed && runtime?.binaryComparison === "different";
-  const text = !running ? "version unknown" : differs ? `running ${running} · installed ${installed}` : `running ${running}`;
+  const text = !running ? "version unknown" : differs ? `last check ran ${running} · installed ${installed}` : `last check ran ${running}`;
   return { running, installed, differs, text };
 }
 

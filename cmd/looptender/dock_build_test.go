@@ -119,16 +119,24 @@ func TestDockBuildLineAndShortLabels(t *testing.T) {
 		{"", "v0.2.0", "version unknown"},
 		{"dev", "v0.2.0", "version unknown"},
 		{"v0.2.0\nx", "v0.2.0", "version unknown"},
-		{"v0.2.0", "v0.2.0", "running v0.2.0"},
-		{"v0.2.0-dev.ccd23105e0aa", "v0.2.0-dev.ccd23105e0aa", "running v0.2.0-dev.ccd2310"},
-		{"v0.2.0-dev.ccd2310", "v0.2.0", "running v0.2.0-dev.ccd2310 · panel v0.2.0"},
-		{"v0.1.0", "v0.2.0", "running v0.1.0 · panel v0.2.0"},
-		{"v0.2.0", "dev", "running v0.2.0"},
-		{"ccd23105e0aa-dirty", "ccd23105e0aa-dirty", "running ccd2310-dirty (built with uncommitted changes)"},
+		{"v0.2.0", "v0.2.0", "last check ran v0.2.0"},
+		{"v0.2.0-dev.ccd23105e0aa", "v0.2.0-dev.ccd23105e0aa", "last check ran v0.2.0-dev.ccd2310"},
+		{"v0.2.0-dev.ccd2310", "v0.2.0", "last check ran v0.2.0-dev.ccd2310 · panel v0.2.0"},
+		{"v0.1.0", "v0.2.0", "last check ran v0.1.0 · panel v0.2.0"},
+		{"v0.2.0", "dev", "last check ran v0.2.0"},
+		// Builds that differ never read the same: lengthened until they do not.
+		{"v0.2.0-dev.ccd2310a1111", "v0.2.0-dev.ccd2310b2222", "last check ran v0.2.0-dev.ccd2310a · panel v0.2.0-dev.ccd2310b"},
+		{"ccd23105e0aa-dirty", "ccd23105e0aa-dirty", "last check ran ccd2310-dirty (built with uncommitted changes)"},
 	} {
 		if got := dockBuildOf(c.recorded, c.panel).Line; got != c.want {
 			t.Errorf("%q vs %q: %q, want %q", c.recorded, c.panel, got, c.want)
 		}
+	}
+	if a, b := shortBuildPair("v0.2.0-dev.ccd2310a1111", "v0.2.0-dev.ccd2310b2222"); a != "v0.2.0-dev.ccd2310a" || b != "v0.2.0-dev.ccd2310b" {
+		t.Errorf("collision: %q %q", a, b)
+	}
+	if a, b := shortBuildPair("v0.2.0-dev.ccd2310a1111", "v0.2.0-dev.ccd2310a1111"); a != b || a != "v0.2.0-dev.ccd2310" {
+		t.Errorf("same build: %q %q", a, b)
 	}
 	for in, want := range map[string]string{"": "", "dev": "", "unavailable": "", "/p/x": "", "a b": "", "v0.2.0": "v0.2.0", "v0.2.0-dev.ccd2310": "v0.2.0-dev.ccd2310",
 		"v0.2.0-dev.ccd23105e0aa": "v0.2.0-dev.ccd2310", "ccd23105e0aa": "ccd2310", "26f91db": "26f91db"} {
