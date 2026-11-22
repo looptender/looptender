@@ -76,10 +76,13 @@ class PartitionTests(unittest.TestCase):
             log = Path(temp) / 'command-1.jsonl'
             log.write_text(''.join(json.dumps(e) + '\n' for e in events) + '{"Time": cut off')
             text = race.describe(log, 1, 3, 600, 630)
+            later = race.describe(log, 1, 3, 600, 630, '2026-11-22T10:10:21.3Z')
         self.assertIn('partition 2 of 3', text)
         self.assertIn('630s of its 600s budget', text)
         self.assertIn('still running: TestStuck (30s so far)', text)
         self.assertIn('slowest finished: TestSlow 20.0s, TestFast 1.0s', text)
+        # A stuck test keeps counting to the moment of the stop, not to its last output.
+        self.assertIn('still running: TestStuck (540s so far)', later)
 
     def test_deadline_message_comes_from_the_partition_not_a_generic_string(self):
         with tempfile.TemporaryDirectory() as temp:

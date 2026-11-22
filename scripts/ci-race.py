@@ -103,8 +103,12 @@ def seconds_between(start, end):
     return (parse(end) - parse(start)).total_seconds()
 
 
-def timings(path):
-    """Finished top-level tests with their seconds, and those still running."""
+def timings(path, now=None):
+    """Finished top-level tests with their seconds, and those still running.
+
+    A running test has been going since its "run" event, up to now (the time of
+    the last event in the log when no clock is given, for a finished log).
+    """
     finished, running, last = {}, {}, None
     for event in read_events(path):
         last = event.get('Time', last)
@@ -116,12 +120,13 @@ def timings(path):
         elif event['Action'] in ('pass', 'fail', 'skip'):
             running.pop(name, None)
             finished[name] = event.get('Elapsed', 0.0)
-    open_for = {n: seconds_between(t, last) for n, t in running.items() if t and last}
+    end = now or last
+    open_for = {n: seconds_between(t, end) for n, t in running.items() if t and end}
     return finished, open_for
 
 
-def describe(path, index, count, budget, elapsed):
-    finished, open_for = timings(path)
+def describe(path, index, count, budget, elapsed, now=None):
+    finished, open_for = timings(path, now)
     slowest = sorted(finished.items(), key=lambda kv: -kv[1])[:5]
     text = (f'command partition {index + 1} of {count}: {elapsed:.0f}s of its {budget}s budget '
             f'({100 * elapsed / budget:.0f}%); {len(finished)} tests finished')
@@ -268,6 +273,10 @@ def cleanup_jobs(jobs):
         raise RuntimeError('; '.join(errors))
 
 
+def utc_now():
+    return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+
+
 def summary(text):
     print(text, flush=True)
     path = os.environ.get('GITHUB_STEP_SUMMARY')
@@ -325,7 +334,7 @@ def run_command_partition(index):
         jobs = [Job(argv, root / 'cmd/looptender', log, mine)]
 
         def overrun():
-            return describe(log, index, PARTITIONS, BUDGET, time.monotonic() - started)
+            return describe(log, index, PARTITIONS, BUDGET, time.monotonic() - started, utc_now())
 
         try:
             run_guarded(jobs, lambda: wait_jobs(jobs, deadline, overrun))
@@ -334,7 +343,7 @@ def run_command_partition(index):
             raise
         except Exception:
             if log.exists():
-                summary(f'**Failed: {describe(log, index, PARTITIONS, BUDGET, time.monotonic() - started)}**')
+                summary(f'**Failed: {describe(log, index, PARTITIONS, BUDGET, time.monotonic() - started, utc_now())}**')
             raise
         text = describe(log, index, PARTITIONS, BUDGET, time.monotonic() - started)
         summary(f'Command partition ran {len(mine)} of {len(names)} tests: {text}')
