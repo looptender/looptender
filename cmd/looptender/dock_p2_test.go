@@ -104,7 +104,7 @@ func TestDockNoteHidesAbsolutePathsAndAddressesButShowsRelativePaths(t *testing.
 		t.Fatalf("%s", got)
 	}
 	// The copy as it is written in the script (a backslash is doubled there).
-	if js := dockUIText(t, "dock.js"); !strings.Contains(js, `an absolute or home path (a /, ~/, ~name, C:\\ or \\ path, also one that contains .. or starts with Users, home or root, with / or \\ between its parts, and a \\\\server\\share path)`) || !strings.Contains(js, "IPv4 or IPv6 address") || !strings.Contains(js, "user name and password before a host") || !strings.Contains(js, `another relative path such as docs/plan.md or docs\\plan.md is shown`) {
+	if js := dockUIText(t, "dock.js"); !strings.Contains(js, `an absolute or home path (a /, ~/, ~name, C:\\ or C:/ or \\ path, with its spaces when each word after the first starts with a capital letter, a digit or a bracket, also one that contains .. or starts with Users, home or root, with / or \\ between its parts, a \\\\server\\share path, and a path with %2F or %5C in it)`) || !strings.Contains(js, "IPv4 or IPv6 address") || !strings.Contains(js, "user name and password before a host") || !strings.Contains(js, `another relative path such as docs/plan.md or docs\\plan.md is shown`) {
 		t.Error("the page's copy does not say what is hidden")
 	}
 }
@@ -181,6 +181,13 @@ func TestDockNoteMaskingFollowsTheCopyExactly(t *testing.T) {
 		"another user's home":                   "see ~example/work/x.txt now",
 		"another user's home, alone":            "cd ~example then",
 		"another user's home, backslash":        `see ~example\work now`,
+		"a drive path with forward slashes":     "see C:/Users/example/file.txt now",
+		"a lower case drive, forward slashes":   "see c:/Users/example now",
+		"a drive path with spaces":              `see C:\Program Files\App\x.exe now`,
+		"a drive path with a bracket":           `see C:\Program Files (x86)\App\x.exe now`,
+		"a path with spaces, forward slashes":   "see /home/example/My Documents/x.txt now",
+		"a percent-encoded path":                "see %2Fhome%2Fexample%2Fx now",
+		"a percent-encoded path, lower case":    "see %2fhome%2fexample%5cx now",
 	}
 	for name, note := range hidden {
 		got, hid := dockMaskNote(note)
@@ -188,7 +195,7 @@ func TestDockNoteMaskingFollowsTheCopyExactly(t *testing.T) {
 			t.Errorf("%s: %q was not hidden: %q", name, note, got)
 			continue
 		}
-		for _, secret := range []string{"user:", "pass@", "hunter2", "admin", "secret", "passwd", "example/work", "id now", "server", "fe80", "2001", "[::1]"} {
+		for _, secret := range []string{"user:", "pass@", "hunter2", "admin", "secret", "passwd", "example/work", "id now", "server", "fe80", "2001", "[::1]", "Program", "Files", "x86", "App", "Documents", "x.txt", "file.txt", "%2F", "%2f"} {
 			if strings.Contains(note, secret) && strings.Contains(got, secret) {
 				t.Errorf("%s: %q still shows %q: %q", name, note, secret, got)
 			}
@@ -196,7 +203,7 @@ func TestDockNoteMaskingFollowsTheCopyExactly(t *testing.T) {
 	}
 	shown := []string{
 		"see docs/reference/PLAN.md now", "version 1.2.3 and v0.2.0", "at 12:30:45 the check ran", "ratio 3:1 or 10:30",
-		"see src/app/main.go and pkg/x", "go to the home page", "root cause", "users like it", "a/b/c",
+		"see src/app/main.go and pkg/x", "go to the home page", "ratio a:b and 5:/ ok", "100% sure, 50% done", "root cause", "users like it", "a/b/c",
 		`see docs\plan.md and src\app\main.go`, "about ~5 min or ~3 times", "a ~ b and ~ c", "line one\\n and two",
 	}
 	for _, note := range shown {
@@ -417,5 +424,44 @@ func TestDockPausedAndWaitingIsNotListedAgainForFailedLanes(t *testing.T) {
 	}
 	if !listed["example-paused"] {
 		t.Errorf("a paused loop with a failed lane is not listed: %+v", r.Worth)
+	}
+}
+
+// The wording about tests and the route in use says a paused loop that is
+// still waiting for a person is both, where it read only "paused".
+func TestDockTestingAndRouteWordingKnowAPausedLoopIsAlsoWaiting(t *testing.T) {
+	in := dockEvidence{controls: &clientControls{Enabled: true, Paused: true, AwaitingUser: true}}.input()
+	l, _ := projectDockLoop(in, dockNow, defaultStaleAfter, false)
+	if l.State != "paused" || l.AlsoWaiting == "" {
+		t.Fatalf("%+v", l)
+	}
+	if got := dockUse(l, in.Status).Phrase; got != "Current route, loop paused and waiting for you" {
+		t.Errorf("route phrase: %q", got)
+	}
+	if got := dockTestingOf(dockNoteState(l), in.Status, nil).notWhile; got != "while the loop is paused and held for a person" {
+		t.Errorf("test wording: %q", got)
+	}
+	// A plain paused loop keeps its words.
+	plain, _ := projectDockLoop(dockEvidence{controls: &clientControls{Enabled: true, Paused: true}}.input(), dockNow, defaultStaleAfter, false)
+	if got := dockTestingOf(dockNoteState(plain), nil, nil).notWhile; got != "while the loop is paused" {
+		t.Errorf("plain paused: %q", got)
+	}
+	if got := dockUse(plain, in.Status).Phrase; got != "Current route, loop paused" {
+		t.Errorf("plain paused route: %q", got)
+	}
+}
+
+// The trade-off for a path with spaces: ordinary prose after a path is kept,
+// and a path with a lower-case word in it is hidden only up to that word.
+func TestDockNoteKeepsProseAfterAPathAndStopsAtALowerCaseWord(t *testing.T) {
+	got, _ := dockMaskNote(`first C:\a\b and then do it, see /tmp/x and now Done`)
+	for _, want := range []string{"and then do it", "and now Done"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prose lost: %q", got)
+		}
+	}
+	got, hid := dockMaskNote(`see C:\Documents and Settings\x now`)
+	if !hid || strings.Contains(got, "C:") || !strings.Contains(got, "now") {
+		t.Errorf("%q", got)
 	}
 }

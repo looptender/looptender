@@ -319,7 +319,7 @@
       note.appendChild(document.createTextNode("“" + text + "”"));
       li.appendChild(note);
       if (n.noteMasked && !state.identifiers) {
-        var p = el("p", "sub", "Parts that look like an ID, an absolute or home path (a /, ~/, ~name, C:\\ or \\ path, also one that contains .. or starts with Users, home or root, with / or \\ between its parts, and a \\\\server\\share path), a web address, a user name and password before a host, an email address, an IPv4 or IPv6 address or a long code are hidden; another relative path such as docs/plan.md or docs\\plan.md is shown. ");
+        var p = el("p", "sub", "Parts that look like an ID, an absolute or home path (a /, ~/, ~name, C:\\ or C:/ or \\ path, with its spaces when each word after the first starts with a capital letter, a digit or a bracket, also one that contains .. or starts with Users, home or root, with / or \\ between its parts, a \\\\server\\share path, and a path with %2F or %5C in it), a web address, a user name and password before a host, an email address, an IPv4 or IPv6 address or a long code are hidden; another relative path such as docs/plan.md or docs\\plan.md is shown. ");
         p.appendChild(showNotesButton());
         li.appendChild(p);
       }
