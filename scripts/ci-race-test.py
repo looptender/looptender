@@ -60,7 +60,12 @@ class PartitionTests(unittest.TestCase):
     def test_the_early_guard_tests_are_not_all_in_one_partition(self):
         guards = ['TestDockHiddenTabReadsNothingG1', 'TestDockReadsTimeOutG2', 'TestDockQuotaOnlyReadsAfterExplicitReview']
         default, known = race.load_weights()
-        groups = race.partition(list(known) + guards + [f'TestOther{i}' for i in range(1000)])
+        # The source's own test functions stand in for the binary's inventory.
+        source = Path(__file__).resolve().parents[1] / 'cmd/looptender'
+        names = sorted({m for f in source.glob('*_test.go')
+                        for m in re.findall(r'^func (Test\w+)\(\w+ \*testing\.T\)', f.read_text(), re.M)})
+        self.assertTrue(set(guards) <= set(names))
+        groups = race.partition(names)
         self.assertGreater(len({i for i, g in enumerate(groups) for n in guards if n in g}), 1)
 
     def test_workflow_matrix_runs_every_partition(self):
