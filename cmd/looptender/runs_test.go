@@ -1083,7 +1083,7 @@ func TestRunsBlockerResolvesToTheBlockingLoopsRunAndChat(t *testing.T) {
 	}
 	var text, errs bytes.Buffer
 	run(context.Background(), []string{"runs", "--registry-id", parent.ID, "--directory", regDir}, &text, &errs)
-	for _, want := range []string{"a registered loop: " + child.ID + " (example-child)  run " + runsID("run_", 2) + "\n", "follow it with: keepgoing runs --registry-id " + child.ID, "its loop: unavailable (not_registered)"} {
+	for _, want := range []string{"a registered loop: " + child.ID + " (example-child)  run " + runsID("run_", 2) + "\n", "follow it with: looptender runs --registry-id " + child.ID, "its loop: unavailable (not_registered)"} {
 		if !strings.Contains(text.String(), want) {
 			t.Fatalf("lacks %q:\n%s", want, text.String())
 		}

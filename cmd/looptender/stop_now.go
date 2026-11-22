@@ -274,5 +274,5 @@ func stopWarningWords(code string) string {
 			return c.words
 		}
 	}
-	return "the stop check recorded a warning; keepgoing status shows it"
+	return "the stop check recorded a warning; looptender status shows it"
 }

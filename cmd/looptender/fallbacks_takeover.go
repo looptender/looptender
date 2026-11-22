@@ -59,7 +59,7 @@ func fallbacksArm(e env, args []string, input io.Reader, lookPath func(string) (
 		e.errf("fallbacks arm: this loop is not a BB loop; a takeover starts a new BB conversation")
 		return exitUsage
 	case cfg.Loop.FollowsStandard():
-		e.errf("fallbacks arm: this loop follows your standard route list; add a new-conversation route there with keepgoing routes add")
+		e.errf("fallbacks arm: this loop follows your standard route list; add a new-conversation route there with looptender routes add")
 		return exitUsage
 	}
 	if cfg.FallbackSet != nil {
@@ -100,7 +100,7 @@ func fallbacksArm(e env, args []string, input io.Reader, lookPath func(string) (
 	preview := append(append([]string{}, add...), "--dry-run")
 	if !*asJSON {
 		probe := config.Candidate{Agent: config.Agent{Provider: c.Provider, BB: &config.BB{NewThread: true, Model: c.Model, Reasoning: c.Reasoning, PermissionMode: c.Permission}}}
-		printNewThreadPlan(e.stdout, cfg.Loop.Provider, probe, "do not arm it; once armed, remove the fallback with keepgoing fallbacks remove, or turn handoff off with keepgoing fallbacks handoff off")
+		printNewThreadPlan(e.stdout, cfg.Loop.Provider, probe, "do not arm it; once armed, remove the fallback with looptender fallbacks remove, or turn handoff off with looptender fallbacks handoff off")
 		fmt.Fprintln(e.stdout, takeoverReadiness(cfg, c.Provider, c.Provider, time.Now()))
 		if n := otherFallbacksGainingHandoff(cfg); n > 0 {
 			fmt.Fprintf(e.stdout, "Arming turns handoff on for rate limits for the whole loop, so its %d other fallback(s) start taking handoffs too, in their current order, before this new conversation is tried.\n", n)

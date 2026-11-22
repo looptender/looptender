@@ -164,9 +164,9 @@ var fallbackAddLimitations = []string{
 const fallbackAddUsage = `Add a fallback to an existing loop: another provider, account or model.
 
 Usage:
-  keepgoing fallbacks add -c looptender.yaml                 guided questions, preview, then confirm
-  keepgoing fallbacks add -c looptender.yaml --non-interactive --agent codex [flags]
-  keepgoing fallbacks add --loop NAME                         the same, naming a registered loop
+  looptender fallbacks add -c looptender.yaml                 guided questions, preview, then confirm
+  looptender fallbacks add -c looptender.yaml --non-interactive --agent codex [flags]
+  looptender fallbacks add --loop NAME                         the same, naming a registered loop
 
 The command looks up installed agent CLIs without running them, previews the
 fallback and the handoff order, and writes only after confirmation (or with
@@ -208,7 +208,7 @@ func fallbacksAdd(e env, args []string, input io.Reader, lookPath func(string) (
 	fs.StringVar(&o.probeAccount, "probe-account-dir", "", "bb: account directory the local probe CLI uses (default: its current login)")
 	fs.BoolVar(&o.showIDs, "show-ids", false, "bb: print thread IDs in listings, the preview and JSON")
 	fs.StringVar(&o.account, "account-dir", "", "existing account configuration directory (default: the CLI's current login)")
-	fs.StringVar(&o.accountID, "account", "", "accounts catalog ID of the account you name for this fallback (keepgoing accounts list); fills --account-dir from it and writes account: ID")
+	fs.StringVar(&o.accountID, "account", "", "accounts catalog ID of the account you name for this fallback (looptender accounts list); fills --account-dir from it and writes account: ID")
 	fs.StringVar(&o.group, "group", "", "quota group label; accounts sharing limits must share it (default: account directory name, else provider)")
 	fs.StringVar(&o.model, "model", "", "model for this fallback's turns (default: CLI configuration)")
 	fs.StringVar(&o.probeModel, "probe-model", "", "cheaper model for scheduled health probes (default: the target model)")
@@ -341,7 +341,7 @@ func fallbacksAdd(e env, args []string, input io.Reader, lookPath func(string) (
 	}
 	printFallbackAddNext(e.stdout, plan)
 	if plan.historyFailed {
-		fmt.Fprintln(e.stdout, "Note: the fallback was added, but could not be recorded in the loop's history (keepgoing timeline).")
+		fmt.Fprintln(e.stdout, "Note: the fallback was added, but could not be recorded in the loop's history (looptender timeline).")
 	}
 	return exitOK
 }
@@ -677,7 +677,7 @@ func (w *fallbackAddWizard) collectAccount() error {
 		case f == nil:
 			fmt.Fprintln(out, "  (Your accounts catalog could not be read, so no named accounts are offered.)")
 		case len(choices) == 0:
-			fmt.Fprintln(out, "  Name your accounts with keepgoing accounts add to pick them here.")
+			fmt.Fprintln(out, "  Name your accounts with looptender accounts add to pick them here.")
 		}
 	}
 	if len(choices) == 0 {

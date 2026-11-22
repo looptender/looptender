@@ -82,10 +82,10 @@ type fallbackEditReport struct {
 const fallbackManageUsage = `Change an existing loop's fallbacks without editing YAML.
 
 Usage:
-  keepgoing fallbacks handoff on|off -c looptender.yaml    turn automatic handoff for rate limits on or off
-  keepgoing fallbacks remove ID -c looptender.yaml         take a fallback out of the loop
-  keepgoing fallbacks move ID --to N -c looptender.yaml    change its place in the handoff order
-  keepgoing fallbacks move ID --to N --loop NAME           the same, naming a registered loop
+  looptender fallbacks handoff on|off -c looptender.yaml    turn automatic handoff for rate limits on or off
+  looptender fallbacks remove ID -c looptender.yaml         take a fallback out of the loop
+  looptender fallbacks move ID --to N -c looptender.yaml    change its place in the handoff order
+  looptender fallbacks move ID --to N --loop NAME           the same, naming a registered loop
 
 Each command previews the result and writes only after you answer yes, or
 with --yes. --dry-run previews only. Nothing is run: no agent, model or check.
@@ -119,9 +119,9 @@ func fallbacksManage(e env, sub string, args []string, input io.Reader) int {
 	}
 	positional = append(positional, fs.Args()...)
 	usage := map[string]string{
-		"handoff": "usage: keepgoing fallbacks handoff on|off [-c looptender.yaml]",
-		"remove":  "usage: keepgoing fallbacks remove ID [-c looptender.yaml]",
-		"move":    "usage: keepgoing fallbacks move ID --to N [-c looptender.yaml]",
+		"handoff": "usage: looptender fallbacks handoff on|off [-c looptender.yaml]",
+		"remove":  "usage: looptender fallbacks remove ID [-c looptender.yaml]",
+		"move":    "usage: looptender fallbacks move ID --to N [-c looptender.yaml]",
 	}[sub]
 	if len(positional) != 1 || (sub == "handoff" && positional[0] != "on" && positional[0] != "off") {
 		e.errf("%s", usage)
@@ -154,7 +154,7 @@ func fallbacksManage(e env, sub string, args []string, input io.Reader) int {
 		return refuse(exitUsage, errors.New(followsStandardRefusal(sub)))
 	}
 	if cfg.FallbackSet == nil {
-		return refuse(exitUsage, errors.New("This loop has no fallbacks. Add one first with: keepgoing fallbacks add"))
+		return refuse(exitUsage, errors.New("This loop has no fallbacks. Add one first with: looptender fallbacks add"))
 	}
 	if info, err := os.Lstat(cfg.Loop.Fallbacks); err != nil || !info.Mode().IsRegular() {
 		return refuse(exitUsage, errors.New("The loop's fallbacks file is a symbolic link or not a regular file.\n  Point loop.fallbacks at the real file instead."))
@@ -239,7 +239,7 @@ func fallbacksManage(e env, sub string, args []string, input io.Reader) int {
 	}
 	fmt.Fprintf(e.stdout, "\n%s\nA running daemon uses the change after its next configuration reload.\n", edit.done)
 	if edit.historyFailed {
-		fmt.Fprintln(e.stdout, "Note: the change was saved, but could not be recorded in the loop's history (keepgoing timeline).")
+		fmt.Fprintln(e.stdout, "Note: the change was saved, but could not be recorded in the loop's history (looptender timeline).")
 	}
 	return exitOK
 }
@@ -406,17 +406,17 @@ func planFallbackRemove(cfg *config.Config, id string) (*fallbackEdit, error) {
 			return nil, findErr
 		}
 		if p.active == id {
-			return nil, fmt.Errorf("The loop's saved state says it is running on %q, which is not a\n  fallback of this loop. Move it first with: keepgoing retarget primary", id)
+			return nil, fmt.Errorf("The loop's saved state says it is running on %q, which is not a\n  fallback of this loop. Move it first with: looptender retarget primary", id)
 		}
 		p.subject, p.cleanupOnly = id, true
 		p.confirm, p.done = "Clear these leftover records?", fmt.Sprintf("Cleared the leftover records of %s.", id)
 		return p, nil
 	}
 	if p.active == id {
-		return nil, fmt.Errorf("The loop is running on %q right now. Move it first with:\n    keepgoing retarget primary %s\n      -c %s", id, lineContinuation(), commandQuote(p.cfgPath))
+		return nil, fmt.Errorf("The loop is running on %q right now. Move it first with:\n    looptender retarget primary %s\n      -c %s", id, lineContinuation(), commandQuote(p.cfgPath))
 	}
 	if len(p.order) == 1 {
-		return nil, fmt.Errorf("%q is this loop's only fallback, and a fallbacks file cannot be empty.\n  To stop automatic handoff, use: keepgoing fallbacks handoff off", id)
+		return nil, fmt.Errorf("%q is this loop's only fallback, and a fallbacks file cannot be empty.\n  To stop automatic handoff, use: looptender fallbacks handoff off", id)
 	}
 	if p.leftovers, err = findFallbackLeftovers(cfg, id); err != nil {
 		return nil, err
@@ -730,7 +730,7 @@ func printFallbackEdit(w io.Writer, p *fallbackEdit) {
 				fallbackAddWrap(w, "  ", "  ", fmt.Sprintf("The current list (%s) is not remembered: turning handoff on again restores rate limits only.", p.replacedList))
 			}
 			if p.active != state.Primary {
-				fmt.Fprintf(w, "  The loop stays on %s, where it is now. This does not move it\n  back; use keepgoing retarget primary for that.\n", p.active)
+				fmt.Fprintf(w, "  The loop stays on %s, where it is now. This does not move it\n  back; use looptender retarget primary for that.\n", p.active)
 			}
 		}
 		fmt.Fprintln(w, "\nHandoff order (unchanged)")

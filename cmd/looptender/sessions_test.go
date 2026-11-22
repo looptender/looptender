@@ -86,6 +86,22 @@ func TestEnableRefusesASecondLoopOnOneSession(t *testing.T) {
 		!strings.Contains(strings.Join(st.SharedWith, "\n"), "fallback claude-other-account and this loop's fallback claude-other-account are the same BB thread thr_alt") {
 		t.Fatalf("status json: %s", out)
 	}
+	if !strings.Contains(st.SharedWith[1], ") is enabled and supervising, and ") {
+		t.Fatalf("an unheld loop: %q", st.SharedWith)
+	}
+	// A held loop is enabled but sends nothing: the warning says it is held,
+	// how, and what lifts it, and never calls it supervising.
+	if code, _, errs := f.run("pause"); code != exitOK {
+		t.Fatalf("pause: %s", errs)
+	}
+	code, out, _ = runWith("status", "-c", other)
+	if code != exitOK || !strings.Contains(out, "also supervises BB thread thr_primary but held (paused): it sends nothing until a person resumes it; once it resumes, the two can both prompt it") ||
+		!strings.Contains(out, "is enabled but held (paused): it sends nothing until a person resumes it, and its fallback") || strings.Contains(out, "is enabled and supervising") {
+		t.Fatalf("status with the other paused: %s", out)
+	}
+	if code, _, errs := f.run("resume"); code != exitOK {
+		t.Fatalf("resume: %s", errs)
+	}
 	// The flag belongs to enable, start and init only.
 	if code, _, errs := runWith("pause", "-c", other, "--allow-second-loop"); code != exitUsage || !strings.Contains(errs, "only supported by enable, start and init") {
 		t.Fatalf("pause --allow-second-loop: %d %s", code, errs)

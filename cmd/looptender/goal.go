@@ -14,7 +14,7 @@ import (
 
 func goalCommand(e env, args []string) int {
 	if len(args) == 0 {
-		e.errf("usage: keepgoing goal create|revise|show [-c config] [--file private.json] [--id ID --revision N] [--json] [--private]")
+		e.errf("usage: looptender goal create|revise|show [-c config] [--file private.json] [--id ID --revision N] [--json] [--private]")
 		return exitUsage
 	}
 	cmd := args[0]

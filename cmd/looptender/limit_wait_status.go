@@ -141,7 +141,7 @@ func limitWaitTold(s limitWaitStatus) string {
 }
 
 // limitWaitWayOut is the advice for a long wait with no handoff.
-const limitWaitWayOut = "To continue before the reset: add a route that can take over (keepgoing fallbacks add; --new-thread starts a conversation on another provider), or follow the standard route list (keepgoing routes follow-standard); keep rate_limit in errors.failover_on; or retarget by hand."
+const limitWaitWayOut = "To continue before the reset: add a route that can take over (looptender fallbacks add; --new-thread starts a conversation on another provider), or follow the standard route list (looptender routes follow-standard); keep rate_limit in errors.failover_on; or retarget by hand."
 
 func printLimitWait(w io.Writer, s limitWaitStatus) {
 	if s.State == "none" {

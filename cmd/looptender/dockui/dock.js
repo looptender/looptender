@@ -1,5 +1,5 @@
 "use strict";
-// keepgoing panel page. Reads bounded versioned JSON relative to this
+// looptender panel page. Reads bounded versioned JSON relative to this
 // page and renders it with DOM text nodes only; no data is parsed as HTML.
 // Ages come from the report's read time, never this browser's clock, so the
 // page reads the same wherever it is opened. Every sentence about a loop or a
@@ -338,7 +338,7 @@
       li.appendChild(cmd);
       var where = el("p", "sub resume-where");
       where.id = "resume-where-" + n.key;
-      put(where, ["CONFIG is the path of " + n.loop + "'s configuration file; ", el("code", null, "keepgoing registry list --private"), " lists it."]);
+      put(where, ["CONFIG is the path of " + n.loop + "'s configuration file; ", el("code", null, "looptender registry list --private"), " lists it."]);
       li.appendChild(where);
     }
     return li;
@@ -467,13 +467,13 @@
     if (group) pane.appendChild(group);
     if (d.registry.availability !== "available") {
       pane.appendChild(el("p", "lede", "Unknown."));
-      pane.appendChild(emptyBox("The registry could not be read.", "Nothing is shown rather than guessing. Check it with keepgoing registry list."));
+      pane.appendChild(emptyBox("The registry could not be read.", "Nothing is shown rather than guessing. Check it with looptender registry list."));
       return;
     }
     var needs = list(d.needsYou);
     if (d.lede) pane.appendChild(el("p", "lede", d.lede));
     if (!list(d.loops).length) {
-      pane.appendChild(emptyBox("No loops are registered yet.", "Register one with keepgoing registry add -c path/to/looptender.yaml (or keepgoing.yaml), and it appears here on the next read."));
+      pane.appendChild(emptyBox("No loops are registered yet.", "Register one with looptender registry add -c path/to/looptender.yaml (or keepgoing.yaml), and it appears here on the next read."));
       return;
     }
     if (!needs.length && !d.allClear) {
@@ -2592,7 +2592,7 @@
         state.failedLong = Date.now() - state.failedSince >= FAIL_LONG_MS;
         var schema = err && err.message === "schema";
         var cmd = "keepgoing " + served();
-        var again = served() === "panel" ? "run keepgoing panel again." : "start it again and open the new address it prints.";
+        var again = served() === "panel" ? "run looptender panel again." : "start it again and open the new address it prints.";
         var text = schema ? "This page does not understand the reply it was sent. Reload the page, or restart " + cmd + "." :
           !state.data ? "Could not read from " + cmd + ". It may have stopped; " + again :
           state.failedLong ? "Reads have failed since " + secFmt.format(new Date(state.failedSince)) + ", so what you see is out of date. " + cmd + " may have stopped; if so, " + again :

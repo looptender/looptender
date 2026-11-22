@@ -110,7 +110,7 @@ func clientCommand(e env, args []string) int {
 		return clientReviewCommand(e, args)
 	}
 	if len(args) == 0 || args[0] != "status" {
-		e.errf("usage: keepgoing client status|pause|stop|prepare-resume|resume --id ID, or client review|apply pause|stop|resume --loop KEY [--directory private-registry] [--json]; see each command --help")
+		e.errf("usage: looptender client status|pause|stop|prepare-resume|resume --id ID, or client review|apply pause|stop|resume --loop KEY [--directory private-registry] [--json]; see each command --help")
 		return exitUsage
 	}
 	fs := flag.NewFlagSet("client status", flag.ContinueOnError)
@@ -348,6 +348,7 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 	// running means the computer slept.
 	if scheduleOf != nil && s.Runtime != nil {
 		sch := scheduleOf(&s.Daemon)
+		noteTickCadence(&s.Daemon, nil, sch, now)
 		s.Runtime.Overdue, s.Runtime.OverdueMessage = sch.Overdue, sch.Message
 		if sch.Overdue && sch.Since != nil {
 			s.Runtime.OverdueSince = sch.Since
