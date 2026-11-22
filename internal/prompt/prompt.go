@@ -35,7 +35,7 @@ func Wake(loop config.Loop) (string, error) {
 
 // ComposeWake returns the message and its goal provenance from the same read.
 func ComposeWake(loop config.Loop) (Message, error) {
-	text, err := loop.PromptText()
+	text, err := wakeText(loop)
 	if err != nil {
 		return Message{}, err
 	}
@@ -47,7 +47,7 @@ func ComposeWake(loop config.Loop) (Message, error) {
 // short line. Without the setting, or without prompt_goal, it is ComposeWake
 // and choose is not called.
 func ComposeWakeOnChange(loop config.Loop, choose func(id string, revision uint64) (short bool)) (Message, error) {
-	text, err := loop.PromptText()
+	text, err := wakeText(loop)
 	if err != nil {
 		return Message{}, err
 	}
@@ -56,6 +56,18 @@ func ComposeWakeOnChange(loop config.Loop, choose func(id string, revision uint6
 		return m, err
 	}
 	return Message{GoalID: m.GoalID, GoalRevision: m.GoalRevision, GoalForm: GoalShort, Text: shortGoalText(text, m.GoalID, m.GoalRevision)}, nil
+}
+
+// wakeText reads the configured prompt on each send. A prompt file whose
+// policy part is one setup wrote goes with the current wording and its own
+// task (see MatchPolicy); any other prompt is sent as written.
+func wakeText(loop config.Loop) (string, error) {
+	text, err := loop.PromptText()
+	if err != nil || loop.PromptFile == "" {
+		return text, err
+	}
+	text, _, _ = CurrentWording(text)
+	return text, nil
 }
 
 // WakeHeader is the fixed first line of every message looptender sends to a

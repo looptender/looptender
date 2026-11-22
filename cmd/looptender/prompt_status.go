@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
+	"github.com/looptender/looptender/internal/prompt"
 	"github.com/looptender/looptender/internal/state"
 )
 
@@ -64,4 +66,39 @@ func printPromptSend(w io.Writer, r promptSendStatus) {
 		fmt.Fprintf(w, "  last full goal copy: %s revision %d to %s; check %s; %d short send(s) since\n", g.GoalID, g.GoalRevision, g.Target, when(g.At), g.ShortSends)
 	}
 	fmt.Fprintln(w, "  saved after adapter return; delivery and execution unverified; queued messages may retain older revisions")
+}
+
+// wakePolicyStatus says where the loop's standing wake policy comes from:
+// this build (the prompt file holds a wording setup wrote) or the loop's own
+// text, which then receives no policy updates.
+type wakePolicyStatus struct {
+	prompt.PolicyState
+	Message string `json:"message"`
+}
+
+const wakePolicyOptIn = "To receive policy updates, run `looptender prompt-policy apply -c CONFIG`: it rewrites the text above the line `Task:` to the current wording, keeps the task, and keeps the previous file beside it."
+
+func describeWakePolicy(l config.Loop) *wakePolicyStatus {
+	text, err := l.PromptText()
+	if err != nil {
+		return nil
+	}
+	s := &wakePolicyStatus{PolicyState: prompt.DescribePolicy(text, l.PromptFile != "")}
+	switch {
+	case s.Source == prompt.PolicyInline:
+		s.Message = "The prompt is set in the configuration (loop.prompt) and sent exactly as written; it does not receive policy updates."
+	case s.Source == prompt.PolicyCustom:
+		s.Message = "The prompt file differs from every wording setup wrote, so it is sent exactly as written and does not receive policy updates. " + wakePolicyOptIn
+	case s.FileVersion == s.CurrentVersion:
+		s.Message = fmt.Sprintf("Built in: the prompt file holds the current wording (version %d), followed by the task.", s.CurrentVersion)
+	default:
+		s.Message = fmt.Sprintf("Built in: the prompt file holds version %d of the wording; each wake sends this build's version %d followed by the file's task. The file is not rewritten.", s.FileVersion, s.CurrentVersion)
+	}
+	return s
+}
+
+func printWakePolicy(w io.Writer, s *wakePolicyStatus) {
+	if s != nil {
+		fmt.Fprintf(w, "standing wake policy: %s\n", s.Message)
+	}
 }

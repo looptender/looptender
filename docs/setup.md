@@ -28,6 +28,21 @@ Runtime state will live in that directory's `state` subdirectory. `--directory` 
 
 **Task files are imported once.** Setup copies the entered task, stdin, or `--task-file` contents into the generated `prompt.md`. Later edits to the original task file do not update that snapshot. Supervision rereads the saved `loop.prompt_file` (generated as `prompt.md`) when preparing task prompts; edit that saved file to revise future prompts while preserving its control instructions. Already-sent messages are unchanged. looptender does not follow referenced documents or detect whether the task wording has become stale.
 
+### Standing wake policy
+
+The guidance above the `Task:` line in a generated `prompt.md` (how to plan, delegate, finish, and ask for a person) is the standing wake policy. It belongs to the looptender build, not to the loop: each wake sends the running build's current wording, followed by the text after the file's `Task:` line. A loop set up by an older build therefore gets newer guidance from its next wake after an upgrade, without anyone editing its files. The file itself is never rewritten by a wake.
+
+This holds while the text above `Task:` is exactly as some version of setup wrote it, with the same command path and configuration path in both commands. The text after `Task:` is the loop's own and can be edited freely. The build keeps every wording setup has written, so it recognises a file written by any earlier version.
+
+Edit anything above `Task:` and the file becomes the loop's own prompt: it is sent exactly as written and no longer receives policy updates. `status` and `doctor` say which of the two a loop has (`wakePolicy` in `status --json`). A prompt set inline with `loop.prompt` is always sent as written.
+
+```sh
+looptender prompt-policy show -c CONFIG
+looptender prompt-policy apply -c CONFIG
+```
+
+`apply` is the way back to the built-in policy. It rewrites the prompt file as setup writes it now: the current wording, then the text after the file's first line that reads exactly `Task:`. The previous file is kept beside it as `prompt.md.before-policy-<time>`. It writes nothing for a file already on a built-in wording, and refuses a file with no `Task:` line. Nothing else rewrites the file.
+
 Review the generated task and configuration, then run the exact `start --foreground` command printed by setup. Commands include the resolved config path; Windows output uses PowerShell syntax. Start validates local files and executable availability, enables the loop, and runs the daemon in the terminal. Choose `--background` to detach it instead; the command waits for a startup acknowledgement and prints the daemon PID. Existing holds remain in effect until `resume`. See [starting supervision](operations.md#starting-supervision) for validation limits, controls, and background lifecycle. `enable` alone still does not start a supervisor. Background mode installs no service and does not restart after a crash or reboot. On macOS and Linux, a [service](services.md#the-recommended-way-to-keep-checks-running) is the recommended way to keep checks running across restarts, and `init` prints its install command; external schedulers remain available on every platform. Whatever runs the checks, `status` says when they have [stopped](operations.md#external-schedulers-can-stop-on-their-own).
 
 The generated prompt tells the agent to honor newer user instructions, finish and verify the entire task before calling `complete`, and call `await-user` when only human-dependent work remains. The agent needs permission to run these control commands and write the private state directory. Setup preserves the provider's current sandbox and permission settings; it does not bypass a permission request. Completion holds across supervisor restarts until an explicit `resume`.
