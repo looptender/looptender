@@ -1110,30 +1110,55 @@ func TestPanelPutsNothingRedeemableInAnyProcessArguments(t *testing.T) {
 	}
 	target, c := panelRedeem(t, address)
 	after := processCommandLines(t)
-	// Every needle is specific to this panel: random per opening, or carrying
-	// this panel's own port. The process list is the whole machine's, which
-	// holds other test runs, real panels and browsers. A generic "/open/" would
-	// make the test judge their arguments (a Chrome app window or a concurrent
-	// run's address, for example), so the address is this panel's, port
-	// included.
-	address127 := fmt.Sprintf("127.0.0.1:%d/open/", rec.Port)
-	secrets := map[string]string{"opening code": code, "session": c.Value, "page path segment": strings.Split(target, "/")[2], "an opening address": address127}
+	secrets := panelArgumentNeedles(rec.Port, code, c.Value, strings.Split(target, "/")[2])
 	for name, ps := range map[string]string{"while the launcher ran": during, "after the opening was used": after} {
-		for what, secret := range secrets {
-			if strings.Contains(ps, secret) {
-				// Name the process, never the secret.
-				line := ""
-				for _, l := range strings.Split(ps, "\n") {
-					if strings.Contains(l, secret) {
-						line = l
-						break
-					}
-				}
-				for _, redact := range secrets {
-					line = strings.ReplaceAll(line, redact, "<redacted>")
-				}
-				t.Fatalf("%s: the %s is in a process's arguments: %s", name, what, line)
+		if what, line := panelArgumentLeak(ps, secrets); what != "" {
+			t.Fatalf("%s: the %s is in a process's arguments: %s", name, what, line)
+		}
+	}
+}
+
+// Every needle is specific to this panel: random per opening, or carrying
+// this panel's own port. The process list is the whole machine's, which holds
+// other test runs, real panels and browsers, so a generic "/open/" would judge
+// their arguments. The address needle leaves the host out, so 127.0.0.1,
+// localhost and [::1] forms of this panel's opening address are all caught.
+func panelArgumentNeedles(port int, code, session, segment string) map[string]string {
+	return map[string]string{"opening code": code, "session": session, "page path segment": segment, "an opening address": fmt.Sprintf(":%d/open/", port)}
+}
+
+// panelArgumentLeak names the first needle found in a process list and the
+// process line holding it, with every needle redacted from the line.
+func panelArgumentLeak(ps string, needles map[string]string) (what, line string) {
+	for what, needle := range needles {
+		if !strings.Contains(ps, needle) {
+			continue
+		}
+		for _, l := range strings.Split(ps, "\n") {
+			if strings.Contains(l, needle) {
+				line = l
+				break
 			}
+		}
+		for _, redact := range needles {
+			line = strings.ReplaceAll(line, redact, "<redacted>")
+		}
+		return what, line
+	}
+	return "", ""
+}
+
+func TestPanelArgumentLeakJudgesOnlyThisPanel(t *testing.T) {
+	needles := panelArgumentNeedles(41234, strings.Repeat("c", 64), strings.Repeat("d", 64), strings.Repeat("e", 32))
+	unrelated := "100 /usr/bin/something --url=/open/ and http://127.0.0.1:50000/open/other\n101 chrome --app=http://localhost:41235/open/x\n"
+	if what, line := panelArgumentLeak(unrelated, needles); what != "" {
+		t.Fatalf("an unrelated process was judged: %s %s", what, line)
+	}
+	for _, host := range []string{"127.0.0.1", "localhost", "[::1]", "0.0.0.0"} {
+		ps := unrelated + "102 launcher http://" + host + ":41234/open/" + strings.Repeat("9", 64) + "\n"
+		what, line := panelArgumentLeak(ps, needles)
+		if what != "an opening address" || !strings.Contains(line, "102 launcher") || strings.Contains(line, ":41234/open/") {
+			t.Fatalf("%s: %q %q", host, what, line)
 		}
 	}
 }
