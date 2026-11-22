@@ -52,7 +52,7 @@ keep going
 Automatic looptender wake for loop example-loop: not a new instruction from a person and not an approval.
 
 [keepgoing:child-errors count=1 running=1]
-keepgoing notice: 1 direct child thread(s) of this thread were in an error state at this check, and 1 other direct child thread(s) are still running. keepgoing has not retried, messaged or stopped any of them and has not read their content. This is not an instruction to continue the task: the running children are still working. You own the errored work: decide whether to retry or replace it. This notice is sent once when a child newly enters an error state.
+keepgoing notice: 1 direct child thread(s) of this thread were in an error state at this check, and 1 other direct child thread(s) are still running. keepgoing has not retried, messaged or stopped any of them and has not read their content. This is not an instruction to continue the task: the running children are still working. You own the errored work. Inspect current structured execution and pending input separately from the explicit assignment outcome. Idle, error or disappearance is not completion. Reconcile unfinished obligations and newer owner direction before choosing an authorized action; do not replay completed or superseded work, duplicate a running retry, or clear a hold. This notice is sent once when a child newly enters an error state.
 
 === prompt_goal wake primary #0 mode=auto
 Automatic looptender wake for loop example-loop: not a new instruction from a person and not an approval.
