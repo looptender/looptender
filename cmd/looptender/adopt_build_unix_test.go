@@ -698,6 +698,46 @@ func TestAdoptionWaitsWhileTheLoopIsNotReady(t *testing.T) {
 	}
 }
 
+// The loop's readiness is checked again under the tick lock: a change
+// between the first look and the switch stops it, refusing nothing.
+func TestReadinessIsCheckedAgainUnderTheTickLock(t *testing.T) {
+	w := newAdoptWorld(t)
+	calls := 0
+	w.a.ready = func(*ownerLease) string {
+		calls++
+		if calls == 1 {
+			return ""
+		}
+		if held, _ := lock.Held(w.dir, lock.Tick); !held {
+			t.Error("second readiness check without the tick lock")
+		}
+		return "the loop's owner changed"
+	}
+	w.a.atSafePoint(context.Background(), &config.Config{}, nil)
+	if calls != 2 || len(w.runs) != 2 || len(w.execs) != 0 || len(w.a.skip) != 0 || w.record(t) != nil {
+		t.Fatalf("calls %d runs %v execs %v skip %v record %+v", calls, w.runs, w.execs, w.a.skip, w.record(t))
+	}
+}
+
+// A returning build that finds another state_dir keeps its own and does no
+// provider work on that configuration.
+func TestReturningBuildKeepsItsStateDirWithoutProviderWork(t *testing.T) {
+	f := newDoctorFixture(t)
+	f.loop["state_dir"] = filepath.Join(f.root, "elsewhere")
+	f.save(t)
+	cfg, err := config.Load(f.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.CheckSources(); err != nil {
+		t.Fatal(err)
+	}
+	keepStateDir(cfg, f.state)
+	if cfg.Loop.StateDir != f.state || cfg.CheckSources() == nil {
+		t.Fatalf("state dir %s; sources verified: %v", cfg.Loop.StateDir, cfg.CheckSources() == nil)
+	}
+}
+
 // A file that arrives in the last moment before the exec is caught by the
 // last check: nothing runs, nothing is refused for good.
 func TestLastCheckBeforeTheExec(t *testing.T) {

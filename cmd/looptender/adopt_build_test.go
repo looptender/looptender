@@ -56,6 +56,7 @@ func TestBuildAdoptionStatusWords(t *testing.T) {
 	answering := daemonStatus{State: "responsive"}
 	silent := daemonStatus{State: "not_recorded"}
 	dead := daemonStatus{State: "unavailable"}
+	var held *lock.Lock
 	for _, c := range []struct {
 		r          adoptRecord
 		d          daemonStatus
@@ -82,6 +83,9 @@ func TestBuildAdoptionStatusWords(t *testing.T) {
 		{adoptRecord{Outcome: adoptAdopted, At: now.Add(-time.Hour), From: old, To: installed}, silent, true, []string{"switched from"}, 0},
 		// Just switched: not yet.
 		{adoptRecord{Outcome: adoptAdopted, At: now.Add(-time.Second), From: old, To: installed}, dead, true, []string{"switched from"}, -time.Minute},
+		// The build came up but could not publish its diagnostics: it holds
+		// the daemon lock, so it is up. (held marks the case.)
+		{adoptRecord{Outcome: adoptAdopted, At: now.Add(-time.Hour), From: old, To: installed, Mode: "held"}, dead, true, []string{"switched from"}, -time.Minute},
 		// The owner changed during the switch: the daemon exited as at any check.
 		{adoptRecord{Outcome: adoptHandedOff, At: now.Add(-time.Hour), From: old, To: installed}, silent, true, []string{"handed off"}, 0},
 	} {
@@ -98,7 +102,18 @@ func TestBuildAdoptionStatusWords(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		if c.r.Mode == "held" {
+			l, err := lock.AcquireNamed(dir, lock.Daemon)
+			if err != nil {
+				t.Fatal(err)
+			}
+			held = l
+		}
 		s := describeBuildAdoption(dir, c.d, now)
+		if held != nil {
+			held.Release()
+			held = nil
+		}
 		if s == nil || s.Outcome != c.r.Outcome || s.Supervised != c.supervised {
 			t.Fatalf("%s: %+v", c.r.Outcome, s)
 		}

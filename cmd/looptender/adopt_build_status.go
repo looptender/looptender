@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/daemoninfo"
+	"github.com/looptender/looptender/internal/lock"
 )
 
 // adoptStalled is how long a recorded switch may go without a daemon
@@ -56,7 +57,9 @@ func describeBuildAdoption(dir string, daemon daemonStatus, now time.Time) *buil
 	// started after it. A daemon that started and later stopped (a crash, a
 	// reboot) is no longer the switch's doing; one that ended on purpose
 	// removes its record and reads as not recorded.
-	dead := daemon.State == "unavailable" && now.Sub(r.At) >= adoptStalled && endpointBefore(dir, r.At)
+	// A daemon holding the loop's daemon lock is up even when it could not
+	// publish its diagnostics.
+	dead := daemon.State == "unavailable" && now.Sub(r.At) >= adoptStalled && endpointBefore(dir, r.At) && !daemonLockHeld(dir)
 	switch r.Outcome {
 	case adoptAdopted:
 		s.Message = fmt.Sprintf("The daemon switched from %s to the installed %s at %s, after a check; holds, owner, send counts and state were kept.", from, to, at)
@@ -95,4 +98,10 @@ func describeBuildAdoption(dir string, daemon daemonStatus, now time.Time) *buil
 func endpointBefore(dir string, at time.Time) bool {
 	info, err := os.Stat(filepath.Join(dir, daemoninfo.FileName))
 	return err == nil && info.ModTime().Before(at)
+}
+
+// daemonLockHeld says whether a process holds the loop's daemon lock.
+func daemonLockHeld(dir string) bool {
+	held, err := lock.Held(dir, lock.Daemon)
+	return err == nil && held
 }

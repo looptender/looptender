@@ -635,10 +635,7 @@ func (p adoptPayload) run(e env) int {
 		if !returning {
 			return p.back(e, "the configuration's state_dir changed; restart the daemon deliberately to apply it")
 		}
-		// As the earlier daemon did: keep its state directory, and do no
-		// provider work on a configuration that names another.
-		cfg.Loop.StateDir = p.StateDir
-		cfg.MarkSourcesStale()
+		keepStateDir(cfg, p.StateDir)
 	}
 	if p.ExpectedStateDir != "" && !returning {
 		if actual, err := canonicalFuturePath(cfg.Loop.StateDir); err != nil || actual != p.ExpectedStateDir {
@@ -679,6 +676,14 @@ func (p adoptPayload) run(e env) int {
 	defer daemonLock.Release()
 	a := newBuildAdopter(p.Config, p.StateDir, p.Mode, p.ExpectedStateDir, daemonLock)
 	return daemonLoop(e, cfg, p.Config, false, lease, monitor, a)
+}
+
+// keepStateDir is what a returning build does with a configuration that
+// names another state directory, as the earlier daemon did: it keeps its
+// own, and does no provider work on that configuration until a restart.
+func keepStateDir(cfg *config.Config, dir string) {
+	cfg.Loop.StateDir = dir
+	cfg.MarkSourcesStale()
 }
 
 func (p adoptPayload) fromID() adoptBuildID {
