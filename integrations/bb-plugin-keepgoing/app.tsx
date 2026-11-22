@@ -79,6 +79,7 @@ function stateLabel(loop: LoopView): string {
   if (loop.imported && loop.controlState === "enabled" && ((loop.details?.failedChecks ?? 0) > 0 || ["failed", "error"].includes(loop.details?.lastCheck?.outcome ?? ""))) return "looptender: checks failing";
   if (loop.imported && loop.controlState === "enabled" && !loop.details?.lastCheck) return "looptender: no check recorded";
   if (loop.controlState === "enabled" && loop.details?.schedule?.overdue) return "looptender: checks have stopped";
+  if (loop.details?.moved?.held && loop.controlState === "awaiting user") return "looptender: moved, resume to start";
   if (loop.controlState === "enabled") return loop.supervising ? "looptender: enabled" : `looptender: watching ${loop.details?.targetThread ?? loop.target}`;
   return `looptender: ${loop.controlState}`;
 }

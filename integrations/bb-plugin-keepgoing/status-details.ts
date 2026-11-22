@@ -21,6 +21,10 @@ export const daemonSchema = z.object({
   state: z.string(), phase: z.string().optional(), observedAt: z.string().optional(),
   nextCheckAt: z.string().optional(), dryRun: z.boolean().optional(), binaryComparison: z.string().optional(),
 });
+// Set by a looptender that says a loop was moved to a new thread and has not
+// been checked there; `held` while the awaiting-user hold the move left is in
+// place (resuming is then the one action needed). No thread ID or title.
+export const movedSchema = z.object({ held: z.boolean(), text: z.string().max(300) });
 export const goalSummarySchema = z.object({
   id: z.string().regex(/^goal_[0-9a-f]{32}$/), revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), state: z.literal("recorded"),
 });
@@ -43,6 +47,10 @@ export const detailsSchema = z.object({
   targetThread: z.string().nullable(), targetAdapter: z.string(), targetConfigured: z.boolean().nullable(),
   runtime: runtimeSchema.nullable(), daemon: daemonSchema.nullable(), lastCheck: checkSchema.nullable(),
   schedule: scheduleSchema.nullable().optional(),
+  // Added by a later looptender; absent from older ones. Configured labels of
+  // the current target, not verified identity.
+  targetProvider: z.string().max(128).optional(), targetModel: z.string().max(128).optional(),
+  moved: movedSchema.optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
 
@@ -56,6 +64,12 @@ export function buildSummary(runtime: Runtime | undefined): { running?: string; 
   const differs = !!running && !!installed && runtime?.binaryComparison === "different";
   const text = !running ? "version unknown" : differs ? `last check ran ${running} · installed ${installed}` : `last check ran ${running}`;
   return { running, installed, differs, text };
+}
+
+/** What `bb keepgoing status` prints after `last=`: a moved loop has history
+ * but nothing checked on its new target, which is not "never". */
+export function lastLabel(lastState: string | null | undefined, details: { moved?: unknown } | null | undefined): string {
+  return details?.moved ? "none yet (new target, not yet checked)" : lastState || "never";
 }
 
 export function dateLabel(value: string | null | undefined): string {
@@ -72,6 +86,8 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
     `Task completion: ${d.completed ? "declared; not independently verified" : "not declared"}`,
     `Current target: ${d.targetThread ?? d.targetAdapter} (${target})${supervising ? "; this thread" : "; not this thread"}${d.targetConfigured === false ? "; missing or disabled in config" : ""}`,
     `Build: ${buildSummary(d.runtime).text}${d.runtime?.installedBuild && !buildSummary(d.runtime).differs ? ` · installed ${d.runtime.installedBuild}` : ""}`,
+    ...(d.targetProvider ? [`Provider: ${d.targetProvider}${d.targetModel ? ` · model ${d.targetModel}` : ""} (configured)`] : []),
+    ...(d.moved ? [`Moved: ${d.moved.text}`] : []),
     d.runtime ? `Check evidence: ${d.runtime.state} · ${d.runtime.freshness} · source ${d.runtime.source}` : "Check evidence: unavailable from this build",
   ];
   const daemon = d.daemon;

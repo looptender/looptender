@@ -294,3 +294,31 @@ func TestClientStatusCarriesRecordedAndInstalledBuilds(t *testing.T) {
 		})
 	}
 }
+
+func TestClientStatusCarriesTheTargetsProviderAndAMove(t *testing.T) {
+	dir, entry := clientFixture(t)
+	ctl := control.File{Enabled: true, AwaitingUser: true, Ownership: &control.Ownership{ThreadID: "thr_destination", Generation: 2,
+		Previous: &control.Handoff{ThreadID: "thr_source", Status: "handed_off", At: time.Now().UTC()}}}
+	if err := control.Save(entry.StateDir, ctl); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Save(entry.StateDir, state.File{}); err != nil {
+		t.Fatal(err)
+	}
+	r := clientRead(t, dir, entry, false)
+	raw, _ := json.Marshal(r)
+	m := r.Snapshot.Moved
+	if m == nil || !m.Held || m.Text != movedHeldText || r.Snapshot.Target == nil || r.Snapshot.Target.Provider == "" {
+		t.Fatalf("%+v %s", m, raw)
+	}
+	if strings.Contains(string(raw), "thr_source") || strings.Contains(string(raw), "thr_destination") && !strings.Contains(string(raw), `"bbThread"`) {
+		t.Fatalf("an owner's thread ID escaped: %s", raw)
+	}
+	// Not moved: absent.
+	if err := control.Save(entry.StateDir, control.File{Enabled: true, AwaitingUser: true}); err != nil {
+		t.Fatal(err)
+	}
+	if clientRead(t, dir, entry, false).Snapshot.Moved != nil {
+		t.Fatal("an ordinary hold reads as moved")
+	}
+}

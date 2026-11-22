@@ -98,3 +98,33 @@ test("the build lines say what was recorded and never guess", async () => {
   assert.match(lines, /Build: last check ran v0\.1\.0 · installed v0\.2\.0/);
   assert.match(diagnosticLines({ readAt: "2026-01-01T00:00:00Z", completed: false, targetThread: null, targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null }, "primary", true).join("\n"), /Build: version unknown/);
 });
+
+test("a moved loop carries its target's provider and model and a moved note, and older looptenders send neither", async () => {
+  const record = { id: "example", loop: "example", threadId: "thr_source", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: "/projects/example", provider: "claude-code", configPath: "/private/example/keepgoing.yaml" };
+  const agent = { adapter: "bb", bbThread: "thr_source", provider: "claude-code", model: "example-model" };
+  const base = { loop: "example", target: "primary", controlState: "awaiting user", control: {}, window: "open", state: {}, primaryAgent: agent, targetAgent: agent, targetConfigured: true };
+  let data: unknown = { ...base, moved: { held: true, text: "Moved to its new thread. Resuming it is the one action needed.", threadId: "thr_private" } };
+  const { bb, harness } = createFakePluginHost({ pluginId: "keepgoing", settings: { configs: "", keepgoingPath: "keepgoing" }, experimental_callHostRpc: async () => ({ code: 0, data }) });
+  try {
+    await plugin(bb); await bb.storage.kv.set("setups.v1", [record]);
+    const read = async () => rpcContract.forThread.output.parse(await harness.behavior.callRpc("forThread", { threadId: record.threadId })).loops[0]!;
+    const moved = await read();
+    assert.deepEqual(moved.details?.moved, { held: true, text: "Moved to its new thread. Resuming it is the one action needed." });
+    assert.ok(!JSON.stringify(moved).includes("thr_private"));
+    const lines = diagnosticLines(moved.details, moved.target, moved.supervising).join("\n");
+    assert.match(lines, /Provider: claude-code · model example-model \(configured\)/);
+    assert.match(lines, /Moved: Moved to its new thread/);
+    data = { ...base, primaryAgent: { adapter: "bb", bbThread: "thr_source", provider: "claude-code" }, targetAgent: { adapter: "bb", bbThread: "thr_source", provider: "claude-code" } };
+    const older = await read();
+    assert.equal(older.details?.moved, undefined); assert.equal(older.details?.targetModel, undefined);
+    assert.doesNotMatch(diagnosticLines(older.details, older.target, older.supervising).join("\n"), /Moved:/);
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+test("status after a move says the target is new, not that it was never checked", async () => {
+  const { lastLabel } = await import("./status-details.ts");
+  assert.equal(lastLabel(null, { moved: { held: true, text: "x" } }), "none yet (new target, not yet checked)");
+  assert.equal(lastLabel("", { moved: {} }), "none yet (new target, not yet checked)");
+  assert.equal(lastLabel(null, undefined), "never");
+  assert.equal(lastLabel("idle", null), "idle");
+});

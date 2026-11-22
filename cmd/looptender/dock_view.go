@@ -256,6 +256,15 @@ type dockLoop struct {
 	// Refusals is the refusal gauge and any open question about refusals or
 	// a restriction, as status shows them; nil before the first refusal.
 	Refusals *refusalStatus `json:"refusals,omitempty"`
+	// Provider and Model are the labels of the loop's current target from its
+	// configuration (not verified identity), shown beside its name so the
+	// name need not be the only cue. Absent when not configured or unplain.
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	// Moved is set while the loop has been moved to a new thread and its
+	// first check there has not run. Held says the awaiting-user hold the
+	// move left is still in place, so resuming is the one action needed.
+	Moved *clientMoved `json:"moved,omitempty"`
 	// Build is the build that ran the loop's last check, against this
 	// panel's own; listed under "Worth knowing" when they differ.
 	Build dockBuild `json:"build"`
@@ -1530,6 +1539,12 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		}
 		l.Hold = dockCurrentHold(snap.Controls, updated, in.Timeline, now)
 	}
+	if snap != nil {
+		if snap.Target != nil {
+			l.Provider, l.Model = snap.Target.Provider, snap.Target.Model
+		}
+		l.Moved = snap.Moved
+	}
 	l.LastCheck = dockLastCheck(st, now, staleAfter)
 	l.NextCheck = dockNextCheck(snap, st, now)
 	l.Fallbacks = dockFallbackReadiness(st, in.Chain)
@@ -1572,6 +1587,11 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		case c.AwaitingUser:
 			l.State, l.Phrase = "waiting_for_you", "Waiting for you"
 			need = dockHoldNeed(st, in.Hold, identifiers)
+			if snap.Moved != nil && snap.Moved.Held {
+				// The hold a move leaves reads as what it is, from the records.
+				l.Phrase = movedHeldPhrase
+				need.Reason, need.Action = snap.Moved.Text, "Resume the loop; that is the one action needed."
+			}
 			l.Detail = need.Reason
 		case c.Paused:
 			l.State, l.Phrase, l.Detail = "paused", "Paused", "Paused. Nothing is sent until it is resumed."

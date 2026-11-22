@@ -575,15 +575,18 @@ type statusOut struct {
 	Version  string               `json:"version"`
 	// Structured identities for tools that match a loop to a session, such
 	// as an agent workspace showing keepgoing's state beside a thread.
-	PrimaryAgent     agentRef       `json:"primaryAgent"`
-	TargetAgent      agentRef       `json:"targetAgent"`
-	TargetConfigured bool           `json:"targetConfigured"`
-	TaskSource       string         `json:"taskSource"`
-	TaskFile         string         `json:"taskFile,omitempty"`
-	Runtime          runtimeStatus  `json:"runtime"`
-	Schedule         scheduleStatus `json:"schedule"`
-	TargetSession    *sessionStatus `json:"targetSession,omitempty"`
-	Daemon           daemonStatus   `json:"daemon"`
+	PrimaryAgent     agentRef      `json:"primaryAgent"`
+	TargetAgent      agentRef      `json:"targetAgent"`
+	TargetConfigured bool          `json:"targetConfigured"`
+	TaskSource       string        `json:"taskSource"`
+	TaskFile         string        `json:"taskFile,omitempty"`
+	Runtime          runtimeStatus `json:"runtime"`
+	// Moved is set while the loop has been moved to a new thread and its
+	// first check there has not run; see loop_move.go.
+	Moved         *movedStatus   `json:"moved,omitempty"`
+	Schedule      scheduleStatus `json:"schedule"`
+	TargetSession *sessionStatus `json:"targetSession,omitempty"`
+	Daemon        daemonStatus   `json:"daemon"`
 
 	// controlUnreadable and stateUnreadable: the record could not be read, so
 	// nothing taken from it is shown. Its fields hold an empty record, which
@@ -595,7 +598,7 @@ type statusOut struct {
 // stateFields are the keys of status --json taken from state.json. They are
 // left out when it cannot be read.
 var stateFields = []string{"state", "targetAgent", "targetSession", "newThreads", "redundancy", "promptSend",
-	"limitWait", "turnRetry", "contextWindow", "contextWindowReset", "turnUsage", "savings", "refusals", "laneRecovery", "childErrorReport", "takeoverBriefs"}
+	"limitWait", "turnRetry", "contextWindow", "contextWindowReset", "turnUsage", "savings", "refusals", "laneRecovery", "childErrorReport", "takeoverBriefs", "moved"}
 
 // MarshalJSON is the ordinary encoding, without what an unreadable record
 // would have filled in: "control" when control.json cannot be read, and the
@@ -982,7 +985,12 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 		fmt.Fprintln(w, "progress:  unavailable")
 		fmt.Fprintln(w, "last sent: unavailable")
 	} else {
-		fmt.Fprintf(w, "last check: %s\n", when(st.CheckedAt))
+		if out.Moved != nil {
+			fmt.Fprintf(w, "last check: %s\n", movedNoCheckText)
+			fmt.Fprintf(w, "moved:     %s\n", out.Moved.Text)
+		} else {
+			fmt.Fprintf(w, "last check: %s\n", when(st.CheckedAt))
+		}
 		if out.Schedule.Overdue {
 			fmt.Fprintf(w, "schedule:  %s\n", out.Schedule.Message)
 		}
@@ -1224,6 +1232,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	}
 	out.Notifications = report.InspectDeliveries(l.StateDir)
 	out.Runtime = describeRuntime(ctl, st, in, out.TargetConfigured, now, staleAfter, version)
+	out.Moved = movedOf(ctl, st)
 	for _, u := range unreadable {
 		// What the loop is doing cannot be known without its controls, and
 		// an empty record would read as "disabled".

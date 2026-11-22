@@ -28,8 +28,13 @@ public struct PanelLoop: Decodable, Equatable {
     /// Set when that build is a different one from the installed CLI. It
     /// never says which is newer.
     public var buildDiffers: Bool? = nil
+    /// The configured provider and model of the loop's current target, shown
+    /// beside its state so the name is not the only cue. Absent from a CLI
+    /// that predates them.
+    public var provider: String? = nil
+    public var model: String? = nil
 
-    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil) {
+    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil) {
         self.key = key
         self.name = name
         self.state = state
@@ -40,6 +45,8 @@ public struct PanelLoop: Decodable, Equatable {
         self.overdueSince = overdueSince
         self.recordedBuild = recordedBuild
         self.buildDiffers = buildDiffers
+        self.provider = provider
+        self.model = model
     }
 }
 
@@ -319,7 +326,8 @@ public enum MenuBuilder {
                 // The build after the state, outside the cut-down phrase, so
                 // a long phrase never hides which build it is.
                 let build = buildText(loop, installed: list.installedBuild)
-                let shown = build.isEmpty ? phrase : phrase + " · " + build
+                let target = targetText(loop)
+                let shown = [phrase, target, build].filter { !$0.isEmpty }.joined(separator: " · ")
                 rows.append(MenuRow(kind: .loop, title: short, detail: shown, symbol: symbols[loop.state] ?? "questionmark.circle",
                                     accessibilityLabel: flag.isEmpty ? "\(name), \(shown)" : "\(name), \(Contract.text(loop.phrase)). \(flag)" + (build.isEmpty ? "" : ". " + build),
                                     accessibilityHelp: choices.count > 1 ? "Shows what you can do with this loop." : "Opens this loop in the panel.",
@@ -367,6 +375,13 @@ public enum MenuBuilder {
         rows.append(separator)
         rows.append(status(notice ?? (refreshing ? "Reading…" : line)))
         return MenuModel(rows: rows, badge: badge, iconAccessibilityLabel: iconLabel)
+    }
+
+    /// The configured provider, and model when known. Empty when the CLI gave none.
+    static func targetText(_ loop: PanelLoop) -> String {
+        guard let provider = loop.provider.map(Contract.text), !provider.isEmpty else { return "" }
+        guard let model = loop.model.map(Contract.text), !model.isEmpty else { return provider }
+        return provider + " " + model
     }
 
     /// What the loop's supervisor last recorded running, and the installed

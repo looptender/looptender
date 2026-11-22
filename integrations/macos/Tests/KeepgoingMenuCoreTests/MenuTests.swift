@@ -373,4 +373,21 @@ final class MenuTests: XCTestCase {
         let plain = MenuBuilder.build(.read(three, at: now.addingTimeInterval(-130)), now: now)
         XCTAssertFalse(text(plain).contains { $0.contains("looptender v") || $0.contains("last check ran") })
     }
+
+    func testProviderModelAndAMovedHoldAreOnTheRow() throws {
+        let json = """
+        {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":false,"needsYou":1,"unread":0,"omitted":0,
+         "loops":[{"key":"l000000000001","name":"example-codex-loop","state":"waiting_for_you","phrase":"Moved: resume to start","needsYou":true,"provider":"claude-code","model":"example-model",
+                   "moved":{"held":true,"text":"Moved to its new thread. Resuming it is the one action needed."}},
+                  {"key":"l000000000002","name":"example-docs","state":"waiting_for_you","phrase":"Waiting for you","needsYou":true,"provider":"codex"},
+                  {"key":"l000000000003","name":"example-site","state":"supervising","phrase":"Supervising","needsYou":false}]}
+        """
+        let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
+        let rows = text(MenuBuilder.build(.read(decoded, at: now), now: now))
+        XCTAssertTrue(rows.contains("example-codex-loop | Moved: resume to start · claude-code example-model"))
+        // An ordinary hold keeps its wording, with only the provider known.
+        XCTAssertTrue(rows.contains("example-docs | Waiting for you · codex"))
+        // A CLI that sends neither leaves the row as it was.
+        XCTAssertTrue(rows.contains("example-site | Supervising"))
+    }
 }

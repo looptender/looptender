@@ -2,7 +2,7 @@
 // supervises, and offers pause, resume, and stop. It only calls the keepgoing
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
-import { checkSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, scheduleSchema } from "./status-details.ts";
+import { lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, scheduleSchema } from "./status-details.ts";
 import { execFile } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -39,6 +39,7 @@ const statusSchema = z.object({
     .passthrough(),
   redundancy: z.object({ healthy: z.array(z.string()), distinct: z.number(), min: z.number(), meets: z.boolean() }).optional(),
   runtime: runtimeSchema.optional(),
+  moved: movedSchema.optional(),
   schedule: scheduleSchema.optional(),
   daemon: daemonSchema.optional(),
   targetConfigured: z.boolean().optional(),
@@ -187,6 +188,9 @@ export default async function plugin(bb: BbPluginApi) {
       failedChecks: s.state.failedChecks ?? 0,
       daemon: s.daemon ?? null, lastCheck: s.state.lastCheck ?? null,
       schedule: s.schedule ?? null,
+      ...(s.targetAgent.provider ? { targetProvider: s.targetAgent.provider.slice(0, 128) } : {}),
+      ...(s.targetAgent.model ? { targetModel: s.targetAgent.model.slice(0, 128) } : {}),
+      ...(s.moved ? { moved: s.moved } : {}),
     },
     loop: s.loop,
     configPath,
@@ -413,7 +417,7 @@ export default async function plugin(bb: BbPluginApi) {
       const [command, name, ...rest] = argv;
       if (command === "status" && name === undefined) {
         const { loops, errors } = await allLoops(null);
-        const lines = loops.map((l) => `${l.loop}\t${l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${l.lastState ?? "never"}${l.note ? `\t(${l.note})` : ""}`);
+        const lines = loops.map((l) => `${l.loop}\t${l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.note ? `\t(${l.note})` : ""}`);
         return { exitCode: errors.length > 0 ? 1 : 0, stdout: `${lines.join("\n")}\nReferences: explicit plugin settings and saved host references; CLI registry/menu coverage is separate. This is not a complete process inventory.\n`, stderr: errors.join("\n") };
       }
       const parsed = actionSchema.safeParse(command);
