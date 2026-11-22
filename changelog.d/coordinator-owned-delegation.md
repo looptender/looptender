@@ -1,0 +1,1 @@
+- Add an unreleased agent-owned, explicitly granted new-child coordinator workflow with durable unknown-attempt reservations, current assignment/control checks and verified-artifact settlement. It is separate from the supervisor, excludes tell/reuse and retains submitted-request uncertainty; installed automatic-delegation acceptance remains open.

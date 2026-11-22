@@ -365,3 +365,14 @@ never automatically rearm. Ordinary task prompts, gates, cadence and send allowa
 This does not dispatch children, clear a saved hold or enforce handoffs at turn end.
 
 Unreleased delivery-history groundwork distinguishes HTTP acceptance from notification-command acceptance. Process outcomes promote the private history to schema 2; older readers refuse it. This does not yet enable a BB notification sender. See [delivery history compatibility](docs/operations.md#process-delivery-history-compatibility-unreleased).
+
+Unreleased agent tooling: the packaged keepgoing skill includes a bounded
+[coordinator-owned new-child workflow](integrations/bb-plugin-keepgoing/skills/keepgoing/references/coordinator-workflow.md).
+Under an existing explicit owner delegation grant it checks current controls and
+assignment evidence, reserves an attempt before a visible BB spawn, and records
+its assignment through the existing review command. Verified artifact settlement
+can advance the next independent task. Unknown creation/publication stays reserved;
+it is never retried. This Python 3/Unix agent path is separate from the supervisor;
+it adds no general supervisor creation, tell/reuse, hold clearing or global spend
+guarantee. A submitted host request can race a later hold. Fictional execution is
+not installed coordinator acceptance; overall automatic delegation remains open.

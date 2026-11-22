@@ -1,6 +1,6 @@
 ---
 name: keepgoing
-description: Show or control the looptender (formerly keepgoing) loops that supervise BB threads, with bb keepgoing status, pause and stop; resume is a person's.
+description: Show or control the looptender (formerly keepgoing) loops that supervise BB threads, with bb keepgoing status, pause and stop; coordinate explicitly authorized BB child-lane delegation with the bounded agent workflow. Resume is a person's.
 ---
 
 # looptender in BB
@@ -36,3 +36,28 @@ The banner/card diagnostics show recorded goal ID/revision (not private title/re
 
 
 Unreleased source: **Find registered loops → Preview attachment → Attach existing loop** imports an existing single-primary BB loop from the current target host's CLI registry. It verifies the exact current target/provider and ownership and BB host/project/environment/path, and changes only the plugin reference. It can reconcile a stale plugin reference after an external provider transfer to an already-owned successor, without a transfer command or a new loop. Fallback/standard-route loops, pending transfers and unverifiable/conflicting identities are refused. A server-local configured path must first be removed from that list before import; attachment never edits settings. After an uncertain response use **Check attachment status**; this is read-only and resolves the existing identity without replaying a save. Imported setup offers no Start or plugin Move action; use the host CLI, then reconcile its reference explicitly. Holds, services and budgets remain unchanged. An enabled imported loop with failed checks remains labelled **checks failing** despite a responsive daemon; no check recorded means operational supervision is unverified. Startup acknowledgement and first-check success are separate evidence. This is fixture-tested source only; no live installation/transfer/startup acceptance is claimed.
+
+## Coordinator delegation under existing owner authorization (unreleased)
+
+When the owner has already authorized independent deliverables through visible
+BB child lanes, reconcile their obligations at each phase or child completion
+and dispatch the next independent task within that scope; do not wait for the
+same delegation reminder again. This is the coordinator agent's action, never
+an automatic supervisor creation rule. Do not infer completion from idle/error,
+archive, a superseded lane or repeated receipts. Preserve unfinished obligations,
+person gates, runtime holds, spend bounds and exclusive resources. A newer owner
+instruction can supersede an old coordinator park, but cannot clear a hold.
+
+The packaged `scripts/coordinator.py` provides a bounded **spawn-only** path using
+current assignment lifecycle records. Python 3 and Unix locks are required. Read
+`references/coordinator-workflow.md` before use; it specifies the private grant,
+dry-run/execute and unknown-attempt reconciliation. Grants faithfully record an
+existing owner instruction, not new authority. Preserve caller/environment and
+exact reviewed context. Under that grant, advance after verified completion using
+a current acknowledged handoff plus coordinator artifact-verification receipt.
+An unknown spawn/mapping result remains reserved across restarts and grant
+revisions; reconcile its exact intent/child without replay. No tell/reuse/retry,
+automatic hold clearing, provider probes, host changes or general supervisor
+creation is supplied. A submitted host request can race a later hold; final reread
+is not atomic fencing. Offline dispatcher tests are not actual agent continuation
+or installed automatic-delegation acceptance, which remains incomplete.
