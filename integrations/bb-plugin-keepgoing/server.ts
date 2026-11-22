@@ -2,7 +2,7 @@
 // supervises, and offers pause, resume, and stop. It only calls the keepgoing
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
-import { lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
+import { shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
 import { execFile } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -419,8 +419,16 @@ export default async function plugin(bb: BbPluginApi) {
       const [command, name, ...rest] = argv;
       if (command === "status" && name === undefined) {
         const { loops, errors } = await allLoops(null);
-        const lines = loops.map((l) => `${l.loop}\t${l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.note ? `\t(${l.note})` : ""}`);
-        return { exitCode: errors.length > 0 ? 1 : 0, stdout: `${lines.join("\n")}\nReferences: explicit plugin settings and saved host references; CLI registry/menu coverage is separate. This is not a complete process inventory.\n`, stderr: errors.join("\n") };
+        const lines = loops.map((l) => `${l.loop}\t${l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
+        // Registered loops this plugin was not told about: said, with how to add one.
+        let notShown = "";
+        try {
+          const { bin } = await configured();
+          const listed = await run(bin, ["registry", "list", "--json"]);
+          const parsed = z.object({ entries: z.array(z.object({ loop: z.string() })).max(1024) }).safeParse(JSON.parse(listed.stdout));
+          if (listed.code === 0 && parsed.success) notShown = notShownLine(parsed.data.entries.map(e => e.loop), loops.map(l => l.loop));
+        } catch { /* the registry could not be read: nothing is claimed */ }
+        return { exitCode: errors.length > 0 ? 1 : 0, stdout: `${lines.join("\n")}\n${notShown ? `${notShown}\n` : ""}References: explicit plugin settings and saved host references; CLI registry/menu coverage is separate. This is not a complete process inventory.\n`, stderr: errors.join("\n") };
       }
       const parsed = actionSchema.safeParse(command);
       if (!parsed.success || !name || rest.length > 0) return { exitCode: 2, stderr: "Usage: bb keepgoing status | pause <loop> | resume <loop> | stop <loop>" };

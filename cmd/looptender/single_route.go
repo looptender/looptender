@@ -44,13 +44,23 @@ func doctorRoutes(r *doctorReport, cfg *config.Config, st state.File, stateReada
 	if w := singleRouteWarning(cfg); w != "" {
 		r.add("routes.single", "warning", w, limitWaitWayOut)
 	}
-	if !stateReadable || held != "" {
+	if !stateReadable {
 		return
 	}
 	s := describeLimitWait(st.LimitWaitReport, cfg.Loop, held, now)
 	if s.State == "none" || s.ResetPassed {
 		return
 	}
-	r.add("limit_wait", "warning", fmt.Sprintf("Long limit wait: %s has been waiting on a provider limit since the check of %s, and the reset is reported for %s, in about %s. No handoff is possible because %s. The loop is not held and sends nothing until then. %s",
-		s.Target, s.DetectedAt.UTC().Format(time.RFC3339), s.ResetsAt.UTC().Format(time.RFC3339), s.ResetIn, limitWaitReasonText(s.Reason), limitWaitTold(s)), limitWaitWayOut)
+	if held != "" {
+		// Information only: a held loop observes nothing, so this is what the
+		// last check before the hold recorded.
+		msg := fmt.Sprintf("A long limit wait was recorded before the hold (%s): %s was waiting on a provider limit at the check of %s, with the reset reported for %s, in about %s. The loop is held (%s), so this may be out of date.", held, s.Target, s.DetectedAt.UTC().Format(time.RFC3339), s.ResetsAt.UTC().Format(time.RFC3339), s.ResetIn, held)
+		if s.ResetAfterDeadline {
+			msg += " The reset falls after the loop's deadline."
+		}
+		r.add("limit_wait", "ok", msg, "")
+		return
+	}
+	r.add("limit_wait", "warning", fmt.Sprintf("Long limit wait: %s has been waiting on a provider limit since the check of %s, and the reset is reported for %s, in about %s. No handoff is possible because %s. The loop is not held and sends nothing until then.%s %s",
+		s.Target, s.DetectedAt.UTC().Format(time.RFC3339), s.ResetsAt.UTC().Format(time.RFC3339), s.ResetIn, limitWaitReasonText(s.Reason), map[bool]string{true: " The reset falls after the loop's deadline, which will hold the loop first.", false: ""}[s.ResetAfterDeadline], limitWaitTold(s)), limitWaitWayOut)
 }

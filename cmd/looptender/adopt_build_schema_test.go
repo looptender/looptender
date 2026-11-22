@@ -43,6 +43,9 @@ var adoptSchemaFingerprints = map[int]string{
 	// leaves on its own hold; kept out of control.json so older builds can
 	// still pause a moved loop).
 	4: "4c0b2fe163cafb87ef954ed2590ad21a69ac214ab5062c473a96609572d5bcb5",
+	// 5: state.json's childMove gained transfer and left (a child move made
+	// by transfer apply, or its choice to leave the children).
+	5: "dc1f9bcc270d8fff7841264b2d32bb55a3865caf613828e0983cd77cf7efec9a",
 }
 
 // schemaFingerprint lists every JSON field reachable from t, by path, with

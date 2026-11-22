@@ -42,7 +42,15 @@ func TestOwnerConflictsAndExplicitTransfer(t *testing.T) {
 	before, _ := os.ReadFile(filepath.Join(f.dir, "state", control.FileName))
 	calls := f.read("calls")
 	t.Setenv("BB_THREAD_ID", "thr_second")
-	for _, args := range [][]string{{"validate"}, {"enable"}, {"daemon"}, {"tick"}, {"retarget", "primary"}, {"fallbacks", "check"}} {
+	// validate only reads: a non-owner gets the configuration checked and a
+	// line saying what is refused for it, and nothing changes.
+	if code, out, errs := f.run("validate"); code != 0 || !strings.Contains(out, "this caller is not the owner") || strings.Contains(out+errs, "thr_first") {
+		t.Fatalf("validate: code=%d out=%s error=%s", code, out, errs)
+	}
+	if after, _ := os.ReadFile(filepath.Join(f.dir, "state", control.FileName)); string(after) != string(before) {
+		t.Fatal("validate changed control")
+	}
+	for _, args := range [][]string{{"enable"}, {"daemon"}, {"tick"}, {"retarget", "primary"}, {"fallbacks", "check"}} {
 		code, _, errs := f.run(args...)
 		if code != exitFailed || !strings.Contains(errs, "thr_first") || !strings.Contains(errs, "--take-over") {
 			t.Fatalf("%v: code=%d error=%s", args, code, errs)

@@ -167,7 +167,11 @@ func doctor(e env, args []string, run doctorRun) int {
 		if s.Source == prompt.PolicyCustom || s.Source == prompt.PolicyGenerated {
 			status = "warning"
 		}
-		r.add("wake_policy", status, s.Message, "")
+		fix := ""
+		if s.CommandPrefix == prefixOtherBuild || s.CommandPrefix == prefixMissing {
+			status, fix = "warning", "Preview the fix with prompt-policy apply --refresh-prefix; nothing is rewritten without --yes."
+		}
+		r.add("wake_policy", status, s.Message, fix)
 	}
 	doctorFile(&r, "state.directory", cfg.Loop.StateDir, true)
 	doctorStateAccess(&r, cfg.Loop.StateDir, doctorOSAccess)
@@ -230,7 +234,14 @@ func doctor(e env, args []string, run doctorRun) int {
 		}
 	}
 	if current := os.Getenv("BB_THREAD_ID"); current != "" && cfg.Loop.BB != nil && current != cfg.Loop.BB.Thread {
-		r.add("target.current_thread", "warning", "The configured primary is a different BB conversation from this caller.", "Review the configured thread ID; this command does not transfer supervision.")
+		// A caller that does not own the loop is only looking (a coordinator,
+		// a lane, a reviewer): that is information. For the owner it can mean
+		// the loop is configured for another conversation.
+		if c, err := control.Load(cfg.Loop.StateDir); err == nil && c.Ownership != nil && c.Ownership.ThreadID != current && !c.Ownership.FollowedFrom(current) {
+			r.add("target.current_thread", "ok", "The configured primary is a different BB conversation from this caller, which is not the loop's owner; this command only reads.", "")
+		} else {
+			r.add("target.current_thread", "warning", "The configured primary is a different BB conversation from this caller.", "Review the configured thread ID; this command does not transfer supervision.")
+		}
 	}
 	checkAgent := func(id string, a config.Agent) {
 		if s := savedSession(cfg.Loop.StateDir, id, a.Adapter); s != nil {
@@ -322,7 +333,7 @@ func doctor(e env, args []string, run doctorRun) int {
 		r.BBAutomation = &s
 		doctorAutomationResult(&r, s)
 	}
-	doctorCheckVersion(&r, st.LastCheck, stateErr == nil)
+	doctorCheckVersion(&r, st.LastCheck, stateErr == nil, ctlErr == nil && !ctl.Enabled)
 	r.add("supervisor.builds", "ok", "Builds: "+buildNames(st, d)+".", "")
 	if answer, text := followsInstalls(d); answer != "unknown" || d.State == "responsive" {
 		level, fix := "ok", ""
@@ -361,7 +372,10 @@ func doctor(e env, args []string, run doctorRun) int {
 	return printDoctor(e, r, *asJSON)
 }
 
-func doctorCheckVersion(r *doctorReport, check *state.Check, stateReadable bool) {
+// doctorCheckVersion compares the last tick's build label with this one. A
+// disabled loop is not judged (its schedule says "disabled"), so a different
+// label there is information, not a warning.
+func doctorCheckVersion(r *doctorReport, check *state.Check, stateReadable, disabled bool) {
 	comparison := "unknown"
 	if stateReadable {
 		comparison = compareCheckVersion(check, r.Version)
@@ -370,6 +384,10 @@ func doctorCheckVersion(r *doctorReport, check *state.Check, stateReadable bool)
 	case "match":
 		r.add("supervisor.version", "ok", "The last recorded tick used this build label. This does not verify the currently running scheduler's binary.", "")
 	case "different":
+		if disabled {
+			r.add("supervisor.version", "ok", "The last recorded tick used a different build label. The loop is disabled, so no scheduler is expected to run it and this is not judged.", "")
+			break
+		}
 		r.add("supervisor.version", "warning", "The last recorded tick used a different build label; the scheduler may still use another binary.", "Compare the scheduler's executable with this installation; inspect a new tick before deciding whether the mismatch persists.")
 	default:
 		r.add("supervisor.version", "unavailable", "Comparable tick build history is unavailable; an empty or dev label cannot identify a build.", "Record a tick from a versioned binary, then compare it with the scheduler's executable.")
@@ -407,7 +425,7 @@ func doctorNetworkCheck(ctx context.Context, r *doctorReport, l config.Loop, st 
 		r.add("network.check", "unavailable", "The connectivity check was not tested because --offline was given.", "Run doctor without --offline to test it.")
 		return
 	}
-	target := "the default target"
+	target := "the default target (" + netretry.DefaultURL + ")"
 	switch {
 	case len(l.Network.Command) > 0:
 		target = "the configured command"
@@ -514,6 +532,8 @@ func doctorHeartbeat(r *doctorReport, st state.File, ctl control.File, controlKn
 	switch {
 	case age < -time.Minute:
 		r.add("heartbeat", "warning", "The last check is in the future.", "Check host clocks and whether --now was used for a test tick.")
+	case age > stale && controlKnown && !ctl.Enabled:
+		r.add("heartbeat", "ok", "The last check exceeds the configured stale-after threshold. The loop is disabled, so no check is expected and this is not judged.", "")
 	case age > stale:
 		r.add("heartbeat", "warning", "The last check exceeds the configured stale-after threshold.", "Inspect the supervisor and its logs, or adjust --stale-after above your external scheduler interval.")
 	default:

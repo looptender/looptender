@@ -37,14 +37,32 @@ func validate(e env, cfg *config.Config, path string, takeOver ...bool) int {
 	if err := checkTransferSources(cfg, false); err != nil {
 		return ownershipError(e, err)
 	}
+	// validate only reads, so a caller that does not own the loop still gets
+	// the configuration checked; what is refused for it is said, not done.
+	var notOwner, ownerUnread bool
 	if err := validateOwner(cfg.Loop.StateDir, len(takeOver) > 0 && takeOver[0]); err != nil {
-		return ownershipError(e, err)
+		if errors.Is(err, os.ErrPermission) {
+			// Reading the owner takes the control lock, which needs a writable
+			// state directory; the configuration can still be checked.
+			ownerUnread = true
+		} else if !errors.Is(err, control.ErrOwnerConflict) {
+			return ownershipError(e, err)
+		}
+		if !ownerUnread {
+			notOwner = true
+		}
 	}
 	l := cfg.Loop
 	if len(takeOver) > 0 && takeOver[0] {
 		fmt.Fprintln(e.stdout, "ownership: validation only; use enable --take-over to transfer the claim")
 	}
 	fmt.Fprintf(e.stdout, "ok: %s (loop %s, %s)\n", path, l.Name, l.Describe())
+	if ownerUnread {
+		fmt.Fprintln(e.stdout, "ownership: not checked: the state directory is not writable for this caller, and reading the owner takes the control lock. The configuration was checked; status, doctor and context read the owner without the lock.")
+	}
+	if notOwner {
+		fmt.Fprintln(e.stdout, "ownership: this caller is not the owner of the loop, so enable, start, daemon and resume would be refused for it; the configuration was checked and nothing was changed. Ownership moves only by a person's enable --take-over from the new owning thread.")
+	}
 	for _, w := range sharedLoopWarnings(cfg, findOtherLoops(cfg)) {
 		e.errf("warning: %s", w)
 	}
@@ -675,6 +693,8 @@ type childMoveStatus struct {
 	Skipped int       `json:"skipped"`
 	Listed  bool      `json:"listed"`
 	Done    bool      `json:"done"`
+	// Transfer says transfer apply made the move, not a handoff.
+	Transfer bool `json:"transfer,omitempty"`
 }
 
 type newThreadStatus struct {
@@ -854,7 +874,13 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 		printLimitWait(w, out.LimitWait)
 		printIdleSpacing(w, out.IdleSpacing, now)
 	}
-	fmt.Fprintf(w, "progress flag: %s\n", out.NoProgress.Text)
+	if held := loopHeld(out.Control, out.controlUnreadable); held != "" && out.NoProgress.Availability == "flagged" {
+		// A held loop is not judged and observes nothing: the flag is what the
+		// last check before the hold found.
+		fmt.Fprintf(w, "progress flag: %s (recorded before the hold; the loop is held (%s), so this is not current)\n", out.NoProgress.Text, held)
+	} else {
+		fmt.Fprintf(w, "progress flag: %s\n", out.NoProgress.Text)
+	}
 	if !out.stateUnreadable {
 		printTurnRetry(w, out.TurnRetry)
 		printContext(w, out.ContextWindow)
@@ -873,7 +899,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 		// target is in state.json: with it unreadable the "state:
 		// unavailable" line below covers this too.
 		printLanes(w, out.Lanes)
-		printChildReport(w, out.ChildErrorReport)
+		printChildReport(w, out.ChildErrorReport, loopHeld(out.Control, out.controlUnreadable))
 	}
 	fmt.Fprintf(w, "task:      %s", out.TaskSource)
 	if out.TaskFile != "" {
@@ -969,7 +995,12 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 		}
 	}
 	if out.Deadline != "" {
-		fmt.Fprintf(w, "deadline:  %s (reached: %t; evaluated on next check)\n", out.Deadline, out.DeadlineReached)
+		// In UTC, like every other time here, when it parses.
+		deadline := out.Deadline
+		if t, err := time.Parse(time.RFC3339, deadline); err == nil {
+			deadline = t.UTC().Format(time.RFC3339)
+		}
+		fmt.Fprintf(w, "deadline:  %s (reached: %t; evaluated on next check)\n", deadline, out.DeadlineReached)
 	}
 	fmt.Fprintf(w, "activity:  %s (source: %s)\nreason:    %s\n", out.Runtime.State, out.Runtime.Source, out.Runtime.Reason)
 	fmt.Fprintf(w, "history:   %s (stale after %s)\n", out.Runtime.Freshness, out.Runtime.StaleAfter)
@@ -978,7 +1009,11 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	} else if c := st.LastCheck; c != nil {
 		fmt.Fprintf(w, "decision:  %s; outcome %s; target %s\n", c.Action, c.Outcome, c.Target)
 		fmt.Fprintf(w, "decision reason: %s\n", c.Reason)
-		fmt.Fprintf(w, "observed:  %s; target %s (historical)\n", c.ObservedState, c.ObservedTarget)
+		if c.ObservedTarget == "" {
+			fmt.Fprintf(w, "observed:  %s (historical)\n", c.ObservedState)
+		} else {
+			fmt.Fprintf(w, "observed:  %s; target %s (historical)\n", c.ObservedState, c.ObservedTarget)
+		}
 		if c.RetrySignal == "declined" {
 			fmt.Fprintln(w, "retry signal: declined; BB's retry plugin recorded that it will not retry the failed turn and had nothing pending, so the provider retry notice was not waited out and ordinary error handling applied")
 		}
@@ -1285,8 +1320,8 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		}
 	}
 	out.NewThreads = newThreadStatus{Created: st.NewThreadsCreated, Max: l.Limits.MaxNewThreads, Pending: st.NewThreadIntent != nil}
-	if m := st.ChildMove; m != nil {
-		out.ChildMove = &childMoveStatus{At: m.At, Moved: m.Moved, Pending: len(m.Remaining), Failed: m.Failed, Skipped: m.Skipped, Listed: m.Listed, Done: m.Done}
+	if m := st.ChildMove; m != nil && !m.Left {
+		out.ChildMove = &childMoveStatus{At: m.At, Moved: m.Moved, Pending: len(m.Remaining), Failed: m.Failed, Skipped: m.Skipped, Listed: m.Listed, Done: m.Done, Transfer: m.Transfer != ""}
 	}
 	if !st.LastNewThreadAt.IsZero() {
 		next := st.LastNewThreadAt.Add(config.MinNewThreadInterval)
@@ -1974,19 +2009,23 @@ func activeBB(cfg *config.Config, target string) *config.BB {
 }
 
 func printChildMove(w io.Writer, m childMoveStatus) {
+	what, later := "handoff", "later checks continue unless the loop is held"
+	if m.Transfer {
+		what, later = "transfer", "transfer recover continues, as do the loop's checks once it is resumed"
+	}
 	if !m.Listed {
-		fmt.Fprintf(w, "child threads: the handoff of %s is to move the left conversation's direct children to the thread that took over; they could not be listed yet, and a later check tries again\n", when(m.At))
+		fmt.Fprintf(w, "child threads: the %s of %s is to move the left conversation's direct children to the thread that took over; they could not be listed yet (%s)\n", what, when(m.At), later)
 		return
 	}
-	fmt.Fprintf(w, "child threads: %d of the left conversation's direct children moved to the thread that took over at the handoff of %s", m.Moved, when(m.At))
+	fmt.Fprintf(w, "child threads: %d of the left conversation's direct children moved to the thread that took over at the %s of %s", m.Moved, what, when(m.At))
 	if m.Pending > 0 {
-		fmt.Fprintf(w, "; %d still to move (later checks continue unless the loop is held)", m.Pending)
+		fmt.Fprintf(w, "; %d still to move (%s)", m.Pending, later)
 	}
 	if m.Failed > 0 {
 		fmt.Fprintf(w, "; %d could not be moved after %d attempts each: move them by hand with bb thread update <child> --parent-thread <new thread>", m.Failed, state.MaxChildMoveAttempts)
 	}
 	if m.Skipped > 0 {
-		fmt.Fprintf(w, "; %d left where they were (archived, or beyond the %d moved per handoff)", m.Skipped, state.MaxMovedChildren)
+		fmt.Fprintf(w, "; %d left where they were (archived, gone, or beyond the %d moved per %s)", m.Skipped, state.MaxMovedChildren, what)
 	}
 	fmt.Fprintln(w, ". Only their parent changed; none was messaged, retried or stopped")
 }

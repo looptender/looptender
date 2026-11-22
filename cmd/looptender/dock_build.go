@@ -156,7 +156,7 @@ var (
 	// buildLabelShape keeps a label that could carry a path, a name or any
 	// free text out of status output.
 	buildLabelShape = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$`)
-	devBuildSuffix  = regexp.MustCompile(`^(.*-dev\.)([0-9a-f]{8,40})(-dirty)?$`)
+	devBuildSuffix  = regexp.MustCompile(`^(.*-dev\.)([0-9a-f]{8,40})(-[A-Za-z0-9]+)?$`)
 	bareSHA         = regexp.MustCompile(`^([0-9a-f]{8,40})(-dirty)?$`)
 )
 

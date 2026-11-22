@@ -182,7 +182,7 @@ These richer diagnostics are implemented after v0.1.3 and require rebuilt plugin
 ## Commands
 
 ```sh
-bb keepgoing status
+bb keepgoing status   # also says how many registered loops it does not show, and how to add one
 bb keepgoing pause <loop>
 bb keepgoing resume <loop>   # refused: prints where a person resumes the loop
 bb keepgoing stop <loop>

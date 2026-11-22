@@ -518,8 +518,15 @@ type OwnerMove struct {
 // children moved and confirmed, given up on after MaxChildMoveAttempts, and
 // left because they were archived or beyond MaxMovedChildren.
 type ChildMove struct {
-	From      string         `json:"from"`
-	To        string         `json:"to"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	// Transfer is the transfer apply identity (move_…) for a move made
+	// by transfer apply; Candidate is then empty. A move with neither does
+	// not belong to anything and is never run.
+	Transfer string `json:"transfer,omitempty"`
+	// Left records that transfer apply was told to leave the children
+	// where they are: nothing is moved for that transfer.
+	Left      bool           `json:"left,omitempty"`
 	Candidate string         `json:"candidate"`
 	At        time.Time      `json:"at"`
 	Listed    bool           `json:"listed,omitempty"`

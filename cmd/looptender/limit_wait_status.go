@@ -40,6 +40,10 @@ type limitWaitStatus struct {
 	// person, paused, disabled, or control unreadable), or empty. A held
 	// loop observes nothing, so the record is from before the hold.
 	Held string `json:"held,omitempty"`
+	// ResetAfterDeadline is set when the reported reset falls after the
+	// loop's own deadline, so the wait cannot end before the loop is held by
+	// the deadline.
+	ResetAfterDeadline bool `json:"resetAfterDeadline,omitempty"`
 }
 
 // loopHeld names the hold on a loop, or "" when it is supervising.
@@ -85,6 +89,9 @@ func describeLimitWait(r *state.LimitWaitReport, loop config.Loop, held string, 
 	}
 	if !out.ResetPassed {
 		out.ResetIn = humanDuration(r.ResetsAt.Sub(now))
+		if deadline, err := time.Parse(time.RFC3339, loop.Limits.Deadline); err == nil && r.ResetsAt.After(deadline) {
+			out.ResetAfterDeadline = true
+		}
 	}
 	return out
 }
@@ -145,6 +152,9 @@ func printLimitWait(w io.Writer, s limitWaitStatus) {
 		fmt.Fprint(w, " (now passed; the next check decides)")
 	}
 	fmt.Fprintln(w)
+	if s.ResetAfterDeadline {
+		fmt.Fprintln(w, "  the reset falls after this loop's deadline: the loop will be held by the deadline on its first check after it, before this wait can end.")
+	}
 	if s.Held != "" {
 		// A held loop observes nothing: the record is from before the hold.
 		fmt.Fprintf(w, "  the loop is held (%s), so it observes and sends nothing; this record is from the last check before the hold and may be out of date.\n", s.Held)

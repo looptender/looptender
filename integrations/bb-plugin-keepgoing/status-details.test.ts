@@ -157,3 +157,21 @@ test("status after a move says the target is new, not that it was never checked"
   assert.equal(lastLabel(null, undefined), "never");
   assert.equal(lastLabel("idle", null), "idle");
 });
+
+test("status says how many registered loops the plugin does not show, and how to show them", async () => {
+  const { notShownLine } = await import("./status-details.ts");
+  assert.equal(notShownLine(["a", "b"], ["a", "b", "c"]), "");
+  const one = notShownLine(["a", "b"], ["a"]);
+  assert.match(one, /^1 registered loop is not shown here \(b\)\./); assert.match(one, /configs setting, one path per line/); assert.match(one, /registry list/);
+  const many = notShownLine(Array.from({ length: 11 }, (_, i) => `loop-${i}`), []);
+  assert.match(many, /^11 registered loops are not shown here \(loop-0, .*loop-7, and 3 more\)\./);
+  assert.equal(notShownLine([], ["a"]), "");
+});
+
+test("a long control note is one short line in the listing", async () => {
+  const { shortNote } = await import("./status-details.ts");
+  assert.equal(shortNote("short note"), "short note");
+  const cut = shortNote("word ".repeat(100));
+  assert.ok(cut.length <= 120 && cut.endsWith("…") && !cut.includes("\n"));
+  assert.equal(shortNote("two\nlines  here"), "two lines here");
+});

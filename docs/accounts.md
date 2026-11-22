@@ -728,8 +728,13 @@ show used and remaining values, independent reset timestamps, source, read age,
 partial evidence and failed refreshes. The native menu shows the same saved
 summary in account submenus, capped at six accounts/eight details per submenu
 with explicit omitted counts; the panel lists the remaining details. Neither
-page polling nor native menu polling contacts providers. Native output contains
-no catalog IDs, account-directory paths or provider account identities.
+page polling nor native menu polling contacts providers. Native output
+(`panel list --json`, key `accountQuotas`) carries, per account, the catalog `id`
+(the menu needs it to open or connect one particular account, and treats it as
+optional), the label as the person named it, the provider and the saved
+summary. It contains no account-directory paths or provider account
+identities. The id and label are private to the computer: do not copy native
+output into public fixtures, issues or documentation.
 
 The private `subscription-quota.json` cache remains bounded to 1 MiB and 64
 entries. A refresh writes quota-cache schema 2 for separate bucket/unit data;
