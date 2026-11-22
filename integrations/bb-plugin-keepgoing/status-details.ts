@@ -83,6 +83,23 @@ export function buildSummary(runtime: Runtime | undefined): { running?: string; 
  * plugin does not show: how many, which, and how to show them. Empty when
  * every registered loop is shown. Names only; loops are matched by name.
  */
+/**
+ * The line `bb keepgoing status` ends with about the plugin's own build, so a
+ * plugin BB kept serving after an install is obvious. built is the looptender
+ * build the plugin was stamped with (null for a source build) and running is
+ * what the looptender it runs reports (null when it could not be read).
+ * Labels are compared whole; nothing says which is newer.
+ */
+/** The shape of a build label, as the Go side checks it before showing one. */
+export const isBuildLabel = (s: string): boolean => /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/.test(s);
+
+export function pluginBuildLine(built: string | null, running: string | null): string {
+  if (!built) return "Plugin: not stamped with a looptender build (a source build), so it cannot say whether BB is serving a copy from before an install.";
+  if (!running) return `Plugin: built from looptender ${built}; the looptender it runs did not report its version.`;
+  if (built === running) return `Plugin: built from looptender ${built}, the build it runs.`;
+  return `Plugin: built from looptender ${built}; the looptender it runs is ${running}. These are different builds. If one of them was installed recently, BB may still be serving the plugin from before it; see the plugin README, "After installing a new build".`;
+}
+
 /** A control note cut to one short line for a listing; the full note stays in the loop's own detail. */
 export function shortNote(note: string, max = 120): string {
   const one = note.replace(/\s+/g, " ").trim();
