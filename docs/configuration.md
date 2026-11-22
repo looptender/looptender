@@ -66,6 +66,9 @@ loop:
 | `new_thread` | `false` | Fallback candidates only, v0.2.0. Instead of `thread`: a handoff to this candidate creates a new BB thread on the candidate's `provider`, with `model` and `reasoning`. Requires `provider`. See [hand off to a new conversation](fallbacks.md#hand-off-to-a-new-conversation). |
 | `project`, `environment` | the continued conversation's | With `new_thread` only: where the new thread is created. |
 | `permission_mode` | `accept-edits` | With `new_thread` only: `accept-edits`, `auto` or `full`. Always passed to `bb thread spawn`, so the new thread never takes a project default. `accept-edits` asks before anything but file edits. |
+| `replace_blocked_children` | `true` | With `new_thread` only: after the handoff and the child move, start successor threads on this provider for child lanes blocked on another provider's usage limit. `false` turns it off. See [replace blocked child lanes](fallbacks.md#replace-blocked-child-lanes). |
+| `child_model`, `child_reasoning` | the candidate's `model`, `reasoning` | With `new_thread` only: the successor threads' model and reasoning (`child_reasoning` needs `child_model`). |
+| `child_permission_mode` | `accept-edits` | With `new_thread` only: the successor threads' permission mode, lowered to a replaced lane's own when BB reports a more restrictive one. |
 | `move_children` | `true` | With `new_thread` only: after the handoff, move the direct child threads of the conversation being left to the created thread, and back on an automatic switch-back. See [child threads](fallbacks.md#child-threads-follow-the-handoff). |
 | `children.retry_errored` | `false` | v0.2.0. Opt in to [lane recovery](operations.md#lane-recovery): ask BB to retry the failed turn of a lane that was seen working and then failed with a connection, overload or unknown error. Nothing else is ever done to a lane. Per lane it uses `errors.max_reprompts` attempts spaced by `errors.backoff`. |
 | `children.max_per_check` | `5` | With `retry_errored`: lanes worked on in one check. `1` to `20`; `0` means the default. |
@@ -291,6 +294,8 @@ These three optional fields are the only loop-wide bounds on repeated automatic 
 | `deadline` | none | A check starts at or after this absolute time. |
 | `max_sends` | none (`0` disables) | This many automatic send attempts have been reserved in the state directory. |
 | `no_progress_timeout` | none (`0` disables) | The Git fingerprint of `progress.repositories` has not changed for this long. |
+
+`loop.limits.max_child_successors` (default `10`; `0` means the default; at most `50`) caps the successor threads a loop creates over its life to replace child lanes blocked on another provider, at most 5 per handoff or command; see [replace blocked child lanes](transfer.md#replace-blocked-child-lanes-unreleased). It is not a bound on repeated work and is separate from `max_sends`.
 
 `loop.limits.max_new_threads` (default `3`; `0` means the default; at most `10`) is separate: it caps the BB thread creations a loop attempts for handoffs to candidates with `bb.new_thread`, and is not a bound on repeated work. Every attempt not proven refused counts, and two are never made less than one hour apart (fixed). See [hand off to a new conversation](fallbacks.md#hand-off-to-a-new-conversation).
 

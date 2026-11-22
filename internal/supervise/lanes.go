@@ -44,8 +44,11 @@ const (
 // with, so it is announced like any other errored child.
 var laneWontAct = map[string]bool{
 	string(decide.LaneRateLimited): true, string(decide.LaneAuth): true, string(decide.LaneDeclined): true, string(decide.LaneUnverified): true,
-	string(decide.LaneWaitingPerson): true, laneOtherLoop: true, laneOwnershipUnknown: true,
+	string(decide.LaneWaitingPerson): true, laneOtherLoop: true, laneOwnershipUnknown: true, laneReplaced: true,
 }
+
+// laneReplaced is a lane a successor thread continues.
+const laneReplaced = "replaced"
 
 // A lane another loop supervises, or holds the session claim of, is that
 // loop's to recover or stop; one whose ownership cannot be established is
@@ -317,6 +320,13 @@ func (t *tick) tryLane(lr adapter.LaneRecoverer, rec *state.LaneRecovery, check 
 	defer cancel()
 	r := rec.Retries[hash]
 	defer func() { rec.Retries[hash] = r }()
+	// A lane replaced by a successor thread is left alone: retrying it would
+	// put two threads on the same work.
+	if t.st.Replaced(id) {
+		r.Outcome, r.LookedAt = laneReplaced, t.now
+		check.NotRetried[laneReplaced]++
+		return true
+	}
 	// Another loop's lane is that loop's: retrying it could undo that loop's
 	// stop or pause. The same check a stop of the lanes uses.
 	switch other, unknown := t.otherLoopLane(id); {

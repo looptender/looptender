@@ -558,6 +558,7 @@ type statusOut struct {
 	ChildErrorReport  childReportStatus        `json:"childErrorReport"`
 	NewThreads        newThreadStatus          `json:"newThreads"`
 	ChildMove         *childMoveStatus         `json:"childMove,omitempty"`
+	Successors        *successorStatus         `json:"childSuccessors,omitempty"`
 	Goal              *control.GoalSummary     `json:"goal,omitempty"`
 	GoalError         string                   `json:"goalError,omitempty"`
 	Notifications     report.DeliveryStatus    `json:"notifications"`
@@ -662,6 +663,18 @@ type childMoveStatus struct {
 	Done    bool      `json:"done"`
 	// Transfer says transfer apply made the move, not a handoff.
 	Transfer bool `json:"transfer,omitempty"`
+}
+
+// successorStatus is the replacement of blocked child lanes, in counts.
+type successorStatus struct {
+	Replaced int  `json:"replaced"`
+	Created  int  `json:"lifetimeCreated"`
+	Max      int  `json:"lifetimeMax"`
+	Pending  bool `json:"pending"` // a creation could not be confirmed
+	// SkippedRun and SkippedLife: blocked lanes left without a successor at
+	// the per-handoff and lifetime caps, at the last run.
+	SkippedRun  int `json:"skippedPerRun,omitempty"`
+	SkippedLife int `json:"skippedLifetime,omitempty"`
 }
 
 type newThreadStatus struct {
@@ -836,6 +849,19 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	}
 	if m := out.ChildMove; m != nil && !out.stateUnreadable {
 		printChildMove(w, *m)
+	}
+	if s := out.Successors; s != nil && !out.stateUnreadable {
+		fmt.Fprintf(w, "successor threads: %d blocked child lane(s) have a successor on the new provider; %d of at most %d created over the loop's life", s.Replaced, s.Created, s.Max)
+		if s.SkippedRun > 0 {
+			fmt.Fprintf(w, "; %d blocked lane(s) skipped at the %d per handoff", s.SkippedRun, config.ChildSuccessorsPerRun)
+		}
+		if s.SkippedLife > 0 {
+			fmt.Fprintf(w, "; %d blocked lane(s) skipped at the loop's limit", s.SkippedLife)
+		}
+		if s.Pending {
+			fmt.Fprint(w, "; one creation could not be confirmed: nothing more is created until it is found or settled by a person")
+		}
+		fmt.Fprintln(w, ". The blocked lanes were left as they were")
 	}
 	if !out.stateUnreadable {
 		printLimitWait(w, out.LimitWait)
@@ -1262,6 +1288,13 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		}
 	}
 	out.NewThreads = newThreadStatus{Created: st.NewThreadsCreated, Max: l.Limits.MaxNewThreads, Pending: st.NewThreadIntent != nil}
+	if s := st.ChildSuccessors; s != nil || st.ChildSuccessorsCreated > 0 {
+		out.Successors = &successorStatus{Created: st.ChildSuccessorsCreated, Max: l.Limits.MaxChildSuccessors}
+		if s != nil {
+			out.Successors.Replaced, out.Successors.Pending = len(s.Replaced), s.Intent != nil
+			out.Successors.SkippedRun, out.Successors.SkippedLife = s.SkippedRun, s.SkippedLife
+		}
+	}
 	if m := st.ChildMove; m != nil && !m.Left {
 		out.ChildMove = &childMoveStatus{At: m.At, Moved: m.Moved, Pending: len(m.Remaining), Failed: m.Failed, Skipped: m.Skipped, Listed: m.Listed, Done: m.Done, Transfer: m.Transfer != ""}
 	}

@@ -90,6 +90,8 @@ type SpawnRequest struct {
 	Permission string
 	Title      string
 	Prompt     string
+	// Parent, when set, is the new thread's parent thread.
+	Parent string
 }
 
 // PlaceOf reads the project and environment of an existing thread with
@@ -117,6 +119,50 @@ func (a *Adapter) PlaceOf(ctx context.Context, thread string) (Place, error) {
 		return Place{}, errors.New("bb thread show: unexpected JSON")
 	}
 	return Place{Project: resp.Thread.Project, Environment: resp.Thread.Environment}, nil
+}
+
+// ThreadInfo is what replacing a blocked child needs to know about it: where
+// it lives and which provider runs it. Nothing about its content is read.
+type ThreadInfo struct {
+	Place
+	Provider string
+	// Permission is the thread's permission mode when BB reports one.
+	Permission string
+}
+
+// InfoOf reads a thread's project, environment and provider with
+// `bb thread show`.
+func (a *Adapter) InfoOf(ctx context.Context, thread string) (ThreadInfo, error) {
+	if !childIDPattern.MatchString(thread) {
+		return ThreadInfo{}, errors.New("bb thread show: invalid thread id")
+	}
+	out, err := a.run(ctx, "", "thread", "show", thread, "--json")
+	if code, ok := envelopeError(out); ok {
+		return ThreadInfo{}, errors.New("bb thread show: " + code)
+	}
+	if err != nil {
+		return ThreadInfo{}, errors.New("bb thread show: failed")
+	}
+	var resp struct {
+		Thread *struct {
+			ID          string `json:"id"`
+			Project     string `json:"projectId"`
+			Environment string `json:"environmentId"`
+			Provider    string `json:"providerId"`
+			Permission  string `json:"permissionMode"`
+		} `json:"thread"`
+	}
+	if json.Unmarshal(out, &resp) != nil || resp.Thread == nil || resp.Thread.ID != thread ||
+		!placeIDPattern.MatchString(resp.Thread.Project) || !placeIDPattern.MatchString(resp.Thread.Environment) || !placeIDPattern.MatchString(resp.Thread.Provider) {
+		return ThreadInfo{}, errors.New("bb thread show: unexpected JSON")
+	}
+	info := ThreadInfo{Place: Place{Project: resp.Thread.Project, Environment: resp.Thread.Environment}, Provider: resp.Thread.Provider}
+	for _, m := range PermissionModes {
+		if resp.Thread.Permission == m {
+			info.Permission = m // anything else is not reported
+		}
+	}
+	return info, nil
 }
 
 // FindByTitle lists the threads of a place and returns the IDs of those whose
@@ -173,6 +219,12 @@ func (a *Adapter) Spawn(ctx context.Context, r SpawnRequest) (string, error) {
 	}
 	if r.Reasoning != "" {
 		args = append(args, "--reasoning-level", r.Reasoning)
+	}
+	if r.Parent != "" {
+		if !childIDPattern.MatchString(r.Parent) {
+			return "", ErrSpawnRefused // nothing was run
+		}
+		args = append(args, "--parent-thread", r.Parent)
 	}
 	out, err := a.run(ctx, r.Prompt, args...)
 	if code, ok := envelopeError(out); ok {

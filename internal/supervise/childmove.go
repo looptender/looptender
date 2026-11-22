@@ -325,7 +325,7 @@ func MoveChildren(ctx context.Context, threads ChildMover, m *state.ChildMove, e
 // childrenNote is appended to a created thread's first prompt when the left
 // conversation's children will be moved to it, or "" when the last check saw
 // none.
-func childrenNote(o decide.Observation) string {
+func childrenNote(o decide.Observation, replaces bool) string {
 	total := len(o.HealthyChildren) + len(o.ErroredChildren) // healthy: any known status but error
 	if total == 0 && o.ActiveChildren == 0 && !o.ChildrenUnverified {
 		return ""
@@ -334,6 +334,16 @@ func childrenNote(o decide.Observation) string {
 	if o.ChildrenUnverified {
 		n += " (the listing was incomplete, so there may be more)"
 	}
-	return "\n\nChild threads: once keepgoing records this handoff, it moves the direct child threads of the conversation you continue to this one. At the last check it saw " + n + ". " +
-		"Moving a child changes only its parent. A thread cannot change provider, so a child in error because its provider hit a usage limit stays in error until that limit resets; decide whether to redo its work here.\n"
+	note := "\n\nChild threads: once keepgoing records this handoff, it moves the direct child threads of the conversation you continue to this one. At the last check it saw " + n + ". " +
+		"Moving a child changes only its parent. A thread cannot change provider, so a child in error because its provider hit a usage limit stays in error until that limit resets"
+	if !replaces {
+		return note + "; decide whether to redo its work here.\n"
+	}
+	idle := max(0, len(o.HealthyChildren)-o.ActiveChildren)
+	errored := len(o.ErroredChildren)
+	started := min(errored, config.ChildSuccessorsPerRun)
+	return note + fmt.Sprintf(". Once the children are here, keepgoing starts a successor thread on this provider for each child blocked by a usage limit on another provider, as your child lane. "+
+		"From the last check: %d child thread(s) were in error, so up to %d successor lane(s) will be started and %d blocked child thread(s) skipped at the cap of %d per handoff (only those blocked by a usage limit are replaced, so it may be fewer; keepgoing status gives the numbers actually started and skipped). "+
+		"The %d idle child thread(s), and any child in error for another reason, are left for you to decide; a finished turn says nothing about unfinished work. "+
+		"When the old provider's limit resets, BB may run a replaced child again: check before redoing work twice.\n", errored, started, max(errored-config.ChildSuccessorsPerRun, 0), config.ChildSuccessorsPerRun, idle)
 }

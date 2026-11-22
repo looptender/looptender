@@ -223,6 +223,11 @@ type Limits struct {
 	// candidates with bb.new_thread. Zero means the default. It is not a
 	// loop-wide work bound and is not listed by Configured.
 	MaxNewThreads int `yaml:"max_new_threads,omitempty"`
+	// MaxChildSuccessors caps, over the loop's life, the successor threads
+	// it may create to replace child lanes blocked on another provider
+	// (bb.replace_blocked_children and transfer replace-children). Zero
+	// means the default. Like MaxNewThreads it is not listed by Configured.
+	MaxChildSuccessors int `yaml:"max_child_successors,omitempty"`
 }
 
 // DeadlineReached uses the host clock. Configuration validation rejects invalid
@@ -474,26 +479,32 @@ const (
 	// MaxNewThreadsCeiling is the most loop.limits.max_new_threads may be, and
 	// MinNewThreadInterval the least time between two threads a loop creates.
 	// Together: at most ten threads per loop ever, and at most one an hour.
-	MaxNewThreadsCeiling     = 10
-	MinNewThreadInterval     = time.Hour
-	DefaultMaxNudges         = 3
-	DefaultBackoff           = 10 * time.Minute
-	DefaultWaitIfResetWithin = 30 * time.Minute
-	DefaultReportWaitAfter   = 6 * time.Hour
-	DefaultProcessTimeout    = 20 * time.Second
-	DefaultBBCLI             = "bb"
-	DefaultDaemonInterval    = 5 * time.Minute
-	DefaultTickTimeout       = 3 * time.Minute
-	DefaultControlPoll       = 2 * time.Second
-	DefaultReportTimeout     = 20 * time.Second
-	DefaultYieldTimeout      = 10 * time.Second
-	DefaultSwitchBackAfter   = time.Hour
-	DefaultSwitchBackRetry   = 30 * time.Minute
-	DefaultTimingNearReset   = 6 * time.Hour
-	DefaultTimingProbeEvery  = 12 * time.Hour
-	DefaultTimingMinOnStep   = 2 * time.Hour
-	DefaultTimingUnused      = 0.25
-	DefaultTimingDownAt      = 0.95
+	MaxNewThreadsCeiling = 10
+	// DefaultMaxChildSuccessors and MaxChildSuccessorsCeiling bound
+	// loop.limits.max_child_successors; ChildSuccessorsPerRun bounds one
+	// handoff's or one command's successors.
+	DefaultMaxChildSuccessors = 10
+	MaxChildSuccessorsCeiling = 50
+	ChildSuccessorsPerRun     = 5
+	MinNewThreadInterval      = time.Hour
+	DefaultMaxNudges          = 3
+	DefaultBackoff            = 10 * time.Minute
+	DefaultWaitIfResetWithin  = 30 * time.Minute
+	DefaultReportWaitAfter    = 6 * time.Hour
+	DefaultProcessTimeout     = 20 * time.Second
+	DefaultBBCLI              = "bb"
+	DefaultDaemonInterval     = 5 * time.Minute
+	DefaultTickTimeout        = 3 * time.Minute
+	DefaultControlPoll        = 2 * time.Second
+	DefaultReportTimeout      = 20 * time.Second
+	DefaultYieldTimeout       = 10 * time.Second
+	DefaultSwitchBackAfter    = time.Hour
+	DefaultSwitchBackRetry    = 30 * time.Minute
+	DefaultTimingNearReset    = 6 * time.Hour
+	DefaultTimingProbeEvery   = 12 * time.Hour
+	DefaultTimingMinOnStep    = 2 * time.Hour
+	DefaultTimingUnused       = 0.25
+	DefaultTimingDownAt       = 0.95
 )
 
 // ReportEvents lists the events a report may subscribe to.
@@ -660,6 +671,9 @@ func (c *Config) applyDefaults() {
 	if l.Limits.MaxNewThreads == 0 {
 		l.Limits.MaxNewThreads = DefaultMaxNewThreads
 	}
+	if l.Limits.MaxChildSuccessors == 0 {
+		l.Limits.MaxChildSuccessors = DefaultMaxChildSuccessors
+	}
 	setDur(&l.Errors.Backoff, DefaultBackoff)
 	setDur(&l.Errors.WaitIfResetWithin, DefaultWaitIfResetWithin)
 	setDur(&l.Errors.ReportWaitAfter, DefaultReportWaitAfter)
@@ -810,6 +824,9 @@ func (c *Config) Validate() error {
 	}
 	if l.Limits.MaxSends < 0 {
 		add("loop.limits.max_sends must be nonnegative")
+	}
+	if l.Limits.MaxChildSuccessors < 0 || l.Limits.MaxChildSuccessors > MaxChildSuccessorsCeiling {
+		add("loop.limits.max_child_successors must be between 0 and %d (zero means the default)", MaxChildSuccessorsCeiling)
 	}
 	if l.Limits.MaxNewThreads < 0 || l.Limits.MaxNewThreads > MaxNewThreadsCeiling {
 		add("loop.limits.max_new_threads must be between 0 and %d (zero means the default)", MaxNewThreadsCeiling)

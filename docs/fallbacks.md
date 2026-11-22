@@ -499,6 +499,25 @@ Unreleased; **offline fixtures with a fake `bb` only**. A coordinator's lanes ar
 - **Holds win.** The control file is read again before each update: a stop, pause, await-user, completion or disable saved meanwhile ends the moves, and the rest wait for a check after the hold is lifted. A held loop moves nothing. A dry run lists and moves nothing.
 - **Where it shows.** `status` prints a `child threads:` line with how many moved, are still to move, could not be moved and were left (`childMove` in JSON, counts only), and the tick output has `childrenMoved` and `childrenPending`. No child ID appears in reports or the history.
 
+### Replace blocked child lanes
+
+Unreleased; **offline fixtures only; nothing created live**. A BB thread cannot change provider. When the created thread runs on another provider, the lanes it took over still run on the old one, and those stopped by that provider's usage limit stay blocked until it resets. So the takeover also starts successor threads for them on the created thread's provider, each a child lane of the new coordinator.
+
+> **On by default** for a new-thread fallback. Turn it off per fallback with `bb.replace_blocked_children: false` (or `bb.move_children: false`, since it replaces only children that were moved).
+>
+> **Duplicate work is possible.** The old lane is left as it was. When its provider's limit resets, BB may retry it by itself while its successor is working, and both then work on the same thing. looptender never retries a replaced lane and never replaces one BB reports as retrying, and the successor is told to check the old lane first, but a retry by BB itself is outside looptender. Stopping or archiving the old lane is a person's decision.
+
+```yaml
+    bb: {new_thread: true, model: example-model, child_model: example-small-model, child_reasoning: low, child_permission_mode: accept-edits}
+```
+
+- **When.** In the first check that gets past the holds after that handoff, once the child move for it is done: normally the check after the handoff. A held loop does nothing.
+- **Which lanes.** Only children verified blocked mid-work: in error with a rate-limit class, or with a blocked subscription window and a future reset, on a provider other than the created thread's. Whether a child was running a turn when the limit hit cannot be told from BB's structured status alone, so nothing else is included. Idle or finished children, children waiting for a person, with queued input or with a provider retry on the way, and children in error for another reason are not replaced: a finished turn says nothing about unfinished work, and the new coordinator decides those.
+- **The successors.** One `bb thread spawn` per lane on the candidate's provider with `bb.child_model` and `bb.child_reasoning` (the candidate's own model and reasoning when unset). Its parent is the created thread, it lives in the lane's project and environment, and its title and first prompt are as for [`transfer replace-children`](transfer.md#replace-blocked-child-lanes-unreleased). Its permission mode is always passed: `bb.child_permission_mode`, `accept-edits` unless set, lowered to the lane's own mode when BB reports a more restrictive one (`accept-edits` < `auto` < `full`), and `accept-edits` when the lane's mode is not reported. So a successor never has more than the lane it replaces had, and never the coordinator's own permissions. The old lane is not messaged, stopped, archived or re-parented.
+- **The created thread's first prompt** says, from the last check before the handoff, how many children were in error, how many successor lanes that means will be started and how many blocked children skipped at the cap, and how many idle children are left for it. These are expected numbers: the successors are children of the created thread, so they are started after it exists, and only lanes verified blocked by a usage limit are replaced. `status` gives the numbers actually started and skipped.
+- **Caps and failures.** At most 5 per handoff and `loop.limits.max_child_successors` over the loop's life (default 10, at most 50), with the exactly-once rules of a new thread. Each creation is also a send against `loop.limits.max_sends`, as a new thread is: it starts a paid turn. At the send limit the rest are left, uncounted (`stoppedBySendLimit` in the tick output). A creation that cannot be confirmed holds the loop for a person with an `await_user` report naming its title, and `resume` looks for it again. `status` prints a `successor threads:` line with how many lanes have successors, the lifetime count, and how many blocked lanes were skipped at each cap. Creations are reported as counts with the `handoff` event. A dry run counts what would be created (`successors` in the tick output) and creates nothing.
+- **Duplicate work.** See the note at the top of this section. The successor's first prompt tells it to check the old lane before redoing work and to say so in its own thread if it finds it running.
+
 ## Switching back
 
 By default, returning to the primary is manual:

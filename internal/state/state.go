@@ -274,6 +274,12 @@ type File struct {
 	// saved before the first child is moved and after each one, and kept
 	// once done so status can show it, until the next such handoff.
 	ChildMove *ChildMove `json:"childMove,omitempty"`
+	// ChildSuccessors records the successor threads created to replace
+	// child lanes blocked on another provider, for the coordinator thread
+	// they were created under; ChildSuccessorsCreated counts, over the
+	// loop's life, every creation not proven refused.
+	ChildSuccessors        *ChildSuccessors `json:"childSuccessors,omitempty"`
+	ChildSuccessorsCreated int              `json:"childSuccessorsCreated,omitempty"`
 	// ChildErrorReport is set while any child of the supervised thread is in
 	// error, so its report is not repeated by later checks or after a restart.
 	ChildErrorReport *ChildErrorReport `json:"childErrorReport,omitempty"`
@@ -536,6 +542,49 @@ type ChildMove struct {
 	Failed    int            `json:"failed,omitempty"`
 	Skipped   int            `json:"skipped,omitempty"`
 	Done      bool           `json:"done,omitempty"`
+}
+
+// ChildSuccessors is the replacement of blocked child lanes under one
+// coordinator thread. Replaced maps an old child to its successor; Intent is
+// a creation whose outcome is not yet recorded. Created counts this
+// coordinator's creations, for the per-run cap.
+type ChildSuccessors struct {
+	Coordinator string                    `json:"coordinator"`
+	Provider    string                    `json:"provider"`
+	Created     int                       `json:"created,omitempty"`
+	Replaced    map[string]ChildSuccessor `json:"replaced,omitempty"`
+	Intent      *ChildSuccessorIntent     `json:"intent,omitempty"`
+	// SkippedRun and SkippedLife count, from the last run, the blocked
+	// lanes left without a successor at the per-handoff and lifetime caps.
+	SkippedRun  int `json:"skippedRun,omitempty"`
+	SkippedLife int `json:"skippedLife,omitempty"`
+}
+
+// ChildSuccessor is the thread created to continue one blocked child.
+type ChildSuccessor struct {
+	Thread string    `json:"thread"`
+	Title  string    `json:"title"`
+	At     time.Time `json:"at"`
+}
+
+// ChildSuccessorIntent is saved, and counted, before a successor is created,
+// so a crash or an unclear answer is settled by looking for its title.
+type ChildSuccessorIntent struct {
+	Child       string    `json:"child"`
+	Title       string    `json:"title"`
+	Project     string    `json:"project"`
+	Environment string    `json:"environment"`
+	RequestedAt time.Time `json:"requestedAt"`
+	NotStarted  bool      `json:"notStarted,omitempty"`
+}
+
+// Replaced reports whether a child lane has a successor on record.
+func (f File) Replaced(child string) bool {
+	if f.ChildSuccessors == nil {
+		return false
+	}
+	_, ok := f.ChildSuccessors.Replaced[child]
+	return ok
 }
 
 // MaxMovedChildren bounds the children moved for one handoff, and

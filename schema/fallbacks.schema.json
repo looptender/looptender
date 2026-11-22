@@ -187,7 +187,7 @@
       "oneOf": [
         {
           "required": ["thread"],
-          "not": {"anyOf": [{"required": ["new_thread"]}, {"required": ["project"]}, {"required": ["environment"]}, {"required": ["permission_mode"]}, {"required": ["move_children"]}]}
+          "not": {"anyOf": [{"required": ["new_thread"]}, {"required": ["project"]}, {"required": ["environment"]}, {"required": ["permission_mode"]}, {"required": ["move_children"]}, {"required": ["replace_blocked_children"]}, {"required": ["child_model"]}, {"required": ["child_reasoning"]}, {"required": ["child_permission_mode"]}]}
         },
         {
           "required": ["new_thread"],
@@ -217,6 +217,14 @@
           "default": "accept-edits",
           "description": "with new_thread: the new thread's permission mode, always passed to BB so it never inherits a project default"
         },
+        "replace_blocked_children": {
+          "type": "boolean",
+          "default": true,
+          "description": "with new_thread: after the handoff and the child move, start successor threads on this candidate's provider for child lanes blocked on a usage limit of another provider (at most 5 per handoff, loop.limits.max_child_successors over the loop's life). On unless false; needs move_children."
+        },
+        "child_model": {"type": "string", "description": "with new_thread: model of successor threads; default the candidate's model"},
+        "child_reasoning": {"type": "string", "description": "with new_thread and child_model: reasoning of successor threads"},
+        "child_permission_mode": {"enum": ["accept-edits", "auto", "full"], "default": "accept-edits", "description": "with new_thread: permission mode of successor threads; never above the replaced lane's own when BB reports it"},
         "move_children": {
           "type": "boolean",
           "default": true,

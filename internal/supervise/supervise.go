@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/adapter"
+	"github.com/looptender/looptender/internal/adapter/bb"
 	"github.com/looptender/looptender/internal/adapter/factory"
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
@@ -99,6 +100,9 @@ type Options struct {
 	// Threads creates and finds BB threads for handoffs to candidates with
 	// bb.new_thread. Swapped in tests.
 	Threads func(cli string) ThreadCreator
+	// Successors builds what replacing blocked child lanes of coordinator
+	// needs; bb by default.
+	Successors func(cli, coordinator string) ChildSuccessorMaker
 	// CommandPrefix runs this build of the command, quoted for the shell,
 	// for the session commands the supervision context lists
 	// (loop.prompt_context). Empty uses DefaultCommandPrefix.
@@ -186,13 +190,16 @@ type Result struct {
 	// ChildrenMoved and ChildrenPending count the left conversation's
 	// children moved to the thread that took over, and those still to move,
 	// when this check moved any.
-	ChildrenMoved   int             `json:"childrenMoved,omitempty"`
-	ChildrenPending int             `json:"childrenPending,omitempty"`
-	Redundancy      *health.Summary `json:"redundancy,omitempty"`
-	Probes          []ProbeNote     `json:"probes,omitempty"`
-	Yielded         bool            `json:"yielded,omitempty"`
-	DryRun          bool            `json:"dryRun,omitempty"`
-	Warnings        []string        `json:"warnings,omitempty"`
+	ChildrenMoved   int `json:"childrenMoved,omitempty"`
+	ChildrenPending int `json:"childrenPending,omitempty"`
+	// Successors is what replacing blocked child lanes found and did in
+	// this check, in counts, when it ran.
+	Successors *ReplaceResult  `json:"successors,omitempty"`
+	Redundancy *health.Summary `json:"redundancy,omitempty"`
+	Probes     []ProbeNote     `json:"probes,omitempty"`
+	Yielded    bool            `json:"yielded,omitempty"`
+	DryRun     bool            `json:"dryRun,omitempty"`
+	Warnings   []string        `json:"warnings,omitempty"`
 	// Outcome is the recorded result of the check: succeeded, failed or
 	// dry_run. It is empty when the check could not be recorded at all.
 	Outcome string `json:"outcome,omitempty"`
@@ -434,6 +441,11 @@ func Tick(ctx context.Context, cfg *config.Config, opts Options) (Result, error)
 	}
 	if opts.Online == nil {
 		opts.Online = Connectivity(cfg)
+	}
+	if opts.Successors == nil {
+		opts.Successors = func(cli, coordinator string) ChildSuccessorMaker {
+			return bb.New(config.BB{CLI: cli, Thread: coordinator})
+		}
 	}
 	if opts.Threads == nil {
 		opts.Threads = bbThreads
@@ -812,6 +824,10 @@ func (t *tick) run() error {
 	// the thread exists, the handoff it was created for is completed now.
 	t.completeOwnerMove()
 	t.completeChildMove()
+	if held := t.replaceBlockedChildren(); held {
+		res.State, res.Window = "not observed", "not checked"
+		return t.record(nil)
+	}
 	moved, held := t.reconcileNewThread()
 	if held {
 		res.State, res.Window = "not observed", "not checked"
@@ -2688,9 +2704,9 @@ func (t *tick) countUnrecordedSends() error {
 			}
 		case "handoff", "switch_back":
 			// Settled by the hold this check raises: a person looks first.
-		case "new_thread":
+		case "new_thread", childSuccessorAction:
 			// Settled by its own record in state.json, saved before the
-			// conversation was created (see createThread).
+			// conversation was created (see createThread, ReplaceChildren).
 			agentSend = false
 		case laneRetryAction:
 			// A lane's failed turn, retried by reference: counted for that

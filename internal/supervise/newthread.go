@@ -159,7 +159,7 @@ func (t *tick) createThread(from string, fromAgent config.Agent, c config.Candid
 	}
 	text += ownershipNote(t.loop.Name, t.ownerWillFollow(continues))
 	if _, follow := childrenFollow(c); follow && continues != "" {
-		text += childrenNote(t.handoffObs)
+		text += childrenNote(t.handoffObs, c.BB.ReplacesChildren())
 	}
 	var sentContext *state.ContextSent
 	if t.loop.PromptContext {
