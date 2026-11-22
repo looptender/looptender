@@ -75,7 +75,7 @@ scenarios.push(["no needs", (d) => { d.needsYou = []; d.needsLine = "Nothing nee
 
 const routes = ["#/", "#/versions", "#/usage", "#/routes", "#/accounts"];
 
-async function render(name, data) {
+async function render(name, data, checks = []) {
   const errors = [];
   const vc = new VirtualConsole();
   vc.on("jsdomError", (e) => errors.push(String(e.detail && e.detail.stack || e.message || e)));
@@ -107,12 +107,68 @@ async function render(name, data) {
     if (w.__renderError) errors.push(`${hash}: ${String(w.__renderError.stack || w.__renderError).split("\n").slice(0, 2).join(" | ")}`);
     else if (pane && /could not show the reply/.test(pane.textContent)) errors.push(`${hash}: the pane shows the render failure`);
     else if (pane && pane.children.length === 0) errors.push(`${hash}: the pane is empty`);
+    for (const c of checks) {
+      if (c.hash !== hash && !(c.hash === "loop" && hash.startsWith("#/loop/"))) continue;
+      const bad = c.fn(w, hash);
+      if (bad) errors.push(`${hash}: ${bad}`);
+    }
   }
   w.close();
   for (const e of new Set(errors)) failures.push(`${name}: ${e.split("\n").slice(0, 3).join(" | ")}`);
 }
 
 for (const [name, fn] of scenarios) await render(name, scenario(fn));
+
+// What the page shows, not only that it renders.
+const text = (w, sel) => [...w.document.querySelectorAll(sel)].map((n) => n.textContent).join(" | ");
+const outsideDetails = (w, re) => [...w.document.querySelectorAll("#pane p, #pane div")].some((n) => re.test(n.textContent) && !n.closest("details"));
+const target = (d, fn) => { const l = d.loops[0]; fn(l); return l; };
+const expectations = [
+  ["a paused loop's long limit wait, with the deadline and hold notes, is shown outside the folds", (d) => target(d, (l) => {
+    l.state = "paused"; l.phrase = "Paused";
+    l.limitWait = { passed: false, text: [{ t: "Provider limit resets in 5 days" }], note: [{ t: "The reset falls after this loop's deadline: the loop will be held by the deadline on its first check after it, before this wait can end. The loop is held (paused), so it observes and sends nothing." }] };
+  }), [{ hash: "loop", fn: (w, h) => h.endsWith(target(clone(fixture.dock), () => {}).key) ? (outsideDetails(w, /reset falls after this loop's deadline/) ? null : "the deadline note is not shown outside the folds") : null }]],
+  ["a wake-policy warning is shown", (d) => target(d, (l) => { l.wakePolicy = [{ t: "Its prompt file is hand-edited, so it is sent exactly as written. `looptender prompt-policy show` says more." }]; }),
+    [{ hash: "loop", fn: (w, h) => h.endsWith(fixture.dock.loops[0].key) ? (/hand-edited/.test(text(w, "#pane .wake-policy")) ? null : "the wake-policy warning is not shown") : null }]],
+  ["the provider header says the model is not configured", (d) => target(d, (l) => { l.provider = "claude-code"; delete l.model; }),
+    [{ hash: "loop", fn: (w, h) => h.endsWith(fixture.dock.loops[0].key) ? (/Configured provider: claude-code · model not configured/.test(text(w, "#pane .build-line")) ? null : "the provider header is not the agreed wording") : null }]],
+  ["a wait that is in effect is not tagged Reached", (d) => target(d, (l) => { l.limitWait = { passed: false, text: [{ t: "Provider limit resets in 5 days" }] }; l.limits = [{ label: "Time without Git progress", text: [{ t: "26 h of 24 h" }], reached: true }]; l.noProgress = { availability: "clear", text: "Progress: Clear", lines: [] }; l.hold = { state: "held", phrase: "Held" }; }),
+    [{ hash: "loop", fn: (w, h) => { if (!h.endsWith(fixture.dock.loops[0].key)) return null; const t = text(w, "#pane"); return /In effect/.test(t) && /no-progress limit is reached/.test(t) ? null : "the wait tag or the progress note is wrong: " + t.slice(0, 200); } }]],
+  ["the Overview tree names an unsupervised loop", (d) => target(d, (l) => { l.state = "not_checked_recently"; l.phrase = "Not supervised"; }),
+    [{ hash: "#/", fn: (w) => (/Not supervised/.test(text(w, "#pane .work-tree")) ? null : "no 'Not supervised' row in the Overview tree") }]],
+];
+for (const [name, mutate, checks] of expectations) await render(name, scenario(mutate), checks);
+
+// A failed render's banner ends with the next render that works: the Overview
+// is made to throw (as it did on real data), then a page that renders is opened
+// without a new read in between.
+{
+  const errors = [];
+  const vc = new VirtualConsole(); vc.on("jsdomError", () => {});
+  const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "http://127.0.0.1:1/s/token/", virtualConsole: vc });
+  const w = dom.window;
+  w.fetch = async (url) => {
+    const path = String(url).split("?")[0].replace(/^.*\/s\/[^/]+\//, "");
+    const found = { "api/v1/dock": fixture.dock, "api/v1/server": fixture.server, "api/v1/usage": fixture.usage }[path];
+    return { ok: found !== undefined, status: found !== undefined ? 200 : 404, json: async () => clone(found), text: async () => JSON.stringify(found) };
+  };
+  w.TextEncoder = TextEncoder; w.scrollTo = () => {}; w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} }); w.Element.prototype.scrollIntoView = () => {};
+  const create = w.document.createElement.bind(w.document);
+  let breakHome = true;
+  w.document.createElement = (tag, ...rest) => {
+    if (breakHome && w.location.hash.replace(/^#\/?/, "") === "" && ["details", "li", "dl"].includes(tag)) throw new Error("injected Overview failure");
+    return create(tag, ...rest);
+  };
+  w.eval(js);
+  const tick = () => new Promise((r) => setTimeout(r, 15));
+  await tick(); await tick();
+  const banner = () => w.document.getElementById("banner");
+  if (banner().hidden || !/could not show the reply/.test(banner().textContent)) errors.push("the failed Overview did not raise the banner (the test needs it)");
+  w.location.hash = "#/versions"; w.dispatchEvent(new w.Event("hashchange")); await tick();
+  if (!banner().hidden) errors.push("the failure banner outlived the page that rendered");
+  w.close();
+  for (const e of errors) failures.push("banner: " + e);
+}
 
 if (failures.length) {
   console.error(`dock.js failed while rendering ${failures.length} time(s):`);
