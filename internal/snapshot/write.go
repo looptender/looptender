@@ -66,8 +66,9 @@ func Write(f *os.File, data []byte) error {
 }
 
 // WriteFileAtomic replaces path with data: a temporary file beside it is
-// written in full, flushed when sync is set, and renamed over path. On any
-// failure path is left as it was and the temporary file is removed.
+// written in full, flushed when sync is set, and renamed over path
+// (ReplaceAtomic: no availability marker). On any failure path is left as it
+// was and the temporary file is removed.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode, sync bool) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
 	if err != nil {
@@ -92,7 +93,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode, sync bool) erro
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return Replace(name, path)
+	return ReplaceAtomic(name, path)
 }
 
 // AppendLine appends one line to an append-only log, whole or not at all: a
@@ -125,8 +126,12 @@ func AppendLine(path string, line []byte, perm os.FileMode) error {
 		line = append(line, '\n')
 	}
 	if err := Write(f, line); err != nil {
-		if now, serr := f.Stat(); serr == nil && now.Size() > end && now.Size()-end <= int64(len(line)) {
-			_ = f.Truncate(end) // nothing of this line stays
+		now, serr := f.Stat()
+		f.Close()
+		if serr == nil && now.Size() > end && now.Size()-end <= int64(len(line)) {
+			// Nothing of this line stays. Cut by path: on Windows a handle
+			// opened for appending cannot change a file's length.
+			_ = os.Truncate(path, end)
 		}
 		return err
 	}
