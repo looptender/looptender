@@ -403,6 +403,8 @@ func collectInit(e env, o *initOptions, input io.Reader, lookPath func(string) (
 	// usable: yes unless declined.
 	if o.agent == "bb" && !visited["new-thread-provider"] && !visited["fallback"] && o.routes != config.RoutesStandard {
 		if offer := detectNewThreadOffer(e.ctx, o.provider, lookPath); offer != nil {
+			// What yes means, before the question.
+			printNewThreadPlan(e.stdout, o.provider, offerCandidate(*offer, o.newThread.Permission), initNewThreadOff)
 			choice, err := ask(fmt.Sprintf("On a usage limit, start a new conversation on %s that takes over this loop, with its child lanes? (yes/no)", offer.Provider), "yes")
 			if err != nil {
 				return err

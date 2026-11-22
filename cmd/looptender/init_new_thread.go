@@ -155,8 +155,15 @@ func printNewThreadPlan(w io.Writer, primaryProvider string, c config.Candidate,
 	}
 	fmt.Fprintf(w, "On a usage limit on %s: a new conversation on %s (%s, permission %s) is started with a handoff brief and owns the loop from then on; "+
 		"this conversation's child lanes move to it; lanes blocked by the limit get successor threads on %s (at most %d per handoff). "+
-		"At most %d new conversations over the loop's life, never two within an hour. Turn it off: %s.\n",
-		primaryProvider, c.Provider, model, perm, c.Provider, config.ChildSuccessorsPerRun, config.DefaultMaxNewThreads, off)
+		"At most %d new conversations over the loop's life, never two within an hour. Each new conversation and each successor is a paid turn and a send against max_sends. "+
+		"With permission %s, an unattended new conversation or successor may stop at a permission question and wait for a person. Turn it off: %s.\n",
+		primaryProvider, c.Provider, model, perm, c.Provider, config.ChildSuccessorsPerRun, config.DefaultMaxNewThreads, perm, off)
+}
+
+// offerCandidate is the fallback an offer would write, for saying what it
+// does before anyone answers.
+func offerCandidate(o newThreadOffer, permission string) config.Candidate {
+	return config.Candidate{Agent: config.Agent{Provider: o.Provider, BB: &config.BB{NewThread: true, Model: o.Model, PermissionMode: permission}}}
 }
 
 // initNewThreadOff is how init's person turns the takeover off.

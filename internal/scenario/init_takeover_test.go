@@ -3,6 +3,7 @@ package scenario
 import (
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -204,5 +205,25 @@ func TestScenarioFallbacksArm(t *testing.T) {
 	}
 	if r := w.Run("fallbacks", "arm", "-c", w.Config, "--yes"); r.Code != 0 || !strings.Contains(r.Stdout, "Already armed") {
 		t.Fatalf("again: %d\n%s", r.Code, r.Stdout)
+	}
+}
+
+// init and fallbacks arm write the same fallback for the same provider and
+// model, so a change to one's defaults that the other misses fails here.
+func TestScenarioInitAndArmWriteTheSameFallback(t *testing.T) {
+	t.Parallel()
+	a := NewWorld(t, scenarioStart)
+	codexUsable(a)
+	a.InitWith("--new-thread-provider", "codex", "--new-thread-model", codexModel)
+	_, fromInit := loopFallbacks(a)
+	b := NewWorld(t, scenarioStart)
+	codexUsable(b)
+	b.InitWith("--new-thread-provider", "none")
+	if r := b.Run("fallbacks", "arm", "-c", b.Config, "--yes"); r.Code != 0 {
+		t.Fatalf("arm %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	_, fromArm := loopFallbacks(b)
+	if len(fromInit) != 1 || len(fromArm) != 1 || !reflect.DeepEqual(fromInit[0], fromArm[0]) {
+		t.Fatalf("init wrote %v\narm wrote  %v", fromInit, fromArm)
 	}
 }

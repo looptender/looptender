@@ -42,8 +42,15 @@ func TestInitWizardOffersTheTakeover(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("%d %s\n%s", code, errOut, out)
 			}
-			if !strings.Contains(out, "On a usage limit, start a new conversation on codex that takes over this loop") {
-				t.Fatalf("not offered:\n%s", out)
+			q := strings.Index(out, "On a usage limit, start a new conversation on codex that takes over this loop")
+			plan := strings.Index(out, "On a usage limit on claude-code: a new conversation on codex")
+			if q < 0 || plan < 0 || plan > q {
+				t.Fatalf("the plan is not said before the question (plan at %d, question at %d):\n%s", plan, q, out)
+			}
+			for _, want := range []string{"successor threads on codex (at most 5 per handoff)", "At most 3 new conversations", "a paid turn and a send against max_sends", "may stop at a permission question and wait for a person"} {
+				if !strings.Contains(out[:q], want) {
+					t.Fatalf("before the question, the plan lacks %q:\n%s", want, out[:q])
+				}
 			}
 			cfg, err := config.Load(filepath.Join(f.destination, config.FileName))
 			if err != nil {
@@ -106,5 +113,25 @@ func TestInitNewThreadFlags(t *testing.T) {
 	}
 	if code, _, _ := f.run(t, append(f.args(), "--dry-run", "--new-thread-provider", "claude-code", "--new-thread-model", "m"), ""); code == 0 {
 		t.Fatal("headless accepted a takeover")
+	}
+}
+
+// Arming turns rate-limit handoff on loop-wide: the loop's other enabled
+// fallbacks then take handoffs too, and the arm plan says so.
+func TestArmCountsOtherFallbacksGainingHandoff(t *testing.T) {
+	other := config.Candidate{ID: "other", Agent: config.Agent{Adapter: "codex"}}
+	off := other
+	off.ID, off.Disabled = "off", true
+	nt := config.Candidate{ID: "new-conversation-codex", Agent: config.Agent{Adapter: "bb", BB: &config.BB{NewThread: true}}}
+	cfg := &config.Config{FallbackSet: &config.Fallbacks{Candidates: []config.Candidate{other, off, nt}}}
+	if n := otherFallbacksGainingHandoff(cfg); n != 1 {
+		t.Fatalf("%d", n)
+	}
+	cfg.Loop.Errors.FailoverOn = []string{"rate_limit"}
+	if n := otherFallbacksGainingHandoff(cfg); n != 0 {
+		t.Fatalf("already on: %d", n)
+	}
+	if n := otherFallbacksGainingHandoff(&config.Config{}); n != 0 {
+		t.Fatalf("none: %d", n)
 	}
 }

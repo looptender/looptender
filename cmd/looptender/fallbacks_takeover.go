@@ -100,6 +100,9 @@ func fallbacksArm(e env, args []string, input io.Reader, lookPath func(string) (
 	if !*asJSON {
 		probe := config.Candidate{Agent: config.Agent{Provider: c.Provider, BB: &config.BB{NewThread: true, Model: c.Model, Reasoning: c.Reasoning, PermissionMode: c.Permission}}}
 		printNewThreadPlan(e.stdout, cfg.Loop.Provider, probe, "do not arm it; once armed, remove the fallback with keepgoing fallbacks remove, or turn handoff off with keepgoing fallbacks handoff off")
+		if n := otherFallbacksGainingHandoff(cfg); n > 0 {
+			fmt.Fprintf(e.stdout, "Arming turns handoff on for rate limits for the whole loop, so its %d other fallback(s) start taking handoffs too, in their current order, before this new conversation is tried.\n", n)
+		}
 		fmt.Fprintln(e.stdout)
 	}
 	if *dryRun {
@@ -117,4 +120,24 @@ func fallbacksArm(e env, args []string, input io.Reader, lookPath func(string) (
 		}
 	}
 	return fallbacksAdd(e, add, input, lookPath, bb)
+}
+
+// otherFallbacksGainingHandoff counts the loop's enabled fallbacks that do
+// not take handoffs now and would once arming turns rate-limit handoff on.
+func otherFallbacksGainingHandoff(cfg *config.Config) int {
+	if cfg.FallbackSet == nil {
+		return 0
+	}
+	for _, class := range cfg.Loop.Errors.FailoverOn {
+		if class == "rate_limit" {
+			return 0 // they already take rate-limit handoffs
+		}
+	}
+	n := 0
+	for _, c := range cfg.FallbackSet.Candidates {
+		if !c.Disabled && !isNewThreadCandidate(c) {
+			n++
+		}
+	}
+	return n
 }
