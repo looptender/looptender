@@ -26,12 +26,22 @@ def validate(text):
         assert re.search(r'^        run: ' + command + r'$', race[0], re.M), 'native runner failure must propagate'
         assert f"if: {SCOPE} || matrix.os == 'ubuntu-24.04'" in race[0]
     gate = re.search(r'^  go:\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', text, re.M | re.S)
-    assert gate and 'needs: [checks, race]' in gate[1] and 'if: ${{ !cancelled() }}' in gate[1], 'the required name must gate on every job'
-    assert '[ "$CHECKS" = success ] && [ "$RACE" = success ]' in gate[1], 'the gate must require success, not just absence of failure'
+    assert gate and 'if: ${{ !cancelled() }}' in gate[1], 'the required name must gate on every job'
     assert 'fail-fast: false' in gate[1], 'a failing gate must not cancel the other'
     assert 'Build and test (${{ matrix.os }})' in gate[1], 'branch protection requires this name'
     assert not re.search(r'run: go test -race ./cmd/looptender -run', text), 'static guards already execute once in the native runner'
-    for script in ('ci-scope-test.sh', 'check-contributions-test.sh', 'ci-timeout-note-test.sh', 'ci-workflow-test.py'):
+    # The gate must wait for every other job: a job it does not wait for cannot
+    # block a merge, because only the gate's names are required.
+    jobs = set(re.findall(r'^  ([a-z][a-z-]*):\n', text.split('\njobs:\n', 1)[1], re.M)) - {'go'}
+    needs = re.search(r'^    needs: \[([a-z, -]+)\]$', gate[1], re.M)
+    assert needs and set(n.strip() for n in needs[1].split(',')) == jobs, f'the gate must need exactly {sorted(jobs)}'
+    assert "all(.[]; .result == \"success\")" in gate[1], 'the gate must require success from every job it needs'
+    # A pinned -run pattern that matches nothing must fail, not pass silently.
+    for step in steps:
+        for line in step.splitlines():
+            if re.search(r'\bgo test\b.* -run ', line) and 'go test' in line:
+                assert re.search(r'python3? scripts/ci-go-test-ran\.py go test', line), f'pinned go test must go through the wrapper: {line.strip()}'
+    for script in ('ci-scope-test.sh', 'check-contributions-test.sh', 'ci-timeout-note-test.sh', 'ci-workflow-test.py', 'ci-go-test-ran-test.py'):
         assert text.index(script) < text.index('run: go vet ./...'), f'{script} must fail before expensive checks'
 
 
@@ -55,12 +65,21 @@ class WorkflowTests(unittest.TestCase):
                 validate(WORKFLOW.replace('python3 -u scripts/ci-race.py command ${{ matrix.part }}', replacement))
 
     def test_a_gate_that_forgets_a_job_or_tolerates_failure_is_rejected(self):
-        for old, new in (('needs: [checks, race]', 'needs: [checks]'),
-                         ('[ "$RACE" = success ]', 'true'),
+        for old, new in (('all(.[]; .result == "success")', 'all(.[]; .result != "failure")'),
                          ('if: ${{ !cancelled() }}', ''),
                          ('fail-fast: false # each gate reports its own result', '')):
             with self.subTest(old=old), self.assertRaises(AssertionError):
                 validate(WORKFLOW.replace(old, new, 1))
+
+    def test_a_gate_missing_a_job_is_rejected(self):
+        for job in ('bb-plugin', 'windows-acl', 'windows-processes', 'race', 'checks'):
+            with self.subTest(job=job), self.assertRaises(AssertionError):
+                validate(re.sub(r'^(    needs: \[.*)\b' + job + r'\b,? ?(.*\])$', r'\1\2', WORKFLOW, count=1, flags=re.M)
+                         .replace(', ]', ']'))
+
+    def test_an_unwrapped_pinned_go_test_is_rejected(self):
+        with self.assertRaises(AssertionError):
+            validate(WORKFLOW.replace('python scripts/ci-go-test-ran.py go test ./cmd/looptender -run', 'go test ./cmd/looptender -run', 1))
 
     def test_redundant_static_guard_execution_rejected(self):
         with self.assertRaises(AssertionError):
