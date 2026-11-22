@@ -133,7 +133,6 @@ function ToggleButton({ loop, threadId, onDone, compactResume = false }: { loop:
   // to its primary, so pausing it is allowed, but only after it is said which
   // loop and which thread are meant.
   const watching = !paused && !loop.supervising;
-  const targetThread = loop.details?.targetThread ?? loop.target;
   const act = () => {
     setBusy(true);
     setError("");
@@ -155,7 +154,7 @@ function ToggleButton({ loop, threadId, onDone, compactResume = false }: { loop:
       ? <ResumeNote loop={loop} compact={compactResume} />
       : watching && confirming
         ? <span role="group" aria-label={`Confirm pausing ${loop.loop}`}>
-            <span>Pause loop {loop.loop}? It supervises {targetThread}, not this thread.</span>{" "}
+            <span>Pause loop {loop.loop}? {loop.details?.targetThread ? `It supervises ${loop.details.targetThread}, not this thread.` : `Its current target is ${loop.target}, not this thread.`}</span>{" "}
             <button type="button" disabled={busy} onClick={act} style={buttonStyle}>Pause loop {loop.loop}</button>{" "}
             <button type="button" disabled={busy} onClick={() => setConfirming(false)} style={buttonStyle}>Cancel</button>
           </span>
@@ -172,7 +171,7 @@ function ResumeNote({ loop, compact }: { loop: LoopView; compact: boolean }) {
     return <span>Resume is refused for a superseded loop; its successor continues the work{successor ? ` (${successor})` : ""}.</span>;
   }
   // With several held loops the sentence is said once for the card; each loop keeps only its command.
-  if (compact) return <details><summary>Resume command</summary><code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code></details>;
+  if (compact) return <details><summary>Command to resume (run in a terminal)</summary><code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code></details>;
   return <span>A person resumes this from an ordinary terminal: <code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code>, or the looptender panel started there.</span>;
 }
 

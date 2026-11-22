@@ -188,7 +188,7 @@ Under each state word the card lists, as a short "Why" list, what is not visible
 Both read:
 
 - `looptender: enabled`: the loop is enabled and this thread is its current target. This label alone does not prove a supervisor is running.
-- `looptender: watching <thread or target>`: the current target is elsewhere. This thread is the loop's primary, so Pause is offered, but it first asks, naming the loop and the thread it supervises. The server refuses a pause or stop from a thread that is neither the loop's primary nor its current target.
+- `looptender: watching <thread or target>`: the current target is elsewhere. This thread is the loop's primary, so Pause is offered, but it first asks, naming the loop and the thread it supervises. The server guards the card against acting on the wrong loop: it refuses a pause or stop that names a thread that is neither the loop's primary nor its current target. The caller names the thread itself and may omit it, so this is not access control.
 - `looptender: paused`, `stop requested`, `awaiting user`, `completed`, or `disabled`: the loop's control state. `looptender: superseded` says resume is refused and shows the successor when `status --json` names one; no state offers a Resume button.
 
 The expanded banner and card hover show the actual target thread (or adapter for non-BB targets), whether this is that thread, declared completion even under another hold, runtime evidence source/freshness, last recorded action/outcome/target/time, and the existing note/send/fallback summary. A completion declaration is not independently verified task success. Failed and dry-run actions remain labeled; missing history and zero timestamps are unavailable, never proof that nothing was sent.

@@ -148,7 +148,7 @@ const UNREADABLE_WHAT: Record<string, string> = {
 type Unreadable = NonNullable<StatusDetails["unreadable"]>[number];
 /** `<file> could not be read (<why>)`, as status prints it. */
 export const unreadableHead = (u: Unreadable): string => `${u.file} could not be read (${UNREADABLE_WHAT[u.problem] ?? "reason not recorded"}${u.offset !== undefined ? `, at byte ${u.offset}` : ""})`;
-const firstSentence = (text: string): string => { const m = /^.*?[.!?](?=\s|$)/s.exec(text.trim()); return m ? m[0] : text.trim(); };
+const firstSentence = (text: string): string => { const m = /^.*?[.!?](?=\s|$)/s.exec(text.trim()); const one = m ? m[0] : text.trim(); return one.length > 240 ? `${one.slice(0, 239).trimEnd()}…` : one; };
 
 /** status: "the reset falls after this loop's deadline: the loop will be held by the deadline on its first check after it, before this wait can end". */
 const AFTER_DEADLINE = "the reset falls after this loop's deadline: the loop will be held by the deadline on its first check after it, before this wait can end";

@@ -16,7 +16,8 @@ async function loopWith(status: object, exit = 0) {
   const { bb, harness } = createFakePluginHost({ pluginId: "keepgoing", settings: { keepgoingPath: program, configs: config } });
   await plugin(bb);
   const forThread = async () => await harness.behavior.callRpc("forThread", { threadId: "thr_example" }) as { loops: { controlState: string; details: StatusDetails }[]; errors: string[] };
-  return { forThread, dispose: async () => { await harness.lifecycle.dispose(); await rm(dir, { recursive: true, force: true }); } };
+  const listing = async () => String((await harness.behavior.runCli(["status"])).stdout);
+  return { forThread, listing, dispose: async () => { await harness.lifecycle.dispose(); await rm(dir, { recursive: true, force: true }); } };
 }
 const agent = { adapter: "bb", bbThread: "thr_example" };
 const healthy = { loop: "example-loop", target: "primary", controlState: "enabled", control: {}, window: "open", state: {}, daemon: { state: "not_recorded" }, primaryAgent: agent, targetAgent: agent };
@@ -79,3 +80,22 @@ test("a held loop's note is a visible reason, cut short; an enabled loop's note 
 });
 
 test("a title is cut to the length asked", () => { assert.equal(boundedTitle("a".repeat(2000), 600).length, 600); assert.equal(boundedTitle("short"), "short"); });
+
+test("a malformed optional field is ignored and the loop is kept", async () => {
+  const bad = { ...healthy, diskSpace: "garbage", sendAllowance: { max: "x" }, unreadable: "nope", deadline: 5, deadlineReached: "yes", sendRecord: 7, control: { supersededBy: 3 } };
+  const w = await loopWith(bad);
+  try {
+    const r = await w.forThread();
+    assert.deepEqual(r.errors, []); assert.equal(r.loops.length, 1); assert.equal(r.loops[0]!.controlState, "enabled");
+    const d = r.loops[0]!.details as Record<string, unknown>;
+    for (const key of ["disk", "sends", "unreadable", "deadline", "sendRecord", "supersededBy"]) assert.equal(d[key], undefined, key);
+  } finally { await w.dispose(); }
+});
+
+test("the listing says a low disk once, as disk=low, and nothing for an ok one", async () => {
+  const message = "the volume that holds the state directory is filling (900 MiB free of 100 GiB, below 2.0 GiB): free space on it before records fail to save";
+  const low = await loopWith({ ...healthy, diskSpace: { level: "low", message } });
+  try { assert.equal((await low.listing()).match(/disk=low/g)?.length, 1); } finally { await low.dispose(); }
+  const ok = await loopWith({ ...healthy, diskSpace: { level: "ok" } });
+  try { assert.ok(!(await ok.listing()).includes("disk=")); } finally { await ok.dispose(); }
+});

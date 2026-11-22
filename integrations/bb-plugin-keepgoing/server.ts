@@ -27,7 +27,7 @@ const statusSchema = z.object({
   target: z.string(),
   controlState: z.string(),
   // Left out of status --json when control.json cannot be read.
-  control: z.object({ note: z.string().optional(), completed: z.boolean().optional(), supersededBy: z.string().optional() }).passthrough().optional(),
+  control: z.object({ note: z.string().optional(), completed: z.boolean().optional(), supersededBy: z.string().optional().catch(undefined) }).passthrough().optional(),
   window: z.string(),
   // Left out of status --json when state.json cannot be read.
   state: z
@@ -49,11 +49,12 @@ const statusSchema = z.object({
   targetConfigured: z.boolean().optional(),
   primaryAgent: agentRef,
   targetAgent: agentRef.optional(),
-  deadline: z.string().optional(), deadlineReached: z.boolean().optional(),
-  sendAllowance: z.object({ max: z.number(), used: z.number().optional(), remaining: z.number().optional(), reached: z.boolean(), error: z.string().optional() }).optional(),
-  sendRecord: z.string().optional(),
-  diskSpace: z.object({ level: z.string(), message: z.string().optional() }).optional(),
-  unreadable: z.array(z.object({ file: z.string(), problem: z.string(), offset: z.number().optional(), remedy: z.string() })).optional(),
+  // A field status adds later that is malformed is ignored, never a reason to lose the loop.
+  deadline: z.string().optional().catch(undefined), deadlineReached: z.boolean().optional().catch(undefined),
+  sendAllowance: z.object({ max: z.number(), used: z.number().optional(), remaining: z.number().optional(), reached: z.boolean(), error: z.string().optional() }).optional().catch(undefined),
+  sendRecord: z.string().optional().catch(undefined),
+  diskSpace: z.object({ level: z.string(), message: z.string().optional() }).optional().catch(undefined),
+  unreadable: z.array(z.object({ file: z.string(), problem: z.string(), offset: z.number().optional(), remedy: z.string() })).optional().catch(undefined),
 });
 
 const loopSchema = z.object({
@@ -88,6 +89,7 @@ function hasUnreadable(output: unknown): boolean {
 }
 
 // What a control says when the thread it was asked from is neither the loop's primary nor its current target.
+export const NOT_THIS_SETUP = "This setup does not belong to this thread (it is neither the thread it was saved for nor the destination of its move), so nothing was changed.";
 export const NOT_THIS_THREAD = "This loop does not belong to this thread (it is neither the loop's primary nor its current target), so nothing was changed.";
 
 // What the plugin says instead of resuming: where a person resumes the loop.
@@ -289,8 +291,8 @@ export default async function plugin(bb: BbPluginApi) {
     if (managedId) {
       const record = (await records()).find(r => r.id === managedId && r.configPath === configPath);
       if (!record) return { ok: false, message: "That setup is not registered with this plugin." };
-      // A control asked for from a thread's card reaches only a loop that thread belongs to.
-      if (expectedThreadId !== undefined && record.threadId !== expectedThreadId && !(await intents()).some(i => i.record.id === record.id && i.destination.threadId === expectedThreadId)) return { ok: false, message: NOT_THIS_THREAD };
+      // A guard against a card acting on the wrong loop, not access control: the caller names the thread itself.
+      if (expectedThreadId !== undefined && record.threadId !== expectedThreadId && !(await intents()).some(i => i.record.id === record.id && i.destination.threadId === expectedThreadId)) return { ok: false, message: NOT_THIS_SETUP };
       try {
         await verifyImported(bin, record);
         const result = await hostCommand(bin, record, action);
@@ -459,7 +461,7 @@ export default async function plugin(bb: BbPluginApi) {
       const [command, name, ...rest] = argv;
       if (command === "status" && name === undefined) {
         const { loops, errors } = await allLoops(null);
-        const lines = loops.map((l) => `${l.loop}\t${l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
+        const lines = loops.map((l) => `${l.loop}\t${l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.details?.disk ? `\tdisk=${l.details.disk.level}` : ""}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
         // Registered loops this plugin was not told about: said, with how to add one.
         let notShown = "";
         try {
