@@ -25,10 +25,20 @@ type limitWaitStatus struct {
 	Receipt         string     `json:"receipt,omitempty"`
 	// Reports counts report attempts in this wait; at most three are made.
 	Reports int `json:"reports,omitempty"`
+	// Reason is why no handoff was possible, as the check recorded it:
+	// limit_failover_disabled, limit_no_fallback, limit_refusal_unrecovered,
+	// or unavailable for a record saved by an earlier build.
+	Reason string `json:"reason,omitempty"`
+	// ReportConfigured says the loop has a report section at all. Without
+	// one nobody is told about the wait: only status, doctor and the panel
+	// show it.
+	ReportConfigured bool `json:"reportConfigured"`
+	// ResetIn is how long is left until the reported reset, when it is ahead.
+	ResetIn string `json:"resetIn,omitempty"`
 }
 
 func describeLimitWait(r *state.LimitWaitReport, loop config.Loop, now time.Time) limitWaitStatus {
-	out := limitWaitStatus{State: "none", ReportWaitAfter: loop.Errors.ReportWaitAfter.Duration.String(), Subscribed: loop.Report.ReportsEvent("limit_wait")}
+	out := limitWaitStatus{State: "none", ReportWaitAfter: loop.Errors.ReportWaitAfter.Duration.String(), Subscribed: loop.Report.ReportsEvent("limit_wait"), ReportConfigured: loop.Report != nil}
 	if r == nil || r.Target == "" || r.ResetsAt.IsZero() {
 		return out
 	}
@@ -41,8 +51,36 @@ func describeLimitWait(r *state.LimitWaitReport, loop config.Loop, now time.Time
 		out.State = "not_subscribed"
 	}
 	out.Target, out.ResetsAt, out.DetectedAt, out.ResetPassed, out.Reports = r.Target, &r.ResetsAt, &r.DetectedAt, !now.Before(r.ResetsAt), r.Reports
+	out.Reason = r.Reason
+	if !out.ResetPassed {
+		out.ResetIn = r.ResetsAt.Sub(now).Round(time.Minute).String()
+	}
+	if out.Reason == "" {
+		out.Reason = "unavailable"
+	}
 	return out
 }
+
+// limitWaitReasonText says why no handoff was possible, in words.
+func limitWaitReasonText(reason string) string {
+	switch reason {
+	case "limit_failover_disabled":
+		return "automatic handoff is off for this error (errors.failover_on does not include it)"
+	case "limit_no_fallback":
+		return "no other route is configured or none passed its check"
+	case "limit_refusal_unrecovered":
+		return "a refusal on this route is unrecovered, so the work is not moved"
+	}
+	return "the reason was not recorded by the build that saw it"
+}
+
+// nobodyTold reports whether a recorded wait reached no person.
+func (s limitWaitStatus) nobodyTold() bool {
+	return s.State == "not_subscribed" || s.State == "report_failed"
+}
+
+// limitWaitWayOut is the advice for a long wait with no handoff.
+const limitWaitWayOut = "To continue before the reset: add a route that can take over (keepgoing fallbacks add; --new-thread starts a conversation on another provider), or follow the standard route list (keepgoing routes follow-standard); keep rate_limit in errors.failover_on; or retarget by hand."
 
 func printLimitWait(w io.Writer, s limitWaitStatus) {
 	if s.State == "none" {
@@ -53,13 +91,23 @@ func printLimitWait(w io.Writer, s limitWaitStatus) {
 		fmt.Fprint(w, " (now passed; the next check decides)")
 	}
 	fmt.Fprintln(w)
+	if !s.ResetPassed {
+		fmt.Fprintf(w, "  LONG LIMIT WAIT: no handoff is possible because %s. Nothing is sent until the limit lifts, for about %s more.\n", limitWaitReasonText(s.Reason), s.ResetIn)
+	}
 	switch s.State {
 	case "reported":
 		fmt.Fprintf(w, "  a limit_wait report was requested for this wait (attempt %d of at most 3, each only after the reset moves later); receipt unverified, see notifications. The loop is not held and keeps checking.\n", max(1, s.Reports))
 	case "report_failed":
 		fmt.Fprintln(w, "  the limit_wait report for this wait FAILED and is not retried; see notifications. The loop is not held and keeps checking.")
 	default:
-		fmt.Fprintln(w, "  nothing was sent: report.events does not include limit_wait. The loop is not held and keeps checking.")
+		if !s.ReportConfigured {
+			fmt.Fprintln(w, "  NOBODY WAS TOLD: this loop has no report section, so no report is sent; only status, doctor and the panel show this wait. The loop is not held and keeps checking.")
+		} else {
+			fmt.Fprintln(w, "  nothing was sent: report.events does not include limit_wait. The loop is not held and keeps checking.")
+		}
+	}
+	if !s.ResetPassed {
+		fmt.Fprintln(w, "  "+limitWaitWayOut)
 	}
 }
 

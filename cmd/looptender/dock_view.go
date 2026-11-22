@@ -388,6 +388,11 @@ type dockLimitWait struct {
 	ResetsAt *time.Time `json:"resetsAt,omitempty"`
 	Passed   bool       `json:"passed"`
 	Text     dockText   `json:"text"`
+	// Reason is why no handoff was possible, as status gives it.
+	Reason string `json:"reason,omitempty"`
+	// Told is whether a person was told: reported (receipt unverified),
+	// report_failed, no_report_section or not_subscribed.
+	Told string `json:"told"`
 }
 
 // dockIdentifiers is shown only on request and holds nothing that registered
@@ -1536,7 +1541,10 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	if st != nil {
 		l.Limits = dockLimits(st, now)
 		if w := st.LimitWait; w.State != "none" {
-			lw := &dockLimitWait{Passed: w.ResetPassed}
+			lw := &dockLimitWait{Passed: w.ResetPassed, Reason: w.Reason, Told: w.State}
+			if w.State == "not_subscribed" && !w.ReportConfigured {
+				lw.Told = "no_report_section"
+			}
 			switch {
 			case dockSaneReset(now, w.ResetsAt) && w.ResetPassed:
 				lw.ResetsAt, lw.Text = w.ResetsAt, txt("Provider limit reset ", dockUntil(now, *w.ResetsAt))
@@ -1597,6 +1605,12 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			l.Detail = "A connectivity check found the network down " + dockAgo(now, st.State.NetworkDownSince) + ", and no connectivity check since has found it back. Work that needs the network waits until one does."
 		case l.LimitWait != nil && !l.LimitWait.Passed:
 			l.State, l.Phrase, l.Detail = "waiting_on_limit", "Waiting for a limit to reset", "A check recorded a provider usage limit with no other route able to take over. The loop is not held and keeps checking."
+			switch l.LimitWait.Told {
+			case "no_report_section":
+				l.Detail += " Nobody was told: this loop has no report section. Adding a route that can take over would let it continue before the reset."
+			case "not_subscribed", "report_failed":
+				l.Detail += " Nobody was told: no limit_wait report reached a destination."
+			}
 		case l.LastCheck.FailedInRow > 0:
 			l.State, l.Phrase, l.Detail = "checks_failing", "Checks are failing", "Checks are running but could not observe or act."
 		default:

@@ -18,6 +18,12 @@ export const daemonSchema = z.object({
   state: z.string(), phase: z.string().optional(), observedAt: z.string().optional(),
   nextCheckAt: z.string().optional(), dryRun: z.boolean().optional(), binaryComparison: z.string().optional(),
 });
+// A long limit wait with no handoff possible, from status --json limitWait.
+// Only its state, reason and reset time cross this boundary.
+export const limitWaitSchema = z.object({
+  state: z.string(), resetsAt: z.string().optional(), resetPassed: z.boolean().optional(),
+  reason: z.string().optional(), reportConfigured: z.boolean().optional(), resetIn: z.string().optional(),
+});
 export const goalSummarySchema = z.object({
   id: z.string().regex(/^goal_[0-9a-f]{32}$/), revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), state: z.literal("recorded"),
 });
@@ -40,6 +46,7 @@ export const detailsSchema = z.object({
   targetThread: z.string().nullable(), targetAdapter: z.string(), targetConfigured: z.boolean().nullable(),
   runtime: runtimeSchema.nullable(), daemon: daemonSchema.nullable(), lastCheck: checkSchema.nullable(),
   schedule: scheduleSchema.nullable().optional(),
+  limitWait: limitWaitSchema.nullable().optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
 
@@ -69,6 +76,18 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
   // Only a judged loop whose usual interval is known is said to be on time.
   else if (d.schedule?.judging && d.schedule.basis === "usual" && !d.schedule.slept) lines.push("Schedule: checks are running at their usual interval");
   else if (!d.schedule) lines.push("External scheduler health: not inspected; a daemon reply does not establish agent health");
+  const wait = d.limitWait;
+  if (wait && wait.state !== "none" && !wait.resetPassed) {
+    const why: Record<string, string> = {
+      limit_failover_disabled: "automatic handoff is off for this error",
+      limit_no_fallback: "no other route is configured or none passed its check",
+      limit_refusal_unrecovered: "a refusal on this route is unrecovered",
+    };
+    const told = wait.state === "reported" ? "a report was requested (receipt unverified)"
+      : wait.state === "report_failed" ? "the report failed; nobody was told"
+      : wait.reportConfigured === false ? "nobody was told: no report section" : "nobody was told: limit_wait is not in report.events";
+    lines.push(`Long limit wait: no handoff possible (${why[wait.reason ?? ""] ?? "reason not recorded"}); resets ${dateLabel(wait.resetsAt)}${wait.resetIn ? ` (in ${wait.resetIn})` : ""}; ${told}. The loop is not held and sends nothing until then.`);
+  }
   if ((d.failedChecks ?? 0) > 0) lines.push(`Checks failing: ${d.failedChecks} failed checks recorded; a responsive daemon does not establish operational supervision`);
   const check = d.lastCheck;
   lines.push(check

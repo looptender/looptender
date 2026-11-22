@@ -83,3 +83,16 @@ test("an overdue schedule is shown with its message, and only a judged one is sa
   const older = diagnosticLines(base, "primary", true);
   assert.ok(older.some((line) => line.startsWith("External scheduler health: not inspected")));
 });
+
+test("a long limit wait says why no handoff is possible and whether anyone was told", () => {
+  const base = { readAt: "2030-01-01T00:00:00Z", completed: false, targetThread: "thr_example", targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null };
+  const lines = diagnosticLines({ ...base, limitWait: { state: "not_subscribed", resetsAt: "2030-01-06T12:00:00Z", reason: "limit_failover_disabled", reportConfigured: false, resetIn: "132h0m0s" } }, "primary", true);
+  const line = lines.find((l) => l.startsWith("Long limit wait:"));
+  assert.ok(line, lines.join("\n"));
+  assert.match(line, /automatic handoff is off/);
+  assert.match(line, /nobody was told: no report section/);
+  assert.match(line, /in 132h0m0s/);
+  for (const limitWait of [null, { state: "none" }, { state: "reported", resetPassed: true }]) {
+    assert.ok(!diagnosticLines({ ...base, limitWait }, "primary", true).some((l) => l.startsWith("Long limit wait:")), JSON.stringify(limitWait));
+  }
+});

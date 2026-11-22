@@ -49,7 +49,7 @@ func TestStatusShowsARecordedLongLimitWait(t *testing.T) {
 	}{
 		{state.LimitWaitRequested, "reported", "a limit_wait report was requested for this wait (attempt 1 of at most 3", 60 * time.Hour},
 		{state.LimitWaitFailed, "report_failed", "FAILED and is not retried", 60 * time.Hour},
-		{state.LimitWaitNotSubscribed, "not_subscribed", "report.events does not include limit_wait", 60 * time.Hour},
+		{state.LimitWaitNotSubscribed, "not_subscribed", "NOBODY WAS TOLD: this loop has no report section", 60 * time.Hour},
 		{state.LimitWaitRequested, "reported", "(now passed; the next check decides)", -time.Minute},
 	} {
 		rec := &state.LimitWaitReport{Target: "primary", ResetsAt: now.Add(tc.resetIn), DetectedAt: now.Add(-12 * time.Hour), Outcome: tc.outcome}
