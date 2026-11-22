@@ -175,3 +175,14 @@ test("a long control note is one short line in the listing", async () => {
   assert.ok(cut.length <= 120 && cut.endsWith("…") && !cut.includes("\n"));
   assert.equal(shortNote("two\nlines  here"), "two lines here");
 });
+
+test("a filling or nearly full volume is shown on the card", () => {
+  const base = { readAt: "2030-01-01T00:00:00Z", completed: false, targetThread: "thr_example", targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null };
+  const message = "the volume that holds the state directory is filling (18.50 GiB free of 926 GiB, below 18.52 GiB): free space on it before records fail to save";
+  const low = diagnosticLines({ ...base, diskSpace: { level: "low", message } }, "primary", true);
+  assert.ok(low.includes("Disk: " + message));
+  for (const diskSpace of [{ level: "ok" }, { level: "unknown" }, null]) {
+    const lines = diagnosticLines({ ...base, diskSpace }, "primary", true);
+    assert.ok(!lines.some((line) => line.startsWith("Disk:")), JSON.stringify(diskSpace));
+  }
+});

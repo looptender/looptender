@@ -123,6 +123,7 @@ func installedDigest(t *testing.T, path string) string {
 func TestAdoptionSwitchesToTheValidatedInstalledBuild(t *testing.T) {
 	w := newAdoptWorld(t)
 	w.execErr = errors.New("fictional exec failure")
+	w.a.disk = &diskWatch{level: "low", told: map[string]bool{"low": true}}
 	lease := &ownerLease{thread: "thr_fictional", generation: 4}
 	w.a.atSafePoint(context.Background(), &config.Config{}, lease)
 	resolved, _ := filepath.EvalSymlinks(w.installed)
@@ -145,7 +146,8 @@ func TestAdoptionSwitchesToTheValidatedInstalledBuild(t *testing.T) {
 	p := w.payloads[0]
 	sha := installedDigest(t, w.installed)
 	if p.ExpectSHA != sha || p.FromSHA != processExecutableImage.Digest() || p.OwnerThread != "thr_fictional" || p.OwnerGeneration != 4 ||
-		p.ExpectedStateDir != "/fictional/state" || p.Mode != "service" || p.Config != w.a.cfgPath || p.StateDir != w.dir || p.Returning != "" {
+		p.ExpectedStateDir != "/fictional/state" || p.Mode != "service" || p.Config != w.a.cfgPath || p.StateDir != w.dir || p.Returning != "" ||
+		p.DiskEpisode == nil || p.DiskEpisode.Level != "low" || len(p.DiskEpisode.Told) != 1 {
 		t.Fatalf("payload: %+v", p)
 	}
 	// The exec failed: the daemon carries on, holding its lock, and says so.

@@ -3,7 +3,7 @@
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
 import { BUILD_LABEL } from "./build-label.ts";
-import { isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
+import { isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema, diskSpaceSchema } from "./status-details.ts";
 import { execFile } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -42,6 +42,7 @@ const statusSchema = z.object({
   runtime: runtimeSchema.optional(),
   moved: movedSchema.optional(),
   schedule: scheduleSchema.optional(),
+  diskSpace: diskSpaceSchema.optional(),
   limitWait: limitWaitSchema.optional(),
   daemon: daemonSchema.optional(),
   targetConfigured: z.boolean().optional(),
@@ -190,6 +191,7 @@ export default async function plugin(bb: BbPluginApi) {
       failedChecks: s.state.failedChecks ?? 0,
       daemon: s.daemon ?? null, lastCheck: s.state.lastCheck ?? null,
       schedule: s.schedule ?? null,
+      diskSpace: s.diskSpace ?? null,
       ...(s.targetAgent.provider ? { targetProvider: s.targetAgent.provider.slice(0, 128) } : {}),
       ...(s.targetAgent.model ? { targetModel: s.targetAgent.model.slice(0, 128) } : {}),
       ...(s.moved ? { moved: s.moved } : {}),
@@ -420,7 +422,7 @@ export default async function plugin(bb: BbPluginApi) {
       const [command, name, ...rest] = argv;
       if (command === "status" && name === undefined) {
         const { loops, errors } = await allLoops(null);
-        const lines = loops.map((l) => `${l.loop}\t${l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
+        const lines = loops.map((l) => `${l.loop}\t${l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.details?.diskSpace && ["low", "critical"].includes(l.details.diskSpace.level) ? `\tdisk=${l.details.diskSpace.level}` : ""}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
         // Registered loops this plugin was not told about: said, with how to add one.
         let notShown = "";
         try {
