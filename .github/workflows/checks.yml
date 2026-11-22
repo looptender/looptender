@@ -119,64 +119,64 @@ jobs:
         if: steps.scope.outputs.scope != 'docs'
       - name: Verify registered client status and controls on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test ./cmd/looptender -run '^TestClient' -count=1
+        run: python scripts/ci-go-test-ran.py go test ./cmd/looptender -run '^TestClient' -count=1
       - name: Verify local loop registry on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test ./internal/registry ./cmd/looptender -run '^TestRegistry' -count=1
+        run: python scripts/ci-go-test-ran.py go test ./internal/registry ./cmd/looptender -run '^TestRegistry' -count=1
       - name: Verify route list edits and their replacement while read on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test ./internal/config ./cmd/looptender -run '^TestRouteEdit' -count=1
+        run: python scripts/ci-go-test-ran.py go test ./internal/config ./cmd/looptender -run '^TestRouteEdit' -count=1
       - name: Verify the per-user directories, their name and their move on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -v ./internal/userdir ./internal/session ./internal/config ./internal/lock ./internal/registry ./cmd/looptender -run '^(TestMove|TestASwapThatStopped|TestOneDirectoryUnderTwoSpellings|TestRewriteMatches|TestRenameProblem|TestRegistryAddThroughAnotherSpelling|TestARecordFromBeforeARename|TestPlaceAt|TestOnePlaceMoved|TestAnInterruptedMove|TestACurrentPlace|TestLookAfterAMove|TestEveryMomentOfAMove|TestOnlyAMoveBetween|TestMigrate|TestRegistryRebase|TestNameIn|TestThisPlatform|TestDirKeepsTheEarlierDirectory|TestClaimsAndRecordsAreHonouredUnderBothNames|TestAClaimIsTakenWhenTheTwoNamesAreOneDirectory|TestLookWhenTheTwoNamesAreOneDirectory|TestHeld|TestStandardRoutesPath|TestInitDefaultDirectory|TestDoctorUserDirectory|TestRegistriesUnderBothNames)' -count=1
-      - run: go test -v ./cmd/looptender -run '^(TestWindowsACL|TestDoctorACL|TestWindowsAccess|TestDoctorAccess)' -count=1
+        run: python scripts/ci-go-test-ran.py go test -v ./internal/userdir ./internal/session ./internal/config ./internal/lock ./internal/registry ./cmd/looptender -run '^(TestMove|TestASwapThatStopped|TestOneDirectoryUnderTwoSpellings|TestRewriteMatches|TestRenameProblem|TestRegistryAddThroughAnotherSpelling|TestARecordFromBeforeARename|TestPlaceAt|TestOnePlaceMoved|TestAnInterruptedMove|TestACurrentPlace|TestLookAfterAMove|TestEveryMomentOfAMove|TestOnlyAMoveBetween|TestMigrate|TestRegistryRebase|TestNameIn|TestThisPlatform|TestDirKeepsTheEarlierDirectory|TestClaimsAndRecordsAreHonouredUnderBothNames|TestAClaimIsTakenWhenTheTwoNamesAreOneDirectory|TestLookWhenTheTwoNamesAreOneDirectory|TestHeld|TestStandardRoutesPath|TestInitDefaultDirectory|TestDoctorUserDirectory|TestRegistriesUnderBothNames)' -count=1
+      - run: python scripts/ci-go-test-ran.py go test -v ./cmd/looptender -run '^(TestWindowsACL|TestDoctorACL|TestWindowsAccess|TestDoctorAccess)' -count=1
         if: steps.scope.outputs.scope != 'docs'
       - name: Verify allowance persistence and replacement on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -v ./internal/state -run '^Test(SendLedger|ProgressLedger|LaneKey|WindowsMissingMarkedLaneKey)' -count=1
+        run: python scripts/ci-go-test-ran.py go test -v ./internal/state -run '^Test(SendLedger|ProgressLedger|LaneKey|WindowsMissingMarkedLaneKey)' -count=1
       - name: Verify runtime records can be replaced while readers poll
         # Report every record even when an earlier step has already failed.
         if: always() && (steps.scope.outputs.scope != 'docs')
-        run: go test -race -v ./internal/state ./internal/health ./internal/incident ./internal/report ./internal/registry ./internal/daemoninfo ./cmd/looptender -run '^(TestStateSnapshot|Test.*SnapshotSavesWhileReadersPoll$|TestTransferRecordReads)' -count=1
+        run: python scripts/ci-go-test-ran.py go test -race -v ./internal/state ./internal/health ./internal/incident ./internal/report ./internal/registry ./internal/daemoninfo ./cmd/looptender -run '^(TestStateSnapshot|Test.*SnapshotSavesWhileReadersPoll$|TestTransferRecordReads)' -count=1
       - name: Verify Sessionpipe report gates and explicit resume on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -race -v ./internal/report ./cmd/looptender -run '^(TestSessionpipe|TestReportResume)' -count=1
+        run: python scripts/ci-go-test-ran.py go test -race -v ./internal/report ./cmd/looptender -run '^(TestSessionpipe|TestReportResume)' -count=1
       - name: Verify process delivery history and notification contracts on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -race -v ./internal/report ./cmd/looptender -run '^(TestProcessDelivery|TestBBPush)' -count=1
+        run: python scripts/ci-go-test-ran.py go test -race -v ./internal/report ./cmd/looptender -run '^(TestProcessDelivery|TestBBPush)' -count=1
       - name: Verify BB transfer and recovery on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -v ./cmd/looptender -run '^TestTransfer' -count=1
-      - run: go test -v ./internal/config -run '^TestBBTransfer' -count=1
+        run: python scripts/ci-go-test-ran.py go test -v ./cmd/looptender -run '^TestTransfer' -count=1
+      - run: python scripts/ci-go-test-ran.py go test -v ./internal/config -run '^TestBBTransfer' -count=1
         if: steps.scope.outputs.scope != 'docs'
       - name: Verify goal-aware setup on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -v ./cmd/looptender -run '^TestInitGoal' -count=1
+        run: python scripts/ci-go-test-ran.py go test -v ./cmd/looptender -run '^TestInitGoal' -count=1
       - name: Verify Cursor guided setup on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -v ./cmd/looptender -run '^(TestInitCursor|TestDoctorCursor)' -count=1
+        run: python scripts/ci-go-test-ran.py go test -v ./cmd/looptender -run '^(TestInitCursor|TestDoctorCursor)' -count=1
       - name: Verify guided fallback setup on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -v ./cmd/looptender -run '^TestFallbacks(Add|Handoff|Remove|Move|Manage)' -count=1
+        run: python scripts/ci-go-test-ran.py go test -v ./cmd/looptender -run '^TestFallbacks(Add|Handoff|Remove|Move|Manage)' -count=1
       - name: Verify explicit assignment lifecycle and coordination records on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -race -v ./internal/control ./internal/config ./cmd/looptender -run '^Test(Assignment|DockAssignment)' -count=1
+        run: python scripts/ci-go-test-ran.py go test -race -v ./internal/control ./internal/config ./cmd/looptender -run '^Test(Assignment|DockAssignment)' -count=1
       - name: Verify private goal records on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -v ./internal/control -run '^TestGoal' -count=1
+        run: python scripts/ci-go-test-ran.py go test -v ./internal/control -run '^TestGoal' -count=1
       - name: Verify control writes across repeated and backwards clock readings
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -v ./internal/control -run '^TestSaveAdvancesLoadedTimestamp$' -count=1
+        run: python scripts/ci-go-test-ran.py go test -v ./internal/control -run '^TestSaveAdvancesLoadedTimestamp$' -count=1
       - name: Verify daemon control polling with unchanged file metadata
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -v ./cmd/looptender -run '^TestDaemonWait' -count=1
+        run: python scripts/ci-go-test-ran.py go test -v ./cmd/looptender -run '^TestDaemonWait' -count=1
       - name: Verify control snapshots permit atomic replacement on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -race -v ./internal/control ./cmd/looptender -run '^(TestControlSnapshot|TestWindowsControlSnapshot|TestDaemonWaitSnapshot)' -count=1
+        run: python scripts/ci-go-test-ran.py go test -race -v ./internal/control ./cmd/looptender -run '^(TestControlSnapshot|TestWindowsControlSnapshot|TestDaemonWaitSnapshot)' -count=1
       - name: Verify executable record, receipt and backup metadata on Windows
         # Metadata helpers only: build replacement remains unsupported here.
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -v ./internal/state ./cmd/looptender -run '^(TestWindowsCheckExecutable|TestWindowsBuildReceipt|TestBuildBackupPreserves)' -count=1
+        run: python scripts/ci-go-test-ran.py go test -v ./internal/state ./cmd/looptender -run '^(TestWindowsCheckExecutable|TestWindowsBuildReceipt|TestBuildBackupPreserves)' -count=1
       - name: Verify the snapshot package on Windows
         # The whole package: every reader and writer rule of record files is
         # here, and a test that a name filter misses would never run.
@@ -187,10 +187,10 @@ jobs:
         run: python scripts/check-antigravity-snapshot-negative.py
       - name: Verify Antigravity turn snapshot replacement on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -race -v ./internal/adapter/runner -run '^TestAntigravityTurnSnapshot' -count=1
+        run: python scripts/ci-go-test-ran.py go test -race -v ./internal/adapter/runner -run '^TestAntigravityTurnSnapshot' -count=1
       - name: Verify headless observation output boundaries on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -race -v ./internal/adapter/runner -run '^TestBuiltinOutputReadBoundaries$' -count=1
+        run: python scripts/ci-go-test-ran.py go test -race -v ./internal/adapter/runner -run '^TestBuiltinOutputReadBoundaries$' -count=1
       - name: Verify the adapter contract cases on Windows
         if: steps.scope.outputs.scope != 'docs'
         run: go test -race -v ./internal/adapter/conformance -count=1
@@ -202,15 +202,15 @@ jobs:
         run: go test -race -v ./internal/accounts -count=1
       - name: Verify selected account commands and effective context on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -race -v ./cmd/looptender -run '^(TestAccounts|TestAccountQuota|TestPanelAccountQuota|TestPanelAccountSelection|TestPanelAccountReply|TestPanelAccountConnectClient|TestPanelSendAllowance)' -count=1
+        run: python scripts/ci-go-test-ran.py go test -race -v ./cmd/looptender -run '^(TestAccounts|TestAccountQuota|TestPanelAccountQuota|TestPanelAccountSelection|TestPanelAccountReply|TestPanelAccountConnectClient|TestPanelSendAllowance)' -count=1
       - name: Verify bounded PR backlog evidence and ordinary wake gates on Windows
         if: steps.scope.outputs.scope != 'docs'
         run: |
           go test -race -v ./internal/prbacklog -count=1
-          go test -race -v ./internal/config ./internal/supervise ./cmd/looptender -run '^TestPRBacklog' -count=1
+          python scripts/ci-go-test-ran.py go test -race -v ./internal/config ./internal/supervise ./cmd/looptender -run '^TestPRBacklog' -count=1
       - name: Verify offline run navigation on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -race -v ./cmd/looptender -run '^TestRuns' -count=1
+        run: python scripts/ci-go-test-ran.py go test -race -v ./cmd/looptender -run '^TestRuns' -count=1
       - name: Work skipped for a documentation-only change
         if: steps.scope.outputs.scope == 'docs'
         shell: bash
@@ -255,13 +255,13 @@ jobs:
         run: go test -race -v ./internal/adapter/runner -count=1
       - name: Verify Cursor command recovery and active holds on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -race -v ./cmd/looptender -run '^TestCursorCommand' -count=1
+        run: python scripts/ci-go-test-ran.py go test -race -v ./cmd/looptender -run '^TestCursorCommand' -count=1
       - name: Verify Cursor idle holds through the real factory on Windows
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -race -v ./internal/supervise -run '^TestCursorHolds' -count=1
+        run: python scripts/ci-go-test-ran.py go test -race -v ./internal/supervise -run '^TestCursorHolds' -count=1
       - name: Verify detached background startup with a local process fixture
         if: steps.scope.outputs.scope != 'docs'
-        run: go test -v ./cmd/looptender -run '^TestStartBackgroundProcess$' -count=20 -timeout=3m
+        run: python scripts/ci-go-test-ran.py go test -v ./cmd/looptender -run '^TestStartBackgroundProcess$' -count=20 -timeout=3m
       - name: Work skipped for a documentation-only change
         if: steps.scope.outputs.scope == 'docs'
         shell: bash
@@ -336,11 +336,15 @@ jobs:
         run: bash scripts/ci-timeout-note.sh
 
   # The required checks are "Build and test (ubuntu-24.04)" and "Build and
-  # test (macos-15)". They are this job, a gate that passes only when the
-  # other checks and every command partition passed. It keeps the names branch
-  # protection requires; the work moved to `checks` and `race`. It runs on
-  # Linux for both names: it only reads results. A matrix job's result covers
-  # all its legs, so a failure on either OS fails both gates.
+  # test (macos-15)". They are this job, a gate that passes only when every
+  # other job in this workflow passed: the race partitions, the other checks,
+  # the BB plugin job and both Windows jobs. Branch protection requires only
+  # these names, so any job the gate does not wait for cannot block a merge.
+  # scripts/ci-workflow-test.py fails if a job of this workflow is missing from
+  # `needs`. Both gates wait for all of them, so no extra required context is
+  # needed. It runs on Linux for both names: it only reads results. A matrix
+  # job's result covers all its legs, so a failure on either OS fails both
+  # gates.
   go:
     # A name with an expression does not get the matrix value appended, so it
     # is written out.
@@ -349,19 +353,19 @@ jobs:
       fail-fast: false # each gate reports its own result
       matrix:
         os: [ubuntu-24.04, macos-15]
-    needs: [checks, race]
+    needs: [checks, race, bb-plugin, windows-acl, windows-processes]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require the other checks and every race partition
+      - name: Require every other job to have succeeded
         shell: bash
         env:
-          CHECKS: ${{ needs.checks.result }}
-          RACE: ${{ needs.race.result }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          echo "Other checks: $CHECKS. Race partitions: $RACE." | tee -a "$GITHUB_STEP_SUMMARY"
-          [ "$CHECKS" = success ] && [ "$RACE" = success ]
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"' | tee -a "$GITHUB_STEP_SUMMARY"
+          # Success only: failure, cancelled and skipped all fail the gate.
+          echo "$NEEDS" | jq -e 'length > 0 and all(.[]; .result == "success")' > /dev/null
 
   checks:
     name: "${{ inputs.base && 'Scope preview - ' || '' }}Other checks (${{ matrix.os }})"
@@ -402,6 +406,9 @@ jobs:
       - name: Check workflow selection and native race execution
         if: runner.os == 'Linux'
         run: python3 scripts/ci-workflow-test.py
+      - name: Check that a go test pattern matching nothing fails
+        if: runner.os == 'Linux'
+        run: python3 scripts/ci-go-test-ran-test.py
       - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
         if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
       - run: go vet ./...
@@ -428,7 +435,7 @@ jobs:
           python3 integrations/macos/scripts/smoke-contract.py "$RUNNER_TEMP/keepgoing-smoke"
       - name: Verify native Linux ACL metadata fixture
         if: runner.os == 'Linux'
-        run: go test -v ./cmd/looptender -run '^TestLinuxACLMetadataDetectsDefaultACLHiddenByModeBits$' -count=1
+        run: python3 scripts/ci-go-test-ran.py go test -v ./cmd/looptender -run '^TestLinuxACLMetadataDetectsDefaultACLHiddenByModeBits$' -count=1
       - name: Cross-compile for Windows
         if: runner.os == 'Linux'
         run: GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/looptender
