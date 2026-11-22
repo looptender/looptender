@@ -97,7 +97,10 @@ func (t *tick) reportLongLimitWait(target string, obs decide.Observation) {
 	case decide.WaitRefusalUnrecovered:
 		reason, cause = "a refusal on this route is unrecovered, so the work is not moved", kind
 	}
-	rec := &state.LimitWaitReport{Target: target, ResetsAt: obs.ResetsAt.UTC(), DetectedAt: t.now, Outcome: state.LimitWaitNotSubscribed, Reason: string(cause), Reports: reports}
+	rec := &state.LimitWaitReport{Target: target, ResetsAt: obs.ResetsAt.UTC(), DetectedAt: t.now, Outcome: state.LimitWaitNotSubscribed, Reason: string(cause), Reports: reports, ReportSection: "present"}
+	if t.loop.Report == nil {
+		rec.ReportSection = "none"
+	}
 	if !subscribed {
 		t.st.LimitWaitReport = rec
 		t.incidentLimitWaitReport = rec.Outcome

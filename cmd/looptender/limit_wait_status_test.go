@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/incident"
 	"github.com/looptender/looptender/internal/state"
 )
@@ -23,6 +24,10 @@ func TestStatusShowsARecordedLongLimitWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
+	// An enabled loop: a held one shows its recorded wait as from before the hold.
+	if _, err := control.Update(f.state, func(c *control.File) { c.Enabled = true }); err != nil {
+		t.Fatal(err)
+	}
 	run := func(asJSON bool) (string, limitWaitStatus) {
 		t.Helper()
 		var out bytes.Buffer
@@ -48,8 +53,8 @@ func TestStatusShowsARecordedLongLimitWait(t *testing.T) {
 		resetIn              time.Duration
 	}{
 		{state.LimitWaitRequested, "reported", "a limit_wait report was requested for this wait (attempt 1 of at most 3", 60 * time.Hour},
-		{state.LimitWaitFailed, "report_failed", "FAILED and is not retried", 60 * time.Hour},
-		{state.LimitWaitNotSubscribed, "not_subscribed", "NOBODY WAS TOLD: this loop has no report section", 60 * time.Hour},
+		{state.LimitWaitFailed, "report_failed", "FAILED (delivery not confirmed) and is not retried", 60 * time.Hour},
+		{state.LimitWaitNotSubscribed, "not_subscribed", "nothing was sent: limit_wait was not subscribed when this wait was recorded", 60 * time.Hour},
 		{state.LimitWaitRequested, "reported", "(now passed; the next check decides)", -time.Minute},
 	} {
 		rec := &state.LimitWaitReport{Target: "primary", ResetsAt: now.Add(tc.resetIn), DetectedAt: now.Add(-12 * time.Hour), Outcome: tc.outcome}
@@ -72,7 +77,7 @@ func TestStatusShowsARecordedLongLimitWait(t *testing.T) {
 		}
 	}
 	// A malformed record is not presented as a wait.
-	if got := describeLimitWait(&state.LimitWaitReport{Outcome: state.LimitWaitRequested}, cfg.Loop, now); got.State != "none" {
+	if got := describeLimitWait(&state.LimitWaitReport{Outcome: state.LimitWaitRequested}, cfg.Loop, "", now); got.State != "none" {
 		t.Fatalf("%+v", got)
 	}
 }

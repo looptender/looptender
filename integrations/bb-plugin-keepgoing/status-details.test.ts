@@ -86,12 +86,18 @@ test("an overdue schedule is shown with its message, and only a judged one is sa
 
 test("a long limit wait says why no handoff is possible and whether anyone was told", () => {
   const base = { readAt: "2030-01-01T00:00:00Z", completed: false, targetThread: "thr_example", targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null };
-  const lines = diagnosticLines({ ...base, limitWait: { state: "not_subscribed", resetsAt: "2030-01-06T12:00:00Z", reason: "limit_failover_disabled", reportConfigured: false, resetIn: "132h0m0s" } }, "primary", true);
+  const lines = diagnosticLines({ ...base, limitWait: { state: "not_subscribed", resetsAt: "2030-01-06T12:00:00Z", reason: "limit_failover_disabled", reportConfigured: false, resetIn: "5d 12h" } }, "primary", true);
   const line = lines.find((l) => l.startsWith("Long limit wait:"));
   assert.ok(line, lines.join("\n"));
   assert.match(line, /automatic handoff is off/);
   assert.match(line, /nobody was told: no report section/);
-  assert.match(line, /in 132h0m0s/);
+  const failed = diagnosticLines({ ...base, limitWait: { state: "report_failed", resetsAt: "2030-01-06T12:00:00Z", reportConfigured: true } }, "primary", true).find((l) => l.startsWith("Long limit wait:"));
+  assert.match(failed ?? "", /delivery not confirmed/);
+  assert.doesNotMatch(failed ?? "", /nobody/i);
+  const held = diagnosticLines({ ...base, limitWait: { state: "not_subscribed", resetsAt: "2030-01-06T12:00:00Z", reportConfigured: false, held: "completed" } }, "primary", true).find((l) => l.startsWith("Long limit wait:"));
+  assert.match(held ?? "", /recorded before the loop was held \(completed\)/);
+  assert.doesNotMatch(held ?? "", /not held|nobody/i);
+  assert.match(line, /in 5d 12h/);
   for (const limitWait of [null, { state: "none" }, { state: "reported", resetPassed: true }]) {
     assert.ok(!diagnosticLines({ ...base, limitWait }, "primary", true).some((l) => l.startsWith("Long limit wait:")), JSON.stringify(limitWait));
   }

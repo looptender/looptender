@@ -1542,7 +1542,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		l.Limits = dockLimits(st, now)
 		if w := st.LimitWait; w.State != "none" {
 			lw := &dockLimitWait{Passed: w.ResetPassed, Reason: w.Reason, Told: w.State}
-			if w.State == "not_subscribed" && !w.ReportConfigured {
+			if w.State == "not_subscribed" && w.ReportConfigured != nil && !*w.ReportConfigured {
 				lw.Told = "no_report_section"
 			}
 			switch {
@@ -1607,9 +1607,11 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			l.State, l.Phrase, l.Detail = "waiting_on_limit", "Waiting for a limit to reset", "A check recorded a provider usage limit with no other route able to take over. The loop is not held and keeps checking."
 			switch l.LimitWait.Told {
 			case "no_report_section":
-				l.Detail += " Nobody was told: this loop has no report section. Adding a route that can take over would let it continue before the reset."
-			case "not_subscribed", "report_failed":
-				l.Detail += " Nobody was told: no limit_wait report reached a destination."
+				l.Detail += " Nobody was told: the loop had no report section when the wait was recorded. Adding a route that can take over would let it continue before the reset."
+			case "not_subscribed":
+				l.Detail += " Nobody was told: limit_wait was not among the reported events."
+			case "report_failed":
+				l.Detail += " Its limit_wait report failed; delivery is not confirmed."
 			}
 		case l.LastCheck.FailedInRow > 0:
 			l.State, l.Phrase, l.Detail = "checks_failing", "Checks are failing", "Checks are running but could not observe or act."
