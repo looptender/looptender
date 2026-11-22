@@ -168,6 +168,12 @@ func TestScenarioIncidentAdoptsInstalledBuild(t *testing.T) {
 	})
 	o, reason := adoption()
 	if o == "refused" && strings.Contains(reason, "a directory of the launch path") {
+		// The install tree is beside this package's sources, not in the
+		// shared temporary directory, so a CI checkout passes the check. In
+		// CI a refusal fails the test: the regression must run there.
+		if os.Getenv("CI") != "" {
+			t.Fatalf("the daemon refused the fixture's directories in CI, so the adoption regression did not run: %s", reason)
+		}
 		t.Skipf("no directory here passes the daemon's directory checks: %s", reason)
 	}
 	w.Check(s, "adopted after the handoff", all(
@@ -209,6 +215,9 @@ func goTool(t *testing.T) string {
 	}
 	p := filepath.Join(runtime.GOROOT(), "bin", "go")
 	if _, err := os.Stat(p); err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatal("the Go toolchain is not available in CI to build a second build")
+		}
 		t.Skip("the Go toolchain is not available to build a second build")
 	}
 	return p
