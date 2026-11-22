@@ -20,21 +20,97 @@ spec.loader.exec_module(race)
 
 class PartitionTests(unittest.TestCase):
     def test_new_tests_examples_and_fuzz_seeds_exactly_once(self):
-        names = sorted(race.EARLY) + ['TestNew', 'TestNewest', 'Example', 'ExampleOutput', 'FuzzSeeds']
+        names = ['TestNew', 'TestNewest', 'Example', 'ExampleOutput', 'FuzzSeeds', 'TestDockHiddenTabReadsNothingG1']
         listed = race.inventory('\n'.join(names + ['BenchmarkCost']))
         groups = race.partition(listed)
+        self.assertEqual(len(groups), race.PARTITIONS)
         self.assertCountEqual([n for g in groups for n in g], names)
-        self.assertEqual(groups[0], sorted(race.EARLY))
-        self.assertFalse(set(groups[0]) & set(groups[1] + groups[2]))
-        for name in ['Example', 'ExampleOutput', 'FuzzSeeds', 'TestNewest']:
+        for name in names:
             self.assertEqual(sum(name in g for g in groups), 1)
+
+    def test_every_count_and_weight_covers_each_test_exactly_once(self):
+        # A test in no partition, or in two, must be impossible whatever the
+        # weights file says (stale, missing or odd entries only change balance).
+        names = [f'Test{i}' for i in range(200)]
+        for count in (1, 2, 3, 5, 8):
+            for weights in [(0.25, {}), (0.25, {'Test3': 99.0, 'Test4': 0.0, 'Gone': 5.0}), (1.0, {n: 1.0 for n in names})]:
+                with self.subTest(count=count):
+                    groups = race.partition(names, count, weights)
+                    self.assertEqual(len(groups), count)
+                    self.assertEqual(sorted(n for g in groups for n in g), sorted(names))
+                    self.assertEqual(groups, race.partition(list(reversed(names)), count, weights))
+
+    def test_real_weights_balance_the_partitions(self):
+        default, known = race.load_weights()
+        self.assertGreater(len(known), 50)
+        names = list(known) + [f'TestOther{i}' for i in range(1000)]
+        groups = race.partition(names)
+        loads = [sum(known.get(n, default) for n in g) for g in groups]
+        self.assertLess(max(loads) - min(loads), max(known.values()))
+
+    def test_every_package_but_the_command_package_runs_in_exactly_one_leg(self):
+        packages = [race.MODULE + n for n in ['internal/incident', 'internal/supervise', 'internal/new', 'internal/other']]
+        for loads in ([0, 0, 0], [500, 0, 10]):
+            groups = race.package_groups(packages, loads)
+            self.assertEqual(sorted(p for g in groups for p in g), sorted(packages))
+        self.assertTrue(all(len(g) <= 2 for g in race.package_groups(packages, [0, 0, 0])))
+        real = race.package_groups([race.MODULE + n for n in json.loads(race.WEIGHTS_FILE.read_text())['packages']], [330, 330, 330])
+        self.assertTrue(all(real), 'each leg should get a heavy package')
+
+    def test_the_early_guard_tests_are_not_all_in_one_partition(self):
+        guards = ['TestDockHiddenTabReadsNothingG1', 'TestDockReadsTimeOutG2', 'TestDockQuotaOnlyReadsAfterExplicitReview']
+        default, known = race.load_weights()
+        # The source's own test functions stand in for the binary's inventory.
+        source = Path(__file__).resolve().parents[1] / 'cmd/looptender'
+        names = sorted({m for f in source.glob('*_test.go')
+                        for m in re.findall(r'^func (Test\w+)\(\w+ \*testing\.T\)', f.read_text(), re.M)})
+        self.assertTrue(set(guards) <= set(names))
+        groups = race.partition(names)
+        self.assertGreater(len({i for i, g in enumerate(groups) for n in guards if n in g}), 1)
+
+    def test_workflow_matrix_runs_every_partition(self):
+        text = (Path(__file__).resolve().parents[1] / '.github/workflows/checks.yml').read_text()
+        job = re.search(r'^  race:\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', text, re.M | re.S)[1]
+        listed = re.search(r'^        part: \[([0-9, ]+)\]$', job, re.M)[1]
+        self.assertEqual([int(i) for i in listed.split(',')], list(range(race.PARTITIONS)))
+
+    def test_overrun_names_the_partition_its_slowest_and_its_unfinished_tests(self):
+        events = [
+            {'Time': '2026-11-22T10:00:00.1Z', 'Action': 'run', 'Test': 'TestFast'},
+            {'Time': '2026-11-22T10:00:01.1Z', 'Action': 'pass', 'Test': 'TestFast', 'Elapsed': 1.0},
+            {'Time': '2026-11-22T10:00:01.2Z', 'Action': 'run', 'Test': 'TestSlow'},
+            {'Time': '2026-11-22T10:00:21.2Z', 'Action': 'pass', 'Test': 'TestSlow', 'Elapsed': 20.0},
+            {'Time': '2026-11-22T10:00:21.3Z', 'Action': 'run', 'Test': 'TestStuck'},
+            {'Time': '2026-11-22T10:00:51.3Z', 'Action': 'output', 'Test': 'TestStuck'},
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / 'command-1.jsonl'
+            log.write_text(''.join(json.dumps(e) + '\n' for e in events) + '{"Time": cut off')
+            text = race.describe(log, 1, 3, 600, 630)
+            later = race.describe(log, 1, 3, 600, 630, '2026-11-22T10:10:21.3Z')
+        self.assertIn('partition 2 of 3', text)
+        self.assertIn('630s of its 600s budget', text)
+        self.assertIn('still running: TestStuck (30s so far)', text)
+        self.assertIn('slowest finished: TestSlow 20.0s, TestFast 1.0s', text)
+        # A stuck test keeps counting to the moment of the stop, not to its last output.
+        self.assertIn('still running: TestStuck (600s so far)', later)
+
+    def test_deadline_message_comes_from_the_partition_not_a_generic_string(self):
+        with tempfile.TemporaryDirectory() as temp:
+            job = race.Job([sys.executable, '-u', '-c', 'import time; time.sleep(30)'],
+                           temp, Path(temp) / 'slow.log', ['TestSlow'])
+            try:
+                with self.assertRaisesRegex(TimeoutError, 'partition 9 of 9'):
+                    race.wait_jobs([job], time.monotonic() + 0.3, lambda: 'command partition 9 of 9 over')
+            finally:
+                job.stop()
 
     def test_missing_duplicate_empty_and_unrecognized_inventory_refused(self):
         for output in ['', 'TestA\nTestA', 'TestA\nFAIL', 'TestA\nwarning: partial list']:
             with self.subTest(output=output), self.assertRaises(ValueError):
                 race.inventory(output)
         with self.assertRaises(ValueError):
-            race.partition(['TestNew', 'TestOther'])
+            race.partition([])
         for groups in [[['TestA']], [['TestA'], ['TestA', 'TestB']], [['TestA', 'TestB'], []]]:
             with self.subTest(groups=groups), self.assertRaises(ValueError):
                 race.validate_partition(['TestA', 'TestB'], groups)

@@ -274,11 +274,97 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           LIMIT_MINUTES: "12"
         run: bash scripts/ci-timeout-note.sh
+
+  # The command package's tests run as three partitions, one runner each
+  # (scripts/ci-race.py, weights in scripts/ci-race-weights.json), so no runner
+  # carries the whole package: on one macOS runner the two partitions and the
+  # other packages together used 91 to 99 percent of the 600-second budget and
+  # the merge queue run 45007959493 ran out of it with no failing test. Each
+  # leg has its own 600-second budget for its command tests, then runs a share
+  # of the other packages, and says which partition ran over and which tests
+  # were slowest or unfinished. `checks` keeps everything else.
+  race:
+    name: "${{ inputs.base && 'Scope preview - ' || '' }}Race partition ${{ matrix.part }} (${{ matrix.os }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        part: [0, 1, 2]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      actions: read # the timeout note reads this run's steps
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          PREVIEW_BASE: ${{ inputs.base }}
+        # Anything but a clean "docs" answer runs everything.
+        run: bash scripts/ci-scope.sh >> "$GITHUB_OUTPUT" || echo "scope=full" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
+        with:
+          go-version: "1.26.11"
+      - name: Run one disjoint partition of the command package, and a share of the other packages, under the race detector
+        run: python3 -u scripts/ci-race.py command ${{ matrix.part }}
+        if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
+      - name: Retain this partition's inventory and logs
+        if: always() && (steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: race-partition-${{ matrix.part }}-${{ matrix.os }}
+          path: ${{ runner.temp }}/ci-race/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Work skipped for a documentation-only change
+        if: steps.scope.outputs.scope == 'docs' && matrix.os != 'ubuntu-24.04'
+        shell: bash
+        run: echo "Every changed file is documentation, so this job did no work. The Ubuntu job ran every check." >> "$GITHUB_STEP_SUMMARY"
+      - name: Say so if the job ran out of time
+        if: cancelled()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIMIT_MINUTES: "15"
+        run: bash scripts/ci-timeout-note.sh
+
+  # The required checks are "Build and test (ubuntu-24.04)" and "Build and
+  # test (macos-15)". They are this job, a gate that passes only when the
+  # other checks and every command partition passed. It keeps the names branch
+  # protection requires; the work moved to `checks` and `race`. It runs on
+  # Linux for both names: it only reads results. A matrix job's result covers
+  # all its legs, so a failure on either OS fails both gates.
   go:
-    # The required checks are "Build and test (ubuntu-24.04)" and "Build and
-    # test (macos-15)". A name with an expression does not get the matrix
-    # value appended, so it is written out.
+    # A name with an expression does not get the matrix value appended, so it
+    # is written out.
     name: "${{ inputs.base && 'Scope preview - ' || '' }}Build and test (${{ matrix.os }})"
+    strategy:
+      fail-fast: false # each gate reports its own result
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    needs: [checks, race]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the other checks and every race partition
+        shell: bash
+        env:
+          CHECKS: ${{ needs.checks.result }}
+          RACE: ${{ needs.race.result }}
+        run: |
+          echo "Other checks: $CHECKS. Race partitions: $RACE." | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$CHECKS" = success ] && [ "$RACE" = success ]
+
+  checks:
+    name: "${{ inputs.base && 'Scope preview - ' || '' }}Other checks (${{ matrix.os }})"
     strategy:
       matrix:
         os: [ubuntu-24.04, macos-15]
@@ -328,17 +414,6 @@ jobs:
       - name: Check race partition coverage and failure handling
         if: runner.os == 'Linux'
         run: python3 scripts/ci-race-test.py
-      - name: Run native race suite with disjoint command partitions
-        run: python3 -u scripts/ci-race.py
-        if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
-      - name: Retain race inventory and partition logs
-        if: always() && (steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: native-race-${{ matrix.os }}
-          path: ${{ runner.temp }}/ci-race/
-          if-no-files-found: warn
-          retention-days: 7
       - name: Smoke check setup and recovery with local fixtures
         if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
         run: |
