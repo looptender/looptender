@@ -4,6 +4,12 @@ The current source command package is `cmd/looptender`. Historical validation co
 
 For a built or unpacked executable, [release verification](release-verification.md) provides a provider-free setup smoke check, a [local recovery smoke check](release-verification.md#check-recovery-with-local-stand-ins), and a separate live walkthrough. Both scripts run in macOS/Linux CI. Recovery uses stand-in providers, a loopback webhook and actual temporary daemon processes; neither script certifies real provider sessions.
 
+## Go toolchain
+
+CI and release builds pin Go 1.26.11, the current patch of the older upstream-supported release line when selected. The module's `go 1.24.0` directive remains the language/minimum compatibility declaration; it is not the CI compiler pin. Keep all setup-go steps on the same reviewed patch and update the pin as upstream support changes.
+
+Go 1.24.0 has a known ARM64 compiler bug that can manufacture out-of-allocation temporary pointers ([Go issue 71932](https://github.com/golang/go/issues/71932), [fixed in 1.24.1](https://github.com/golang/go/issues/71938)). Do not select that initial compiler from the module directive for CI. The observed incident-journal GC crash is consistent with this bug, but the failure alone does not establish its exact cause. Keep race checks and platform coverage enabled; a successful retry is not a diagnosis.
+
 ## Review and execution evidence
 
 These checks guide new changes; adding them does not certify existing code or close roadmap acceptance criteria.
