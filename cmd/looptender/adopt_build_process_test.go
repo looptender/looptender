@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -139,6 +140,7 @@ loop:
 		t.Fatalf("%s not reached; daemon %+v\nrecord %s\nruns %s", what, query(), r, b)
 	}
 	waitFor("old build answering", 10*time.Second, func() bool { return query().Version == "fixture-old" })
+	startedAt := query().StartedAt
 	ctlBefore, err := os.ReadFile(filepath.Join(stateDir, control.FileName))
 	if err != nil {
 		t.Fatal(err)
@@ -147,6 +149,15 @@ loop:
 	waitFor("new build answering", 40*time.Second, func() bool { return query().Version == "fixture-new" })
 	if s := query(); s.ProcessID != started.PID {
 		t.Fatalf("a new process: %d, started %d", s.ProcessID, started.PID)
+	}
+	// The same process: its start is the one it had before the switch, and
+	// the switch is when the new build took over.
+	if s := query(); !s.StartedAt.Equal(startedAt) || s.BuildStartedAt == nil || !s.BuildStartedAt.After(startedAt) {
+		t.Fatalf("start across the switch: %v, before %v, build %v", s.StartedAt, startedAt, s.BuildStartedAt)
+	}
+	// The process list still names the loop's configuration.
+	if b, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(started.PID)).Output(); err != nil || !strings.Contains(string(b), adoptCommandName+" --handover-fd ") || !strings.Contains(string(b), " -c "+cfg) {
+		t.Fatalf("ps: %v %q", err, b)
 	}
 	ctlAfter, _ := os.ReadFile(filepath.Join(stateDir, control.FileName))
 	if !bytes.Equal(ctlBefore, ctlAfter) {

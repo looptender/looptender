@@ -507,16 +507,21 @@ const (
 )
 
 type Card struct {
-	Quota           *QuotaView `json:"quota,omitempty"`
-	ID              string     `json:"id"`
-	Label           string     `json:"label"`
-	Provider        string     `json:"provider"`
-	Selection       string     `json:"selection"`
-	Auth            Evidence   `json:"auth"`
-	Plan            Evidence   `json:"plan"`
-	ConfiguredModel Evidence   `json:"configuredModel"`
-	ObservedModel   Evidence   `json:"observedModel"`
-	Reason          string     `json:"reason,omitempty"`
+	Quota *QuotaView `json:"quota,omitempty"`
+	ID    string     `json:"id"`
+	// Handle names the account in read-only native output (panel list)
+	// instead of its catalog ID: a keyed digest of the ID under the
+	// catalog's salt, so it is stable for this catalog, reveals nothing of
+	// the ID, and only this catalog can resolve it (File.ByHandle).
+	Handle          string   `json:"-"`
+	Label           string   `json:"label"`
+	Provider        string   `json:"provider"`
+	Selection       string   `json:"selection"`
+	Auth            Evidence `json:"auth"`
+	Plan            Evidence `json:"plan"`
+	ConfiguredModel Evidence `json:"configuredModel"`
+	ObservedModel   Evidence `json:"observedModel"`
+	Reason          string   `json:"reason,omitempty"`
 	// FailedCheckAt is the time of the latest check when it did not produce a
 	// login result and Auth and Plan show the observation before it.
 	FailedCheckAt *time.Time `json:"failedCheckAt,omitempty"`
@@ -576,7 +581,7 @@ func Project(f File, now time.Time) View {
 	unavailable := Evidence{Text: "Unavailable", State: "unavailable", Freshness: "unavailable"}
 	notRecorded := Evidence{Text: "Not recorded", State: "unavailable", Freshness: "unavailable", Missing: MissingNotRecorded}
 	for _, e := range f.Entries {
-		c := Card{ID: e.ID, Label: e.Label, Provider: e.Provider, Selection: e.Mode, Auth: Evidence{Text: "Not checked", State: "unchecked", Freshness: "unavailable"}, Plan: unavailable, ConfiguredModel: notRecorded, ObservedModel: notRecorded, Uses: "unavailable", Identity: "selected_context_only"}
+		c := Card{ID: e.ID, Handle: f.Handle(e.ID), Label: e.Label, Provider: e.Provider, Selection: e.Mode, Auth: Evidence{Text: "Not checked", State: "unchecked", Freshness: "unavailable"}, Plan: unavailable, ConfiguredModel: notRecorded, ObservedModel: notRecorded, Uses: "unavailable", Identity: "selected_context_only"}
 		if !supported(e.Provider) {
 			c.Auth.State = "unavailable"
 			c.Auth.Text = "Externally managed or unsupported"
@@ -676,6 +681,33 @@ func LinkRoutes(v *View, named map[string]bool, complete bool) {
 			c.Routes = RoutesUnknown
 		}
 	}
+}
+
+// handleDefinition separates handles from every other keyed digest of the
+// catalog's salt.
+const handleDefinition = "looptender account handle v1"
+
+// Handle is the account's handle for read-only native output: 32 lowercase
+// hex characters, the shape of a catalog ID, so a reader that validates one
+// accepts the other. It is "" when the catalog has no salt.
+func (f File) Handle(id string) string {
+	key, err := hex.DecodeString(f.Salt)
+	if err != nil || len(key) == 0 || id == "" {
+		return ""
+	}
+	h := hmac.New(sha256.New, key)
+	_, _ = h.Write([]byte(handleDefinition + "\n" + id))
+	return hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// ByHandle finds the catalog ID a handle names.
+func (f File) ByHandle(handle string) (string, bool) {
+	for _, e := range f.Entries {
+		if h := f.Handle(e.ID); h != "" && hmac.Equal([]byte(h), []byte(handle)) {
+			return e.ID, true
+		}
+	}
+	return "", false
 }
 
 func ReadView(dir string, now time.Time) View {

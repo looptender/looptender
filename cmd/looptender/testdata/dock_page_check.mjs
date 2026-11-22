@@ -156,6 +156,9 @@ const expectations = [
   ["a paused loop checked by ticks says how it is checked on its page and in the tree", (d) => target(d, (l) => { l.state = "paused"; l.phrase = "Paused"; l.checkedBy = { kind: "ticks", text: "Checked by ticks from a scheduler not on record." }; }),
     [{ hash: "loop", fn: (w, h) => h.endsWith(fixture.dock.loops[0].key) ? (/Checked by ticks/.test(text(w, "#pane .checked-by")) ? null : "the loop page does not say how the loop is checked") : null },
      { hash: "#/", fn: (w) => (/Checked by ticks/.test(text(w, "#pane .work-tree")) ? null : "the Overview tree does not say how the loop is checked") }]],
+  ["a paused loop that still waits for a person has the needs-you pill on its page and in the picker", (d) => target(d, (l) => { l.state = "paused"; l.phrase = "Paused \u00B7 also waiting for you"; l.alsoWaiting = "A question is open."; }),
+    [{ hash: "loop", fn: (w, h) => h.endsWith(fixture.dock.loops[0].key) ? (w.document.querySelector("#pane .state.tone-attn") ? null : "the loop page's pill is not the needs-you tone") : null },
+     { hash: "#/", fn: (w) => (w.document.querySelector("#picker .dot-attn") ? null : "the picker row is not the attention dot") }]],
   ["the Overview tree names an unsupervised loop", (d) => target(d, (l) => { l.state = "not_checked_recently"; l.phrase = "Not supervised"; }),
     [{ hash: "#/", fn: (w) => (/Not supervised/.test(text(w, "#pane .work-tree")) ? null : "no 'Not supervised' row in the Overview tree") }]],
 ];

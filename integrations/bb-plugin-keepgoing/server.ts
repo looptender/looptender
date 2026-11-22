@@ -26,7 +26,7 @@ const statusSchema = z.object({
   loop: z.string(),
   target: z.string(),
   controlState: z.string(),
-  control: z.object({ note: z.string().optional(), completed: z.boolean().optional() }).passthrough(),
+  control: z.object({ note: z.string().optional(), completed: z.boolean().optional(), supersededBy: z.string().optional() }).passthrough(),
   window: z.string(),
   state: z
     .object({
@@ -71,6 +71,9 @@ const loopSchema = z.object({
 export type LoopView = z.infer<typeof loopSchema>;
 
 const actionSchema = z.enum(["pause", "resume", "stop"]);
+
+// What a control says when the thread it was asked from is neither the loop's primary nor its current target.
+export const NOT_THIS_THREAD = "This loop does not belong to this thread (it is neither the loop's primary nor its current target), so nothing was changed.";
 
 // What the plugin says instead of resuming: where a person resumes the loop.
 export const resumeByPerson = (configPath: string) =>
@@ -193,6 +196,7 @@ export default async function plugin(bb: BbPluginApi) {
       ...(s.targetAgent.provider ? { targetProvider: s.targetAgent.provider.slice(0, 128) } : {}),
       ...(s.targetAgent.model ? { targetModel: s.targetAgent.model.slice(0, 128) } : {}),
       ...(s.moved ? { moved: s.moved } : {}),
+      ...(s.control.supersededBy ? { supersededBy: s.control.supersededBy.slice(0, 128) } : {}),
       limitWait: s.limitWait ?? null,
     },
     loop: s.loop,
@@ -258,6 +262,8 @@ export default async function plugin(bb: BbPluginApi) {
     if (managedId) {
       const record = (await records()).find(r => r.id === managedId && r.configPath === configPath);
       if (!record) return { ok: false, message: "That setup is not registered with this plugin." };
+      // A control asked for from a thread's card reaches only a loop that thread belongs to.
+      if (expectedThreadId !== undefined && record.threadId !== expectedThreadId && !(await intents()).some(i => i.record.id === record.id && i.destination.threadId === expectedThreadId)) return { ok: false, message: NOT_THIS_THREAD };
       try {
         await verifyImported(bin, record);
         const result = await hostCommand(bin, record, action);
@@ -266,6 +272,12 @@ export default async function plugin(bb: BbPluginApi) {
       } catch { return { ok: false, message: "Host control unavailable or target changed. No transfer was performed." }; }
     }
     if (!paths.includes(configPath)) return { ok: false, message: "That loop is not in the plugin's configured list." };
+    if (expectedThreadId !== undefined) {
+      // The loop's own status says which threads it belongs to: its primary and its current target.
+      let s: z.infer<typeof statusSchema>;
+      try { s = await status(bin, configPath); } catch { return { ok: false, message: "The loop's status could not be read, so it was not changed." }; }
+      if (s.primaryAgent.bbThread !== expectedThreadId && s.targetAgent.bbThread !== expectedThreadId) return { ok: false, message: NOT_THIS_THREAD };
+    }
     const result = await run(bin, [action, "-c", configPath]);
     bb.realtime.publish(CHANGED, { at: Date.now() });
     return result.code === 0

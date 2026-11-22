@@ -19,6 +19,7 @@ import (
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
+	"github.com/looptender/looptender/internal/daemoninfo"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/state"
 )
@@ -134,7 +135,9 @@ func TestAdoptionSwitchesToTheValidatedInstalledBuild(t *testing.T) {
 		t.Fatalf("execs: %v", w.execs)
 	}
 	argv := w.execs[0]
-	// Nothing of the loop in the process list: only the descriptor.
+	// A build whose probe does not say it accepts the configuration path
+	// (every earlier build) is handed only the descriptor: the one form it
+	// accepts.
 	if argv[0] != resolved || len(argv) != 5 || argv[1] != w.launch || argv[2] != adoptCommandName || argv[3] != "--handover-fd" {
 		t.Fatalf("exec: %v", argv)
 	}
@@ -173,6 +176,37 @@ func TestAdoptionSwitchesToTheValidatedInstalledBuild(t *testing.T) {
 	again := newBuildAdopter(w.a.cfgPath, w.dir, "service", "", w.daemonLock)
 	if !again.skip[sha] {
 		t.Fatal("recorded refusal not carried over")
+	}
+}
+
+// A build that says it accepts the configuration path gets it after the
+// descriptor, so the process list still names the loop after the switch;
+// the payload says this build accepts it too, for a return. The daemon's
+// start and last pass go with the payload.
+func TestAdoptionNamesTheConfigurationForABuildThatAcceptsIt(t *testing.T) {
+	w := newAdoptWorld(t)
+	w.probe = `{"protocol":1,"stateFormat":6,"version":"v9.0.0-dev.fictional2","configArg":true}`
+	w.execErr = errors.New("fictional exec failure")
+	monitor, err := daemoninfo.Start(w.dir, version, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer monitor.Close()
+	w.a.watch(monitor)
+	w.a.atSafePoint(context.Background(), &config.Config{}, &ownerLease{thread: "thr_fictional", generation: 4})
+	if len(w.execs) != 1 {
+		t.Fatalf("execs: %v", w.execs)
+	}
+	argv := w.execs[0]
+	if len(argv) != 7 || argv[2] != adoptCommandName || argv[3] != "--handover-fd" || argv[5] != "-c" || argv[6] != w.a.cfgPath {
+		t.Fatalf("exec: %v", argv)
+	}
+	if strings.Contains(strings.Join(argv, " "), "thr_fictional") {
+		t.Fatalf("owner in argv %v", argv)
+	}
+	p := w.payloads[0]
+	if !p.ConfigArg || p.DaemonStartedAt == nil || !p.DaemonStartedAt.Equal(monitor.StartedAt()) || p.DaemonLastPassAt != nil {
+		t.Fatalf("payload: %+v", p)
 	}
 }
 

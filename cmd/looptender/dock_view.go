@@ -1318,8 +1318,9 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 		daemonBuild := l.Versions.Daemon != "" && dockBuildOf(l.Versions.Daemon, version).Availability == "different"
 		otherFile := l.Versions.Service == "different_file"
 		otherBuild := l.Build.Availability == "different" || daemonBuild || otherFile
-		// A loop held for a person is under "Needs you" already.
-		lanesFailed := l.LanesFailed != "" && l.State != "waiting_for_you"
+		// A loop held for a person, or paused and still waiting for one, is
+		// under "Needs you" already.
+		lanesFailed := l.LanesFailed != "" && l.State != "waiting_for_you" && l.AlsoWaiting == ""
 		if quiet[l.State] && l.Away == nil && !flagged && !otherBuild && !lanesFailed {
 			continue
 		}
@@ -1797,6 +1798,9 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	}
 	if st != nil {
 		np := st.NoProgress
+		// The words status uses: on a held loop the flag is from before
+		// the hold, not current.
+		np.Text = noProgressText(np, loopHeld(st.Control, st.controlUnreadable))
 		l.NoProgress = &np
 		if r := st.Refusals; r.Total > 0 || r.Question != "" {
 			l.Refusals = &r

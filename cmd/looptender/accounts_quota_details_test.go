@@ -248,11 +248,12 @@ func TestAccountQuotaDetailsResponseAliasesRefused(t *testing.T) {
 }
 
 // panel list --json carries, per account, exactly the documented keys: the
-// catalog id (the menu opens and connects one account with it), the label, the
-// provider and the saved summary. No path, directory or provider identity.
+// account's handle as its id (the menu opens and connects one account with it;
+// never the catalog ID), the label, the provider and the saved summary. No
+// path, directory, catalog ID or provider identity.
 func TestPanelListAccountQuotaKeysAreTheDocumentedOnes(t *testing.T) {
 	r := dockReport{Accounts: &accounts.View{State: "available", Complete: true, Cards: []accounts.Card{
-		{ID: strings.Repeat("a", 32), Label: "Example Codex", Provider: "codex", Selection: "inherited", Quota: &accounts.QuotaView{State: "unavailable", Reason: "unsupported_provider", Freshness: "unavailable"}},
+		{ID: strings.Repeat("a", 32), Handle: strings.Repeat("b", 32), Label: "Example Codex", Provider: "codex", Selection: "inherited", Quota: &accounts.QuotaView{State: "unavailable", Reason: "unsupported_provider", Freshness: "unavailable"}},
 	}}}
 	raw, err := json.Marshal(buildPanelList(r))
 	if err != nil {
@@ -265,6 +266,9 @@ func TestPanelListAccountQuotaKeysAreTheDocumentedOnes(t *testing.T) {
 	}
 	if err := json.Unmarshal(raw, &v); err != nil || len(v.AccountQuotas.Accounts) != 1 {
 		t.Fatalf("%v %s", err, raw)
+	}
+	if strings.Contains(string(raw), strings.Repeat("a", 32)) || string(v.AccountQuotas.Accounts[0]["id"]) != `"`+strings.Repeat("b", 32)+`"` {
+		t.Fatalf("panel list names the catalog ID, or not the handle: %s", raw)
 	}
 	for k := range v.AccountQuotas.Accounts[0] {
 		switch k {

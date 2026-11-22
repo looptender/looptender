@@ -18,12 +18,15 @@ type daemonStatus struct {
 	Message                string     `json:"message"`
 	Phase                  string     `json:"phase,omitempty"`
 	StartedAt              *time.Time `json:"startedAt,omitempty"`
-	ObservedAt             *time.Time `json:"observedAt,omitempty"`
-	NextCheckAt            *time.Time `json:"nextCheckAt,omitempty"`
-	LastPassAt             *time.Time `json:"lastPassAt,omitempty"`
-	LastPassStartedAt      *time.Time `json:"lastPassStartedAt,omitempty"`
-	NextCheck              string     `json:"nextCheck"`
-	BinaryComparison       string     `json:"binaryComparison"`
+	// BuildStartedAt, after a switch to a new build in place, is when the
+	// running build took over; StartedAt stays the process's start.
+	BuildStartedAt    *time.Time `json:"buildStartedAt,omitempty"`
+	ObservedAt        *time.Time `json:"observedAt,omitempty"`
+	NextCheckAt       *time.Time `json:"nextCheckAt,omitempty"`
+	LastPassAt        *time.Time `json:"lastPassAt,omitempty"`
+	LastPassStartedAt *time.Time `json:"lastPassStartedAt,omitempty"`
+	NextCheck         string     `json:"nextCheck"`
+	BinaryComparison  string     `json:"binaryComparison"`
 	// version is the build label the daemon reported, made safe to show.
 	// Status JSON carries only the comparison for the daemon's label; the
 	// panel's Versions view reads the label. The last recorded check's label
@@ -53,6 +56,7 @@ func inspectDaemon(ctx context.Context, dir, current string, offline bool) daemo
 	}
 	d.processID, d.invocationID = s.ProcessID, s.InvocationID
 	d.State, d.Message = "responsive", "A keepgoing daemon answered a fresh local challenge. This does not establish agent health or future execution."
+	d.BuildStartedAt = s.BuildStartedAt
 	d.Phase, d.StartedAt, d.ObservedAt, d.NextCheckAt, d.LastPassAt, d.LastPassStartedAt, d.DryRun = s.Phase, &s.StartedAt, &s.ObservedAt, s.NextCheckAt, s.LastPassAt, s.LastPassStartedAt, s.DryRun
 	d.BinaryComparison = compareCheckVersion(&state.Check{Version: s.Version}, current)
 	d.version = dockBuildLabel(s.Version)

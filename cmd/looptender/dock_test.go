@@ -2029,3 +2029,35 @@ func TestDockLimitNotesTakeTheResetFromTheReading(t *testing.T) {
 		})
 	}
 }
+
+// A no-progress flag on a held loop is what the last check before the hold
+// found: the page and panel list say so in the words status uses, and a
+// running loop's flag reads as current.
+func TestDockNoProgressOnAHeldLoopIsNotCurrent(t *testing.T) {
+	const flag = "No progress: 4 checks that found an error or retried the turn with no recorded change to its repositories in 19 h."
+	for _, c := range []struct {
+		name     string
+		controls control.File
+		want     string
+	}{
+		{"running", control.File{Enabled: true}, flag},
+		{"paused", control.File{Enabled: true, Paused: true}, flag + " (recorded before the hold; the loop is held (paused), so this is not current)"},
+		{"awaiting a person", control.File{Enabled: true, AwaitingUser: true}, flag + " (recorded before the hold; the loop is held (awaiting a person), so this is not current)"},
+	} {
+		ctl := c.controls
+		in := dockEvidence{controls: &clientControls{Enabled: ctl.Enabled, Paused: ctl.Paused, AwaitingUser: ctl.AwaitingUser}, status: func(st *statusOut) {
+			st.Control = ctl
+			st.NoProgress = noProgressView{Availability: "flagged", Text: flag}
+		}}.input()
+		r := buildDockReport([]dockInput{in}, dockNow, time.Minute, defaultStaleAfter, false, true, 0, true)
+		if got := r.Loops[0].NoProgress; got == nil || got.Text != c.want {
+			t.Errorf("%s: page %+v", c.name, got)
+		}
+		if got := buildPanelList(r).Loops[0].NoProgress; got != c.want {
+			t.Errorf("%s: panel list %q", c.name, got)
+		}
+		if got := noProgressText(noProgressView{Availability: "flagged", Text: flag}, loopHeld(ctl, false)); got != c.want {
+			t.Errorf("%s: status words %q", c.name, got)
+		}
+	}
+}

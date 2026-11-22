@@ -307,6 +307,7 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 	state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "started"})
 	clearStartRefused(cfg.Loop.StateDir) // a supervisor is running now
 	monitor.SetAdoption(adopter.followMode(cfg))
+	adopter.watch(monitor)
 	defer state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "stopped"})
 	var disk *diskWatch
 	if !dryRun {
@@ -935,13 +936,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 		printLimitWait(w, out.LimitWait)
 		printIdleSpacing(w, out.IdleSpacing, now)
 	}
-	if held := loopHeld(out.Control, out.controlUnreadable); held != "" && out.NoProgress.Availability == "flagged" {
-		// A held loop is not judged and observes nothing: the flag is what the
-		// last check before the hold found.
-		fmt.Fprintf(w, "progress flag: %s (recorded before the hold; the loop is held (%s), so this is not current)\n", out.NoProgress.Text, held)
-	} else {
-		fmt.Fprintf(w, "progress flag: %s\n", out.NoProgress.Text)
-	}
+	fmt.Fprintf(w, "progress flag: %s\n", noProgressText(out.NoProgress, loopHeld(out.Control, out.controlUnreadable)))
 	if !out.stateUnreadable {
 		printTurnRetry(w, out.TurnRetry)
 		printContext(w, out.ContextWindow)
