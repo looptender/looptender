@@ -3,7 +3,7 @@
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
 import { BUILD_LABEL } from "./build-label.ts";
-import { pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
+import { isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
 import { execFile } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -433,7 +433,7 @@ export default async function plugin(bb: BbPluginApi) {
         try {
           const { bin } = await configured();
           const v = await run(bin, ["version"]);
-          if (v.code === 0 && v.stdout.trim() !== "" && v.stdout.trim().length <= 64) running = v.stdout.trim();
+          if (v.code === 0 && isBuildLabel(v.stdout.trim())) running = v.stdout.trim();
         } catch { /* not read */ }
         const built = pluginBuildLine(BUILD_LABEL, running);
         return { exitCode: errors.length > 0 ? 1 : 0, stdout: `${lines.join("\n")}\n${notShown ? `${notShown}\n` : ""}${built}\nReferences: explicit plugin settings and saved host references; CLI registry/menu coverage is separate. This is not a complete process inventory.\n`, stderr: errors.join("\n") };

@@ -6,8 +6,11 @@
 //
 // It rewrites two files of that copy: package.json's version becomes
 // <base>-build.<label> (a semver prerelease), and build-label.ts exports the
-// label. Never run it in the repository's own checkout.
-import { readFileSync, writeFileSync } from "node:fs";
+// label. It refuses to run inside a git work tree (the repository's checkout).
+// Different labels can give the same version string (case, "." against "-",
+// and labels sharing their first 48 characters); the install path still differs.
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** A label as a semver prerelease identifier: lowercase letters, digits and hyphens, never all digits. */
@@ -30,7 +33,18 @@ export function labelSource(label) {
   return `// Written by stamp-build.mjs: the looptender build this plugin was built from.\nexport const BUILD_LABEL: string | null = ${JSON.stringify(label)};\n`;
 }
 
+/** Whether dir, or any directory above it, holds a .git entry: a checkout of the repository. */
+export function insideGitWorkTree(dir) {
+  for (let d = resolve(dir); ; d = dirname(d)) {
+    if (existsSync(`${d}/.git`)) return true;
+    if (dirname(d) === d) return false;
+  }
+}
+
 export function stamp(dir, label) {
+  // The stamp is for a staged copy. In a checkout it would leave a modified
+  // package.json that could be committed.
+  if (insideGitWorkTree(dir)) throw new Error("refusing to stamp inside a git work tree; stage a copy of the plugin outside it and run this there");
   const pkgPath = `${dir}/package.json`;
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
   const version = stampedVersion(pkg.version, label);
