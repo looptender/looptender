@@ -2,7 +2,7 @@ import { publicationMessage, type Publication } from "./registry-contract.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { goalDetails } from "./status-details.ts";
-import { checkSchema, refusalMessage, refusedReportSchema, setupInput, targetOf, statusFollowsStandard, type Refusal, type SetupTarget, type SetupPlan, type SetupRecord, type SetupResult } from "./setup-contract.ts";
+import { conversationTask, checkSchema, refusalMessage, refusedReportSchema, setupInput, targetOf, statusFollowsStandard, type Refusal, type SetupTarget, type SetupPlan, type SetupRecord, type SetupResult } from "./setup-contract.ts";
 import { planBounds, sameBounds, type Bounds } from "./new-thread-contract.ts";
 
 export interface SetupDependencies {
@@ -15,6 +15,9 @@ export interface SetupDependencies {
   // Whether the host's looptender has a standard route list with routes.
   standardRoutes(bin: string, target: SetupTarget): Promise<boolean>;
   command(bin: string, record: SetupRecord, operation: "status" | "doctor" | "start", json?: true): Promise<{ code: number; data: unknown; registration?: Publication }>;
+  // What BB's metadata for the thread says about whether it has had a turn.
+  // Optional: absent means "unknown", and the built-in task covers that.
+  conversation?(threadId: string): Promise<"none" | "unknown">;
   changed(): void;
 }
 const agent = z.object({ adapter: z.literal("bb"), bbThread: z.string(), provider: z.string() });
@@ -106,7 +109,8 @@ export function createSetupController(d: SetupDependencies) {
     if (existing) throw new SetupPolicyError("This thread already has a saved setup. Use its diagnostics and controls.");
     await d.guard(input.threadId);
     const target = await d.target(input.threadId);
-    const task = input.task ?? "";
+    const builtIn = input.mode === "conversation";
+    const task = builtIn ? conversationTask(input.note) : input.task ?? "";
     const withGoal = input.withGoal ?? false;
     const followStandard = input.followStandard ?? false;
     if (!task.trim() || Buffer.byteLength(task) > 262144) throw new SetupPolicyError("Enter a task of at most 256 KiB.");
@@ -126,7 +130,7 @@ export function createSetupController(d: SetupDependencies) {
       // to show; not following must come back with none.
       if (followStandard !== (plan.routes !== undefined)) throw new SetupPolicyError("Setup did not report the route choice that was asked for. Nothing was created.");
       previews.set(ticket, { target, name: input.name, taskHash: digest(task), withGoal, followStandard, bounds, bin, plan, expires: Date.now() + 300_000 });
-      return { ok: true, ticket, plan, message: followStandard ? "Preview only. Creating this setup leaves supervision disabled. It follows your standard route list and hands off to it on a rate limit." : "Preview only. Creating this setup leaves supervision disabled; fallbacks and automatic handoffs are off." };
+      return { ok: true, ticket, plan, ...(builtIn ? { task } : {}), message: followStandard ? "Preview only. Creating this setup leaves supervision disabled. It follows your standard route list and hands off to it on a rate limit." : "Preview only. Creating this setup leaves supervision disabled; fallbacks and automatic handoffs are off." };
     }
     const preview = previews.get(input.ticket ?? "");
     previews.delete(input.ticket ?? ""); // one attempt, including failure; never replay a creation
@@ -169,8 +173,16 @@ export function createSetupController(d: SetupDependencies) {
       // Offered only when the host's CLI says a route applies to this thread;
       // any failure to tell means setup is offered exactly as before.
       if (input.action === "inspect" && result.ok && !result.record) {
-        try { if (await d.standardRoutes(await d.binary(), await d.target(input.threadId))) return { ...result, standardRoutes: true }; }
+        // Both are asked outside the queue and each defaults to "not said":
+        // the standard route list is offered only when the host's CLI says a
+        // route applies here, and the conversation is "unknown" unless BB's
+        // metadata says the thread has not started.
+        let standardRoutes = false;
+        try { standardRoutes = await d.standardRoutes(await d.binary(), await d.target(input.threadId)); }
         catch { /* not offered */ }
+        let conversation: "none" | "unknown" = "unknown";
+        try { conversation = (await d.conversation?.(input.threadId)) ?? "unknown"; } catch { /* cannot tell */ }
+        return { ...result, ...(standardRoutes ? { standardRoutes: true as const } : {}), conversation };
       }
       return result;
     },
