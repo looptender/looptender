@@ -43,9 +43,24 @@ func (t *tick) followOwner(from, to, reason string) {
 	if t.opts.DryRun || from == "" || to == "" || from == to {
 		return
 	}
-	// A move not yet applied is about a target the loop is now leaving:
-	// it must never apply later. The owner it would have moved is still the
-	// owner, and the rule below decides afresh from that.
+	// A move not yet applied, to the thread the loop is now leaving, is
+	// chained: ownership is to go from its owner straight to the new
+	// thread, or stays where it is if the loop returns to that owner. Any
+	// other pending move is about a target the loop has already left and
+	// is dropped; the rule below then decides afresh.
+	if m := t.st.PendingOwnerMove; m != nil && m.To == from {
+		if owner, generation := t.ownerOf(); owner == m.From && generation == m.FromGeneration {
+			if to == m.From {
+				t.st.PendingOwnerMove = nil
+				t.saveOwnerMove()
+				return
+			}
+			t.st.PendingOwnerMove = &state.OwnerMove{From: m.From, FromGeneration: m.FromGeneration, To: to, Reason: reason, At: t.now}
+			t.saveOwnerMove()
+			t.afterSave = append(t.afterSave, t.applyOwnerMove)
+			return
+		}
+	}
 	t.dropOwnerMove("the loop moved again before it was applied")
 	owner, generation := t.ownerOf()
 	if owner != from {
@@ -96,6 +111,14 @@ func (t *tick) applyOwnerMove() {
 	t.st.PendingOwnerMove = nil
 	if saved, err := state.Load(t.loop.StateDir); err == nil {
 		saved.PendingOwnerMove = nil
+		_ = state.Save(t.loop.StateDir, saved)
+	}
+}
+
+// saveOwnerMove writes the pending move as this check holds it.
+func (t *tick) saveOwnerMove() {
+	if saved, err := state.Load(t.loop.StateDir); err == nil {
+		saved.PendingOwnerMove = t.st.PendingOwnerMove
 		_ = state.Save(t.loop.StateDir, saved)
 	}
 }

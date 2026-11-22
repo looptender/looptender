@@ -187,7 +187,7 @@
       "oneOf": [
         {
           "required": ["thread"],
-          "not": {"anyOf": [{"required": ["new_thread"]}, {"required": ["project"]}, {"required": ["environment"]}, {"required": ["permission_mode"]}]}
+          "not": {"anyOf": [{"required": ["new_thread"]}, {"required": ["project"]}, {"required": ["environment"]}, {"required": ["permission_mode"]}, {"required": ["move_children"]}]}
         },
         {
           "required": ["new_thread"],
@@ -216,6 +216,11 @@
           "enum": ["accept-edits", "auto", "full"],
           "default": "accept-edits",
           "description": "with new_thread: the new thread's permission mode, always passed to BB so it never inherits a project default"
+        },
+        "move_children": {
+          "type": "boolean",
+          "default": true,
+          "description": "with new_thread: after the handoff, move the direct child threads of the conversation being left to the created thread (and back on an automatic switch-back). Nothing else about a child changes."
         },
         "cli": {
           "type": "string",

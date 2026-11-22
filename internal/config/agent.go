@@ -41,9 +41,13 @@ type BB struct {
 	// NewThread: accept-edits (the default), auto or full. It is always
 	// passed to BB, so the new thread never inherits a project default.
 	PermissionMode string `yaml:"permission_mode,omitempty"`
-	CLI            string `yaml:"cli,omitempty"`
-	Model          string `yaml:"model,omitempty"`
-	Reasoning      string `yaml:"reasoning,omitempty"`
+	// MoveChildren, with NewThread, says whether the direct child threads of
+	// the conversation being left are moved to the created thread after the
+	// handoff (and back on an automatic switch-back). Unset means yes.
+	MoveChildren *bool  `yaml:"move_children,omitempty"`
+	CLI          string `yaml:"cli,omitempty"`
+	Model        string `yaml:"model,omitempty"`
+	Reasoning    string `yaml:"reasoning,omitempty"`
 	// RetrySignalTTL bounds how long a provider retry notice on an errored
 	// thread suppresses error recovery. Zero uses the adapter default (15m).
 	RetrySignalTTL Duration `yaml:"retry_signal_ttl,omitempty"`
@@ -100,6 +104,10 @@ func (b *BB) LanesPerEpisode() int {
 const DefaultNewThreadPermission = "accept-edits"
 
 // NewThreadPermission is the permission mode a created thread gets.
+// ChildrenFollow reports whether a created thread takes the direct children
+// of the conversation it continues.
+func (b BB) ChildrenFollow() bool { return b.MoveChildren == nil || *b.MoveChildren }
+
 func (b BB) NewThreadPermission() string {
 	if b.PermissionMode == "" {
 		return DefaultNewThreadPermission
@@ -259,8 +267,8 @@ func (a Agent) validate(where string) []error {
 			add("bb.new_thread needs provider: the new thread is created on that BB provider")
 		case !a.BB.NewThread && a.BB.Thread == "":
 			add("bb.thread is required (or bb.new_thread for a fallback that starts a new thread at handoff)")
-		case !a.BB.NewThread && (a.BB.Project != "" || a.BB.Environment != "" || a.BB.PermissionMode != ""):
-			add("bb.project, bb.environment and bb.permission_mode apply only with bb.new_thread")
+		case !a.BB.NewThread && (a.BB.Project != "" || a.BB.Environment != "" || a.BB.PermissionMode != "" || a.BB.MoveChildren != nil):
+			add("bb.project, bb.environment, bb.permission_mode and bb.move_children apply only with bb.new_thread")
 		case a.BB.NewThread && a.BB.PermissionMode != "" && a.BB.PermissionMode != "accept-edits" && a.BB.PermissionMode != "auto" && a.BB.PermissionMode != "full":
 			add("bb.permission_mode must be accept-edits, auto or full")
 		}
