@@ -39,6 +39,7 @@ func transferReplaceChildren(e env, args []string) int {
 	permission := fs.String("permission-mode", "", "accept-edits (default), auto or full")
 	all := fs.Bool("all-old-provider", false, "replace every live child on another provider, not only those blocked on a usage limit")
 	dryRun := fs.Bool("dry-run", false, "preview: count what would be created and create nothing")
+	discard := fs.Bool("discard-pending-successor", false, "forget a successor creation that could not be confirmed (find and stop that thread in BB first); creates nothing")
 	asJSON := fs.Bool("json", false, "machine-readable result")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -48,6 +49,13 @@ func transferReplaceChildren(e env, args []string) int {
 		}
 		e.errf("transfer replace-children: invalid arguments")
 		return exitUsage
+	}
+	if *discard {
+		if fs.NArg() != 0 || *dryRun || *model != "" || *all {
+			e.errf("transfer replace-children: --discard-pending-successor takes only -c and --json")
+			return exitUsage
+		}
+		return discardPendingSuccessor(e, fs, path, *asJSON)
 	}
 	if fs.NArg() != 0 || (!*dryRun && *model == "") || (*permission != "" && *permission != "accept-edits" && *permission != "auto" && *permission != "full") ||
 		(*model != "" && !transferLabel.MatchString(*model)) || (*reasoning != "" && !transferLabel.MatchString(*reasoning)) {
@@ -176,4 +184,53 @@ func printReplaceResult(w io.Writer, outcome string, r supervise.ReplaceResult, 
 	}
 	fmt.Fprintf(w, ". %d lane(s) have a successor on record.\n", r.Replaced)
 	fmt.Fprintln(w, "The blocked lanes are left as they were. When their provider's limit resets, BB or a person may run them again; stopping or archiving them is your call.")
+}
+
+// discardPendingSuccessor forgets a successor creation that could not be
+// confirmed, so creation can go on. It works for any BB loop, with or
+// without fallbacks. The attempt stays counted. A thread created under the
+// title and not found (renamed, archived, not listed yet) is then unknown to
+// looptender: find it in BB and stop or archive it first.
+func discardPendingSuccessor(e env, fs *flag.FlagSet, path *string, asJSON bool) int {
+	if !configDefault(e, "transfer replace-children", fs, path) {
+		return exitUsage
+	}
+	cfg, err := config.Load(*path)
+	if err != nil {
+		e.errf("transfer replace-children: configuration unavailable; inspect it privately")
+		return exitUsage
+	}
+	tick, err := lock.Acquire(cfg.Loop.StateDir)
+	if err != nil {
+		e.errf("transfer replace-children: %v", err)
+		if errors.Is(err, lock.ErrHeld) {
+			return exitSkipped
+		}
+		return exitFailed
+	}
+	defer tick.Release()
+	if err := checkOwnership(cfg.Loop.StateDir, nil); err != nil {
+		e.errf("transfer replace-children: %v", err)
+		return exitFailed
+	}
+	st, err := state.Load(cfg.Loop.StateDir)
+	if err != nil || st.ChildSuccessors == nil || st.ChildSuccessors.Intent == nil {
+		e.errf("transfer replace-children: no successor creation is pending")
+		return exitFailed
+	}
+	title := st.ChildSuccessors.Intent.Title
+	st.ChildSuccessors.Intent = nil
+	if err := state.Save(cfg.Loop.StateDir, st); err != nil {
+		e.errf("transfer replace-children: could not save the change; nothing was discarded")
+		return exitFailed
+	}
+	if asJSON {
+		_ = json.NewEncoder(e.stdout).Encode(struct {
+			Outcome string `json:"outcome"`
+			Title   string `json:"title"`
+		}{"discarded", title})
+	} else {
+		fmt.Fprintf(e.stdout, "Discarded the pending successor titled %q. It stays counted. If BB has a thread with that title, or one renamed from it, stop or archive it now: looptender no longer knows about it. Resume the loop to go on.\n", title)
+	}
+	return exitOK
 }

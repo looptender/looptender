@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -184,4 +186,52 @@ func TestStatusCountsSuccessors(t *testing.T) {
 		t.Fatal(out.String())
 	}
 	_ = dir
+}
+
+// Review P2-2: a person can discard a successor creation that could not be
+// confirmed; it stays counted, and the next run carries on.
+func TestDiscardPendingSuccessor(t *testing.T) {
+	m := newFakeMaker(2, 2)
+	path, dir := replaceFixture(t, m)
+	if code, _, errs := runReplace(t, path, "--discard-pending-successor"); code != exitFailed || !strings.Contains(errs, "no successor creation is pending") {
+		t.Fatal(code, errs)
+	}
+	m.spawnErr, m.unlisted = bb.ErrSpawnUncertain, true
+	runReplace(t, path, "--model", "example-small-model")
+	m.spawnErr, m.unlisted = nil, false
+	if code, _, _ := runReplace(t, path, "--model", "example-small-model"); code != exitFailed {
+		t.Fatal("not still pending")
+	}
+	code, out, _ := runReplace(t, path, "--discard-pending-successor")
+	st, _ := state.Load(dir)
+	if code != exitOK || st.ChildSuccessors.Intent != nil || st.ChildSuccessorsCreated != 1 || !strings.Contains(out, "stop or archive it now") {
+		t.Fatal(code, out, st.ChildSuccessors)
+	}
+	if code, _, errs := runReplace(t, path, "--discard-pending-successor", "--model", "x"); code != exitUsage {
+		t.Fatal(code, errs)
+	}
+	if code, _, _ := runReplace(t, path, "--model", "example-small-model"); code != exitOK || len(m.spawned) != 3 {
+		t.Fatal(code, len(m.spawned))
+	}
+}
+
+// Review P2-3: before any handoff, status and doctor say that a handoff to
+// a new-thread fallback will start successor lanes, and how to turn it off;
+// opting out removes the notice.
+func TestSuccessorPlanIsShownBeforeItActs(t *testing.T) {
+	f := newThreadFixture(t)
+	_, out, _ := f.run("status")
+	want := "successor lanes (on by default): A handoff to claude-other-account starts up to 5 successor thread(s)"
+	if !strings.Contains(out, want) || !strings.Contains(out, "bb.replace_blocked_children: false") {
+		t.Fatalf("status:\n%s", out)
+	}
+	_, out, _ = f.run("doctor", "--offline")
+	if !strings.Contains(out, "routes.successors.claude-other-account") || !strings.Contains(out, "starts up to 5 successor thread(s)") {
+		t.Fatalf("doctor:\n%s", out)
+	}
+	fallbacks, _ := os.ReadFile(filepath.Join(f.dir, "fallbacks.yaml"))
+	write(t, filepath.Join(f.dir, "fallbacks.yaml"), strings.Replace(string(fallbacks), "new_thread: true,", "new_thread: true, replace_blocked_children: false,", 1), 0o600)
+	if _, out, _ = f.run("status"); strings.Contains(out, "successor lanes") {
+		t.Fatalf("opted out:\n%s", out)
+	}
 }

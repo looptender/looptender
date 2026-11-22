@@ -246,6 +246,7 @@ func MoveChildren(ctx context.Context, threads ChildMover, m *state.ChildMove, e
 			switch place(id) {
 			case childMoved:
 				m.Moved++
+				m.MovedIDs = append(m.MovedIDs, id)
 				delete(m.Attempts, id)
 			case childGone:
 				m.Skipped++

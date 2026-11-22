@@ -25,6 +25,7 @@ func TestFallbacksAddBBNewThread(t *testing.T) {
 		"Permissions:", "accept-edits (set on the new thread; never a project default)",
 		"Permission mode accept-edits: the new thread asks before anything but file edits",
 		"works in the same environment and checkout as the conversation it continues", "BB may retry it later",
+		"Successor lanes (on by default):", "starts up to 5 successor thread(s) on codex (example-large, permission accept-edits)", "bb.replace_blocked_children: false",
 	} {
 		// Warnings are wrapped, so line breaks are not part of the wording.
 		if !strings.Contains(strings.Join(strings.Fields(preview), " "), want) {

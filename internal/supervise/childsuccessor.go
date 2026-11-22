@@ -25,8 +25,9 @@ import (
 // @thread:<old child>." looptender reads nothing of the child's content, and
 // the old child is not messaged, stopped, archived or re-parented.
 //
-// It is never automatic by default: a new_thread fallback opts in with
-// bb.replace_blocked_children, and a person runs transfer replace-children.
+// After a handoff to a created thread it runs by default, once, for the
+// children that handoff moved (bb.replace_blocked_children: false turns it
+// off); after a manual transfer a person runs transfer replace-children.
 // Creation uses the bb.new_thread rules: the intent, with a unique title, is
 // saved and counted before the spawn; after any failure the title is looked
 // for, and exactly one match is the thread; an outcome that cannot be proven
@@ -52,7 +53,10 @@ type ReplacePlan struct {
 	Provider    string // the coordinator's provider: successors run on it
 	Model       string
 	Reasoning   string
-	Permission  string // the most a successor may have
+	Permission  string // the successors' permission mode
+	// Ceiling, when set, is a permission mode no successor may exceed: the
+	// coordinator's own.
+	Ceiling string
 	// UnknownChildPermission, when set, caps a successor whose old lane's
 	// permission mode BB does not report. A successor never gets more than
 	// the lane it replaces had, when that is known.
@@ -62,6 +66,9 @@ type ReplacePlan struct {
 	AllOldProvider bool
 	Lifetime       int // loop.limits.max_child_successors
 	DryRun         bool
+	// Only, when not nil, is the set of children that may be replaced: for
+	// a handoff, those its child move moved. Nil means every child.
+	Only []string
 	// Reserve, when set, records each creation as a send against
 	// loop.limits.max_sends before it is made; state.ErrSendLimit stops the
 	// run with the rest counted in SendLimit.
@@ -79,6 +86,10 @@ type ReplaceResult struct {
 	SendLimit   int  `json:"stoppedBySendLimit,omitempty"`
 	Unknown     int  `json:"unknown,omitempty"` // children that could not be inspected
 	Unsettled   bool `json:"unsettled,omitempty"`
+	// Complete is a pass that looked at every candidate and was not cut
+	// short by a hold, time, the send limit or a failure. Caps still end
+	// it as complete: nothing more may be created for it.
+	Complete bool `json:"complete,omitempty"`
 	// Title names an unsettled creation so a person can look for it. It is
 	// the title looptender generated, with no child content.
 	Title string `json:"title,omitempty"`
@@ -150,13 +161,23 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 		fctx, cancel := context.WithTimeout(ctx, successorFindTime)
 		ids, err := maker.FindByTitle(fctx, bb.Place{Project: in.Project, Environment: in.Environment}, in.Title)
 		cancel()
-		if err != nil || len(ids) != 1 {
+		switch {
+		case err == nil && len(ids) == 1:
+			r.Replaced[in.Child] = state.ChildSuccessor{Thread: ids[0], Title: in.Title, At: time.Now().UTC()}
+			r.Intent = nil
+			env.Save()
+		case err == nil && len(ids) == 0 && (!in.Asked || in.NotStarted):
+			// Proven not created: bb was never asked, or its CLI never
+			// started, and nothing has the title. Not counted.
+			r.Intent = nil
+			r.Created = max(r.Created-1, 0)
+			*lifetime = max(*lifetime-1, 0)
+			env.Save()
+			env.Warn("replacing blocked child lanes: an earlier creation was never made; it is not counted")
+		default:
 			res.Unsettled, res.Title = true, in.Title
 			return res, ErrSuccessorUnsettled
 		}
-		r.Replaced[in.Child] = state.ChildSuccessor{Thread: ids[0], Title: in.Title, At: time.Now().UTC()}
-		r.Intent = nil
-		env.Save()
 	}
 	lctx, cancel := context.WithTimeout(ctx, successorInspectTime)
 	children, err := maker.ListChildren(lctx, p.Coordinator)
@@ -176,9 +197,16 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 		permission string
 	}
 	var eligible []candidate
+	var only map[string]bool
+	if p.Only != nil {
+		only = map[string]bool{}
+		for _, id := range p.Only {
+			only[id] = true
+		}
+	}
 	ids := []string{}
 	for _, c := range children {
-		if !c.Archived && !successors[c.ID] {
+		if !c.Archived && !successors[c.ID] && (only == nil || only[c.ID]) {
 			ids = append(ids, c.ID)
 		}
 	}
@@ -216,13 +244,18 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 		if !p.AllOldProvider && !(f.Errored && f.ClassKnown && f.Class == decide.ErrRateLimit) {
 			continue
 		}
+		if !p.AllOldProvider && !f.ResetsAt.IsZero() && !f.ResetsAt.After(time.Now()) {
+			continue // its limit has reset: a retry, not a duplicate
+		}
 		perm := p.Permission
 		limit := info.Permission
 		if limit == "" {
 			limit = p.UnknownChildPermission
 		}
-		if config.PermissionRank(limit) >= 0 && config.PermissionRank(limit) < config.PermissionRank(perm) {
-			perm = limit
+		for _, ceiling := range []string{limit, p.Ceiling} {
+			if config.PermissionRank(ceiling) >= 0 && config.PermissionRank(ceiling) < config.PermissionRank(perm) {
+				perm = ceiling
+			}
 		}
 		eligible = append(eligible, candidate{id, info.Place, perm})
 	}
@@ -246,8 +279,10 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 	}
 	r.SkippedRun, r.SkippedLife = res.CappedRun, res.CappedLife
 	env.Save()
+	complete := res.Unknown == 0
 	for _, c := range eligible[:res.WouldCreate] {
 		if env.Left() < successorSpawnTime+successorFindTime || env.Held() {
+			complete = false
 			break
 		}
 		title, err := successorTitle(p.Loop)
@@ -260,6 +295,7 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 		env.Save()
 		if p.Reserve != nil {
 			if err := p.Reserve(); err != nil {
+				complete = false
 				// Nothing was asked of bb: the attempt is not counted.
 				r.Intent = nil
 				r.Created--
@@ -272,6 +308,8 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 				return res, err
 			}
 		}
+		r.Intent.Asked = true // saved before bb is asked
+		env.Save()
 		sctx, cancel := context.WithTimeout(ctx, successorSpawnTime)
 		thread, err := maker.Spawn(sctx, bb.SpawnRequest{Place: c.place, Provider: p.Provider, Model: p.Model, Reasoning: p.Reasoning,
 			Permission: c.permission, Title: title, Prompt: successorPrompt(p.Loop, c.id), Parent: p.Coordinator})
@@ -291,6 +329,7 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 				*lifetime--
 				env.Save()
 				env.Warn(fmt.Sprintf("replacing a blocked child lane: bb refused to create its successor: %v", err))
+				complete = false
 				continue
 			default:
 				env.Save()
@@ -304,6 +343,7 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 		res.Replaced = len(r.Replaced)
 		env.Save()
 	}
+	res.Complete = complete
 	return res, nil
 }
 
@@ -320,13 +360,20 @@ func (t *tick) replaceBlockedChildren() (held bool) {
 		return false
 	}
 	coordinator := t.activeThread()
-	if m := t.st.ChildMove; coordinator == "" || m == nil || m.To != coordinator || !m.Done {
+	m := t.st.ChildMove
+	if coordinator == "" || m == nil || m.To != coordinator || !m.Done || m.Candidate != c.ID {
 		return false // the children are not all here yet
+	}
+	if r := t.st.ChildSuccessors; r != nil && r.Coordinator == coordinator && r.Done && r.Intent == nil {
+		return false // this handoff's one pass is done
 	}
 	model, reasoning := c.BB.SuccessorModel()
 	p := ReplacePlan{Loop: t.loop.Name, Coordinator: coordinator, Provider: c.Provider, Model: model, Reasoning: reasoning,
 		Permission: c.BB.SuccessorPermission(), UnknownChildPermission: config.DefaultNewThreadPermission, Lifetime: t.loop.Limits.MaxChildSuccessors, DryRun: t.opts.DryRun,
-		Reserve: func() error { _, err := t.reserveSend(childSuccessorAction, coordinator); return err }}
+		Reserve: func() error { _, err := t.reserveSend(childSuccessorAction, coordinator); return err },
+		// Only the children this handoff moved, and never more than the
+		// coordinator's own permission.
+		Only: append([]string{}, m.MovedIDs...), Ceiling: c.BB.NewThreadPermission()}
 	save := func() {
 		if saved, err := state.Load(t.loop.StateDir); err == nil {
 			saved.ChildSuccessors, saved.ChildSuccessorsCreated = t.st.ChildSuccessors, t.st.ChildSuccessorsCreated
@@ -338,9 +385,13 @@ func (t *tick) replaceBlockedChildren() (held bool) {
 	if res.Listed || res.Unsettled {
 		t.res.Successors = &res
 	}
+	if res.Complete && !t.opts.DryRun && t.st.ChildSuccessors != nil {
+		t.st.ChildSuccessors.Done = true
+		save()
+	}
 	if errors.Is(err, ErrSuccessorUnsettled) && !t.opts.DryRun {
 		d := decide.Decision{Action: decide.AwaitUser, Reason: fmt.Sprintf("keepgoing asked BB to create a successor thread titled %q for a blocked child lane and cannot tell whether it exists. "+
-			"Nothing else was created. Look for it in BB; if it exists under another title, stop or archive it. Then resume to look again", res.Title)}
+			"Nothing else was created. Look for it in BB; if it exists under another title, stop or archive it. Then resume to look again, or, if BB does not list it, run keepgoing transfer replace-children --discard-pending-successor and resume", res.Title)}
 		t.res.Action, t.res.Reason = string(d.Action), d.Reason
 		if err := t.act(nil, d); err != nil {
 			t.warn("could not hold the loop: %v", err)

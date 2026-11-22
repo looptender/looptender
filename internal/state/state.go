@@ -538,10 +538,13 @@ type ChildMove struct {
 	Listed    bool           `json:"listed,omitempty"`
 	Remaining []string       `json:"remaining,omitempty"`
 	Attempts  map[string]int `json:"attempts,omitempty"`
-	Moved     int            `json:"moved,omitempty"`
-	Failed    int            `json:"failed,omitempty"`
-	Skipped   int            `json:"skipped,omitempty"`
-	Done      bool           `json:"done,omitempty"`
+	// MovedIDs are the children confirmed moved: the only ones a
+	// handoff's successor threads may replace.
+	MovedIDs []string `json:"movedIds,omitempty"`
+	Moved    int      `json:"moved,omitempty"`
+	Failed   int      `json:"failed,omitempty"`
+	Skipped  int      `json:"skipped,omitempty"`
+	Done     bool     `json:"done,omitempty"`
 }
 
 // ChildSuccessors is the replacement of blocked child lanes under one
@@ -558,6 +561,9 @@ type ChildSuccessors struct {
 	// lanes left without a successor at the per-handoff and lifetime caps.
 	SkippedRun  int `json:"skippedRun,omitempty"`
 	SkippedLife int `json:"skippedLife,omitempty"`
+	// Done records that a handoff's run made its one complete pass under
+	// this coordinator; it is not run again.
+	Done bool `json:"done,omitempty"`
 }
 
 // ChildSuccessor is the thread created to continue one blocked child.
@@ -575,7 +581,12 @@ type ChildSuccessorIntent struct {
 	Project     string    `json:"project"`
 	Environment string    `json:"environment"`
 	RequestedAt time.Time `json:"requestedAt"`
-	NotStarted  bool      `json:"notStarted,omitempty"`
+	// Asked is saved just before bb is asked to create the thread. An
+	// intent without it was never asked; NotStarted records that the bb
+	// CLI could not be started. Either, with no thread under the title,
+	// proves nothing was created.
+	Asked      bool `json:"asked,omitempty"`
+	NotStarted bool `json:"notStarted,omitempty"`
 }
 
 // Replaced reports whether a child lane has a successor on record.

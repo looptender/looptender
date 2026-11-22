@@ -47,8 +47,9 @@ var adoptSchemaFingerprints = map[int]string{
 	// by transfer apply, or its choice to leave the children).
 	5: "dc1f9bcc270d8fff7841264b2d32bb55a3865caf613828e0983cd77cf7efec9a",
 	// 6: state.json gained childSuccessors and childSuccessorsCreated
-	// (successor threads replacing child lanes blocked on another provider).
-	6: "d7aca46ae89175eb0e0bffc8f376fb0e4cc9f288affd26327fbfa484d66fec58",
+	// (successor threads replacing child lanes blocked on another provider)
+	// and childMove's movedIds.
+	6: "cd5f4d62beb56bec7e3154185f462fa7a4f1b55b3b7634bedad4441fbabd7ec3",
 }
 
 // schemaFingerprint lists every JSON field reachable from t, by path, with

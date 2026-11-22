@@ -30,6 +30,8 @@ type LaneFacts struct {
 	// Retrying: the provider still announces a retry of its own that nothing
 	// shows to be dead.
 	Retrying bool
+	// ResetsAt is when the provider says its limit resets, when it says.
+	ResetsAt time.Time
 }
 
 // LaneVerdict is what the facts allow.

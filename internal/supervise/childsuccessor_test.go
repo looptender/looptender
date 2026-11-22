@@ -25,6 +25,8 @@ type fakeSuccessors struct {
 	spawnErr      error
 	createdAnyway bool
 	successors    []bb.SpawnRequest
+	// spawnHook runs after each spawn.
+	spawnHook func()
 }
 
 func (s *fakeSuccessors) InfoOf(_ context.Context, id string) (bb.ThreadInfo, error) {
@@ -46,6 +48,9 @@ func (s *fakeSuccessors) Spawn(_ context.Context, r bb.SpawnRequest) (string, er
 		s.titles[r.Title] = append(s.titles[r.Title], id)
 		s.children[r.Parent] = append(s.children[r.Parent], bb.ListedChild{ID: id})
 		s.provider[id] = r.Provider
+	}
+	if s.spawnHook != nil {
+		s.spawnHook()
 	}
 	if s.spawnErr != nil {
 		return "", s.spawnErr
@@ -298,7 +303,7 @@ func TestSuccessorDefaultsAndPermission(t *testing.T) {
 	w.adapters[state.Primary].obs = obs
 	for i := range w.cfg.FallbackSet.Candidates {
 		if c := &w.cfg.FallbackSet.Candidates[i]; c.ID == "claude-other" {
-			c.BB.ChildModel, c.BB.ChildReasoning, c.BB.ChildPermissionMode = "", "", "full"
+			c.BB.ChildModel, c.BB.ChildReasoning, c.BB.ChildPermissionMode, c.BB.PermissionMode = "", "", "full", "full"
 		}
 	}
 	s.permission = map[string]string{"thr_child_00": "auto", "thr_child_01": "full"}
@@ -363,4 +368,124 @@ func TestSuccessorsCountAgainstMaxSends(t *testing.T) {
 		t.Fatalf("%+v %+v", res.Successors, st.ChildSuccessors)
 	}
 	sendsUsed(t, w, 2)
+}
+
+// Review P3: never above the coordinator's own permission mode either.
+func TestSuccessorPermissionIsCappedByTheCoordinator(t *testing.T) {
+	w, f, s := successorWorld(t, 1, 1)
+	for i := range w.cfg.FallbackSet.Candidates {
+		if c := &w.cfg.FallbackSet.Candidates[i]; c.ID == "claude-other" {
+			c.BB.ChildPermissionMode, c.BB.PermissionMode = "full", "auto"
+		}
+	}
+	s.permission = map[string]string{"thr_child_00": "full"}
+	successorTick(t, w, f, s, t0)
+	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	successorTick(t, w, f, s, t0.Add(time.Minute))
+	if len(s.successors) != 1 || s.successors[0].Permission != "auto" {
+		t.Fatalf("%+v", s.successors)
+	}
+}
+
+// Review P2-1: only the children the handoff moved, in one pass. A lane
+// started later under the new coordinator on the old provider that hits a
+// limit hours later gets no successor, and later checks do not look again.
+func TestSuccessorsOnlyForMovedChildrenAndOnce(t *testing.T) {
+	w, f, s := successorWorld(t, 2, 1)
+	successorTick(t, w, f, s, t0)
+	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	successorTick(t, w, f, s, t0.Add(time.Minute))
+	st, _ := state.Load(w.dir)
+	if len(s.successors) != 1 || !st.ChildSuccessors.Done {
+		t.Fatalf("%d %+v", len(s.successors), st.ChildSuccessors)
+	}
+	// A later lane under the new coordinator, on the old provider, blocked.
+	f.children["thr_created_1"] = append(f.children["thr_created_1"], bb.ListedChild{ID: "thr_later_lane"})
+	s.provider["thr_later_lane"], s.facts["thr_later_lane"] = "claude-code", limitedLane
+	// And the moved lane that was idle is now blocked too.
+	s.facts["thr_child_01"] = limitedLane
+	lists := f.childLists
+	res := successorTick(t, w, f, s, t0.Add(5*time.Hour))
+	if len(s.successors) != 1 || res.Successors != nil || f.childLists != lists {
+		t.Fatalf("ran again: %d %+v lists %d->%d", len(s.successors), res.Successors, lists, f.childLists)
+	}
+}
+
+// A pass cut short by a hold continues on a later check, then ends.
+func TestSuccessorPassCutShortContinues(t *testing.T) {
+	w, f, s := successorWorld(t, 2, 2)
+	successorTick(t, w, f, s, t0)
+	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	orig := s.spawnHook
+	s.spawnHook = func() { control.Update(w.dir, func(c *control.File) { c.Paused = true }) }
+	successorTick(t, w, f, s, t0.Add(time.Minute))
+	st, _ := state.Load(w.dir)
+	if len(s.successors) != 1 || st.ChildSuccessors.Done {
+		t.Fatalf("%d %+v", len(s.successors), st.ChildSuccessors)
+	}
+	s.spawnHook = orig
+	control.Update(w.dir, func(c *control.File) { c.Paused = false })
+	successorTick(t, w, f, s, t0.Add(2*time.Minute))
+	st, _ = state.Load(w.dir)
+	if len(s.successors) != 2 || !st.ChildSuccessors.Done {
+		t.Fatalf("%d %+v", len(s.successors), st.ChildSuccessors)
+	}
+}
+
+// Review P2-2: a creation that provably never happened does not hold the
+// loop for good. An intent saved but never asked (the process ended before
+// bb was run), and one whose bb CLI could not start, with no thread under
+// the title, are cleared and not counted.
+func TestNeverMadeSuccessorIsCleared(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*fakeSuccessors, *state.ChildSuccessorIntent)
+	}{
+		{"never asked", func(_ *fakeSuccessors, in *state.ChildSuccessorIntent) { in.Asked = false }},
+		{"bb CLI did not start", func(_ *fakeSuccessors, in *state.ChildSuccessorIntent) { in.Asked, in.NotStarted = true, true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, f, s := successorWorld(t, 1, 1)
+			successorTick(t, w, f, s, t0)
+			in := &state.ChildSuccessorIntent{Child: "thr_child_00", Title: "keepgoing: example-loop lane (continued, 00000000)", Project: "proj_example", Environment: "env_example", RequestedAt: t0}
+			tc.setup(s, in)
+			st, _ := state.Load(w.dir)
+			st.ChildSuccessors = &state.ChildSuccessors{Coordinator: "thr_created_1", Provider: "codex", Created: 1, Intent: in}
+			st.ChildSuccessorsCreated = 1
+			state.Save(w.dir, st)
+			w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+			res := successorTick(t, w, f, s, t0.Add(time.Minute))
+			st, _ = state.Load(w.dir)
+			if res.Action == "await_user" || len(s.successors) != 1 || st.ChildSuccessorsCreated != 1 || st.ChildSuccessors.Intent != nil {
+				t.Fatalf("%+v %+v %d", res.Action, st.ChildSuccessors, st.ChildSuccessorsCreated)
+			}
+		})
+	}
+	// Asked, and not found: still held for a person, as before.
+	w, f, s := successorWorld(t, 1, 1)
+	successorTick(t, w, f, s, t0)
+	st, _ := state.Load(w.dir)
+	st.ChildSuccessors = &state.ChildSuccessors{Coordinator: "thr_created_1", Provider: "codex", Created: 1, Intent: &state.ChildSuccessorIntent{Child: "thr_child_00", Title: "keepgoing: example-loop lane (continued, 11111111)", Project: "proj_example", Environment: "env_example", Asked: true}}
+	state.Save(w.dir, st)
+	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	if res := successorTick(t, w, f, s, t0.Add(time.Minute)); res.Action != "await_user" {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// Review P3: a lane in error with another class is not replaced, nor one
+// whose limit has already reset.
+func TestOnlyCurrentRateLimitsAreReplaced(t *testing.T) {
+	w, f, s := successorWorld(t, 3, 0)
+	auth, reset, current := limitedLane, limitedLane, limitedLane
+	auth.Class = decide.ErrAuth
+	reset.ResetsAt = time.Now().Add(-time.Hour)
+	current.ResetsAt = time.Now().Add(time.Hour)
+	s.facts["thr_child_00"], s.facts["thr_child_01"], s.facts["thr_child_02"] = auth, reset, current
+	successorTick(t, w, f, s, t0)
+	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	successorTick(t, w, f, s, t0.Add(time.Minute))
+	if len(s.successors) != 1 || !strings.HasSuffix(s.successors[0].Prompt, "thr_child_02.\n") {
+		t.Fatalf("%+v", s.successors)
+	}
 }

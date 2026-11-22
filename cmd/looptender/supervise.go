@@ -559,6 +559,7 @@ type statusOut struct {
 	NewThreads        newThreadStatus          `json:"newThreads"`
 	ChildMove         *childMoveStatus         `json:"childMove,omitempty"`
 	Successors        *successorStatus         `json:"childSuccessors,omitempty"`
+	SuccessorPlans    []successorPlan          `json:"successorPlans,omitempty"`
 	Goal              *control.GoalSummary     `json:"goal,omitempty"`
 	GoalError         string                   `json:"goalError,omitempty"`
 	Notifications     report.DeliveryStatus    `json:"notifications"`
@@ -849,6 +850,9 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	}
 	if m := out.ChildMove; m != nil && !out.stateUnreadable {
 		printChildMove(w, *m)
+	}
+	for _, p := range out.SuccessorPlans {
+		fmt.Fprintf(w, "successor lanes (on by default): %s\n", p.Text())
 	}
 	if s := out.Successors; s != nil && !out.stateUnreadable {
 		fmt.Fprintf(w, "successor threads: %d blocked child lane(s) have a successor on the new provider; %d of at most %d created over the loop's life", s.Replaced, s.Created, s.Max)
@@ -1288,6 +1292,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		}
 	}
 	out.NewThreads = newThreadStatus{Created: st.NewThreadsCreated, Max: l.Limits.MaxNewThreads, Pending: st.NewThreadIntent != nil}
+	out.SuccessorPlans = successorPlans(cfg)
 	if s := st.ChildSuccessors; s != nil || st.ChildSuccessorsCreated > 0 {
 		out.Successors = &successorStatus{Created: st.ChildSuccessorsCreated, Max: l.Limits.MaxChildSuccessors}
 		if s != nil {
