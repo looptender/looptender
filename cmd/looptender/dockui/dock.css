@@ -180,6 +180,7 @@ details[open] > .work-summary .work-name::before { transform: rotate(45deg); }
 .banner { position: fixed; z-index: 6; inset-inline: 1rem; bottom: 1rem; max-width: 44rem; margin: 0 auto; padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--surface); color: var(--ink); border: 1px solid var(--line-2); box-shadow: var(--shadow); }
 .banner.is-alarm { background: var(--warn-soft); border-color: color-mix(in oklch, var(--warn) 40%, transparent); }
 body.has-banner { padding-bottom: 8rem; }
+@media (max-width: 34rem) { body.has-banner { padding-bottom: 14rem; } }
 
 /* Two levels: a picker, and what was picked */
 .layout { max-width: 76rem; margin: 0 auto; padding: 1.5rem 1.5rem 1rem; display: grid; grid-template-columns: 19.5rem minmax(0, 1fr); gap: 1.75rem; align-items: start; }
@@ -447,7 +448,8 @@ html:not(.has-script) .needs-script { visibility: hidden; }
 .usage-loop > h2 a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 0.2em; }
 .usage-loop > h2 a:hover, .usage-brief .work-inspect:hover { text-decoration-color: currentColor; }
 .usage-brief .work-inspect { margin-top: 0.35rem; color: var(--limit); text-underline-offset: 0.2em; }
-.table-wrap { margin-top: 0.75rem; max-inline-size: 100%; overflow-x: auto; }
+.table-wrap { margin-top: 0.75rem; max-inline-size: 100%; min-inline-size: 0; overflow-x: auto; }
+.pane, .panel { min-inline-size: 0; }
 .usage-days { border-collapse: collapse; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
 .usage-days caption { padding-bottom: 0.35rem; text-align: start; color: var(--ink-2); }
 .usage-days th, .usage-days td { padding: 0.35rem 1rem 0.35rem 0; text-align: start; white-space: nowrap; border-bottom: 1px solid var(--line); }

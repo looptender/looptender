@@ -167,7 +167,7 @@
     var f = frag();
     if (wait) {
       var w = el("div", null, say(wait.text));
-      if (!wait.passed) w.appendChild(tag("reached", "Reached"));
+      if (!wait.passed) w.appendChild(tag("reached", "In effect"));
       f.appendChild(w);
     }
     list(items).forEach(function (l) {
@@ -319,7 +319,7 @@
       note.appendChild(document.createTextNode("“" + text + "”"));
       li.appendChild(note);
       if (n.noteMasked && !state.identifiers) {
-        var p = el("p", "sub", "Parts that look like an ID, path, web address, email address, network address or long code are hidden. ");
+        var p = el("p", "sub", "Parts that look like an ID, absolute or home path, web address, email address, network address or long code are hidden; a relative path such as docs/plan.md is shown. ");
         p.appendChild(showNotesButton());
         li.appendChild(p);
       }
@@ -727,7 +727,7 @@
     pane.appendChild(paneHead(l.name, pills));
     // The provider and model the loop now targets, from its configuration, so
     // its name is not the only cue. Nothing when an older server sends none.
-    if (l.provider) pane.appendChild(el("p", "sub build-line", "Provider: " + l.provider + (l.model ? " \u00B7 model " + l.model : "") + " (configured)"));
+    if (l.provider) pane.appendChild(el("p", "sub build-line", "Configured provider: " + l.provider + " \u00B7 " + (l.model ? "model " + l.model : "model not configured")));
     // The build its last check ran; "version unknown" when none is recorded.
     // An older server sends no line, and then nothing is shown.
     if (l.build && l.build.line) pane.appendChild(el("p", "sub build-line", l.build.line));
@@ -741,6 +741,16 @@
       pane.appendChild(nb);
     }
     pane.appendChild(nowRow(l));
+    // A limit wait, with what status says about it (the reset falls after the
+    // loop's deadline; a held loop's wait is from before the hold), shown with
+    // the state and not only in the diagnostics. A passed wait is not news.
+    if (l.limitWait && !l.limitWait.passed && (list(l.limitWait.note).length || l.state === "paused" || l.state === "stopped" || l.state === "waiting_for_you")) {
+      var lwBox = el("p", "detail limit-wait", say(l.limitWait.text));
+      if (list(l.limitWait.note).length) lwBox.appendChild(document.createTextNode(" " + say(l.limitWait.note)));
+      pane.appendChild(lwBox);
+    }
+    // The standing wake policy, when status warns about it. Names no path.
+    if (list(l.wakePolicy).length) pane.appendChild(el("p", "detail wake-policy", say(l.wakePolicy)));
     var change = changeBox(l);
     if (change) pane.appendChild(change);
     if (l.migrationReview && l.migrationReview.availability === "available" && l.migrationReview.counts && l.migrationReview.counts.unfinished > 0) {
@@ -798,6 +808,10 @@
       var np = l.noProgress, pf = frag();
       pf.appendChild(np.availability === "not_available" ? unknown(np.text) : el("span", null, np.text));
       list(np.lines).forEach(function (s) { pf.appendChild(el("div", "sub", s)); });
+      // A reached no-progress limit beside a clear flag: the loop is held, so
+      // the flag is not judged and the limit is the last check's.
+      var npReached = list(l.limits).some(function (x) { return x.reached && /progress/i.test(x.label || ""); });
+      if (npReached && np.availability !== "flagged") pf.appendChild(el("div", "sub", "The no-progress limit is reached" + (l.hold && l.hold.state !== "none" ? "; the loop is held, so the flag is not judged now." : ".")));
       dl.appendChild(fact("Progress", pf));
     }
     if (l.refusals && (l.refusals.text || l.refusals.question)) {
@@ -2406,6 +2420,8 @@
       return false;
     }
     retainedRouteEditor = null;
+    // A render that worked ends the failure banner an earlier render left.
+    if (state.notice.indexOf("render") === 0) notice("render", "");
     renderReadline();
     var needs = list(d.needsYou).length;
     document.title = (needs ? "(" + needs + ") " : "") + "looptender";

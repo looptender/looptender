@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/looptender/looptender/internal/prompt"
 	"sort"
 	"strings"
 	"time"
@@ -268,6 +269,11 @@ type dockLoop struct {
 	// Build is the build that ran the loop's last check, against this
 	// panel's own; listed under "Worth knowing" when they differ.
 	Build dockBuild `json:"build"`
+	// WakePolicy is a warning about the loop's standing wake policy when
+	// status has one: the prompt is hand-edited, or not recorded as following
+	// updates, or its commands run another program. Absent when it follows
+	// updates with nothing to say. It names no path.
+	WakePolicy dockText `json:"wakePolicy,omitempty"`
 	// Versions is what else the read found about the builds the loop runs:
 	// its daemon's label and its service's file. The Versions view lists them.
 	Versions dockLoopVersions `json:"versions"`
@@ -402,6 +408,12 @@ type dockLimitWait struct {
 	// Told is whether a person was told: reported (receipt unverified),
 	// report_failed, no_report_section or not_subscribed.
 	Told string `json:"told"`
+	// AfterDeadline is set when the reset falls after the loop's own
+	// deadline. Note says what that means, and that a held loop's wait is
+	// from before the hold, in the page's words; it is shown with the loop's
+	// state, not only in the diagnostics.
+	AfterDeadline bool     `json:"afterDeadline,omitempty"`
+	Note          dockText `json:"note,omitempty"`
 }
 
 // dockIdentifiers is shown only on request and holds nothing that registered
@@ -1570,6 +1582,17 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			default:
 				lw.Text = txt("Provider limit: no reset time was reported")
 			}
+			lw.AfterDeadline = w.ResetAfterDeadline
+			var note []string
+			if w.ResetAfterDeadline {
+				note = append(note, "The reset falls after this loop's deadline: the loop will be held by the deadline on its first check after it, before this wait can end.")
+			}
+			if w.Held != "" {
+				note = append(note, "The loop is held ("+w.Held+"), so it observes and sends nothing; this wait is from the last check before the hold and may be out of date.")
+			}
+			if len(note) > 0 {
+				lw.Note = txt(strings.Join(note, " "))
+			}
 			l.LimitWait = lw
 		}
 	}
@@ -1588,6 +1611,10 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	default:
 		c := snap.Controls
 		switch {
+		case !c.Enabled:
+			// status says "disabled" for a loop that is off, whatever else is
+			// recorded (a completed task, a stop): one word per state.
+			l.State, l.Phrase, l.Detail = "off", "Off", "Supervision is off for this loop."
 		case c.Stop:
 			l.State, l.Phrase, l.Detail = "stopped", "Stopped", "A stop is requested. Nothing is sent until it is resumed."
 		case c.Completed:
@@ -1709,6 +1736,9 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	l.Chain = dockHandoffChain(in.Chain, use, dockTestingOf(l.State, st, in.Chain), l.Fallbacks, now, identifiers)
 	l.Away = dockAwayOf(st, in.Chain, l.Chain.Entries, in.Timeline, now)
 	l.Build = dockBuildOf(dockLastBuild(st, in.Timeline), version)
+	if st != nil {
+		l.WakePolicy = dockWakePolicyText(st.WakePolicy)
+	}
 	if in.Daemon.State == "responsive" {
 		l.Versions.Daemon = in.Daemon.version
 	}
@@ -2150,7 +2180,7 @@ func dockUnscheduledDetail(st *statusOut, now time.Time) string {
 		last += ", started by a BB automation"
 	}
 	if g := st.Schedule.sch.Recent; g > 0 {
-		return last + ", and recent checks ran about " + dockSpan(g) + " apart (past checks, not a forecast). " + dockCapital(next) + "."
+		return last + ", and recent checks ran about " + dockSpan(g) + " apart (past checks, not a forecast). " + dockCapital(next) + ". Checks come from a scheduler that is not recorded (ticks): each tick runs the build at the path that scheduler calls."
 	}
 	return last + ". " + dockCapital(next) + "."
 }
@@ -2573,4 +2603,31 @@ func dockProbePhrase(ok bool, class, age string) string {
 		what = "Provider overloaded when tested"
 	}
 	return what + " " + age
+}
+
+// dockWakePolicyText words status's wake-policy warning for the page, from the
+// same record and without a path: what is wrong, not which file.
+func dockWakePolicyText(w *wakePolicyStatus) dockText {
+	if w == nil {
+		return nil
+	}
+	var parts []string
+	switch {
+	case w.Source == prompt.PolicyCustom:
+		parts = append(parts, "Its prompt file is hand-edited, so it is sent exactly as written and does not receive updates to the standing wake policy.")
+	case w.Source == prompt.PolicyGenerated && w.Recorded:
+		parts = append(parts, "Its prompt file was edited after it was recorded as following updates, so it no longer follows them.")
+	case w.Source == prompt.PolicyGenerated:
+		parts = append(parts, fmt.Sprintf("Its prompt file matches generated wording version %d but is not recorded as following updates, so it is sent exactly as written.", w.FileVersion))
+	}
+	if w.CommandPrefix == prefixOtherBuild || w.CommandPrefix == prefixMissing || len(w.CommandPrograms) > 0 {
+		parts = append(parts, "The commands in its prompt run a program that is not the one installed, or that does not exist, so the agent's complete and await-user commands may fail.")
+	}
+	if w.CommandProgramsNotLooked > 0 || w.CommandProgramsUnchecked {
+		parts = append(parts, "Not every program its prompt names was checked.")
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return txt(strings.Join(parts, " ") + " `looptender prompt-policy show` says more.")
 }

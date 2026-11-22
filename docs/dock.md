@@ -627,3 +627,12 @@ block other pages. Earlier-context replies are discarded. The existing main
 8 MiB hard ceiling and 6 MiB maximal-fixture guard are unchanged; the companion
 and native projections each have a 1 MiB cap. See the
 [saved-account read contract](accounts.md#read-selected-context-subscription-quota).
+
+## Page details added after the first panel review
+
+- A loop that status calls `disabled` is "Off" on the page, whatever else is recorded (a finished task, a stop): one word per state, the one `status` uses.
+- A long limit wait is shown with the loop's state, not only in the diagnostics, with what `status` says about it: when the reset falls after the loop's deadline, that the loop will be held by the deadline before the wait can end, and for a held loop that the wait is from before the hold. A wait still in effect is tagged "In effect", not "Reached".
+- When `status` warns about the standing wake policy (a hand-edited prompt, one not recorded as following updates, or commands that run another program), the loop's page says so, without a path. A loop checked by ticks says its checks come from a scheduler that is not recorded.
+- The provider line reads "Configured provider: X · model Y" or "model not configured", the same words as the route row. A reached no-progress limit beside a clear flag says the loop is held and the flag is not judged.
+- A hold's note hides absolute and home paths, web addresses, email addresses, IDs, network addresses and long codes; a relative path such as `docs/plan.md` is shown, and the page's copy says so.
+- The failure banner ("This page could not show the reply it was sent") ends with the next render that works, and at phone widths the page leaves room for it.

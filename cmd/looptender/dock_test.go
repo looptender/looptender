@@ -454,6 +454,8 @@ func TestDockPhrasesFollowEvidence(t *testing.T) {
 	// With no looptender scheduler on record, what the record shows of past
 	// checks is said: never a time for the next one.
 	const noNext = "No looptender scheduler is on record to say when the next is due."
+	// With checks arriving regularly, it also says they are ticks.
+	const ticks = " Checks come from a scheduler that is not recorded (ticks): each tick runs the build at the path that scheduler calls."
 	minuteAgo, future := dockNow.Add(-70*time.Second), dockNow.Add(time.Hour)
 	for _, c := range []struct {
 		name     string
@@ -464,9 +466,9 @@ func TestDockPhrasesFollowEvidence(t *testing.T) {
 		{"a last check dated ahead of the clock", scheduleStatus{LastCheckAt: &future}, "no looptender scheduler is on record for this loop, and one outside looptender is not visible"},
 		{"too few gaps to say how often", scheduleStatus{LastCheckAt: &minuteAgo, sch: state.Schedule{GapsSeen: 2}}, "the last check ran 1 min ago. " + noNext},
 		{"held, with checks about every 10 min", scheduleStatus{LastCheckAt: &minuteAgo, NotJudged: "held", sch: state.Schedule{Recent: 10 * time.Minute}},
-			"the last check ran 1 min ago, and recent checks ran about 10 min apart (past checks, not a forecast). " + noNext},
+			"the last check ran 1 min ago, and recent checks ran about 10 min apart (past checks, not a forecast). " + noNext + ticks},
 		{"started by a BB automation", scheduleStatus{LastCheckAt: &minuteAgo, StartedBy: &state.Routine{Source: state.RoutineBBAutomation, Routine: "auto_example"}, sch: state.Schedule{Recent: 15 * time.Minute}},
-			"the last check ran 1 min ago, started by a BB automation, and recent checks ran about 15 min apart (past checks, not a forecast). " + noNext},
+			"the last check ran 1 min ago, started by a BB automation, and recent checks ran about 15 min apart (past checks, not a forecast). " + noNext + ticks},
 	} {
 		st := &statusOut{Schedule: c.schedule}
 		n := dockNextCheck(&clientSnapshot{Daemon: daemonStatus{State: "not_recorded"}}, st, dockNow)
