@@ -141,14 +141,14 @@ func startForeground(e env, cfg *config.Config, path string, ready startReady, a
 	defer l.Release()
 	tick, err := lock.Acquire(cfg.Loop.StateDir)
 	if err != nil {
-		return refusedStart(e, cfg.Loop.StateDir, "start", err)
+		return refusedStart(e, cfg.Loop.StateDir, cfg.Loop.Name, "start", err)
 	}
 	defer tick.Release()
 	if err := checkTransferSources(cfg, false); err != nil {
-		return refusedStart(e, cfg.Loop.StateDir, "start", err)
+		return refusedStart(e, cfg.Loop.StateDir, cfg.Loop.Name, "start", err)
 	}
 	if err := validateOwner(cfg.Loop.StateDir, false); err != nil {
-		return refusedStart(e, cfg.Loop.StateDir, "start", err)
+		return refusedStart(e, cfg.Loop.StateDir, cfg.Loop.Name, "start", err)
 	}
 	if !checkSecondLoop(e, cfg, "start", allowShare) {
 		return exitFailed
@@ -178,7 +178,7 @@ func startForeground(e env, cfg *config.Config, path string, ready startReady, a
 			e.errf("start: %v; daemon was not started", err)
 			return exitFailed
 		}
-		return refusedStart(e, cfg.Loop.StateDir, "start", err)
+		return refusedStart(e, cfg.Loop.StateDir, cfg.Loop.Name, "start", err)
 	}
 	noteSupervisor(cfg)
 	registered := publishEnabledLoop(e, cfg)

@@ -1,0 +1,1 @@
+- Daemon events in `runs.jsonl` (`build_switching`, `build_adopted` and the rest, and `start_refused`) now carry the loop's name, as check events do. For a loop checked by ticks with no daemon, `status` and `doctor` now say there is no daemon to follow new installs and that each tick runs the build its scheduler calls, instead of "unknown: no daemon answers".

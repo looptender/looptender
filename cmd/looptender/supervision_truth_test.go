@@ -156,7 +156,8 @@ func TestTickedLoopSaysItIsCheckedByTicks(t *testing.T) {
 	if out.Schedule.CheckedBy != "ticks" || out.Schedule.Cadence != "10m" || out.Schedule.Overdue {
 		t.Fatalf("%+v", out.Schedule)
 	}
-	if !strings.Contains(text, "next check: not scheduled by a daemon: checks are run by an external scheduler or ticks run by hand; recent checks ran about every 10m, the last 4m ago") {
+	if !strings.Contains(text, "next check: not scheduled by a daemon: checks are run by an external scheduler or ticks run by hand; recent checks ran about every 10m, the last 4m ago") ||
+		out.FollowsInstalls != "ticks" || !strings.Contains(text, "daemon follows new installs: no daemon to follow them: the loop is checked by ticks") {
 		t.Fatalf("%s", text)
 	}
 	if _, r := doctorOf(t, f); doctorFinding(r, "supervisor.ticks") == nil {
@@ -207,7 +208,7 @@ func TestRefusedSupervisorStartIsRecorded(t *testing.T) {
 		}
 	}
 	runs, _ := os.ReadFile(filepath.Join(f.state, state.LogName))
-	if strings.Count(string(runs), `"start_refused"`) != 2 || strings.Contains(string(runs), "thr_") {
+	if strings.Count(string(runs), `"start_refused"`) != 2 || strings.Contains(string(runs), "thr_") || strings.Count(string(runs), `"loop":"example-loop"`) < 2 {
 		t.Fatalf("runs.jsonl: %s", runs)
 	}
 	// A service restarting into the same refusal: counted, logged once an hour.
@@ -247,7 +248,7 @@ func TestRefusedSupervisorStartIsRecorded(t *testing.T) {
 	}
 	// A held lock is not a refusal.
 	t.Setenv("BB_THREAD_ID", "thr_other00001")
-	if code := refusedStart(env{context.Background(), &o, &o}, f.state, "daemon", context.Canceled); code == exitOK || loadStartRefusal(f.state) != nil {
+	if code := refusedStart(env{context.Background(), &o, &o}, f.state, "example-loop", "daemon", context.Canceled); code == exitOK || loadStartRefusal(f.state) != nil {
 		t.Fatal("a cancelled start was recorded as refused")
 	}
 }
@@ -273,11 +274,16 @@ func TestStatusNamesBuildsAndWhetherTheDaemonFollowsInstalls(t *testing.T) {
 		"unavailable: not on this platform": "no: not on this platform; restart supervision",
 		"something new":                     "unknown: the daemon's answer is not understood",
 	} {
-		if _, got := followsInstalls(daemonStatus{State: "responsive", Adoption: mode}); !strings.Contains(got, want) {
+		if _, got := followsInstalls(daemonStatus{State: "responsive", Adoption: mode}, scheduleStatus{}); !strings.Contains(got, want) {
 			t.Errorf("%q: %s", mode, got)
 		}
 	}
-	if answer, got := followsInstalls(daemonStatus{State: "not_recorded", Adoption: "moved_link"}); answer != "unknown" || got != "unknown: no daemon answers" {
+	if answer, got := followsInstalls(daemonStatus{State: "not_recorded", Adoption: "moved_link"}, scheduleStatus{}); answer != "unknown" || got != "unknown: no daemon answers" {
+		t.Fatal(got)
+	}
+	// A loop checked by ticks has no daemon to follow installs; each tick
+	// runs whatever is installed.
+	if answer, got := followsInstalls(daemonStatus{State: "not_recorded"}, scheduleStatus{CheckedBy: "ticks"}); answer != "ticks" || !strings.Contains(got, "each tick runs the build") {
 		t.Fatal(got)
 	}
 	// What a daemon publishes.
@@ -322,7 +328,7 @@ func TestRecordedCheckClearsARefusal(t *testing.T) {
 	if err := control.Save(f.state, control.File{}); err != nil { // disabled: the check records without the agent
 		t.Fatal(err)
 	}
-	noteStartRefused(f.state, "service", control.ErrTransferPending, time.Now().Add(-time.Minute))
+	noteStartRefused(f.state, "example-loop", "service", control.ErrTransferPending, time.Now().Add(-time.Minute))
 	if r := loadStartRefusal(f.state); r == nil || r.Reason != refusedTransfer {
 		t.Fatalf("%+v", r)
 	}
@@ -344,16 +350,16 @@ func TestRepeatedRefusalsAreLoggedSparingly(t *testing.T) {
 		b, _ := os.ReadFile(filepath.Join(dir, state.LogName))
 		return strings.Count(string(b), `"start_refused"`)
 	}
-	noteStartRefused(dir, "service", control.ErrSuperseded, at)
-	noteStartRefused(dir, "service", control.ErrSuperseded, at.Add(time.Minute))
+	noteStartRefused(dir, "example-loop", "service", control.ErrSuperseded, at)
+	noteStartRefused(dir, "example-loop", "service", control.ErrSuperseded, at.Add(time.Minute))
 	if lines() != 1 {
 		t.Fatalf("%d", lines())
 	}
-	noteStartRefused(dir, "service", control.ErrSuperseded, at.Add(61*time.Minute))
+	noteStartRefused(dir, "example-loop", "service", control.ErrSuperseded, at.Add(61*time.Minute))
 	if lines() != 2 {
 		t.Fatalf("%d", lines())
 	}
-	noteStartRefused(dir, "service", control.ErrOwnerConflict, at.Add(62*time.Minute))
+	noteStartRefused(dir, "example-loop", "service", control.ErrOwnerConflict, at.Add(62*time.Minute))
 	if r := loadStartRefusal(dir); lines() != 3 || r.Reason != refusedOwner || r.Count != 1 {
 		t.Fatalf("%d %+v", lines(), r)
 	}
