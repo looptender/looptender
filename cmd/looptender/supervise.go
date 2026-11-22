@@ -197,7 +197,7 @@ func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, l
 	// Everything this check starts is the supervised session's, not a
 	// person's: it inherits the marker that keeps it from clearing a hold.
 	defer markSupervised(cfg.Loop.StateDir)()
-	if err := checkOwnership(cfg.Loop.StateDir, firstLease(leases)); err != nil {
+	if err := checkSupervision(cfg.Loop.StateDir, firstLease(leases)); err != nil {
 		return ownershipError(e, err)
 	}
 	if err := checkTransferSources(cfg, true); err != nil {
@@ -458,7 +458,7 @@ func pollWake(ctx context.Context, cfg *config.Config, leases ...*ownerLease) bo
 		return false
 	}
 	defer l.Release()
-	if err := checkOwnership(cfg.Loop.StateDir, firstLease(leases)); err != nil {
+	if err := checkSupervision(cfg.Loop.StateDir, firstLease(leases)); err != nil {
 		return len(leases) > 0
 	} // Return to the daemon's exit check.
 	if checkTransferSources(cfg, false) != nil {

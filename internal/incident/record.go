@@ -560,7 +560,9 @@ func clean(r Record) Record {
 				"question_raised", "question_answered", "question_withdrawn",
 				// The file that runs a loop's checks, replaced with the panel's
 				// build or restored from its backup (no path, no label).
-				"panel_replace_build", "panel_undo_replace_build", "session_reset_by_thread", "session_reset_by_terminal")
+				"panel_replace_build", "panel_undo_replace_build", "session_reset_by_thread", "session_reset_by_terminal",
+				// Ownership that followed a move the supervisor made itself.
+				"supervisor_handoff")
 			c.Caller = oneOf(c.Caller, "unavailable", "owner_thread", "other_thread", "terminal", "client")
 			c.NewEpisode = c.NewEpisode && (c.Operation == "resume" || c.Operation == "panel_resume")
 			if !questionIDPattern.MatchString(c.QuestionID) {
