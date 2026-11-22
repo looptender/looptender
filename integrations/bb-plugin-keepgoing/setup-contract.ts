@@ -53,7 +53,7 @@ export const KEEP_GOING_TASK = [
   "Use await-user when what remains needs the person, or when this conversation contains no task to continue.",
 ].join("\n\n");
 /** The one-line note a person may add to it, kept to a single short line. */
-export const noteSchema = z.string().max(300).regex(/^[^\r\n]*$/, "one line");
+export const noteSchema = z.string().max(600).regex(/^[^\r\n\u0085\u2028\u2029]*$/, "one line").refine(n => n.trim().length <= 300, "at most 300 characters");
 export function conversationTask(note: string | undefined): string {
   const n = (note ?? "").trim();
   return n ? `${KEEP_GOING_TASK}\n\nNote from the person: ${n}` : KEEP_GOING_TASK;

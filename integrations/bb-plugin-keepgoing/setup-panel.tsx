@@ -17,18 +17,22 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
   // "Keep this conversation going" sends a fixed task; "own" sends the typed
   // one. Undecided until the thread's metadata is read: a thread with nothing
   // to continue starts on "own".
+  // What BB's metadata said when the thread was first inspected. Kept apart
+  // from `result`, which a preview or create replaces and which then carries
+  // no such field: the default must not change under the person.
+  const [conversation, setConversation] = useState<"none" | "unknown">("unknown");
   const [chosen, setChosen] = useState<"conversation" | "own" | undefined>();
   const [note, setNote] = useState("");
   const [result, setResult] = useState<SetupResult>();
   const [busy, setBusy] = useState(true);
   useEffect(() => {
     let mounted = true;
-    call({ action: "inspect", threadId }).then(r => { if (mounted) { setResult(r); setStandardRoutes(r.standardRoutes === true); } })
+    call({ action: "inspect", threadId }).then(r => { if (mounted) { setResult(r); setStandardRoutes(r.standardRoutes === true); setConversation(r.conversation ?? "unknown"); } })
       .catch(() => { if (mounted) setResult({ ok: false, message: "Setup status is unavailable. Check the host connection and retry." }); })
       .finally(() => { if (mounted) setBusy(false); });
     return () => { mounted = false; };
   }, [threadId, call]);
-  const empty = result?.conversation === "none";
+  const empty = conversation === "none";
   const mode = chosen ?? (empty ? "own" : "conversation");
   async function act(action: "preview" | "create" | "inspect" | "start") {
     setBusy(true);
@@ -55,7 +59,7 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
         <label><input type="radio" name="setup-mode" aria-label="Keep this conversation going" checked={mode === "conversation"} disabled={busy} onChange={() => { setChosen("conversation"); edit(); }} /> Keep this conversation going</label>
         <label><input type="radio" name="setup-mode" aria-label="Write my own task" checked={mode === "own"} disabled={busy} onChange={() => { setChosen("own"); edit(); }} /> Write my own task</label>
       </fieldset>
-      {empty && chosen === undefined && <span>This thread has not had a turn yet, so there is nothing to continue. Write a task.</span>}
+      {empty && chosen === undefined && <span>This thread may not have started yet, so there may be nothing to continue. Write a task.</span>}
       {mode === "conversation"
         ? <>
           <span>Continues the work already under way in this conversation, following your latest instructions here, and stops for you when it needs you. Nothing from the conversation is read by this plugin.</span>

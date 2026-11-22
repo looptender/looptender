@@ -350,3 +350,22 @@ test("inspect reports what thread metadata says about having a turn, and unknown
   delete f.d.conversation;
   assert.equal((await f.controller.call({ action: "inspect", threadId: "thr_example" })).conversation, "unknown");
 });
+
+test("a pending thread is reported as having no turn together with an offered standard route list", async () => {
+  const f = fixture();
+  f.d.conversation = async () => "none";
+  f.d.standardRoutes = async () => true;
+  const r = await f.controller.call({ action: "inspect", threadId: "thr_example" });
+  assert.equal(r.conversation, "none"); assert.equal(r.standardRoutes, true);
+  f.d.standardRoutes = async () => { throw new Error("PRIVATE"); };
+  const r2 = await f.controller.call({ action: "inspect", threadId: "thr_example" });
+  assert.equal(r2.conversation, "none"); assert.equal(r2.standardRoutes, undefined);
+});
+
+test("the note is one trimmed line of at most 300 characters", async () => {
+  const f = fixture();
+  f.d.init = async () => ({ plan: structuredClone(f.plan) });
+  const preview = (note: string) => f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", mode: "conversation", note });
+  for (const bad of ["a b", "a\u0085b", "a b", "x".repeat(301)]) assert.equal((await preview(bad)).ok, false, JSON.stringify(bad));
+  assert.equal((await preview("x".repeat(300) + "   ")).ok, true);
+});

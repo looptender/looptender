@@ -199,10 +199,34 @@ test("a thread with no turn yet starts on the typed task and says why; a choice 
   try {
     await ui.findByText("Enter a task");
     assert.equal((ui.getByRole("radio", { name: "Write my own task" }) as HTMLInputElement).checked, true);
-    assert.ok(ui.getByText("This thread has not had a turn yet, so there is nothing to continue. Write a task."));
+    assert.ok(ui.getByText("This thread may not have started yet, so there may be nothing to continue. Write a task."));
     assert.ok(ui.getByLabelText("Task and completion criteria"));
     fireEvent.click(ui.getByRole("radio", { name: "Keep this conversation going" }));
     assert.ok(ui.getByLabelText("Anything to add?"));
-    assert.equal(ui.queryByText(/has not had a turn yet/), null);
+    assert.equal(ui.queryByText(/may not have started yet/), null);
+  } finally { cleanup(); }
+});
+
+test("on a thread with no turn yet, the typed task stays the default through preview and create", async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const call = async (input: Record<string, unknown>): Promise<SetupResult> => {
+    seen.push(input);
+    // Preview and create results carry no `conversation` field.
+    if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket" };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [] };
+    return { ok: true, message: "Enter a task", conversation: "none" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call as never} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Enter a task");
+    fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task" } });
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByText("Preview only");
+    assert.equal((ui.getByRole("radio", { name: "Write my own task" }) as HTMLInputElement).checked, true);
+    assert.ok(ui.getByLabelText("Task and completion criteria"));
+    fireEvent.click(ui.getByRole("button", { name: "Create disabled setup" }));
+    await ui.findByText("Saved disabled");
+    const create = seen.find(i => i.action === "create")!;
+    assert.equal(create.mode, "own"); assert.equal(create.task, "Fictional task"); assert.equal("note" in create, false);
   } finally { cleanup(); }
 });

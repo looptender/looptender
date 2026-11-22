@@ -173,13 +173,16 @@ export function createSetupController(d: SetupDependencies) {
       // Offered only when the host's CLI says a route applies to this thread;
       // any failure to tell means setup is offered exactly as before.
       if (input.action === "inspect" && result.ok && !result.record) {
-        try { if (await d.standardRoutes(await d.binary(), await d.target(input.threadId))) return { ...result, standardRoutes: true }; }
+        // Both are asked outside the queue and each defaults to "not said":
+        // the standard route list is offered only when the host's CLI says a
+        // route applies here, and the conversation is "unknown" unless BB's
+        // metadata says the thread has not started.
+        let standardRoutes = false;
+        try { standardRoutes = await d.standardRoutes(await d.binary(), await d.target(input.threadId)); }
         catch { /* not offered */ }
-      }
-      if (input.action === "inspect" && result.ok && !result.record) {
         let conversation: "none" | "unknown" = "unknown";
         try { conversation = (await d.conversation?.(input.threadId)) ?? "unknown"; } catch { /* cannot tell */ }
-        return { ...result, ...(result.standardRoutes ? { standardRoutes: true as const } : {}), conversation };
+        return { ...result, ...(standardRoutes ? { standardRoutes: true as const } : {}), conversation };
       }
       return result;
     },
