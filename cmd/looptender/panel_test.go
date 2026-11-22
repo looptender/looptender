@@ -1110,10 +1110,29 @@ func TestPanelPutsNothingRedeemableInAnyProcessArguments(t *testing.T) {
 	}
 	target, c := panelRedeem(t, address)
 	after := processCommandLines(t)
+	// Every needle is specific to this panel: random per opening, or carrying
+	// this panel's own port. The process list is the whole machine's, which
+	// holds other test runs, real panels and browsers. A generic "/open/" would
+	// make the test judge their arguments (a Chrome app window or a concurrent
+	// run's address, for example), so the address is this panel's, port
+	// included.
+	address127 := fmt.Sprintf("127.0.0.1:%d/open/", rec.Port)
+	secrets := map[string]string{"opening code": code, "session": c.Value, "page path segment": strings.Split(target, "/")[2], "an opening address": address127}
 	for name, ps := range map[string]string{"while the launcher ran": during, "after the opening was used": after} {
-		for what, secret := range map[string]string{"opening code": code, "session": c.Value, "page path segment": strings.Split(target, "/")[2], "an opening address": "/open/"} {
+		for what, secret := range secrets {
 			if strings.Contains(ps, secret) {
-				t.Fatalf("%s: the %s is in a process's arguments", name, what)
+				// Name the process, never the secret.
+				line := ""
+				for _, l := range strings.Split(ps, "\n") {
+					if strings.Contains(l, secret) {
+						line = l
+						break
+					}
+				}
+				for _, redact := range secrets {
+					line = strings.ReplaceAll(line, redact, "<redacted>")
+				}
+				t.Fatalf("%s: the %s is in a process's arguments: %s", name, what, line)
 			}
 		}
 	}
