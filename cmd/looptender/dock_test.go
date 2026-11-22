@@ -464,7 +464,7 @@ func TestDockPhrasesFollowEvidence(t *testing.T) {
 	}{
 		{"never checked", scheduleStatus{}, "no looptender scheduler is on record for this loop, and one outside looptender is not visible"},
 		{"a last check dated ahead of the clock", scheduleStatus{LastCheckAt: &future}, "no looptender scheduler is on record for this loop, and one outside looptender is not visible"},
-		{"too few gaps to say how often", scheduleStatus{LastCheckAt: &minuteAgo, sch: state.Schedule{GapsSeen: 2}}, "the last check ran 1 min ago. " + noNext},
+		{"too few gaps to say how often", scheduleStatus{LastCheckAt: &minuteAgo, sch: state.Schedule{GapsSeen: 2}}, "the last check ran 1 min ago. " + noNext + " Its checks are ticks from a scheduler not on record."},
 		{"held, with checks about every 10 min", scheduleStatus{LastCheckAt: &minuteAgo, NotJudged: "held", sch: state.Schedule{Recent: 10 * time.Minute}},
 			"the last check ran 1 min ago, and recent checks ran about 10 min apart (past checks, not a forecast). " + noNext + ticks},
 		{"started by a BB automation", scheduleStatus{LastCheckAt: &minuteAgo, StartedBy: &state.Routine{Source: state.RoutineBBAutomation, Routine: "auto_example"}, sch: state.Schedule{Recent: 15 * time.Minute}},

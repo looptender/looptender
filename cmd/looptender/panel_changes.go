@@ -649,7 +649,7 @@ func panelPreviewOf(action string, l panelLoop, ctl control.File, expires, now t
 		if n := l.NextCheck; n.Availability == "known" {
 			add("Next check: ", n.Text, ".")
 		} else if n.Detail != "" {
-			add("Next check: unknown; " + n.Detail + ".")
+			add("Next check: unknown; " + strings.TrimSuffix(n.Detail, ".") + ".")
 		}
 		add("Confirming prepares this resume's own ticket, so a resume another client prepared and has not used yet can no longer be used.")
 	}

@@ -26,11 +26,23 @@ type dockNoteShape struct {
 var dockNoteIdentifiers = []dockNoteShape{
 	// URLs with a scheme, and bare www. hosts.
 	{re: regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://\S+|\bwww\.\S+`)},
+	// A user name and password before a host, with no scheme
+	// (user:pass@host.example): all of it, the user name too.
+	{re: regexp.MustCompile(`[A-Za-z0-9._~%+-]+:[^\s@/]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*(:\d{1,5})?(/\S*)?`)},
 	// Email addresses.
 	{re: regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+`)},
+	// UNC paths (\\server\share\a), starting a word or after an opening quote or bracket.
+	{re: regexp.MustCompile(`(^|[\s"'` + "`" + `(\[{<=,;])(\\\\[^\s"'` + "`" + `)\]}>]+)`), lead: true},
 	// Absolute and home paths (/a/b, ~/a, C:\a), starting a word or after an
 	// opening quote, bracket or "=".
 	{re: regexp.MustCompile(`(^|[\s"'` + "`" + `(\[{<=,;])(~?/[^\s"'` + "`" + `)\]}>]+|[A-Za-z]:\\[^\s"'` + "`" + `)\]}>]+)`), lead: true},
+	// A relative path that reaches out (contains ..) or that names a home
+	// directory from its root without the leading slash (Users/, home/, root/).
+	// Other relative paths (docs/plan.md) are shown.
+	{re: regexp.MustCompile(`(^|[\s"'` + "`" + `(\[{<=,;])([^\s"'` + "`" + `)\]}>]*/[^\s"'` + "`" + `)\]}>]*)`), lead: true, when: dockNoteReachingPath},
+	// IPv6 addresses: bracketed with an optional port, or bare with "::" or
+	// eight groups. Clock times (12:30:45) and similar stay.
+	{re: regexp.MustCompile(`\[[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*\](:\d{1,5})?|(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}`), when: dockNoteIPv6},
 	// BB IDs: threads, registrations and loops, projects, environments and
 	// hosts.
 	{re: regexp.MustCompile(`\b(thr|loop|proj|env|host)_[A-Za-z0-9_-]+`)},
@@ -87,4 +99,42 @@ func dockNoteIPv4(m string) bool {
 
 func dockNoteLongCode(m string) bool {
 	return strings.ContainsAny(m, "0123456789") && strings.IndexFunc(m, unicode.IsLetter) >= 0
+}
+
+// dockNoteReachingPath says a relative path should be hidden: it goes up
+// (a ".." segment) or its first segment is a home directory root.
+func dockNoteReachingPath(m string) bool {
+	body := strings.TrimRight(m, ".,;:!?")
+	segs := strings.Split(body, "/")
+	switch segs[0] {
+	case "Users", "home", "root":
+		return true
+	}
+	for _, s := range segs {
+		if s == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// dockNoteIPv6 says a match is an IPv6 address: bracketed, or with "::", or
+// exactly eight groups of one to four hex digits.
+func dockNoteIPv6(m string) bool {
+	if strings.HasPrefix(m, "[") {
+		return strings.Count(m, ":") >= 2
+	}
+	if strings.Contains(m, "::") {
+		return true
+	}
+	groups := strings.Split(m, ":")
+	if len(groups) != 8 {
+		return false
+	}
+	for _, g := range groups {
+		if len(g) < 1 || len(g) > 4 {
+			return false
+		}
+	}
+	return true
 }
