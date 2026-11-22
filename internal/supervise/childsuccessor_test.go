@@ -479,8 +479,9 @@ func TestOnlyCurrentRateLimitsAreReplaced(t *testing.T) {
 	w, f, s := successorWorld(t, 3, 0)
 	auth, reset, current := limitedLane, limitedLane, limitedLane
 	auth.Class = decide.ErrAuth
-	reset.ResetsAt = time.Now().Add(-time.Hour)
-	current.ResetsAt = time.Now().Add(time.Hour)
+	// Judged by the check's time, not the wall clock.
+	reset.ResetsAt = t0.Add(-time.Hour)
+	current.ResetsAt = t0.Add(time.Hour)
 	s.facts["thr_child_00"], s.facts["thr_child_01"], s.facts["thr_child_02"] = auth, reset, current
 	successorTick(t, w, f, s, t0)
 	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}

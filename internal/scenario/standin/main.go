@@ -35,6 +35,11 @@
 //	                       directory unwritable, as a full disk would make
 //	                       every new record fail. The file is used up
 //	readonlyafter.<command> the same, once the command has answered
+//	hold.<command>         if present, holds a number N: the Nth call of
+//	                       `thread <command>` creates <command>.held and waits,
+//	                       before doing anything, until <command>.release
+//	                       exists (at most 30 seconds), so a test can act in
+//	                       the middle of a check
 //	fail.<command>         if present, holds a number N: the next N calls of
 //	                       `thread <command>` fail with no output, as a bb read
 //	                       that the host cut short would
@@ -56,7 +61,9 @@
 //	                       child's .show
 //	sends.jsonl            everything an agent received: `thread tell` (thread,
 //	                       mode, message), an accepted `thread retry`, and a
-//	                       `thread spawn` (new thread, title, first prompt), and
+//	                       `thread spawn` (new thread, title, first prompt,
+//	                       parent, provider, model and reasoning; a spawned
+//	                       child joins its parent's .children), and
 //	                       every headless turn (thread is the CLI name, mode the
 //	                       session it resumed, message the prompt)
 //
@@ -156,6 +163,7 @@ func play(world, name string, args []string) int {
 	}
 	if len(args) > 1 && args[0] == "thread" {
 		unwritable(filepath.Join(world, "readonly."+args[1]))
+		holdUntilReleased(world, args[1])
 	}
 	code := run(world, args)
 	if len(args) > 1 && args[0] == "thread" {
@@ -347,11 +355,22 @@ func spawn(world string, args []string) int {
 	made = append(made, id)
 	writeJSON(filepath.Join(world, "spawned.json"), made)
 	project, environment, title := flagValue(args, "--project"), flagValue(args, "--environment"), flagValue(args, "--title")
-	writeJSON(filepath.Join(world, id+".show"), map[string]any{"thread": map[string]any{
-		"id": id, "status": "active", "projectId": project, "environmentId": environment,
-	}})
+	parent, provider := flagValue(args, "--parent-thread"), flagValue(args, "--provider")
+	show := map[string]any{"id": id, "status": "active", "projectId": project, "environmentId": environment, "permissionMode": flagValue(args, "--permission-mode")}
+	if provider != "" {
+		show["providerId"] = provider
+	}
+	if parent != "" {
+		// A thread spawned with a parent is one of its children.
+		show["parentThreadId"] = parent
+		var listed []map[string]any
+		readJSON(filepath.Join(world, parent+".children"), &listed)
+		writeJSON(filepath.Join(world, parent+".children"), append(listed, map[string]any{"id": id, "visibility": "hidden"}))
+	}
+	writeJSON(filepath.Join(world, id+".show"), map[string]any{"thread": show})
 	appendLine(filepath.Join(world, "sends.jsonl"), map[string]string{
 		"kind": "spawn", "thread": id, "title": title, "mode": flagValue(args, "--permission-mode"), "message": string(prompt),
+		"parent": parent, "provider": provider, "model": flagValue(args, "--model"), "reasoning": flagValue(args, "--reasoning-level"),
 	})
 	if mode != "unlisted" {
 		var listed []map[string]any
@@ -680,4 +699,22 @@ func unwritable(path string) {
 	}
 	os.Remove(path)
 	os.Chmod(strings.TrimSpace(string(b)), 0o500)
+}
+
+// holdUntilReleased is hold.<command>: on the call it names, mark the arrival
+// and wait for the test's release.
+func holdUntilReleased(world, command string) {
+	path := filepath.Join(world, "hold."+command)
+	if _, err := os.Stat(path); err != nil || !killDue(path) {
+		return
+	}
+	os.Remove(path)
+	mark(world, "standin.held")
+	defer mark(world, "standin.released")
+	os.WriteFile(filepath.Join(world, command+".held"), nil, 0o600)
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if _, err := os.Stat(filepath.Join(world, command+".release")); err == nil {
+			return
+		}
+	}
 }

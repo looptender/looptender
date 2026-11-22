@@ -326,8 +326,38 @@ func (t *tick) newThreadGate(c config.Candidate) string {
 	return string(v)
 }
 
-// stopUnrecordedThreads carries a stop to the thread created for a handoff
-// whose outcome was never recorded (the supervisor stopped between asking bb
+// unrecordedCreation is a thread keepgoing may have created and not
+// recorded: the thread for a handoff, or a successor lane for a blocked
+// child (childsuccessor.go), whose creation was asked of bb.
+type unrecordedCreation struct {
+	candidate string // the fallback whose bb CLI and agent reach it
+	title     string
+	place     bb.Place
+	what      string // "the thread created for a handoff", "a successor lane"
+}
+
+// unrecordedCreations lists what a stop must look for.
+func (t *tick) unrecordedCreations() []unrecordedCreation {
+	var out []unrecordedCreation
+	if in := t.st.NewThreadIntent; in != nil {
+		out = append(out, unrecordedCreation{in.Candidate, in.Title, bb.Place{Project: in.Project, Environment: in.Environment}, "the thread created for a handoff"})
+	}
+	// A successor never asked of bb cannot exist; one asked may.
+	if r := t.st.ChildSuccessors; r != nil && r.Intent != nil && r.Intent.Asked {
+		candidate := ""
+		for id, c := range t.st.NewThreads {
+			if c.Thread == r.Coordinator {
+				candidate = id
+			}
+		}
+		out = append(out, unrecordedCreation{candidate, r.Intent.Title, bb.Place{Project: r.Intent.Project, Environment: r.Intent.Environment}, "a successor lane"})
+	}
+	return out
+}
+
+// stopUnrecordedThreads carries a stop to each thread keepgoing may have
+// created and not recorded: the thread created for a handoff whose outcome
+// was never recorded (the supervisor stopped between asking bb
 // and saving the answer, or a person was asked to settle it). That thread
 // may be running the task, and stop wins. Under the hold nothing is settled:
 // the thread is looked up by the intent's unique title, read-only, and
@@ -338,48 +368,55 @@ func (t *tick) newThreadGate(c config.Candidate) string {
 // stop is harmless. None listed is not guessed at: a person is told to stop
 // it by hand. A lookup that fails is an error, so the next check looks
 // again. A thread the stop command runs in is returned in late, to be
-// stopped last.
-func (t *tick) stopUnrecordedThreads(in *state.NewThreadIntent, stopOne func(string, adapter.Adapter), errs []error) (late []func(), _ []error) {
-	if t.fb == nil {
-		t.warn("a thread may have been created for a handoff (titled %q), and its fallback is no longer configured, so keepgoing cannot stop it: stop it by hand", in.Title)
-		return nil, errs
+// stopped last. A successor lane asked of bb and not recorded is looked for
+// and stopped the same way: it may be running a lane's work.
+func (t *tick) stopUnrecordedThreads(in []unrecordedCreation, stopOne func(string, adapter.Adapter), errs []error) (late []func(), _ []error) {
+	for _, u := range in {
+		late, errs = t.stopUnrecorded(u, stopOne, late, errs)
 	}
-	c, ok := t.fb.Find(in.Candidate)
+	return late, errs
+}
+
+func (t *tick) stopUnrecorded(u unrecordedCreation, stopOne func(string, adapter.Adapter), late []func(), errs []error) ([]func(), []error) {
+	c, ok := config.Candidate{}, false
+	if t.fb != nil {
+		c, ok = t.fb.Find(u.candidate)
+	}
 	if !ok || !isNewThread(c) {
-		t.warn("a thread may have been created for a handoff (titled %q), and its fallback is no longer configured, so keepgoing cannot stop it: stop it by hand", in.Title)
-		return nil, errs
+		t.warn("%s may have been created (titled %q), and its fallback is no longer configured, so keepgoing cannot stop it: stop it by hand", u.what, u.title)
+		return late, errs
 	}
 	if t.left() < newThreadFindTime {
-		return nil, append(errs, fmt.Errorf("no time left to look for the thread created for a handoff (titled %q); the next check stops it", in.Title))
+		return late, append(errs, fmt.Errorf("no time left to look for %s (titled %q); the next check stops it", u.what, u.title))
 	}
 	ctx, cancel := context.WithTimeout(t.ctx, newThreadFindTime)
-	ids, err := t.opts.Threads(c.BB.CLI).FindByTitle(ctx, bb.Place{Project: in.Project, Environment: in.Environment}, in.Title)
+	ids, err := t.opts.Threads(c.BB.CLI).FindByTitle(ctx, u.place, u.title)
 	cancel()
 	if err != nil {
-		return nil, append(errs, fmt.Errorf("could not look for the thread created for a handoff (titled %q), so it was not stopped; the next check looks again: %w", in.Title, err))
+		return late, append(errs, fmt.Errorf("could not look for %s (titled %q), so it was not stopped; the next check looks again: %w", u.what, u.title, err))
 	}
 	if len(ids) == 0 {
-		t.warn("a thread may have been created for a handoff (titled %q) and BB lists none under that title, so keepgoing could not stop it: if it exists under another title, stop it by hand", in.Title)
-		return nil, errs
+		t.warn("%s may have been created (titled %q) and BB lists none under that title, so keepgoing could not stop it: if it exists under another title, stop it by hand", u.what, u.title)
+		return late, errs
 	}
 	for _, id := range ids {
 		agent := c.Agent
 		b := *agent.BB
 		b.Thread = id
 		agent.BB = &b
-		a, err := t.newAdapter(agent, t.loop.StateDir, in.Candidate)
+		a, err := t.newAdapter(agent, t.loop.StateDir, u.candidate)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("stop the thread created for a handoff: %w", err))
+			errs = append(errs, fmt.Errorf("stop %s: %w", u.what, err))
 			continue
 		}
 		if t.isCaller(agent) {
 			late = append(late, func() {
-				t.warn("this command runs in the thread created for a handoff; it is stopped last")
-				stopOne(in.Candidate, a)
+				t.warn("this command runs in %s; it is stopped last", u.what)
+				stopOne(u.candidate, a)
 			})
 			continue
 		}
-		stopOne(in.Candidate, a)
+		stopOne(u.candidate, a)
 	}
 	return late, errs
 }
