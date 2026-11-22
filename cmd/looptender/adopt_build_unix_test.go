@@ -178,7 +178,7 @@ func TestAdoptionSwitchesToTheValidatedInstalledBuild(t *testing.T) {
 func TestReturnedBuildIsNotTriedAgain(t *testing.T) {
 	w := newAdoptWorld(t)
 	sha := installedDigest(t, w.installed)
-	noteAdoption(w.dir, adoptRecord{Outcome: adoptReturned, From: adoptBuildID{SHA256: sha}, To: adoptBuildID{SHA256: processExecutableImage.Digest()}, Reason: "fictional"})
+	noteAdoption(w.dir, "", adoptRecord{Outcome: adoptReturned, From: adoptBuildID{SHA256: sha}, To: adoptBuildID{SHA256: processExecutableImage.Digest()}, Reason: "fictional"})
 	a := newBuildAdopter(w.a.cfgPath, w.dir, "service", "", w.daemonLock)
 	if !a.skip[sha] || a.skip[processExecutableImage.Digest()] {
 		t.Fatalf("skip: %v", a.skip)

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,26 +51,60 @@ func checkPromptPrefix(prefix string) (verdict, program string) {
 	if !ok {
 		return prefixUnknown, ""
 	}
+	verdict, _ = checkProgramPath(program)
+	return verdict, program
+}
+
+// checkProgramPath compares a program path with this build's own file: the
+// same file (a link such as ~/.local/bin/looptender that leads to it counts),
+// or a copy with the same size and bytes, is installed. It reads file metadata
+// and, for a file of the same size, its bytes; it runs nothing. The resolved
+// path is what a bare name found on PATH, or a link, leads to.
+func checkProgramPath(program string) (verdict, resolved string) {
 	path := program
 	if !strings.ContainsRune(path, os.PathSeparator) {
 		found, err := exec.LookPath(path)
 		if err != nil {
-			return prefixMissing, program
+			return prefixMissing, ""
 		}
 		path = found
 	}
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
-		return prefixMissing, program
+		return prefixMissing, ""
 	}
+	resolved = realPath(path)
 	self, err := os.Stat(realPath(promptExecutable()))
 	if err != nil {
-		return prefixUnknown, program
+		return prefixUnknown, resolved
 	}
-	if os.SameFile(info, self) {
-		return prefixInstalled, program
+	switch {
+	case os.SameFile(info, self):
+		return prefixInstalled, resolved
+	case info.Size() == self.Size() && sameFileBytes(path, realPath(promptExecutable())):
+		return prefixInstalled, resolved
 	}
-	return prefixOtherBuild, program
+	return prefixOtherBuild, resolved
+}
+
+// sameFileBytes says whether two files hold the same bytes.
+func sameFileBytes(a, b string) bool {
+	da, errA := fileDigest(a)
+	db, errB := fileDigest(b)
+	return errA == nil && errB == nil && da == db
+}
+
+func fileDigest(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func realPath(p string) string {

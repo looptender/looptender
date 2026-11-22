@@ -78,7 +78,10 @@ type wakePolicyStatus struct {
 	// wording setup wrote would run, against the program running now:
 	// installed, other_build, missing or unknown. Absent for any other prompt.
 	CommandPrefix string `json:"commandPrefix,omitempty"`
-	Message       string `json:"message"`
+	// CommandPrograms lists the other programs the prompt text names for the
+	// loop's commands, anywhere in it, when they are not the one running now.
+	CommandPrograms []promptCommandFinding `json:"commandPrograms,omitempty"`
+	Message         string                 `json:"message"`
 }
 
 const wakePolicyOptIn = "Run `looptender prompt-policy apply -c CONFIG` to follow them: it rewrites the text above the line `Task:` to the current wording, keeps the task, keeps the previous file beside it, and records the new file."
@@ -87,7 +90,7 @@ const wakePolicyOptIn = "Run `looptender prompt-policy apply -c CONFIG` to follo
 // apply refuses to guess at.
 const wakePolicyNeedsTask = "To follow them, first put the task after a line reading exactly `Task:`: `looptender prompt-policy apply -c CONFIG` refuses a file without one and writes nothing."
 
-func describeWakePolicy(l config.Loop) *wakePolicyStatus {
+func describeWakePolicy(l config.Loop, cfgPath ...string) *wakePolicyStatus {
 	st, err := prompt.DescribePolicy(l)
 	if err != nil {
 		return nil
@@ -122,7 +125,22 @@ func describeWakePolicy(l config.Loop) *wakePolicyStatus {
 	default:
 		s.Message = fmt.Sprintf("Follows policy updates: the prompt file holds version %d of the wording; each wake sends this build's version %d followed by the file's task. The file is not rewritten.", s.FileVersion, s.CurrentVersion)
 	}
-	s.Message += prefixNote
+	// Any prompt, generated or not: the programs its text names.
+	text, skip := l.Prompt, ""
+	if l.PromptFile != "" {
+		if raw, err := os.ReadFile(l.PromptFile); err == nil {
+			text = string(raw)
+			if m, ok := prompt.MatchPolicy(text); ok {
+				skip = prefixProgram(m.Prefix)
+			}
+		}
+	}
+	cfg := ""
+	if len(cfgPath) > 0 {
+		cfg = cfgPath[0]
+	}
+	s.CommandPrograms = promptCommandFindings(text, cfg, skip)
+	s.Message += prefixNote + promptCommandsSentence(s.CommandPrograms, skip != "")
 	return s
 }
 
@@ -143,4 +161,11 @@ func prefixSentence(verdict, program string) string {
 		return fmt.Sprintf(" The commands in the prompt run %s, which does not exist or is not executable, so the agent's complete and await-user commands would fail. `looptender prompt-policy apply -c CONFIG --refresh-prefix` previews rewriting them.", program)
 	}
 	return ""
+}
+
+// prefixProgram is the program path of a command prefix, "" when it is not a
+// plain quoted path.
+func prefixProgram(prefix string) string {
+	p, _ := promptPrefixProgram(prefix)
+	return p
 }

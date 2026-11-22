@@ -56,7 +56,7 @@ func promptPolicyCommand(e env, args []string) int {
 		return exitUsage
 	}
 	if sub == "show" {
-		s := describeWakePolicy(cfg.Loop)
+		s := describeWakePolicy(cfg.Loop, abs)
 		if s == nil {
 			e.errf("prompt-policy: the prompt cannot be read")
 			return exitFailed

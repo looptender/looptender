@@ -41,7 +41,9 @@ func singleRouteWarning(cfg *config.Config) string {
 // about a long limit wait the last checks recorded. A held loop observes
 // nothing, so its recorded wait is not reported as current.
 func doctorRoutes(r *doctorReport, cfg *config.Config, st state.File, stateReadable bool, held string, now time.Time) {
-	if w := singleRouteWarning(cfg); w != "" {
+	// A completed or disabled loop sends nothing, so a limit can not stop work
+	// it is not doing: the warning is for loops that can run.
+	if w := singleRouteWarning(cfg); w != "" && held != "completed" && held != "disabled" {
 		r.add("routes.single", "warning", w, limitWaitWayOut)
 	}
 	for _, p := range successorPlans(cfg) {

@@ -1279,7 +1279,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	}
 	out.Assignments = assignmentStatus(cfg, ctl)
 	out.PromptSend = describePromptSend(st.LastPromptSend, out.Goal)
-	out.WakePolicy = describeWakePolicy(l)
+	out.WakePolicy = describeWakePolicy(l, cfg.Path())
 	if st.GoalCopy != nil && st.GoalCopy.Valid() {
 		out.PromptSend.GoalCopy = st.GoalCopy
 	}
