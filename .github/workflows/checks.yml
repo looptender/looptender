@@ -269,6 +269,9 @@ jobs:
       - name: Verify Cursor idle holds through the real factory on Windows
         if: steps.scope.outputs.scope != 'docs'
         run: python scripts/ci-go-test-ran.py go test -race -v ./internal/supervise -run '^TestCursorHolds' -count=1
+      - name: Verify the no-fallback limit-wait journey and its panel reference on Windows
+        if: steps.scope.outputs.scope != 'docs'
+        run: python scripts/ci-go-test-ran.py go test -v ./internal/scenario -run '^TestScenarioIncidentNoFallback$' -count=1
       - name: Verify detached background startup with a local process fixture
         if: steps.scope.outputs.scope != 'docs'
         run: python scripts/ci-go-test-ran.py go test -v ./cmd/looptender -run '^TestStartBackgroundProcess$' -count=20 -timeout=3m
