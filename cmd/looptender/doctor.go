@@ -341,7 +341,11 @@ func doctor(e env, args []string, run doctorRun) int {
 	}
 	doctorCheckVersion(&r, st.LastCheck, stateErr == nil, ctlErr == nil && !ctl.Enabled)
 	r.add("supervisor.builds", "ok", "Builds: "+buildNames(st, d)+".", "")
-	if answer, text := followsInstalls(d); answer != "unknown" || d.State == "responsive" {
+	var followSch scheduleStatus
+	if stateErr == nil && ctlErr == nil {
+		followSch = describeSchedule(&cfg.Loop, st, ctl, &d, r.CheckedAt)
+	}
+	if answer, text := followsInstalls(d, followSch); answer != "unknown" || d.State == "responsive" {
 		level, fix := "ok", ""
 		if answer == "no" && d.version != dockBuildLabel(version) {
 			level, fix = "warning", "Restart supervision to run the installed build: for a service, `looptender service install` again; otherwise end the daemon and start it with `looptender start --background`."

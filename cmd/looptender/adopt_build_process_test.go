@@ -163,6 +163,12 @@ loop:
 	if !strings.Contains(string(runs), `"build_switching"`) || !strings.Contains(string(runs), `"build_adopted"`) {
 		t.Fatalf("runs.jsonl: %s", runs)
 	}
+	// Every daemon event names the loop, as check events do.
+	for _, line := range strings.Split(strings.TrimSpace(string(runs)), "\n") {
+		if strings.Contains(line, `"event":"daemon"`) && !strings.Contains(line, `"loop":"example-adopt"`) {
+			t.Fatalf("daemon event without the loop's name: %s", line)
+		}
+	}
 	// The status of the new build says what happened.
 	st := exec.Command(launch, "status", "-c", cfg)
 	b, _ := st.CombinedOutput()

@@ -128,10 +128,13 @@ func buildNames(st state.File, d daemonStatus) string {
 }
 
 // followsInstalls says whether the loop's daemon will move to a new build
-// installed where it was started from, from what the daemon reports.
-func followsInstalls(d daemonStatus) (answer, text string) {
+// installed where it was started from, from what the daemon reports: yes,
+// no, unknown, or ticks for a loop checked by ticks with no daemon.
+func followsInstalls(d daemonStatus, sch scheduleStatus) (answer, text string) {
 	const restart = "; restart supervision to run the installed build"
 	switch mode := d.Adoption; {
+	case d.State != "responsive" && sch.CheckedBy == "ticks":
+		return "ticks", "no daemon to follow them: the loop is checked by ticks, and each tick runs the build at the path its scheduler calls"
 	case d.State != "responsive":
 		return "unknown", "unknown: no daemon answers"
 	case mode == "":

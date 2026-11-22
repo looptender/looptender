@@ -266,7 +266,7 @@ func daemon(e env, cfg *config.Config, cfgPath string, dryRun bool, takeOver ...
 // service's bound state directory.
 func daemonAs(e env, cfg *config.Config, cfgPath string, dryRun, takeOver bool, mode, expectedStateDir string) int {
 	if err := checkTransferSources(cfg, false); err != nil {
-		return refusedStart(e, cfg.Loop.StateDir, mode, err)
+		return refusedStart(e, cfg.Loop.StateDir, cfg.Loop.Name, mode, err)
 	}
 	l, err := lock.AcquireNamed(cfg.Loop.StateDir, lock.Daemon)
 	if errors.Is(err, lock.ErrHeld) {
@@ -281,7 +281,7 @@ func daemonAs(e env, cfg *config.Config, cfgPath string, dryRun, takeOver bool, 
 	defer markSupervised(cfg.Loop.StateDir)()
 	lease, err := bindDaemonOwner(cfg.Loop.StateDir, takeOver)
 	if err != nil {
-		return refusedStart(e, cfg.Loop.StateDir, mode, err)
+		return refusedStart(e, cfg.Loop.StateDir, cfg.Loop.Name, mode, err)
 	}
 	monitor, monitorErr := daemoninfo.Start(cfg.Loop.StateDir, version, dryRun)
 	if monitorErr != nil {
@@ -649,8 +649,9 @@ type statusOut struct {
 	// ownership or a pending transfer, until a supervisor starts.
 	SupervisorStartRefused *startRefusal `json:"supervisorStartRefused,omitempty"`
 	// Builds names the build of the last check, this command's and the
-	// daemon's, from what is recorded; FollowsInstalls is yes, no or unknown:
-	// whether the daemon will move to a new installed build by itself.
+	// daemon's, from what is recorded; FollowsInstalls is yes, no, unknown,
+	// or ticks (checked by ticks, no daemon): whether the daemon will move to
+	// a new installed build by itself.
 	Builds          string `json:"builds"`
 	FollowsInstalls string `json:"followsInstalls"`
 	followsText     string
@@ -1411,7 +1412,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.BuildAdoption = describeBuildAdoption(l.StateDir, out.Daemon, now)
 	out.SupervisorStartRefused = currentStartRefusal(l.StateDir, st.CheckedAt, out.Daemon)
 	out.Builds = buildNames(st, out.Daemon)
-	out.FollowsInstalls, out.followsText = followsInstalls(out.Daemon)
+	out.FollowsInstalls, out.followsText = followsInstalls(out.Daemon, out.Schedule)
 	if out.Daemon.State == "responsive" {
 		out.Runtime.NextCheck = out.Daemon.NextCheck
 	}

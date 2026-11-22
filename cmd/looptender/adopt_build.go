@@ -157,7 +157,10 @@ type buildAdopter struct {
 	launch string // absolute path the daemon was started by: argv[0]
 	// from is the running build's own file, symbolic links resolved, for
 	// a new build that cannot start to return to.
-	from     string
+	from string
+	// loop is the loop's name, for the run log; taken from the
+	// configuration at each safe point.
+	loop     string
 	image    *state.ExecutableImage
 	cfgPath  string
 	stateDir string
@@ -406,7 +409,10 @@ var errAdoptChanged = errors.New("changed since it was checked")
 // adoptPayload is what a switching daemon hands to the new image, through
 // an inherited pipe, so that nothing of it shows in the process list.
 type adoptPayload struct {
-	Config          string `json:"config"`
+	Config string `json:"config"`
+	// Loop is the loop's name, for the run log of a build that cannot
+	// load the configuration. Absent from an earlier build's handover.
+	Loop            string `json:"loop,omitempty"`
 	StateDir        string `json:"stateDir"`
 	Mode            string `json:"mode"`
 	LockFD          uint64 `json:"lockFd"`
@@ -459,6 +465,7 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 	if a == nil || a.off != "" || ctx.Err() != nil || (setting != nil && !*setting) {
 		return
 	}
+	a.loop = cfg.Loop.Name
 	c := a.candidate()
 	if c == nil {
 		return
@@ -549,7 +556,7 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 	if lease != nil {
 		thread, generation = lease.thread, lease.generation
 	}
-	payload := adoptPayload{Config: a.cfgPath, StateDir: a.stateDir, Mode: a.mode, LockFD: uint64(fd), From: a.from, FromSHA: from.SHA256, FromLabel: from.Label,
+	payload := adoptPayload{Config: a.cfgPath, Loop: a.loop, StateDir: a.stateDir, Mode: a.mode, LockFD: uint64(fd), From: a.from, FromSHA: from.SHA256, FromLabel: from.Label,
 		ExpectSHA: c.sha, OwnerThread: thread, OwnerGeneration: generation, ExpectedStateDir: a.expectedStateDir}
 	a.note(adoptRecord{Outcome: adoptSwitching, Mode: a.mode, From: from, To: to})
 	err = handover(payload, a.launch, func(argv []string, keep []*os.File) error {
@@ -577,10 +584,12 @@ const adoptInPlaceReason = "a different build is at the launch path, written ove
 // note saves the record and adds it to runs.jsonl.
 func (a *buildAdopter) note(r adoptRecord) {
 	r.At = a.now().UTC()
-	noteAdoption(a.stateDir, r)
+	noteAdoption(a.stateDir, a.loop, r)
 }
 
-func noteAdoption(dir string, r adoptRecord) {
+// noteAdoption saves the record and adds it to runs.jsonl under the loop's
+// name ("" when the configuration could not be read).
+func noteAdoption(dir, loop string, r adoptRecord) {
 	if r.At.IsZero() {
 		r.At = time.Now().UTC()
 	}
@@ -589,7 +598,7 @@ func noteAdoption(dir string, r adoptRecord) {
 	if r.Mode != "" {
 		extra["mode"] = r.Mode
 	}
-	_ = state.Append(dir, state.Event{At: r.At, Event: "daemon", Reason: "build_" + r.Outcome, Error: r.Reason, Extra: extra})
+	_ = state.Append(dir, state.Event{At: r.At, Loop: loop, Event: "daemon", Reason: "build_" + r.Outcome, Error: r.Reason, Extra: extra})
 }
 
 // adoptBuildCommand is the hidden entry a daemon execs into: the probe, or
@@ -648,6 +657,9 @@ func (p adoptPayload) run(e env) int {
 	if err != nil {
 		return p.back(e, "the configuration could not be loaded by the new build")
 	}
+	if p.Loop == "" {
+		p.Loop = cfg.Loop.Name // an earlier build's handover does not carry it
+	}
 	if cfg.Loop.StateDir != p.StateDir {
 		if !returning {
 			return p.back(e, "the configuration's state_dir changed; restart the daemon deliberately to apply it")
@@ -665,7 +677,7 @@ func (p adoptPayload) run(e env) int {
 	lease := &ownerLease{thread: p.OwnerThread, generation: p.OwnerGeneration}
 	if err := checkOwnership(p.StateDir, lease); err != nil {
 		// As at any check: the daemon has handed off and exits.
-		noteAdoption(p.StateDir, adoptRecord{Outcome: adoptHandedOff, Mode: p.Mode, From: p.fromID(), To: p.toID(), Reason: "the loop's owner changed during the switch; the daemon exited as it does at any check"})
+		noteAdoption(p.StateDir, p.Loop, adoptRecord{Outcome: adoptHandedOff, Mode: p.Mode, From: p.fromID(), To: p.toID(), Reason: "the loop's owner changed during the switch; the daemon exited as it does at any check"})
 		return ownershipError(e, err)
 	}
 	if !returning {
@@ -680,9 +692,9 @@ func (p adoptPayload) run(e env) int {
 		return p.back(e, "the daemon lock was not handed over")
 	}
 	if returning {
-		noteAdoption(p.StateDir, adoptRecord{Outcome: adoptReturned, Mode: p.Mode, From: p.fromID(), To: adoptBuildID{Label: version, SHA256: p.ExpectSHA}, Reason: p.Returning})
+		noteAdoption(p.StateDir, p.Loop, adoptRecord{Outcome: adoptReturned, Mode: p.Mode, From: p.fromID(), To: adoptBuildID{Label: version, SHA256: p.ExpectSHA}, Reason: p.Returning})
 	} else {
-		noteAdoption(p.StateDir, adoptRecord{Outcome: adoptAdopted, Mode: p.Mode, From: p.fromID(), To: p.toID()})
+		noteAdoption(p.StateDir, p.Loop, adoptRecord{Outcome: adoptAdopted, Mode: p.Mode, From: p.fromID(), To: p.toID()})
 	}
 	monitor, err := daemoninfo.Start(p.StateDir, version, false)
 	if err != nil {
@@ -765,7 +777,7 @@ func openEarlierBuild(path, sha string) (*adoptCandidate, string) {
 }
 
 func (p adoptPayload) giveUp(e env, reason string) int {
-	noteAdoption(p.StateDir, adoptRecord{Outcome: adoptFailed, Mode: p.Mode, From: p.fromID(), To: p.toID(), Reason: reason + "; no supervisor is running, start supervision again"})
+	noteAdoption(p.StateDir, p.Loop, adoptRecord{Outcome: adoptFailed, Mode: p.Mode, From: p.fromID(), To: p.toID(), Reason: reason + "; no supervisor is running, start supervision again"})
 	e.errf("adopt build: %s", reason)
 	return exitFailed
 }

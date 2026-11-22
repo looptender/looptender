@@ -79,14 +79,14 @@ func refusalReason(err error) string {
 // refusedStart records a refused supervisor start, then reports it as
 // ownershipError does. A held lock (a check or a daemon running) and a
 // cancelled start are not refusals and are not recorded.
-func refusedStart(e env, stateDir, mode string, err error) int {
+func refusedStart(e env, stateDir, loop, mode string, err error) int {
 	if !errors.Is(err, lock.ErrHeld) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		noteStartRefused(stateDir, mode, err, time.Now())
+		noteStartRefused(stateDir, loop, mode, err, time.Now())
 	}
 	return ownershipError(e, err)
 }
 
-func noteStartRefused(stateDir, mode string, cause error, now time.Time) {
+func noteStartRefused(stateDir, loop, mode string, cause error, now time.Time) {
 	if info, err := os.Stat(stateDir); err != nil || !info.IsDir() {
 		return // never create a loop's state directory for a refusal
 	}
@@ -113,7 +113,7 @@ func noteStartRefused(stateDir, mode string, cause error, now time.Time) {
 		}
 	}
 	if log {
-		_ = state.Append(stateDir, state.Event{At: now, Event: "daemon", Reason: "start_refused", Error: r.Reason, Extra: map[string]any{"mode": mode, "callerThread": caller, "count": r.Count}})
+		_ = state.Append(stateDir, state.Event{At: now, Loop: loop, Event: "daemon", Reason: "start_refused", Error: r.Reason, Extra: map[string]any{"mode": mode, "callerThread": caller, "count": r.Count}})
 	}
 }
 
