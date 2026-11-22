@@ -39,6 +39,13 @@ export const planSchema = z.object({
     apply: z.array(z.object({ id: text, model: z.string().max(256), group: z.string().max(256) })).min(1).max(64),
     handoffOn: z.literal("rate_limit"),
   }).optional(),
+  // Set when the setup has a takeover: on a usage limit a new conversation
+  // on this provider and model starts and owns the loop. `text` is the
+  // CLI's own sentence for what happens.
+  takeover: z.object({ provider: z.string().max(64), model: z.string().max(256), permission: z.string().max(32), text: z.string().max(4096) }).optional(),
+  // A provider looptender found usable for a takeover, so the person can
+  // turn it on or off. Provider and model labels only.
+  takeoverOffer: z.object({ provider: z.string().max(64), model: z.string().max(256) }).optional(),
 });
 export type SetupPlan = z.infer<typeof planSchema>;
 /**
@@ -70,6 +77,9 @@ export const setupInput = z.object({
   task: z.string().max(262144).optional(), ticket: text.optional(),
   // Follow the person's standard route list for handoffs. Off unless chosen.
   followStandard: z.boolean().optional(),
+  // The takeover by a new conversation on another provider, when one is
+  // usable: on unless turned off.
+  takeover: z.enum(["on", "off"]).optional(),
 });
 /**
  * A refusal keepgoing reports in a structured form. The plugin shows a fixed

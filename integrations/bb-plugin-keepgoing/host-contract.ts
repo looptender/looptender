@@ -12,7 +12,9 @@ export const hostContract = defineRpcContract({
   attachment: { input: attachHostInput, output: attachHostResult },
   transfer: { input: transferHostInput, output: z.object({ code: z.number().int(), data: z.unknown(), registration: publicationSchema.optional() }) },
   init: {
-    input: z.object({ bin: text, target: targetSchema, name: text, task: z.string().max(262144), dryRun: z.boolean(), withGoal: z.boolean().optional(), bounds: boundsSchema.optional(), followStandard: z.literal(true).optional() }),
+    input: z.object({ bin: text, target: targetSchema, name: text, task: z.string().max(262144), dryRun: z.boolean(), withGoal: z.boolean().optional(), bounds: boundsSchema.optional(), followStandard: z.literal(true).optional(),
+      // Provider and model labels from init's own offer, or none to decline.
+      takeover: z.union([z.literal("none"), z.literal("detect"), z.object({ provider: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/), model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/) })]).optional() }),
     // A plan, or keepgoing's own structured refusal.
     output: z.union([z.object({ plan: planSchema, registration: publicationSchema.optional() }), z.object({ refused: refusalSchema }), z.object({ noRoutes: z.literal(true) })]),
   },

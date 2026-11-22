@@ -354,7 +354,7 @@ func doctor(e env, args []string, run doctorRun) int {
 		r.add("supervisor.follows_installs", level, "Daemon follows new installs: "+text+".", fix)
 	}
 	doctorFailedChecks(&r, st, stateErr == nil)
-	doctorRoutes(&r, cfg, st, stateErr == nil, loopHeld(ctl, ctlErr != nil), r.CheckedAt)
+	doctorRoutes(&r, cfg, *path, st, stateErr == nil, loopHeld(ctl, ctlErr != nil), r.CheckedAt)
 	if stateErr == nil {
 		if ctl, err := control.Load(cfg.Loop.StateDir); err == nil {
 			sch := describeSchedule(&cfg.Loop, st, ctl, &d, r.CheckedAt)

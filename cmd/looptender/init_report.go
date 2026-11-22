@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/looptender/looptender/internal/config"
@@ -84,6 +85,9 @@ type initReport struct {
 	Probes      *initProbePolicy  `json:"probes,omitempty"`
 	Next        initNextCommands  `json:"next"`
 	Limitations []string          `json:"limitations"`
+	// NewThreadOffer is a usable provider for a takeover that was not asked
+	// for: pass --new-thread-provider and --new-thread-model to set it up.
+	NewThreadOffer *newThreadOffer `json:"newThreadOffer,omitempty"`
 }
 
 type initTarget struct {
@@ -96,6 +100,20 @@ type initTarget struct {
 type initFallbackRef struct {
 	ID     string     `json:"id"`
 	Target initTarget `json:"target"`
+	// NewThread is set for a takeover by a new conversation: on a usage
+	// limit one is started on this provider and model and owns the loop.
+	NewThread *initNewThread `json:"newThread,omitempty"`
+}
+
+// initNewThread is what a takeover fallback starts.
+type initNewThread struct {
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	Reasoning      string `json:"reasoning,omitempty"`
+	Permission     string `json:"permission"`
+	ChildrenFollow bool   `json:"childrenFollow"`
+	Successors     bool   `json:"successors"`
+	Text           string `json:"text"`
 }
 type initLimits struct {
 	NoProgressTimeout string   `json:"noProgressTimeout,omitempty"`
@@ -181,6 +199,7 @@ func printInitJSON(e env, o initOptions, cfg *config.Config, goal *control.Goal)
 	} else if o.taskFile != "" {
 		r.TaskSource = "file"
 	}
+	r.NewThreadOffer = o.offer
 	r.Routes = "none"
 	if cfg.Loop.FollowsStandard() {
 		r.Routes = config.RoutesStandard
@@ -191,7 +210,14 @@ func printInitJSON(e env, o initOptions, cfg *config.Config, goal *control.Goal)
 	r.Limits.FailoverOn = append([]string{}, cfg.Loop.Errors.FailoverOn...)
 	if fs := cfg.FallbackSet; fs != nil {
 		for _, c := range fs.Candidates {
-			r.Fallbacks = append(r.Fallbacks, initFallbackRef{ID: c.ID, Target: initTargetOf(c.Agent)})
+			ref := initFallbackRef{ID: c.ID, Target: initTargetOf(c.Agent)}
+			if isNewThreadCandidate(c) {
+				var b strings.Builder
+				printNewThreadPlan(&b, cfg.Loop.Provider, c, initNewThreadOff)
+				ref.NewThread = &initNewThread{Provider: c.Provider, Model: c.BB.Model, Reasoning: c.BB.Reasoning, Permission: c.BB.NewThreadPermission(),
+					ChildrenFollow: c.BB.ChildrenFollow(), Successors: c.BB.ReplacesChildren(), Text: strings.TrimSpace(b.String())}
+			}
+			r.Fallbacks = append(r.Fallbacks, ref)
 		}
 		r.Probes = &initProbePolicy{fs.Probe.Every.String(), fs.Probe.TTL.String(), fs.Probe.DailyCap, true, true}
 	}

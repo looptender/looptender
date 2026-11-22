@@ -19,6 +19,8 @@
 //	<thread>.interactions  JSON returned by `thread interactions list`
 //	place.list             JSON array of {id, title} returned by
 //	                       `thread list --project ... --environment ...`
+//	providers.list         JSON returned by `provider list` (default [])
+//	models.<provider>      JSON returned by `provider models <provider>` (default [])
 //	spawn.modes            one outcome per line for successive `thread spawn`
 //	                       calls, consumed in order (default ok); see spawn
 //	probe-limited.<model>  if present, a claude probe of that model is rate limited
@@ -197,6 +199,18 @@ func run(world string, args []string) int {
 			b, _ := json.Marshal(map[string]any{"ok": true, "threadId": args[2], "queuedMessageId": "qm_example1"})
 			fmt.Println(string(b))
 			return 0
+		}
+	}
+	// BB's provider metadata, as init and fallbacks arm read it: an empty
+	// list unless the scenario wrote providers.list or models.<provider>.
+	if len(args) >= 2 && args[0] == "provider" {
+		switch args[1] {
+		case "list":
+			return emit(world, "providers.list", "[]")
+		case "models":
+			if len(args) >= 3 {
+				return emit(world, "models."+args[2], "[]")
+			}
 		}
 	}
 	if len(args) < 2 || args[0] != "thread" {
