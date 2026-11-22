@@ -69,11 +69,13 @@ type ScheduleInput struct {
 // Schedule is the rule's verdict.
 type Schedule struct {
 	Overdue bool
-	// NotJudged says why the loop is not judged at all: disabled, held or
-	// never_checked. Empty when it is.
+	// NotJudged says why the loop is not judged at all: disabled, held, or
+	// never_checked when it has no check and no control change to measure
+	// from. Empty when it is.
 	NotJudged string
-	// Basis is how it is judged: usual (its usual interval is known) or
-	// fallback (fewer than CadenceMinGaps gaps seen).
+	// Basis is how it is judged: usual (its usual interval is known),
+	// fallback (fewer than CadenceMinGaps gaps seen), or never_checked (no
+	// check is recorded; measured from the last control change).
 	Basis    string
 	GapsSeen int
 	// LastCheckAt is the last recorded check; From is when the time without
@@ -134,15 +136,14 @@ func ScheduleOf(f File, in ScheduleInput, now time.Time) Schedule {
 		s.From = in.ControlChangedAt
 	}
 	switch {
-	case f.CheckedAt.IsZero():
-		s.NotJudged = "never_checked"
-		return s
 	case !in.Enabled:
 		s.NotJudged = "disabled"
 		return s
 	case in.Held, in.StopRequested && f.StopRequestedSent:
 		s.NotJudged = "held"
 		return s
+	case f.CheckedAt.IsZero():
+		return neverChecked(s, in, now)
 	}
 	s.For = gapLength(in, s.From, now)
 	if s.GapsSeen < CadenceMinGaps {
@@ -174,6 +175,39 @@ func ScheduleOf(f File, in ScheduleInput, now time.Time) Schedule {
 	s.NotRecorded = s.NotRecorded && !s.Blocked
 	s.Slept = daemon && !s.Blocked && !s.NotRecorded
 	s.Overdue = !s.Slept && s.For > s.Threshold
+	return s
+}
+
+// NeverCheckedOverdue is how long an enabled loop that is not held may go
+// with no check at all since it was enabled, resumed or moved (or three
+// daemon intervals, if longer): a supervisor started then has checked well
+// before it.
+const NeverCheckedOverdue = MinOverdue
+
+// neverChecked judges an enabled, unheld loop with no recorded check, from
+// its last control change: enabling, resuming or moving it. Every move clears
+// the check record, so without this the one state in which nothing checks a
+// loop would be the one state with no clock. A daemon still in its first
+// pass is not overdue; one that has finished a pass and recorded nothing is.
+func neverChecked(s Schedule, in ScheduleInput, now time.Time) Schedule {
+	if in.ControlChangedAt.IsZero() || in.ControlChangedAt.After(now) {
+		s.NotJudged = "never_checked" // nothing to measure from
+		return s
+	}
+	s.Basis, s.From = "never_checked", in.ControlChangedAt
+	s.For = gapLength(in, s.From, now)
+	s.Threshold = max(NeverCheckedOverdue, OverdueFactor*in.DaemonInterval)
+	if !in.DaemonStartedAt.IsZero() {
+		passed := in.DaemonLastPassStartedAt
+		if passed.IsZero() {
+			passed = in.DaemonLastPassAt
+		}
+		s.NotRecorded = !passed.IsZero() && !passed.After(now)
+		if !s.NotRecorded {
+			return s // its first check is still running
+		}
+	}
+	s.Overdue = s.For > s.Threshold
 	return s
 }
 

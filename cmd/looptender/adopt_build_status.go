@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/looptender/looptender/internal/daemoninfo"
 	"github.com/looptender/looptender/internal/lock"
+	"github.com/looptender/looptender/internal/state"
 )
 
 // adoptStalled is how long a recorded switch may go without a daemon
@@ -104,4 +106,44 @@ func endpointBefore(dir string, at time.Time) bool {
 func daemonLockHeld(dir string) bool {
 	held, err := lock.Held(dir, lock.Daemon)
 	return err == nil && held
+}
+
+// buildNames says which builds a loop's supervision runs, from what is
+// recorded: the build that ran the last check, this command's, and the
+// build the daemon reports. "unknown" when one is not recorded.
+func buildNames(st state.File, d daemonStatus) string {
+	last := "unknown"
+	if c := st.LastCheck; c != nil && c.Version != "" {
+		last = dockBuildLabel(c.Version)
+	}
+	text := "last check ran " + last + "; this command is " + dockBuildLabel(version)
+	if d.State == "responsive" {
+		running := d.version
+		if running == "" {
+			running = "unknown"
+		}
+		text += "; the daemon runs " + running
+	}
+	return text
+}
+
+// followsInstalls says whether the loop's daemon will move to a new build
+// installed where it was started from, from what the daemon reports.
+func followsInstalls(d daemonStatus) (answer, text string) {
+	const restart = "; restart supervision to run the installed build"
+	switch mode := d.Adoption; {
+	case d.State != "responsive":
+		return "unknown", "unknown: no daemon answers"
+	case mode == "":
+		return "no", "no: this daemon was built before daemons could switch builds" + restart
+	case mode == "moved_link":
+		return "yes", "yes, after a check, when the link it was started through moves to a new build (the default)"
+	case mode == "any_install":
+		return "yes", "yes, after a check, for any new build at the path it was started from (adopt_installed_build: true)"
+	case mode == "off":
+		return "no", "no: loop.daemon.adopt_installed_build is false" + restart
+	case strings.HasPrefix(mode, "unavailable: "):
+		return "no", "no: " + strings.TrimPrefix(mode, "unavailable: ") + restart
+	}
+	return "unknown", "unknown: the daemon's answer is not understood by this build"
 }

@@ -1663,6 +1663,13 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	if snap != nil && snap.Runtime != nil && snap.Runtime.Overdue && need == nil {
 		need = &dockNeed{Kind: "overdue", Reason: "Its checks have stopped: " + snap.Runtime.OverdueMessage + ".",
 			Action: "Find out why no check has run, and start its scheduler again if it stopped; the next check ends this.", Since: snap.Runtime.CheckedAt, SinceEvidence: "last_check"}
+		if snap.Runtime.CheckedAt == nil && snap.Runtime.OverdueSince != nil {
+			// Never checked since it was enabled, resumed or moved.
+			need.Reason = "Nothing is supervising it: " + snap.Runtime.OverdueMessage + "."
+			need.Action = "Start supervision for this loop; the first check ends this."
+			need.Since, need.SinceEvidence = snap.Runtime.OverdueSince, "control_change"
+			l.State, l.Phrase, l.Detail = "not_checked_recently", "Not supervised", "It is on and not held, and nothing has checked it since it was enabled, resumed or moved."
+		}
 	}
 	// After this panel replaced the file that runs its checks: a check that
 	// failed since, or checks that stopped coming, is said with the

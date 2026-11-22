@@ -32,6 +32,9 @@ type daemonStatus struct {
 	// private mode, after a shape check (see shortBuildLabel).
 	version string
 	DryRun  bool `json:"dryRun"`
+	// Adoption is what the daemon said about following new installs
+	// (daemoninfo.Snapshot.Adoption); empty from an older daemon.
+	Adoption string `json:"adoption,omitempty"`
 }
 
 func inspectDaemon(ctx context.Context, dir, current string, offline bool) daemonStatus {
@@ -53,6 +56,7 @@ func inspectDaemon(ctx context.Context, dir, current string, offline bool) daemo
 	d.Phase, d.StartedAt, d.ObservedAt, d.NextCheckAt, d.LastPassAt, d.LastPassStartedAt, d.DryRun = s.Phase, &s.StartedAt, &s.ObservedAt, s.NextCheckAt, s.LastPassAt, s.LastPassStartedAt, s.DryRun
 	d.BinaryComparison = compareCheckVersion(&state.Check{Version: s.Version}, current)
 	d.version = dockBuildLabel(s.Version)
+	d.Adoption = s.Adoption
 	d.NextCheck = "check in progress; the next interval starts after this pass finishes"
 	if s.Phase == "waiting" && s.NextCheckAt != nil {
 		d.NextCheck = "normally due " + s.NextCheckAt.UTC().Format(time.RFC3339) + "; control changes can trigger an earlier check"

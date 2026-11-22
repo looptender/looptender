@@ -323,12 +323,24 @@ func doctor(e env, args []string, run doctorRun) int {
 		doctorAutomationResult(&r, s)
 	}
 	doctorCheckVersion(&r, st.LastCheck, stateErr == nil)
+	r.add("supervisor.builds", "ok", "Builds: "+buildNames(st, d)+".", "")
+	if answer, text := followsInstalls(d); answer != "unknown" {
+		level, fix := "ok", ""
+		if answer == "no" && d.version != dockBuildLabel(version) {
+			level, fix = "warning", "Restart supervision to run the installed build: for a service, `looptender service install` again; otherwise end the daemon and start it with `looptender start --background`."
+		}
+		r.add("supervisor.follows_installs", level, "Daemon follows new installs: "+text+".", fix)
+	}
 	doctorFailedChecks(&r, st, stateErr == nil)
 	doctorRoutes(&r, cfg, st, stateErr == nil, loopHeld(ctl, ctlErr != nil), r.CheckedAt)
 	if stateErr == nil {
 		if ctl, err := control.Load(cfg.Loop.StateDir); err == nil {
-			if level, text, fix, ok := scheduleDoctorLine(describeSchedule(&cfg.Loop, st, ctl, &d, r.CheckedAt)); ok {
+			sch := describeSchedule(&cfg.Loop, st, ctl, &d, r.CheckedAt)
+			if level, text, fix, ok := scheduleDoctorLine(sch); ok {
 				r.add("supervisor.schedule", level, text, fix)
+			}
+			if t := tickCadenceSentence(sch, r.CheckedAt); t != "" {
+				r.add("supervisor.ticks", "ok", "No daemon answers, and the loop is "+t+".", "")
 			}
 		}
 	}
@@ -336,6 +348,9 @@ func doctor(e env, args []string, run doctorRun) int {
 		r.add("supervisor.send_record", "error", "The send record sends.json cannot be read, so no check sends anything.", "Restore sends.json from a copy. Deleting it loses the record of sends not yet counted, which may then be repeated, and resets the count against loop.limits.max_sends.")
 	} else {
 		r.add("supervisor.send_record", "ok", "The send record sends.json is readable.", "")
+	}
+	if refusal := loadStartRefusal(cfg.Loop.StateDir); refusal != nil {
+		r.add("supervisor.start_refused", "warning", "Supervisor start refused: "+refusal.sentence()+".", "Start supervision from the BB thread that owns the loop, or transfer ownership deliberately first (enable --take-over from the new owning thread). A start from a terminal inherits that terminal's BB_THREAD_ID.")
 	}
 	if stateErr == nil && st.StartRefused != nil {
 		r.add("runner.wrapper", "error", fmt.Sprintf("No turn can be started, since %s: %s.", st.StartRefused.Since.Format(time.RFC3339), st.StartRefused.Reason), "Stop the daemon, make sure the keepgoing binary at its path is the one you mean to run, and start the daemon again. Nothing is sent or counted until then.")

@@ -84,6 +84,16 @@ test("an overdue schedule is shown with its message, and only a judged one is sa
   assert.ok(older.some((line) => line.startsWith("External scheduler health: not inspected")));
 });
 
+test("a loop nothing supervises shows the alarm, and one checked by ticks without a daemon says so", () => {
+  const base = { readAt: "2030-01-01T00:00:00Z", completed: false, targetThread: "thr_example", targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null };
+  const message = "it is on and not held, but nothing has checked it since it was enabled, resumed or moved at 2030-01-01T00:00:00Z (5h ago), and no supervisor is running it: start supervision (`looptender start -c CONFIG`, or a service), or it will send nothing";
+  const never = diagnosticLines({ ...base, schedule: { overdue: true, judging: true, basis: "never_checked", message } }, "primary", true);
+  assert.ok(never.includes("Schedule: " + message));
+  const ticked = diagnosticLines({ ...base, schedule: { overdue: false, judging: false, checkedBy: "ticks", cadence: "10m" } }, "primary", true);
+  assert.ok(ticked.includes("Schedule: checked by ticks run without a daemon (an external scheduler or by hand), about every 10m"));
+  assert.ok(ticked.some((line) => line.startsWith("Daemon: unavailable from this build")));
+});
+
 test("a long limit wait says why no handoff is possible and whether anyone was told", () => {
   const base = { readAt: "2030-01-01T00:00:00Z", completed: false, targetThread: "thr_example", targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null };
   const lines = diagnosticLines({ ...base, limitWait: { state: "not_subscribed", resetsAt: "2030-01-06T12:00:00Z", reason: "limit_failover_disabled", reportConfigured: false, resetIn: "5d 12h" } }, "primary", true);
