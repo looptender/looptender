@@ -128,6 +128,16 @@ func AppendLineNoting(path string, line func(locked bool) []byte, perm os.FileMo
 // AppendLockWait is how long an appender waits for the log's lock.
 var AppendLockWait = 3 * time.Second
 
+// AppendLockSkip is how long, after a wait for a log's lock ran out, this
+// process tries the lock only once instead of waiting again: a stuck holder
+// costs one wait per check, not one per event.
+var AppendLockSkip = time.Minute
+
+var (
+	unobtainableMu sync.Mutex
+	unobtainable   = map[string]time.Time{} // log path → until when not to wait
+)
+
 func appendLine(path string, build func(locked bool) []byte, perm os.FileMode, sync bool) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, perm)
 	if err != nil {
@@ -141,8 +151,14 @@ func appendLine(path string, build func(locked bool) []byte, perm os.FileMode, s
 		return err
 	}
 	defer l.Close()
+	wait := AppendLockWait
+	unobtainableMu.Lock()
+	if until, ok := unobtainable[path]; ok && time.Now().Before(until) {
+		wait = 0 // it was unobtainable a moment ago: one try only
+	}
+	unobtainableMu.Unlock()
 	locked := false
-	for deadline := time.Now().Add(AppendLockWait); ; time.Sleep(20 * time.Millisecond) {
+	for deadline := time.Now().Add(wait); ; time.Sleep(20 * time.Millisecond) {
 		ok, err := tryLockAppend(l)
 		if err != nil {
 			return err
@@ -155,6 +171,13 @@ func appendLine(path string, build func(locked bool) []byte, perm os.FileMode, s
 			break // held elsewhere for too long: append without it
 		}
 	}
+	unobtainableMu.Lock()
+	if locked {
+		delete(unobtainable, path)
+	} else if wait > 0 {
+		unobtainable[path] = time.Now().Add(AppendLockSkip)
+	}
+	unobtainableMu.Unlock()
 	if locked {
 		defer unlockAppend(l)
 	}
@@ -176,6 +199,11 @@ func appendLine(path string, build func(locked bool) []byte, perm os.FileMode, s
 	if len(line) == 0 || line[len(line)-1] != '\n' {
 		line = append(line, '\n')
 	}
+	// Without the lock another appender can end its line between the length
+	// read above and this write, so a line break added for a torn line may
+	// leave an empty line instead. That is accepted: nothing is lost or
+	// joined, the routes history reader skips empty lines, and runs.jsonl
+	// has no reader in the product.
 	if err := Write(f, line); err != nil {
 		if now, serr := f.Stat(); locked && serr == nil && now.Size() > end {
 			// Only this call's bytes are past end: the lock keeps every
