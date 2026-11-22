@@ -33,6 +33,10 @@ type transferTarget struct {
 	Host        string `json:"host,omitempty"`
 	Provider    string `json:"provider,omitempty"`
 	Status      string `json:"status,omitempty"`
+	// Model and Reasoning are the labels BB reports for the thread, when it
+	// reports any. Absent when BB returns null: nothing is inferred.
+	Model     string `json:"model,omitempty"`
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 type transferPreview struct {
@@ -344,6 +348,44 @@ func transferCommand(e env, args []string, run doctorRun) int {
 			}
 		}
 	}
+	// A provider change with no model or reasoning label leaves it blank. Say
+	// so, and offer what BB reports for the destination thread, if anything.
+	if providerChange := route != nil || plan.Provider != nil; providerChange {
+		destination := r.To
+		destinationRead := destination.Provider != ""
+		for _, l := range []struct {
+			id, name, flag string
+			blank          bool
+			reported       string
+		}{
+			{"model_label", "model", "--model", (route != nil && route.Model == "") || (route == nil && *newModel == ""), destination.Model},
+			{"reasoning_label", "reasoning", "--reasoning", (route != nil && route.Reasoning == "") || (route == nil && *newReasoning == ""), destination.Reasoning},
+		} {
+			if !l.blank {
+				continue
+			}
+			msg := "The provider changes and no " + l.name + " label is given, so the loop's " + l.name + " label will be blank."
+			switch {
+			case l.reported != "":
+				msg += " BB reports the destination thread's " + l.name + " as " + l.reported + "; pass " + l.flag + " " + l.reported + " to record it."
+			case *offline:
+				msg += " BB was not asked (offline), so no value is offered."
+			case !destinationRead:
+				msg += " BB could not be reached for the destination thread, so no value is offered."
+			default:
+				msg += " BB did not report the destination thread's " + l.name + ", so no value is offered."
+			}
+			r.Checks = append(r.Checks, doctorCheck{ID: l.id, Status: "warning", Message: msg})
+		}
+		// Only the file's age is read, never its content.
+		what := "The loop's task was written for the previous provider and should be reviewed before it is resumed."
+		if cfg.Loop.PromptFile != "" {
+			if info, err := os.Stat(cfg.Loop.PromptFile); err == nil && info.Mode().IsRegular() {
+				what = "The loop's prompt file was last changed " + dockSpan(time.Since(info.ModTime())) + " ago; review it after a provider change, in case it was written for the previous provider."
+			}
+		}
+		r.Checks = append(r.Checks, doctorCheck{ID: "prompt_review", Status: "warning", Message: what})
+	}
 	if cfg.CheckSources() != nil {
 		add("config", "unavailable", "Configuration changed during preview; discard this result and inspect again.")
 	}
@@ -461,6 +503,8 @@ func inspectTransferTarget(ctx context.Context, cli, id string, timeout time.Dur
 			Environment string          `json:"environmentId"`
 			Provider    string          `json:"providerId"`
 			Status      string          `json:"status"`
+			Model       *string         `json:"model"`
+			Reasoning   *string         `json:"reasoningLevel"`
 			Archived    json.RawMessage `json:"archivedAt"`
 			Deleted     json.RawMessage `json:"deletedAt"`
 		} `json:"thread"`
@@ -483,7 +527,15 @@ func inspectTransferTarget(ctx context.Context, cli, id string, timeout time.Dur
 	default:
 		return transferTarget{}, "", bad
 	}
-	return transferTarget{Thread: id, Project: t.Project, Environment: t.Environment, Host: e.Host, Provider: t.Provider, Status: t.Status}, e.Path, nil
+	out := transferTarget{Thread: id, Project: t.Project, Environment: t.Environment, Host: e.Host, Provider: t.Provider, Status: t.Status}
+	// Only a plain label BB actually reported; null or odd values are left out.
+	if t.Model != nil && transferLabel.MatchString(*t.Model) {
+		out.Model = *t.Model
+	}
+	if t.Reasoning != nil && transferLabel.MatchString(*t.Reasoning) {
+		out.Reasoning = *t.Reasoning
+	}
+	return out, e.Path, nil
 }
 
 // applyCheck says what applying this preview takes. A plan across environments

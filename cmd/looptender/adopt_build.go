@@ -52,7 +52,7 @@ const (
 	// fields change without a rise; a new value of an existing field does not
 	// fail it, and needs a rise by hand. A daemon does not switch to a
 	// build with a lower number.
-	adoptStateFormat = 3
+	adoptStateFormat = 4
 	adoptRecordName  = "build-adoption.json"
 	adoptProbeLimit  = 10 * time.Second
 	adoptCheckLimit  = 60 * time.Second

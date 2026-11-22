@@ -514,6 +514,7 @@
       var name = el("span", "work-name", l.name);
       // The glossary's role: its last verified listing has lanes.
       if (l.lanes && l.lanes.role === "coordinator") name.appendChild(el("span", "work-role", "coordinator"));
+      if (l.provider) { var tag = el("span", "work-role", l.provider + (l.model ? " \u00B7 " + l.model : "")); tag.title = "Configured provider and model"; name.appendChild(tag); }
       summary.appendChild(name);
       var status = el("span", "work-status");
       var tone = TONES[l.state] || "unknown";
@@ -724,6 +725,9 @@
       pills.appendChild(tag("needs", l.lanesFailed));
     }
     pane.appendChild(paneHead(l.name, pills));
+    // The provider and model the loop now targets, from its configuration, so
+    // its name is not the only cue. Nothing when an older server sends none.
+    if (l.provider) pane.appendChild(el("p", "sub build-line", "Provider: " + l.provider + (l.model ? " \u00B7 model " + l.model : "") + " (configured)"));
     // The build its last check ran; "version unknown" when none is recorded.
     // An older server sends no line, and then nothing is shown.
     if (l.build && l.build.line) pane.appendChild(el("p", "sub build-line", l.build.line));

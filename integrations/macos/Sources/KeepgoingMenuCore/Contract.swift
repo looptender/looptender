@@ -28,6 +28,7 @@ private struct Snapshot: Decodable {
     let completionEvidence: String
     let target: Target?
     let runtime: Runtime?
+    let moved: Moved?
     let lastCheck: Check?
     let goalState: String
     let goal: Goal?
@@ -38,7 +39,8 @@ private struct Snapshot: Decodable {
 private struct Controls: Decodable {
     let enabled, paused, stop, awaitingUser, completed: Bool
 }
-private struct Target: Decodable { let alias, adapter, identityEvidence: String; let bbThread: String? }
+private struct Target: Decodable { let alias, adapter, identityEvidence: String; let bbThread: String?; let provider, model: String? }
+private struct Moved: Decodable { let held: Bool; let text: String }
 private struct Runtime: Decodable { let state, source, freshness, binaryComparison: String; let checkedAt: String?; let recordedBuild, installedBuild: String? }
 private struct Check: Decodable { let at: String?; let action, outcome: String; let dryRun: Bool }
 private struct Goal: Decodable { let id: String; let revision: UInt64; let state: String }
@@ -141,6 +143,9 @@ public enum Contract {
         if let t = s.target {
             lines.append("Configured target: \(text(t.alias)) (\(text(t.adapter)))")
             if let thread = t.bbThread { lines.append("Configured thread: \(text(thread))") }
+            if let provider = t.provider.map(text), !provider.isEmpty {
+                lines.append("Provider: \(provider)" + (t.model.map(text).flatMap { $0.isEmpty ? nil : " · model \($0)" } ?? "") + " (configured)")
+            }
         } else { lines.append("Configured target: unavailable") }
         if let r = s.runtime {
             let states = ["recorded_active": "active at last check", "recorded_idle": "idle at last check", "recorded_error": "error at last check", "recorded_pending": "pending at last check", "recorded_stopping": "stopping at last check", "recorded_awaiting_input": "awaiting input at last check", "stop_requested": "stop requested", "disabled": "disabled", "paused": "paused", "awaiting_user": "awaiting user", "completed": "completion declared", "outside_window": "outside operating window", "check_failed": "last check failed", "dry_run": "dry run only", "not_observed": "target not observed"]
@@ -153,6 +158,10 @@ public enum Contract {
                 lines.append(r.binaryComparison == "different" && !installed.isEmpty ? "Build: last check ran \(running) · installed \(installed)" : "Build: last check ran \(running)")
             } else { lines.append("Build: version unknown") }
         } else { lines.append("Recorded activity: unavailable") }
+        if let moved = s.moved {
+            lines.append("Moved: \(text(moved.text))")
+            if s.lastCheck == nil { lines.append("Last check: none yet; the target is new and has not been checked") }
+        }
         if let check = s.lastCheck {
             lines.append("Last action: \(known(check.action, ["none", "wake", "nudge", "reprompt", "await_user", "stop", "handoff", "switch_back"])) / \(known(check.outcome, ["succeeded", "failed", "skipped", "dry_run", "unknown"]))\(check.dryRun ? " (dry run)" : "")")
         }

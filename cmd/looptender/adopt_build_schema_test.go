@@ -39,6 +39,10 @@ var adoptSchemaFingerprints = map[int]string{
 	// 3: state.json gained childMove (moving a left conversation's child
 	// threads) and limitWaitReport's reason and reportSection.
 	3: "9a7aa1130ff38ab6bbcb65b4d0d80e1b52e4ce42304954aa922f44d685fe30f5",
+	// 4: state.json gained movedAt and movedControlAt (the mark transfer apply
+	// leaves on its own hold; kept out of control.json so older builds can
+	// still pause a moved loop).
+	4: "4c0b2fe163cafb87ef954ed2590ad21a69ac214ab5062c473a96609572d5bcb5",
 }
 
 // schemaFingerprint lists every JSON field reachable from t, by path, with

@@ -54,6 +54,20 @@ final class ContractTests: XCTestCase {
         // A CLI that sends no labels, or a build with no version.
         XCTAssertTrue(try lines(base.merging(["binaryComparison": "unknown"]) { $1 }).contains("Build: version unknown"))
     }
+    func testMovedAndProviderLinesAndTheirAbsence() throws {
+        var r = report()
+        var snapshot = r["snapshot"] as! [String: Any]
+        snapshot["target"] = ["alias": "primary", "adapter": "bb", "identityEvidence": "configuration_only", "provider": "claude-code", "model": "example-model"]
+        snapshot["moved"] = ["held": true, "text": "Moved to its new thread. Resuming it is the one action needed."]
+        snapshot.removeValue(forKey: "lastCheck")
+        r["snapshot"] = snapshot
+        let lines = Contract.lines(try Contract.status(data(r), exit: 0, entry: entry), privateText: false).joined(separator: "\n")
+        XCTAssertTrue(lines.contains("Provider: claude-code · model example-model (configured)"))
+        XCTAssertTrue(lines.contains("Moved: Moved to its new thread. Resuming it is the one action needed."))
+        XCTAssertTrue(lines.contains("Last check: none yet; the target is new and has not been checked"))
+        let plain = Contract.lines(try Contract.status(data(report()), exit: 0, entry: entry), privateText: false).joined(separator: "\n")
+        XCTAssertFalse(plain.contains("Moved:")); XCTAssertFalse(plain.contains("Provider:"))
+    }
     func testExitSchemaIdentityAndSnapshotMismatchAreRejected() {
         for mode in ["exit", "schema", "identity", "loop", "readAt", "outcome", "missing snapshot"] {
             var r = report()

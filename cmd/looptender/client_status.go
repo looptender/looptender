@@ -34,6 +34,7 @@ type clientSnapshot struct {
 	CompletionEvidence string               `json:"completionEvidence"`
 	Target             *clientTarget        `json:"target,omitempty"`
 	Runtime            *clientRuntime       `json:"runtime,omitempty"`
+	Moved              *clientMoved         `json:"moved,omitempty"`
 	LastCheck          *clientCheck         `json:"lastCheck,omitempty"`
 	GoalState          string               `json:"goalState"`
 	Goal               *control.GoalSummary `json:"goal,omitempty"`
@@ -53,6 +54,18 @@ type clientTarget struct {
 	Adapter          string `json:"adapter"`
 	BBThread         string `json:"bbThread,omitempty"`
 	IdentityEvidence string `json:"identityEvidence"`
+	// Provider and Model are the configured labels of the target, when they
+	// have a plain shape. They are configuration, not verified identity.
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+}
+
+// clientMoved is movedStatus without its time: that a loop was moved to a new
+// thread and has not been checked there, and whether resuming is the one
+// action needed. No thread ID or title.
+type clientMoved struct {
+	Held bool   `json:"held"`
+	Text string `json:"text"`
 }
 type clientRuntime struct {
 	State            string     `json:"state"`
@@ -270,6 +283,12 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 		}
 		if configured {
 			target := &clientTarget{Alias: st.Target(), Adapter: agent.Adapter, IdentityEvidence: "configuration_only"}
+			if transferLabel.MatchString(agent.Provider) {
+				target.Provider = agent.Provider
+			}
+			if agent.BB != nil && transferLabel.MatchString(agent.BB.Model) {
+				target.Model = agent.BB.Model
+			}
 			if agent.BB != nil {
 				if transferThreadID.MatchString(agent.BB.Thread) {
 					target.BBThread = agent.BB.Thread
@@ -294,6 +313,9 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 					RecordedBuild: rt.RecordedBuild, InstalledBuild: rt.InstalledBuild, CheckedAt: clientTime(st.CheckedAt)}
 				scheduleOf = func(d *daemonStatus) scheduleStatus { return describeSchedule(&cfg.Loop, st, ctl, d, now) }
 			}
+		}
+		if m := movedOf(ctl, st); controlOK && m != nil {
+			s.Moved = &clientMoved{Held: m.Held, Text: m.Text}
 		}
 		if c := st.LastCheck; c != nil {
 			s.LastCheck = &clientCheck{At: clientTime(c.At), Target: clientAlias(cfg, c.Target), Action: clientToken(c.Action, "none", "wake", "nudge", "reprompt", "await_user", "stop", "handoff", "switch_back"), Outcome: clientToken(c.Outcome, "succeeded", "failed", "dry_run"), DryRun: c.DryRun}

@@ -114,3 +114,16 @@ test("the status label keeps the state word first and adds the running build, an
   const c = render(withBuild({}), "thr_build_unknown");
   try { assert.ok(await c.findByText("looptender: enabled")); } finally { c.lifecycle.unmount(); cleanup(); }
 });
+
+test("a held loop that was moved reads differently from an ordinary awaiting-user hold", async () => {
+  const held = (moved?: object) => ({ ...loop, controlState: "awaiting user", supervising: true, details: { ...loop.details, completed: false, failedChecks: 0, targetProvider: "claude-code", targetModel: "example-model", ...(moved ? { moved } : {}) } });
+  const render = (l: object, id: string) => renderSlot(app.threadContextCardRows[0]!, { threadId: id, projectId: "proj_example", environment: null }, { rpc: { forThread: () => ({ loops: [l], errors: [] }) } });
+  const a = render(held({ held: true, text: "Moved to its new thread. Resuming it is the one action needed." }), "thr_moved_hold");
+  try {
+    const label = await a.findByText("looptender: moved, resume to start");
+    const title = label.closest("[title]")?.getAttribute("title") ?? "";
+    assert.match(title, /Moved: Moved to its new thread/); assert.match(title, /Provider: claude-code · model example-model/);
+  } finally { a.lifecycle.unmount(); cleanup(); }
+  const b = render(held(), "thr_plain_hold");
+  try { assert.ok(await b.findByText("looptender: awaiting user")); assert.equal(b.queryByText(/moved, resume/), null); } finally { b.lifecycle.unmount(); cleanup(); }
+});

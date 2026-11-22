@@ -1050,6 +1050,12 @@ type panelListLoop struct {
 	// one answering this read; it never says which is newer.
 	RecordedBuild string `json:"recordedBuild,omitempty"`
 	BuildDiffers  bool   `json:"buildDiffers,omitempty"`
+	// Provider and Model are the configured labels of the loop's current
+	// target, shown beside its name; absent when not configured. Moved is set
+	// while the loop has been moved to a new thread and not yet checked there.
+	Provider string       `json:"provider,omitempty"`
+	Model    string       `json:"model,omitempty"`
+	Moved    *clientMoved `json:"moved,omitempty"`
 }
 
 func buildPanelList(r dockReport) panelList {
@@ -1072,7 +1078,7 @@ func buildPanelList(r dockReport) panelList {
 				out.CanAll = append(out.CanAll, a)
 			}
 		}
-		row := panelListLoop{Key: l.Key, Name: l.Name, State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key],
+		row := panelListLoop{Key: l.Key, Name: l.Name, State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
 			BuildDiffers: l.Build.Availability == "different"}
 		// Lengthened with the installed label when the two would read the same.
 		var inst string
