@@ -1355,8 +1355,8 @@ func (t *tick) stop(target string, agent config.Agent, gate decide.Control) erro
 	briefs := append(append([]control.Brief(nil), t.briefHold...), t.unsettledBriefs...)
 	// A thread created for a handoff whose outcome is not recorded may be
 	// running the task too (newthread.go, stopUnrecordedThreads).
-	unrecorded := t.st.NewThreadIntent
-	if (len(briefs) > 0 || unrecorded != nil) && !t.st.StopRequestedSent {
+	unrecorded := t.unrecordedCreations()
+	if (len(briefs) > 0 || len(unrecorded) > 0) && !t.st.StopRequestedSent {
 		// A stop is asked for: stop every conversation that may have the
 		// task, the current one and each one briefed (a second stop is
 		// harmless). Each stop is recorded first, like any send.
@@ -1420,7 +1420,7 @@ func (t *tick) stop(target string, agent config.Agent, gate decide.Control) erro
 			stopOne(b.Target, ba)
 		}
 		var late []func()
-		if unrecorded != nil {
+		if len(unrecorded) > 0 {
 			late, errs = t.stopUnrecordedThreads(unrecorded, stopOne, errs)
 		}
 		t.stopLanes(a)

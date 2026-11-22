@@ -275,6 +275,15 @@ jobs:
       - name: Verify detached background startup with a local process fixture
         if: steps.scope.outputs.scope != 'docs'
         run: python scripts/ci-go-test-ran.py go test -v ./cmd/looptender -run '^TestStartBackgroundProcess$' -count=20 -timeout=3m
+      # The takeover scenarios that need no Unix-only fault hook (no kill of a
+      # check, no unwritable directory, no daemon): the rest of the scenario
+      # suite does not run on Windows yet. TestScenarioIncidentNoFallback is
+      # left out: on Windows its loop's panel reference is not saved and
+      # dock prints no address (run 45051691536), which needs a Windows host
+      # to diagnose.
+      - name: Run the takeover scenarios that need no Unix-only hook on Windows
+        if: steps.scope.outputs.scope != 'docs'
+        run: python scripts/ci-go-test-ran.py go test -v ./internal/scenario -run '^(TestScenarioIncidentTakeover|TestScenarioIncidentWakePolicy|TestScenarioArmedIncidentReplacesBlockedLanes|TestScenarioArmedIncidentOldLimitResets|TestScenarioTransferWithMixedChildren)$' -count=1 -timeout=8m
       - name: Work skipped for a documentation-only change
         if: steps.scope.outputs.scope == 'docs'
         shell: bash
