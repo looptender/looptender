@@ -321,3 +321,34 @@ test("built CLI follows the standard route list through the host contract", { sk
     await assert.rejects(access(trap));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("a takeover travels as provider and model flags and must come back in the CLI's own report", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "keepgoing-plugin-takeover-")));
+  try {
+    const target = { threadId: "thr_example", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: root, provider: "codex" };
+    const base = { schemaVersion: 1, outcome: "preview", loop: "example-loop", project: root, configPath: join(root, "outside", "looptender.yaml"), stateDir: join(root, "outside", "state"), primary: { agent: { adapter: "bb", bbThread: target.threadId, provider: target.provider } } };
+    const limits = { wakeEvery: "1h", interval: "5m", stallAfter: "30m", backoff: "10m", maxNudges: 3, maxReprompts: 3 };
+    const offered = { ...base, routes: "none", fallbacks: [], limits: { ...limits, failoverOn: [] }, newThreadOffer: { provider: "claude-code", model: "example-claude-model" } };
+    const taken = { ...base, routes: "own", limits: { ...limits, failoverOn: ["rate_limit"] }, fallbacks: [{ id: "new-conversation-claude-code", target: { agent: { adapter: "bb", provider: "claude-code" } }, newThread: { provider: "claude-code", model: "example-claude-model", permission: "accept-edits", childrenFollow: true, successors: true, text: "On a usage limit on codex: a new conversation on claude-code takes over." } }] };
+    let reply: unknown = offered;
+    let seen: string[] = [];
+    const run: Execute = async (_bin, args) => { seen = args; return { code: 0, data: reply }; };
+    const input = { bin: "keepgoing", target, name: "example-loop", task: "Fictional private task", dryRun: true };
+    const first = planned(await setupOnHost(input, undefined, run));
+    assert.deepEqual(first.plan.takeoverOffer, { provider: "claude-code", model: "example-claude-model" }); assert.equal(first.plan.takeover, undefined);
+    assert.ok(!seen.includes("--new-thread-provider"));
+    reply = taken;
+    const chosen = planned(await setupOnHost({ ...input, takeover: { provider: "claude-code", model: "example-claude-model" } }, undefined, run));
+    const at = seen.indexOf("--new-thread-provider");
+    assert.deepEqual(seen.slice(at, at + 4), ["--new-thread-provider", "claude-code", "--new-thread-model", "example-claude-model"]);
+    assert.equal(chosen.plan.takeover?.provider, "claude-code"); assert.match(chosen.plan.takeover?.text ?? "", /takes over/);
+    // A report with another provider, or none at all, is refused.
+    await assert.rejects(setupOnHost({ ...input, takeover: { provider: "codex-other", model: "example-claude-model" } }, undefined, run));
+    reply = offered;
+    await assert.rejects(setupOnHost({ ...input, takeover: { provider: "claude-code", model: "example-claude-model" } }, undefined, run));
+    reply = { ...offered, newThreadOffer: undefined };
+    planned(await setupOnHost({ ...input, takeover: "none" }, undefined, run));
+    const n = seen.indexOf("--new-thread-provider");
+    assert.deepEqual(seen.slice(n, n + 2), ["--new-thread-provider", "none"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

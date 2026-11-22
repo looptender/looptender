@@ -67,6 +67,8 @@ The setup service never spawns, forks, re-parents, sends to, or changes the prov
 
 Existing configured supervision or a failed status lookup blocks creating another loop through this flow. When looptender itself refuses a second loop on the same session and reports that in a structured form, **Add to Looptender** shows its reason with the other loop's name; it never offers to override it. This only covers loops known to the plugin, not arbitrary timers/configurations elsewhere. Setup does not detect or replace an external timer. Do not start a second supervisor for a loop already run by another schedule.
 
+**Takeover on a usage limit (unreleased).** When the host's looptender reports another usable provider for the thread (see [a takeover for a BB loop](../../docs/setup.md#a-takeover-for-a-bb-loop-unreleased)), the preview includes it by default: on a usage limit, a new conversation on that provider takes over the loop, with its child lanes. The preview shows looptender's own sentence for what happens. Uncheck **On a usage limit, start a new conversation on … that takes over** and preview again to set the loop up without it. Creation uses exactly the previewed choice. The plugin first asks init with no takeover flag, so an older CLI is never passed one and nothing changes with it. Only the provider and model labels cross from the host.
+
 ### Recovery and verification limits
 
 - Failed/expired previews require a new preview. Changing task text or name clears the UI preview. Target/provider/environment changes require a new setup review; existing loops are never silently transferred.

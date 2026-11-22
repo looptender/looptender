@@ -98,6 +98,7 @@ Control:
 
 Fallbacks:
   fallbacks add            Guide adding a provider, account or model; preview, then confirm
+  fallbacks arm            Give a BB loop a takeover by a new conversation on another provider
   fallbacks handoff on|off Turn automatic handoff for rate limits on or off
   fallbacks remove ID      Take a fallback out of the loop; preview, then confirm
   fallbacks move ID --to N Change a fallback's place in the handoff order
@@ -246,6 +247,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			switch rest[0] {
 			case "add":
 				return fallbacksAddCommand(e, args)
+			case "arm":
+				return fallbacksArmCommand(e, args)
 			case "handoff", "remove", "move":
 				return fallbacksManageCommand(e, rest[0], args)
 			}

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { goalDetails } from "./status-details.ts";
 import { conversationTask, checkSchema, refusalMessage, refusedReportSchema, setupInput, targetOf, statusFollowsStandard, type Refusal, type SetupTarget, type SetupPlan, type SetupRecord, type SetupResult } from "./setup-contract.ts";
 import { planBounds, sameBounds, type Bounds } from "./new-thread-contract.ts";
+import type { TakeoverChoice } from "./setup-host.ts";
 
 export interface SetupDependencies {
   target(threadId: string): Promise<SetupTarget>;
@@ -11,7 +12,7 @@ export interface SetupDependencies {
   records(): Promise<SetupRecord[]>;
   save(records: SetupRecord[]): Promise<void>;
   guard(threadId: string): Promise<void>;
-  init(bin: string, target: SetupTarget, name: string, task: string, dryRun: boolean, withGoal: boolean, bounds?: Bounds, followStandard?: boolean): Promise<{ plan: SetupPlan; registration?: Publication } | { refused: Refusal } | { noRoutes: true }>;
+  init(bin: string, target: SetupTarget, name: string, task: string, dryRun: boolean, withGoal: boolean, bounds?: Bounds, followStandard?: boolean, takeover?: TakeoverChoice): Promise<{ plan: SetupPlan; registration?: Publication } | { refused: Refusal } | { noRoutes: true }>;
   // Whether the host's looptender has a standard route list with routes.
   standardRoutes(bin: string, target: SetupTarget): Promise<boolean>;
   command(bin: string, record: SetupRecord, operation: "status" | "doctor" | "start", json?: true): Promise<{ code: number; data: unknown; registration?: Publication }>;
@@ -36,7 +37,7 @@ const digest = (s: string) => createHash("sha256").update(s).digest("hex");
 export const MAX_SETUPS = 32;
 
 export function createSetupController(d: SetupDependencies) {
-  const previews = new Map<string, { target: SetupTarget; name: string; taskHash: string; withGoal: boolean; followStandard: boolean; bounds?: Bounds; bin: string; plan: SetupPlan; expires: number }>();
+  const previews = new Map<string, { target: SetupTarget; name: string; taskHash: string; withGoal: boolean; followStandard: boolean; takeover: "on" | "off"; choice?: TakeoverChoice; bounds?: Bounds; bin: string; plan: SetupPlan; expires: number }>();
   let queue: Promise<unknown> = Promise.resolve();
   const serialize = <T>(fn: () => Promise<T>): Promise<T> => {
     const next = queue.then(fn, fn);
@@ -117,15 +118,29 @@ export function createSetupController(d: SetupDependencies) {
     const task = builtIn ? conversationTask(input.note) : input.task ?? "";
     const withGoal = input.withGoal ?? false;
     const followStandard = input.followStandard ?? false;
+    // A takeover is offered only when the setup does not follow the list.
+    const takeover = followStandard ? "off" : input.takeover ?? "on";
     if (!task.trim() || Buffer.byteLength(task) > 262144) throw new SetupPolicyError("Enter a task of at most 256 KiB.");
     if (input.action === "preview") {
       if (!input.name) throw new SetupPolicyError("Enter a loop name using lowercase letters, digits, and hyphens.");
       for (const [key, p] of previews) if (p.expires < Date.now()) previews.delete(key);
       if (previews.size >= 64) throw new SetupPolicyError("Too many pending previews. Wait five minutes and retry.");
-      const previewed = await d.init(bin, target, input.name, task, true, withGoal, bounds, followStandard);
+      // init is asked first, with no takeover flag (an older CLI knows none),
+      // what is usable. When it offers a takeover, it is previewed for real
+      // when on, or declined explicitly when off.
+      let choice: TakeoverChoice | undefined;
+      let previewed = await d.init(bin, target, input.name, task, true, withGoal, bounds, followStandard);
       if ("noRoutes" in previewed) return { ok: false, message: "None of your standard route list's routes applies to this thread, so this setup cannot follow it. Clear the choice to set it up without other routes." };
       if ("refused" in previewed) return { ok: false, refused: previewed.refused, message: refusalMessage(previewed.refused, "init") };
-      const { plan } = previewed;
+      const offer = previewed.plan.takeoverOffer;
+      if (offer) {
+        choice = takeover === "on" ? { provider: offer.provider, model: offer.model } : "none";
+        previewed = await d.init(bin, target, input.name, task, true, withGoal, bounds, followStandard, choice);
+        if ("noRoutes" in previewed || "refused" in previewed) throw new SetupPolicyError("The resolved setup changed. Preview again before creating it.");
+      }
+      const plan: SetupPlan = { ...previewed.plan, ...(offer ? { takeoverOffer: offer } : {}) };
+      if (typeof choice === "object" && (plan.takeover?.provider !== choice.provider || plan.takeover?.model !== choice.model)) throw new SetupPolicyError("Setup did not report the takeover that was asked for. Nothing was created.");
+      if (typeof choice !== "object" && plan.takeover) throw new SetupPolicyError("Setup reported a takeover that was not asked for. Nothing was created.");
       // Asked-for loop-wide limits must be exactly what keepgoing reports it
       // will write. Creation is then bound to this plan, so they cannot change.
       if (bounds) { const reported = planBounds(plan.limits); if (!reported || !sameBounds(reported, bounds)) throw new SetupPolicyError("Setup did not report the loop-wide limits that were asked for. Nothing was created."); }
@@ -133,23 +148,26 @@ export function createSetupController(d: SetupDependencies) {
       // Following the list must come back as exactly that, with the routes
       // to show; not following must come back with none.
       if (followStandard !== (plan.routes !== undefined)) throw new SetupPolicyError("Setup did not report the route choice that was asked for. Nothing was created.");
-      previews.set(ticket, { target, name: input.name, taskHash: digest(task), withGoal, followStandard, bounds, bin, plan, expires: Date.now() + 300_000 });
-      return { ok: true, ticket, plan, ...(builtIn ? { task } : {}), message: followStandard ? "Preview only. Creating this setup leaves supervision disabled. It follows your standard route list and hands off to it on a rate limit." : "Preview only. Creating this setup leaves supervision disabled; fallbacks and automatic handoffs are off." };
+      previews.set(ticket, { target, name: input.name, taskHash: digest(task), withGoal, followStandard, takeover, choice, bounds, bin, plan, expires: Date.now() + 300_000 });
+      return { ok: true, ticket, plan, ...(builtIn ? { task } : {}), message: followStandard ? "Preview only. Creating this setup leaves supervision disabled. It follows your standard route list and hands off to it on a rate limit." : plan.takeover ? `Preview only. Creating this setup leaves supervision disabled. ${plan.takeover.text}` : "Preview only. Creating this setup leaves supervision disabled; fallbacks and automatic handoffs are off." };
     }
     const preview = previews.get(input.ticket ?? "");
     previews.delete(input.ticket ?? ""); // one attempt, including failure; never replay a creation
-    if (!preview || preview.expires < Date.now() || preview.bin !== bin || preview.withGoal !== withGoal || preview.followStandard !== followStandard || !equal(preview.bounds, bounds) || preview.taskHash !== digest(task) || !equal(preview.target, target)) throw new SetupPolicyError("The preview expired or its task, goal choice, route choice, target, or binary changed. Preview again.");
+    if (!preview || preview.expires < Date.now() || preview.bin !== bin || preview.withGoal !== withGoal || preview.followStandard !== followStandard || preview.takeover !== takeover || !equal(preview.bounds, bounds) || preview.taskHash !== digest(task) || !equal(preview.target, target)) throw new SetupPolicyError("The preview expired or its task, goal choice, route choice, target, or binary changed. Preview again.");
     if (records.length >= MAX_SETUPS) throw new SetupPolicyError(`The plugin already has ${MAX_SETUPS} saved setups; manage existing loops before adding another.`);
-    const fresh = await d.init(bin, target, preview.name, task, true, withGoal, bounds, followStandard);
+    const fresh = await d.init(bin, target, preview.name, task, true, withGoal, bounds, followStandard, preview.choice);
     if ("noRoutes" in fresh) throw new SetupPolicyError("The resolved setup changed. Preview again before creating it.");
     if ("refused" in fresh) return { ok: false, refused: fresh.refused, message: refusalMessage(fresh.refused, "init") };
-    if (!equal(fresh.plan, preview.plan)) throw new SetupPolicyError("The resolved setup changed. Preview again before creating it.");
-    const created = await d.init(bin, target, preview.name, task, false, withGoal, bounds, followStandard);
+    const { takeoverOffer: _o, ...previewedPlan } = preview.plan;
+    void _o;
+    const same = (p: SetupPlan) => { const { takeoverOffer: _x, ...rest } = p; void _x; return equal(rest, previewedPlan); };
+    if (!same(fresh.plan)) throw new SetupPolicyError("The resolved setup changed. Preview again before creating it.");
+    const created = await d.init(bin, target, preview.name, task, false, withGoal, bounds, followStandard, preview.choice);
     if ("noRoutes" in created) throw new SetupPolicyError("Setup result changed. A disabled configuration may exist; inspect the destination before retrying.");
     // Refused at creation, after a preview that passed: keepgoing checks
     // before it writes anything, so nothing was created.
     if ("refused" in created) return { ok: false, refused: created.refused, message: refusalMessage(created.refused, "init") };
-    if (!equal(created.plan, preview.plan)) throw new SetupPolicyError("Setup result changed. A disabled configuration may exist; inspect the destination before retrying.");
+    if (!same(created.plan)) throw new SetupPolicyError("Setup result changed. A disabled configuration may exist; inspect the destination before retrying.");
     const record = { ...target, ...(created.registration ? { publication: created.registration } : {}), id: randomUUID(), configPath: created.plan.configPath, loop: created.plan.loop, ...(created.plan.startJson === true ? { startJson: true as const, startJsonBin: bin } : {}), ...(created.plan.routes ? { followsStandard: true as const } : {}) };
     try { await d.save([...records, record]); }
     catch { return { ok: false, record, message: "A disabled setup was created, but the plugin could not save its reference. Keep the displayed config path for recovery; do not recreate or start it automatically." + publicationMessage(created.registration) }; }

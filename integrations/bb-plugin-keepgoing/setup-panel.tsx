@@ -13,6 +13,11 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
   // Off unless chosen: following the list also turns on handoff.
   const [followStandard, setFollowStandard] = useState(false);
   const [standardRoutes, setStandardRoutes] = useState(false);
+  // The takeover by a new conversation on another provider: on unless
+  // turned off. The offer is remembered from the last preview that made it,
+  // since a preview with the takeover off carries none.
+  const [takeover, setTakeover] = useState<"on" | "off">("on");
+  const [offer, setOffer] = useState<{ provider: string; model: string }>();
   const [task, setTask] = useState("");
   // "Keep this conversation going" sends a fixed task; "own" sends the typed
   // one. Undecided until the thread's metadata is read: a thread with nothing
@@ -38,7 +43,8 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
     setBusy(true);
     try {
       const follow = followStandard && standardRoutes;
-      const r = await call({ action, threadId, ...(action === "preview" || action === "create" ? { name, mode, ...(mode === "conversation" ? { note } : { task }), withGoal, ticket: result?.ticket, ...(follow ? { followStandard: true } : {}) } : {}) });
+      const r = await call({ action, threadId, ...(action === "preview" || action === "create" ? { name, mode, ...(mode === "conversation" ? { note } : { task }), withGoal, ticket: result?.ticket, ...(follow ? { followStandard: true } : { takeover }) } : {}) });
+      if (r.plan?.takeoverOffer) setOffer(r.plan.takeoverOffer);
       setResult({
         ...r,
         ...(!r.ok && action === "create" && !r.record ? { plan: result?.plan } : {}),
@@ -69,9 +75,10 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
       <label><input type="checkbox" aria-label="Record a goal for this task" checked={withGoal} disabled={busy} onChange={e => { setWithGoal(e.target.checked); edit(); }} /> Record a goal for this task</label>
       <span>{withGoal ? "Use the loop name as the initial goal title. Save the task once in a private file and share current goal references in future prompts. Requires an updated looptender CLI; v0.1.4 does not support this setup option." : "Copy the task into wake instructions without creating a goal record."}</span>
       {standardRoutes && <label><input type="checkbox" aria-label="Follow my standard route list for handoffs" checked={followStandard} disabled={busy} onChange={e => { setFollowStandard(e.target.checked); edit(); }} /> Follow my standard route list for handoffs</label>}
+      {offer && !(followStandard && standardRoutes) && <label><input type="checkbox" aria-label="Take over on a usage limit" checked={takeover === "on"} disabled={busy} onChange={e => { setTakeover(e.target.checked ? "on" : "off"); edit(); }} /> On a usage limit, start a new conversation on {offer.provider} ({offer.model}) that takes over</label>}
       <span>{followStandard && standardRoutes
         ? "One existing thread, with its current model and login, that hands off to the routes of your standard route list that apply to it on a rate limit. The preview names them. Creating the setup leaves supervision disabled."
-        : "One existing thread, with its current model and login. No fallbacks. Creating the setup leaves supervision disabled."}</span>
+        : "One existing thread, with its current model and login. When another provider is usable, the preview adds a takeover by a new conversation on it, which you can turn off. Creating the setup leaves supervision disabled."}</span>
       <button type="button" disabled={busy || (mode === "own" && !task.trim()) || !name} onClick={() => void act("preview")}>Preview setup</button>
     </>}
     {result?.plan && <div aria-label="Setup preview" style={{ display: "grid", gap: 4 }}>
@@ -84,6 +91,9 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
       {result.plan.routes ? <div aria-label="Routes" style={{ display: "grid", gap: 2 }}>
         <span>Routes: follows your standard route list. Handoff on a rate limit is turned on. On a rate limit the loop hands off to, in order:</span>
         <ul style={{ margin: 0 }}>{result.plan.routes.apply.map(r => <li key={r.id}>{r.id}: {r.model || "model unchanged"}, usage limit {r.group}</li>)}</ul>
+      </div> : result.plan.takeover ? <div aria-label="Takeover" style={{ display: "grid", gap: 2 }}>
+        <span>Takeover: on (uncheck it above and preview again to turn it off).</span>
+        <span>{result.plan.takeover.text}</span>
       </div> : <span>No fallbacks; automatic handoff is off.</span>}
       {result.ticket && <button type="button" disabled={busy} onClick={() => void act("create")}>Create disabled setup</button>}
     </div>}
