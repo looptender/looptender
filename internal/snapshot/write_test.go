@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // failing makes writes to files whose names contain name fail after keep
@@ -81,5 +82,35 @@ func TestShortWriteIsAnError(t *testing.T) {
 	defer f.Close()
 	if err := Write(f, []byte("abcdef")); err == nil {
 		t.Fatal("a short write succeeded")
+	}
+}
+
+// Another appender's complete line is never cut with this call's failed
+// one: it waits for the lock, then appends after the cut.
+func TestAFailedAppendNeverCutsAnotherAppendersLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.jsonl")
+	if err := AppendLine(path, []byte(`{"first":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := make(chan error, 1)
+	InjectWriteFaults(func(p string) (int, error) {
+		if filepath.Base(p) != "runs.jsonl" {
+			return 0, nil
+		}
+		InjectWriteFaults(nil) // the other appender's write is not failed
+		// While this write fails, another appender arrives.
+		go func() { other <- AppendLine(path, []byte(`{"other":2}`), 0o600) }()
+		time.Sleep(200 * time.Millisecond)
+		return 0, ENOSPC // nothing of this line was stored
+	})
+	t.Cleanup(func() { InjectWriteFaults(nil) })
+	if err := AppendLine(path, []byte(`{"this line is longer than the other":3}`), 0o600); !errors.Is(err, ENOSPC) {
+		t.Fatal(err)
+	}
+	if err := <-other; err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "{\"first\":1}\n{\"other\":2}\n" {
+		t.Fatalf("%q", b)
 	}
 }

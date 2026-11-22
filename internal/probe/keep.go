@@ -2,6 +2,7 @@ package probe
 
 import (
 	"fmt"
+	"github.com/looptender/looptender/internal/snapshot"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,7 +31,7 @@ func KeepFailure(stateDir, id string, r Result) error {
 	name := r.At.UTC().Format("20060102T150405Z") + "-" + string(r.Tier) + ".out"
 	header := fmt.Sprintf("# keepgoing probe failure\n# candidate: %s\n# tier: %s\n# kind: %s\n# model: %s\n# exit: %d\n# class: %s\n# detail: %s\n\n",
 		id, r.Tier, r.Kind, r.Model, r.ExitCode, r.ErrorClass, r.Detail)
-	if err := os.WriteFile(filepath.Join(dir, name), append([]byte(header), r.Raw...), 0o600); err != nil {
+	if err := snapshot.WriteFileAtomic(filepath.Join(dir, name), append([]byte(header), r.Raw...), 0o600, false); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(dir)

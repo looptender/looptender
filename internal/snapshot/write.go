@@ -99,15 +99,29 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode, sync bool) erro
 // AppendLine appends one line to an append-only log, whole or not at all: a
 // failed or short write is cut back to the log's length before it, so no
 // later line is joined to a torn one. A log left torn by an earlier crash
-// gets a line break first. The write is an O_APPEND write, so lines from
-// other processes are not overwritten; the cut is made only while the log
-// holds no more than this line's bytes past where it ended.
+// gets a line break first. Every appender holds an exclusive lock on the
+// log, only across the length read, the write and the cut, so the cut can
+// only ever remove this call's own bytes, never another process's line.
 func AppendLine(path string, line []byte, perm os.FileMode) error {
+	return appendLine(path, line, perm, false)
+}
+
+// AppendLineSync is AppendLine, flushing the line to the device before it
+// returns.
+func AppendLineSync(path string, line []byte, perm os.FileMode) error {
+	return appendLine(path, line, perm, true)
+}
+
+func appendLine(path string, line []byte, perm os.FileMode, sync bool) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, perm)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	if err := lockAppend(f); err != nil {
+		return err
+	}
+	defer unlockAppend(f)
 	info, err := f.Stat()
 	if err != nil {
 		return err
@@ -126,14 +140,19 @@ func AppendLine(path string, line []byte, perm os.FileMode) error {
 		line = append(line, '\n')
 	}
 	if err := Write(f, line); err != nil {
-		now, serr := f.Stat()
-		f.Close()
-		if serr == nil && now.Size() > end && now.Size()-end <= int64(len(line)) {
-			// Nothing of this line stays. Cut by path: on Windows a handle
+		if now, serr := f.Stat(); serr == nil && now.Size() > end {
+			// Only this call's bytes are past end: the lock keeps every
+			// other appender out. Cut by a handle of its own: on Windows one
 			// opened for appending cannot change a file's length.
-			_ = os.Truncate(path, end)
+			if w, oerr := os.OpenFile(path, os.O_WRONLY, 0); oerr == nil {
+				_ = w.Truncate(end)
+				w.Close()
+			}
 		}
 		return err
+	}
+	if sync {
+		return Sync(f)
 	}
 	return nil
 }

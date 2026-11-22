@@ -1057,21 +1057,11 @@ func appendRouteHistory(dir string, rec routeHistoryRecord) error {
 	if err != nil {
 		return errors.New("it cannot be opened")
 	}
-	defer f.Close()
-	if info, err := f.Stat(); err == nil && info.Size() > 0 {
-		last := make([]byte, 1)
-		if _, err := f.ReadAt(last, info.Size()-1); err != nil {
-			return errors.New("it could not be read")
-		}
-		if last[0] != '\n' {
-			line = append([]byte("\n"), line...)
-		}
-	}
-	if _, err := f.Write(append(line, '\n')); err != nil {
+	f.Close()
+	// Whole lines only, under the appenders' lock, as runs.jsonl: a failed
+	// or short write is cut back, and a torn line gets a line break first.
+	if err := snapshot.AppendLineSync(filepath.Join(dir, routesHistoryName), line, 0o600); err != nil {
 		return errors.New("it could not be written")
-	}
-	if err := f.Sync(); err != nil {
-		return errors.New("it could not be flushed")
 	}
 	return nil
 }

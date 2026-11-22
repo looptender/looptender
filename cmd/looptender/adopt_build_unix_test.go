@@ -42,6 +42,7 @@ func newAdoptWorld(t *testing.T) *adoptWorld {
 	if processExecutableImage == nil {
 		t.Skip("running image unidentified")
 	}
+	volume(t, 50<<30, 500<<30) // room, whatever this machine's disk has
 	w := &adoptWorld{dir: t.TempDir(), probe: `{"protocol":1,"stateFormat":6,"version":"v9.0.0-dev.fictional2"}`}
 	w.installed = filepath.Join(w.dir, "builds", "new", "looptender")
 	if err := os.MkdirAll(filepath.Dir(w.installed), 0o700); err != nil {
@@ -806,3 +807,27 @@ func dupFD(fd uintptr) (uintptr, error) {
 }
 
 func syscallDup(fd int) (int, error) { return syscall.Dup(fd) }
+
+// On a nearly full volume a switch waits, says so once, and goes ahead once
+// there is room.
+func TestAdoptionWaitsForDiskSpace(t *testing.T) {
+	w := newAdoptWorld(t)
+	volume(t, 50<<20, 500<<30)
+	w.a.atSafePoint(context.Background(), &config.Config{}, nil)
+	w.a.atSafePoint(context.Background(), &config.Config{}, nil)
+	if len(w.runs) != 0 || len(w.execs) != 0 || len(w.a.skip) != 0 {
+		t.Fatalf("runs %v execs %v skip %v", w.runs, w.execs, w.a.skip)
+	}
+	if r := w.record(t); r == nil || r.Reason != adoptDiskReason {
+		t.Fatalf("record: %+v", r)
+	}
+	b, _ := os.ReadFile(filepath.Join(w.dir, state.LogName))
+	if n := strings.Count(string(b), "waiting for room"); n != 1 {
+		t.Fatalf("said %d times", n)
+	}
+	volume(t, 50<<30, 500<<30)
+	w.a.atSafePoint(context.Background(), &config.Config{}, nil)
+	if len(w.execs) != 1 {
+		t.Fatal("did not switch once there was room")
+	}
+}
