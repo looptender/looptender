@@ -355,8 +355,18 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 				stopDone = sig // the stop check succeeded and was saved
 			}
 		}
-		configUnavailableSince = updateDaemonConfiguration(pass, cfg, loaded, dryRun, lease, configUnavailableSince)
+		var reportDeferred bool
+		configUnavailableSince, reportDeferred = updateDaemonConfigurationDeferred(pass, cfg, loaded, dryRun, lease, configUnavailableSince)
 		monitor.SetConfigUnavailable(configUnavailableSince)
+		if reportDeferred {
+			// The diagnostic is visible but its one report waited on a busy
+			// tick lock: retry at the next control poll, not a whole interval.
+			monitor.Update("waiting", nil)
+			if !sleepContext(e.ctx, cfg.Loop.Daemon.ControlPoll.Duration) {
+				return exitOK
+			}
+			continue
+		}
 		// Stop wins: a stop that was skipped (another loop's check held the
 		// session, or another tick held the lock) is tried again at the next
 		// control poll, not after a whole interval. A stop already carried
