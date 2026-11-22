@@ -1,5 +1,7 @@
 /dist/
 /keepgoing
+/looptender
+/looptender.exe
 *.test
 *.out
 .DS_Store

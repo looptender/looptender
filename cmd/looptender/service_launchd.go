@@ -27,7 +27,7 @@ type serviceHost struct {
 
 func localServiceHost() serviceHost {
 	home, _ := os.UserHomeDir()
-	exe, _ := os.Executable()
+	exe, _ := launchExecutable() // a link to the installed build stays a link
 	h := serviceHost{platform: runtime.GOOS, home: home, executable: exe, searchPath: os.Getenv("PATH"), uid: os.Getuid(), run: launchctlRun, configHome: os.Getenv("XDG_CONFIG_HOME"), query: systemctlQuery}
 	if h.platform == "linux" {
 		h.run = func(ctx context.Context, args ...string) (int, error) {

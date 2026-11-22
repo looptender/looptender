@@ -417,6 +417,10 @@
             },
             "control_poll": {
               "$ref": "#/$defs/duration"
+            },
+            "adopt_installed_build": {
+              "type": "boolean",
+              "description": "after a check, switch the running daemon to a different build at the path it was started from. Unset: only a build installed by moving a link to a new target. true: also a file overwritten in place. false: never; the daemon keeps the build it started with until it is restarted"
             }
           }
         },
