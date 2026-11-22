@@ -36,11 +36,18 @@ func panelQuotaProviderSupported(provider string) bool {
 
 var panelAccountID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
-// panelAccountByIDOrHandle resolves panel --account: a handle from panel
-// list is looked up in the catalog; anything else (a catalog ID, or a value
-// the catalog cannot resolve) is used as given, as before handles.
-func panelAccountByIDOrHandle(value string) string {
-	dir, err := accountsDirectory("")
+// panelAccountsDir is the accounts catalog every panel read uses: panel
+// list and the panel server read it, and panel --account resolves a handle
+// against it, so a handle is always resolved by the catalog that made it. ""
+// is the default catalog; only tests set another.
+var panelAccountsDir string
+
+// panelAccountByIDOrHandle resolves panel --account against the catalog in
+// accountsDir (accountsDirectory's argument): a handle from panel list is
+// looked up; anything else (a catalog ID, or a value the catalog cannot
+// resolve) is used as given, as before handles.
+func panelAccountByIDOrHandle(accountsDir, value string) string {
+	dir, err := accountsDirectory(accountsDir)
 	if err != nil {
 		return value
 	}

@@ -650,7 +650,7 @@ func runPanelServer(parent context.Context, c panelServerConfig) int {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	reader := &dockReader{ctx: ctx, directory: c.registry, refresh: c.refresh, staleAfter: c.staleAfter, query: inspectDaemon, versions: true, panelDir: c.dir}
+	reader := &dockReader{ctx: ctx, directory: c.registry, refresh: c.refresh, staleAfter: c.staleAfter, query: inspectDaemon, versions: true, panelDir: c.dir, accountsDir: panelAccountsDir}
 	if c.changes {
 		reader.builds = newBuildSession(c.dir, c.registry)
 		defer reader.builds.close()

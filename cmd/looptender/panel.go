@@ -750,7 +750,7 @@ func panelCommand(e env, args []string) int {
 	key := ""
 	if *account != "" {
 		// A catalog ID, or the handle panel list gives the account.
-		key = "a" + panelAccountByIDOrHandle(*account)
+		key = "a" + panelAccountByIDOrHandle(panelAccountsDir, *account)
 	}
 	if *loop != "" {
 		if key, err = panelLoopKey(*directory, *loop); err != nil {
@@ -1113,7 +1113,7 @@ func panelListCommand(e env, args []string) int {
 		e.errf("panel list: registry directory unavailable")
 		return exitUsage
 	}
-	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: dockDefaultRefresh, staleAfter: *staleAfter, query: inspectDaemon}
+	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: dockDefaultRefresh, staleAfter: *staleAfter, query: inspectDaemon, accountsDir: panelAccountsDir}
 	if *offline {
 		reader.query = func(ctx context.Context, dir, current string, _ bool) daemonStatus {
 			return inspectDaemon(ctx, dir, current, true)
