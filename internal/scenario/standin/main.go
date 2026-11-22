@@ -24,7 +24,8 @@
 //	probe-limited.<model>  if present, a claude probe of that model is rate limited
 //	bb.down                if present, every bb command fails with no output
 //	kill.<command>         if present, after `thread <command>` has answered, the
-//	                       stand-in kills the keepgoing process that ran it
+//	                       stand-in kills the keepgoing process that ran it; a
+//	                       number N in it lets N-1 such calls through first
 //	killbefore.<command>   if present, the stand-in kills the keepgoing process
 //	                       that runs `thread <command>` before doing anything
 //	fail.<command>         if present, holds a number N: the next N calls of
@@ -42,6 +43,10 @@
 //	probes.jsonl           every probe
 //	net.mode               online, offline or portal (default online)
 //	headless.mode          overrides net.mode for headless turns
+//	moves.jsonl            every child moved by `thread update <child>
+//	                       --parent-thread <parent>` (child, from, to); the
+//	                       move rewrites both parents' .children files and the
+//	                       child's .show
 //	sends.jsonl            everything an agent received: `thread tell` (thread,
 //	                       mode, message), an accepted `thread retry`, and a
 //	                       `thread spawn` (new thread, title, first prompt), and
@@ -146,7 +151,7 @@ func play(world, name string, args []string) int {
 	// kill.<command>: once the command has done its work and answered, the
 	// stand-in kills the keepgoing process that ran it, as a crash or a
 	// power cut would at that moment. The file is used up.
-	if len(args) > 1 && args[0] == "thread" {
+	if len(args) > 1 && args[0] == "thread" && killDue(filepath.Join(world, "kill."+args[1])) {
 		if os.Remove(filepath.Join(world, "kill."+args[1])) == nil {
 			os.Stdout.Sync()
 			mark(world, "standin.ended")
@@ -229,7 +234,69 @@ func run(world string, args []string) int {
 		return retry(world, arg(args, 2))
 	case "spawn":
 		return spawn(world, args)
+	case "update":
+		if parent := flagValue(args, "--parent-thread"); parent != "" {
+			return moveChild(world, arg(args, 2), parent)
+		}
 	}
+	fmt.Println(`{"ok":true}`)
+	return 0
+}
+
+// killDue says whether a kill.<command> file is due on this call: an empty
+// file at once, a number N on the Nth call, counting down in the file.
+func killDue(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || n <= 1 {
+		return true
+	}
+	os.WriteFile(path, []byte(strconv.Itoa(n-1)), 0o600)
+	return false
+}
+
+// moveChild makes parent the parent of child, as `bb thread update
+// --parent-thread` does: the child leaves its old parent's listing, joins
+// the new one's, and its show names the new parent. The move is recorded.
+func moveChild(world, child, parent string) int {
+	var show map[string]map[string]any
+	readJSON(filepath.Join(world, child+".show"), &show)
+	t := show["thread"]
+	if t == nil {
+		fmt.Println(`{"ok":false,"error":{"code":"not_found","message":"fictional"}}`)
+		return 1
+	}
+	from, _ := t["parentThreadId"].(string)
+	if from != "" && from != parent {
+		var listed []map[string]any
+		readJSON(filepath.Join(world, from+".children"), &listed)
+		kept := []map[string]any{}
+		for _, c := range listed {
+			if c["id"] != child {
+				kept = append(kept, c)
+			}
+		}
+		writeJSON(filepath.Join(world, from+".children"), kept)
+	}
+	var listed []map[string]any
+	readJSON(filepath.Join(world, parent+".children"), &listed)
+	present := false
+	for _, c := range listed {
+		present = present || c["id"] == child
+	}
+	if !present {
+		listed = append(listed, map[string]any{"id": child, "visibility": "hidden"})
+	}
+	if listed == nil {
+		listed = []map[string]any{}
+	}
+	writeJSON(filepath.Join(world, parent+".children"), listed)
+	t["parentThreadId"] = parent
+	writeJSON(filepath.Join(world, child+".show"), show)
+	appendLine(filepath.Join(world, "moves.jsonl"), map[string]string{"child": child, "from": from, "to": parent})
 	fmt.Println(`{"ok":true}`)
 	return 0
 }

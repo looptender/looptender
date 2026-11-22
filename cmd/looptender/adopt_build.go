@@ -231,6 +231,7 @@ func newBuildAdopter(cfgPath, stateDir, mode, expectedStateDir string, daemonLoc
 
 func runAdoptCommand(ctx context.Context, c *adoptCandidate, args ...string) ([]byte, int, error) {
 	cmd := adoptCommand(ctx, c, args...)
+	cmd.Env = adoptCommandEnv(os.Environ())
 	out, err := cmd.Output()
 	if ctx.Err() != nil {
 		return out, -1, ctx.Err()
@@ -243,6 +244,22 @@ func runAdoptCommand(ctx context.Context, c *adoptCandidate, args ...string) ([]
 		return out, -1, err
 	}
 	return out, 0, nil
+}
+
+// adoptCommandEnv is the daemon's environment without BB_THREAD_ID, for
+// the candidate's probe and validate. The daemon's ownership is its lease,
+// checked under its own locks (loopReady); the thread that started it may
+// since have lost ownership to a handoff the supervisor made, which the
+// daemon follows. Validating as that thread would refuse every build
+// installed after such a handoff.
+func adoptCommandEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "BB_THREAD_ID=") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // resolveLaunch resolves the launch path one component at a time and
