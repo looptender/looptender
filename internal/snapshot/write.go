@@ -118,10 +118,17 @@ func appendLine(path string, line []byte, perm os.FileMode, sync bool) error {
 		return err
 	}
 	defer f.Close()
-	if err := lockAppend(f); err != nil {
+	// The lock is taken on a handle of its own: on Windows a handle opened
+	// for appending lacks the access a lock needs.
+	l, err := os.Open(path)
+	if err != nil {
 		return err
 	}
-	defer unlockAppend(f)
+	defer l.Close()
+	if err := lockAppend(l); err != nil {
+		return err
+	}
+	defer unlockAppend(l)
 	info, err := f.Stat()
 	if err != nil {
 		return err
