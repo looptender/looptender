@@ -676,6 +676,9 @@ type successorStatus struct {
 	// the per-handoff and lifetime caps, at the last run.
 	SkippedRun  int `json:"skippedPerRun,omitempty"`
 	SkippedLife int `json:"skippedLifetime,omitempty"`
+	// Uninspectable: moved lanes skipped after passes that could not
+	// inspect them.
+	Uninspectable int `json:"uninspectable,omitempty"`
 }
 
 type newThreadStatus struct {
@@ -861,6 +864,9 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 		}
 		if s.SkippedLife > 0 {
 			fmt.Fprintf(w, "; %d blocked lane(s) skipped at the loop's limit", s.SkippedLife)
+		}
+		if s.Uninspectable > 0 {
+			fmt.Fprintf(w, "; %d moved lane(s) skipped after %d checks could not inspect them", s.Uninspectable, state.MaxSuccessorInspectFailures)
 		}
 		if s.Pending {
 			fmt.Fprint(w, "; one creation could not be confirmed: nothing more is created until it is found or settled by a person")
@@ -1298,6 +1304,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		if s != nil {
 			out.Successors.Replaced, out.Successors.Pending = len(s.Replaced), s.Intent != nil
 			out.Successors.SkippedRun, out.Successors.SkippedLife = s.SkippedRun, s.SkippedLife
+			out.Successors.Uninspectable = s.Uninspectable()
 		}
 	}
 	if m := st.ChildMove; m != nil && !m.Left {

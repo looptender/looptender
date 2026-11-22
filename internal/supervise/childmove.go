@@ -172,7 +172,11 @@ type ChildMoveEnv struct {
 	Left func() time.Duration
 	Held func() bool
 	Save func()
-	Warn func(string)
+	// SaveChecked, when set, saves as Save does and says whether it
+	// worked. A successor is never asked of bb unless the save that marks
+	// it asked succeeded.
+	SaveChecked func() error
+	Warn        func(string)
 }
 
 func (t *tick) runChildMove() {

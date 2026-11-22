@@ -118,14 +118,17 @@ func transferReplaceChildren(e env, args []string) int {
 			c, err := control.Load(cfg.Loop.StateDir)
 			return err != nil || !c.UpdatedAt.Equal(ctl.UpdatedAt)
 		},
-		Save: func() {
-			if s, err := state.Load(cfg.Loop.StateDir); err == nil {
-				s.ChildSuccessors, s.ChildSuccessorsCreated = st.ChildSuccessors, st.ChildSuccessorsCreated
-				_ = state.Save(cfg.Loop.StateDir, s)
+		SaveChecked: func() error {
+			s, err := state.Load(cfg.Loop.StateDir)
+			if err != nil {
+				return err
 			}
+			s.ChildSuccessors, s.ChildSuccessorsCreated = st.ChildSuccessors, st.ChildSuccessorsCreated
+			return state.Save(cfg.Loop.StateDir, s)
 		},
 		Warn: func(s string) { e.errf("warning: %s", s) },
 	}
+	envm.Save = func() { _ = envm.SaveChecked() }
 	res, err := supervise.ReplaceChildren(e.ctx, newSuccessorMaker(cfg.Loop.BB.CLI, cfg.Loop.BB.Thread), &st.ChildSuccessors, &st.ChildSuccessorsCreated, p, envm)
 	outcome := "applied"
 	switch {

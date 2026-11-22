@@ -77,15 +77,18 @@ type ReplacePlan struct {
 
 // ReplaceResult counts what a run found and did.
 type ReplaceResult struct {
-	Eligible    int  `json:"eligible"`
-	WouldCreate int  `json:"wouldCreate"`
-	Created     int  `json:"created"`
-	Replaced    int  `json:"replaced"` // successors on record for this coordinator's lanes
-	CappedRun   int  `json:"cappedPerRun,omitempty"`
-	CappedLife  int  `json:"cappedLifetime,omitempty"`
-	SendLimit   int  `json:"stoppedBySendLimit,omitempty"`
-	Unknown     int  `json:"unknown,omitempty"` // children that could not be inspected
-	Unsettled   bool `json:"unsettled,omitempty"`
+	Eligible    int `json:"eligible"`
+	WouldCreate int `json:"wouldCreate"`
+	Created     int `json:"created"`
+	Replaced    int `json:"replaced"` // successors on record for this coordinator's lanes
+	CappedRun   int `json:"cappedPerRun,omitempty"`
+	CappedLife  int `json:"cappedLifetime,omitempty"`
+	SendLimit   int `json:"stoppedBySendLimit,omitempty"`
+	Unknown     int `json:"unknown,omitempty"` // children that could not be inspected
+	// Uninspectable counts children skipped for good after
+	// state.MaxSuccessorInspectFailures passes without an inspection.
+	Uninspectable int  `json:"uninspectable,omitempty"`
+	Unsettled     bool `json:"unsettled,omitempty"`
 	// Complete is a pass that looked at every candidate and was not cut
 	// short by a hold, time, the send limit or a failure. Caps still end
 	// it as complete: nothing more may be created for it.
@@ -211,19 +214,40 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 		}
 	}
 	sort.Strings(ids)
+	unknown := func(id string) {
+		// A child that cannot be inspected keeps the pass open, but only
+		// for a few passes: then it is skipped for good and counted.
+		if p.DryRun {
+			res.Unknown++
+			return
+		}
+		if r.InspectFailures == nil {
+			r.InspectFailures = map[string]int{}
+		}
+		r.InspectFailures[id]++
+		if r.InspectFailures[id] >= state.MaxSuccessorInspectFailures {
+			res.Uninspectable++
+			return
+		}
+		res.Unknown++
+	}
 	for _, id := range ids {
 		if _, done := r.Replaced[id]; done {
 			continue
 		}
+		if r.InspectFailures[id] >= state.MaxSuccessorInspectFailures {
+			res.Uninspectable++
+			continue
+		}
 		if env.Left() < successorInspectTime {
-			res.Unknown++
+			res.Unknown++ // out of time, not a failed inspection
 			continue
 		}
 		ictx, cancel := context.WithTimeout(ctx, successorInspectTime)
 		info, err := maker.InfoOf(ictx, id)
 		cancel()
 		if err != nil {
-			res.Unknown++
+			unknown(id)
 			continue
 		}
 		if info.Provider == p.Provider {
@@ -233,7 +257,7 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 		f := maker.InspectLane(ictx, id)
 		cancel()
 		if !f.Verified {
-			res.Unknown++
+			unknown(id)
 			continue
 		}
 		// Never a lane that waits for a person, has queued input or a
@@ -308,8 +332,21 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 				return res, err
 			}
 		}
-		r.Intent.Asked = true // saved before bb is asked
-		env.Save()
+		// Saved before bb is asked, and bb is not asked unless it was: an
+		// intent on disk without the mark is one bb never saw.
+		r.Intent.Asked = true
+		saveErr := error(nil)
+		if env.SaveChecked != nil {
+			saveErr = env.SaveChecked()
+		} else {
+			env.Save()
+		}
+		if saveErr != nil {
+			r.Intent.Asked = false
+			complete = false
+			env.Warn("replacing blocked child lanes: the record could not be saved, so no successor was asked for; a later check tries again")
+			break
+		}
 		sctx, cancel := context.WithTimeout(ctx, successorSpawnTime)
 		thread, err := maker.Spawn(sctx, bb.SpawnRequest{Place: c.place, Provider: p.Provider, Model: p.Model, Reasoning: p.Reasoning,
 			Permission: c.permission, Title: title, Prompt: successorPrompt(p.Loop, c.id), Parent: p.Coordinator})
@@ -374,14 +411,17 @@ func (t *tick) replaceBlockedChildren() (held bool) {
 		// Only the children this handoff moved, and never more than the
 		// coordinator's own permission.
 		Only: append([]string{}, m.MovedIDs...), Ceiling: c.BB.NewThreadPermission()}
-	save := func() {
-		if saved, err := state.Load(t.loop.StateDir); err == nil {
-			saved.ChildSuccessors, saved.ChildSuccessorsCreated = t.st.ChildSuccessors, t.st.ChildSuccessorsCreated
-			_ = state.Save(t.loop.StateDir, saved)
+	saveChecked := func() error {
+		saved, err := state.Load(t.loop.StateDir)
+		if err != nil {
+			return err
 		}
+		saved.ChildSuccessors, saved.ChildSuccessorsCreated = t.st.ChildSuccessors, t.st.ChildSuccessorsCreated
+		return state.Save(t.loop.StateDir, saved)
 	}
+	save := func() { _ = saveChecked() }
 	res, err := ReplaceChildren(t.ctx, t.opts.Successors(c.BB.CLI, coordinator), &t.st.ChildSuccessors, &t.st.ChildSuccessorsCreated, p,
-		ChildMoveEnv{Left: t.left, Held: t.heldNow, Save: save, Warn: func(s string) { t.warn("%s", s) }})
+		ChildMoveEnv{Left: t.left, Held: t.heldNow, Save: save, SaveChecked: saveChecked, Warn: func(s string) { t.warn("%s", s) }})
 	if res.Listed || res.Unsettled {
 		t.res.Successors = &res
 	}

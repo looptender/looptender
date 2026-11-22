@@ -564,6 +564,28 @@ type ChildSuccessors struct {
 	// Done records that a handoff's run made its one complete pass under
 	// this coordinator; it is not run again.
 	Done bool `json:"done,omitempty"`
+	// InspectFailures counts, per child, passes in which it could not be
+	// inspected; at MaxSuccessorInspectFailures it is skipped for good.
+	InspectFailures map[string]int `json:"inspectFailures,omitempty"`
+}
+
+// MaxSuccessorInspectFailures bounds the passes a child that cannot be
+// inspected keeps a successor run open.
+const MaxSuccessorInspectFailures = 3
+
+// Uninspectable counts the children skipped for good because they could
+// never be inspected.
+func (c *ChildSuccessors) Uninspectable() int {
+	if c == nil {
+		return 0
+	}
+	n := 0
+	for _, v := range c.InspectFailures {
+		if v >= MaxSuccessorInspectFailures {
+			n++
+		}
+	}
+	return n
 }
 
 // ChildSuccessor is the thread created to continue one blocked child.

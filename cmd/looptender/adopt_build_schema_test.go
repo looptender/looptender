@@ -49,7 +49,7 @@ var adoptSchemaFingerprints = map[int]string{
 	// 6: state.json gained childSuccessors and childSuccessorsCreated
 	// (successor threads replacing child lanes blocked on another provider)
 	// and childMove's movedIds.
-	6: "cd5f4d62beb56bec7e3154185f462fa7a4f1b55b3b7634bedad4441fbabd7ec3",
+	6: "caa99878e54f0d0a3dde2da240155cd6b9b23db79beab3d6e5429b342c9ed73b",
 }
 
 // schemaFingerprint lists every JSON field reachable from t, by path, with

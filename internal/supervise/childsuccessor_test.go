@@ -489,3 +489,89 @@ func TestOnlyCurrentRateLimitsAreReplaced(t *testing.T) {
 		t.Fatalf("%+v", s.successors)
 	}
 }
+
+// Item 1: bb is never asked unless the save marking the intent asked
+// succeeded. A failed save ends the pass for that child; the next pass
+// clears the unasked intent (uncounted) and creates the successor once.
+func TestNoSpawnUnlessTheAskedMarkIsSaved(t *testing.T) {
+	_, f, s := successorWorld(t, 1, 1)
+	f.children["thr_coord"] = []bb.ListedChild{{ID: "thr_child_00"}}
+	var rec *state.ChildSuccessors
+	lifetime := 0
+	fail := true
+	env := ChildMoveEnv{Left: func() time.Duration { return time.Hour }, Held: func() bool { return false }, Save: func() {}, Warn: func(string) {},
+		SaveChecked: func() error {
+			if fail && rec != nil && rec.Intent != nil && rec.Intent.Asked {
+				return fmt.Errorf("disk full")
+			}
+			return nil
+		}}
+	p := ReplacePlan{Loop: "example-loop", Coordinator: "thr_coord", Provider: "codex", Model: "m", Permission: "accept-edits", Only: []string{"thr_child_00"}}
+	res, err := ReplaceChildren(context.Background(), s, &rec, &lifetime, p, env)
+	if err != nil || len(s.successors) != 0 || res.Complete || rec.Intent == nil || rec.Intent.Asked {
+		t.Fatalf("%+v %v spawns=%d intent=%+v", res, err, len(s.successors), rec.Intent)
+	}
+	fail = false
+	res, err = ReplaceChildren(context.Background(), s, &rec, &lifetime, p, env)
+	if err != nil || len(s.successors) != 1 || !res.Complete || lifetime != 1 || rec.Created != 1 || rec.Intent != nil {
+		t.Fatalf("%+v %v spawns=%d lifetime=%d %+v", res, err, len(s.successors), lifetime, rec)
+	}
+}
+
+// Item 2: a lane present under the created thread during the first pass
+// that the handoff did not move gets no successor.
+func TestUnmovedLaneGetsNoSuccessorInTheFirstPass(t *testing.T) {
+	w, f, s := successorWorld(t, 1, 1)
+	successorTick(t, w, f, s, t0)
+	f.children["thr_created_1"] = append(f.children["thr_created_1"], bb.ListedChild{ID: "thr_never_moved"})
+	s.provider["thr_never_moved"], s.facts["thr_never_moved"] = "claude-code", limitedLane
+	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	successorTick(t, w, f, s, t0.Add(time.Minute))
+	if len(s.successors) != 1 || !strings.HasSuffix(s.successors[0].Prompt, "thr_child_00.\n") {
+		t.Fatalf("%+v", s.successors)
+	}
+}
+
+// Item 3: bb was asked and nothing is listed under the title: the intent
+// stays unsettled and every resume holds again.
+func TestAskedSuccessorNotFoundStaysUnsettled(t *testing.T) {
+	w, f, s := successorWorld(t, 1, 1)
+	successorTick(t, w, f, s, t0)
+	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	s.spawnErr = bb.ErrSpawnUncertain
+	f.unlisted = true
+	if res := successorTick(t, w, f, s, t0.Add(time.Minute)); res.Action != "await_user" {
+		t.Fatalf("%+v", res)
+	}
+	for i := 2; i < 4; i++ {
+		control.Update(w.dir, func(c *control.File) { c.AwaitingUser = false })
+		res := successorTick(t, w, f, s, t0.Add(time.Duration(i)*time.Minute))
+		st, _ := state.Load(w.dir)
+		if res.Action != "await_user" || st.ChildSuccessors.Intent == nil || !st.ChildSuccessors.Intent.Asked || len(s.successors) != 1 {
+			t.Fatalf("resume %d: %+v %+v", i, res.Action, st.ChildSuccessors)
+		}
+	}
+}
+
+// Item 4: a moved lane that can never be inspected keeps the pass open for
+// state.MaxSuccessorInspectFailures checks, then is skipped and counted, and
+// the pass completes.
+func TestUninspectableLaneIsSkippedAfterThreeChecks(t *testing.T) {
+	w, f, s := successorWorld(t, 2, 2)
+	delete(s.provider, "thr_child_01") // thread show always fails for it
+	successorTick(t, w, f, s, t0)
+	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	for i := 1; i <= state.MaxSuccessorInspectFailures; i++ {
+		successorTick(t, w, f, s, t0.Add(time.Duration(i)*time.Minute))
+		st, _ := state.Load(w.dir)
+		if done := st.ChildSuccessors.Done; done != (i == state.MaxSuccessorInspectFailures) {
+			t.Fatalf("check %d: done=%t %+v", i, done, st.ChildSuccessors)
+		}
+	}
+	st, _ := state.Load(w.dir)
+	lists := f.childLists
+	successorTick(t, w, f, s, t0.Add(time.Hour))
+	if len(s.successors) != 1 || st.ChildSuccessors.Uninspectable() != 1 || f.childLists != lists {
+		t.Fatalf("%d %+v", len(s.successors), st.ChildSuccessors)
+	}
+}
