@@ -246,3 +246,31 @@ func TestAccountQuotaDetailsResponseAliasesRefused(t *testing.T) {
 		}
 	}
 }
+
+// panel list --json carries, per account, exactly the documented keys: the
+// catalog id (the menu opens and connects one account with it), the label, the
+// provider and the saved summary. No path, directory or provider identity.
+func TestPanelListAccountQuotaKeysAreTheDocumentedOnes(t *testing.T) {
+	r := dockReport{Accounts: &accounts.View{State: "available", Complete: true, Cards: []accounts.Card{
+		{ID: strings.Repeat("a", 32), Label: "Example Codex", Provider: "codex", Selection: "inherited", Quota: &accounts.QuotaView{State: "unavailable", Reason: "unsupported_provider", Freshness: "unavailable"}},
+	}}}
+	raw, err := json.Marshal(buildPanelList(r))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		AccountQuotas struct {
+			Accounts []map[string]json.RawMessage `json:"accounts"`
+		} `json:"accountQuotas"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil || len(v.AccountQuotas.Accounts) != 1 {
+		t.Fatalf("%v %s", err, raw)
+	}
+	for k := range v.AccountQuotas.Accounts[0] {
+		switch k {
+		case "id", "label", "provider", "summary":
+		default:
+			t.Errorf("undocumented key %q in panel list account quota", k)
+		}
+	}
+}

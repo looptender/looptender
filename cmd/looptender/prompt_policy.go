@@ -19,7 +19,7 @@ import (
 // and, only when a person runs apply, rewrites its prompt file so that it
 // follows the built-in policy. Sends never write the file.
 func promptPolicyCommand(e env, args []string) int {
-	const usage = "usage: prompt-policy show|apply -c CONFIG [--json]"
+	const usage = "usage: prompt-policy show|apply -c CONFIG [--refresh-prefix [--yes]] [--json]"
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
 		fmt.Fprintln(e.stdout, usage)
 		return exitOK
@@ -33,9 +33,15 @@ func promptPolicyCommand(e env, args []string) int {
 	fs.SetOutput(e.stderr)
 	path := fs.String("c", "", "config path")
 	asJSON := fs.Bool("json", false, "print JSON")
+	refresh := fs.Bool("refresh-prefix", false, "apply: also rewrite the command prefix of the prompt's commands to this program's path; previews unless --yes is given")
+	yes := fs.Bool("yes", false, "apply --refresh-prefix: write the rewrite instead of previewing it")
 	if err := fs.Parse(args[1:]); errors.Is(err, flag.ErrHelp) {
 		return exitOK
 	} else if err != nil || fs.NArg() != 0 || *path == "" {
+		e.errf(usage)
+		return exitUsage
+	}
+	if sub == "show" && (*refresh || *yes) || *yes && !*refresh {
 		e.errf(usage)
 		return exitUsage
 	}
@@ -61,7 +67,7 @@ func promptPolicyCommand(e env, args []string) int {
 		printWakePolicy(e.stdout, s)
 		return exitOK
 	}
-	r, err := applyPromptPolicy(cfg, abs, time.Now())
+	r, err := applyPromptPolicy(cfg, abs, time.Now(), promptApplyOptions{RefreshPrefix: *refresh, Write: !*refresh || *yes})
 	if err != nil {
 		e.errf("prompt-policy apply: %v", err)
 		return exitFailed
@@ -73,10 +79,25 @@ func promptPolicyCommand(e env, args []string) int {
 	return exitOK
 }
 
+// promptApplyOptions: RefreshPrefix also rewrites the prompt's command prefix
+// to this program's path; Write false only previews what would change.
+type promptApplyOptions struct {
+	RefreshPrefix bool
+	Write         bool
+}
+
 type promptPolicyApplied struct {
-	Changed bool   `json:"changed"`
-	Backup  string `json:"backup,omitempty"`
-	Version int    `json:"version"`
+	// Preview is set when nothing was written because only a preview was asked
+	// for; Changed then says whether a write would change the file.
+	Preview bool `json:"preview,omitempty"`
+	// PreviousPrefix and TaskOccurrences are set by --refresh-prefix: the
+	// prefix the file had, and how many times it also appears in the task
+	// text, which is never rewritten.
+	PreviousPrefix  string `json:"previousPrefix,omitempty"`
+	TaskOccurrences int    `json:"taskOccurrences,omitempty"`
+	Changed         bool   `json:"changed"`
+	Backup          string `json:"backup,omitempty"`
+	Version         int    `json:"version"`
 	// Prefix is the command prefix written into the file's commands.
 	Prefix  string `json:"prefix"`
 	Message string `json:"message"`
@@ -100,26 +121,28 @@ func writeJSON(e env, v any) int {
 // path; any other file keeps the text after its first line reading exactly
 // "Task:" and gets this command's own path, which is reported. The
 // previous file is kept beside it.
-func applyPromptPolicy(cfg *config.Config, cfgPath string, now time.Time) (promptPolicyApplied, error) {
+func applyPromptPolicy(cfg *config.Config, cfgPath string, now time.Time, opts promptApplyOptions) (promptPolicyApplied, error) {
 	l := cfg.Loop
 	r := promptPolicyApplied{Version: prompt.CurrentPolicyVersion()}
 	if l.PromptFile == "" {
 		return r, errors.New("the prompt is set in the configuration (loop.prompt), not in a prompt file; move it to a file named by loop.prompt_file first")
 	}
-	if err := checkOwnership(l.StateDir, nil); err != nil {
-		return r, fmt.Errorf("%v; nothing written", err)
+	if opts.Write {
+		if err := checkOwnership(l.StateDir, nil); err != nil {
+			return r, fmt.Errorf("%v; nothing written", err)
+		}
+		if err := checkTransferSources(cfg, false); err != nil {
+			return r, fmt.Errorf("%v; nothing written", err)
+		}
+		tick, err := lock.Acquire(l.StateDir)
+		if errors.Is(err, lock.ErrHeld) {
+			return r, errors.New("a check is running; nothing written. Try again in a moment")
+		}
+		if err != nil {
+			return r, fmt.Errorf("lock: %v; nothing written", err)
+		}
+		defer tick.Release()
 	}
-	if err := checkTransferSources(cfg, false); err != nil {
-		return r, fmt.Errorf("%v; nothing written", err)
-	}
-	tick, err := lock.Acquire(l.StateDir)
-	if errors.Is(err, lock.ErrHeld) {
-		return r, errors.New("a check is running; nothing written. Try again in a moment")
-	}
-	if err != nil {
-		return r, fmt.Errorf("lock: %v; nothing written", err)
-	}
-	defer tick.Release()
 	info, err := os.Lstat(l.PromptFile)
 	if err != nil || !info.Mode().IsRegular() {
 		return r, errors.New("the prompt file is missing or not a regular file")
@@ -131,7 +154,13 @@ func applyPromptPolicy(cfg *config.Config, cfgPath string, now time.Time) (promp
 	var text string
 	if m, ok := prompt.MatchPolicy(string(raw)); ok {
 		r.Prefix = m.Prefix
-		text = prompt.PolicyHead(m.Prefix, m.ConfigPath) + m.Task + "\n"
+		if opts.RefreshPrefix {
+			// Only the policy part's commands are rewritten. The same prefix
+			// in the task text is the person's and is only counted.
+			r.PreviousPrefix, r.Prefix = m.Prefix, promptRefreshPrefix()
+			r.TaskOccurrences = strings.Count(m.Task, m.Prefix)
+		}
+		text = prompt.PolicyHead(r.Prefix, m.ConfigPath) + m.Task + "\n"
 	} else {
 		task, ok := taskAfterLine(string(raw))
 		if !ok {
@@ -139,6 +168,20 @@ func applyPromptPolicy(cfg *config.Config, cfgPath string, now time.Time) (promp
 		}
 		r.Prefix = initCommandPrefix()
 		text = prompt.GeneratedPrompt(r.Prefix, commandQuote(cfgPath), task)
+	}
+	if !opts.Write {
+		r.Preview, r.Changed = true, text != string(raw)
+		switch {
+		case !r.Changed:
+			r.Message = "Preview: the prompt file's commands already run this program; nothing would change."
+		default:
+			r.Message = fmt.Sprintf("Preview: the commands in the prompt's policy part would run %s instead of %s.", r.Prefix, r.PreviousPrefix)
+			if r.TaskOccurrences > 0 {
+				r.Message += fmt.Sprintf(" The old path also appears %d time(s) in the task text, which is not rewritten.", r.TaskOccurrences)
+			}
+			r.Message += " Nothing was written; add --yes to write it (the previous file is kept beside it)."
+		}
+		return r, nil
 	}
 	if text != string(raw) {
 		backup := l.PromptFile + ".before-policy-" + now.UTC().Format("20060102T150405Z")
