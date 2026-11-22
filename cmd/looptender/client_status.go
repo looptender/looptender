@@ -60,6 +60,8 @@ type clientRuntime struct {
 	Freshness        string     `json:"freshness"`
 	StaleAfter       string     `json:"staleAfter"`
 	BinaryComparison string     `json:"binaryComparison"`
+	RecordedBuild    string     `json:"recordedBuild,omitempty"` // see runtimeStatus
+	InstalledBuild   string     `json:"installedBuild,omitempty"`
 	CheckedAt        *time.Time `json:"checkedAt,omitempty"`
 	// Overdue is the overdue rule's verdict (see state.ScheduleOf), with
 	// what to say about it.
@@ -288,7 +290,8 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 				issue("window_unavailable")
 			} else {
 				rt := describeRuntime(ctl, st, in, configured, now, staleAfter, version)
-				s.Runtime = &clientRuntime{rt.State, rt.Source, rt.Freshness, rt.StaleAfter, rt.BinaryComparison, clientTime(st.CheckedAt), false, ""}
+				s.Runtime = &clientRuntime{State: rt.State, Source: rt.Source, Freshness: rt.Freshness, StaleAfter: rt.StaleAfter, BinaryComparison: rt.BinaryComparison,
+					RecordedBuild: rt.RecordedBuild, InstalledBuild: rt.InstalledBuild, CheckedAt: clientTime(st.CheckedAt)}
 				scheduleOf = func(d *daemonStatus) scheduleStatus { return describeSchedule(&cfg.Loop, st, ctl, d, now) }
 			}
 		}

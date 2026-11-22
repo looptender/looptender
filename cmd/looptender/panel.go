@@ -1019,6 +1019,9 @@ type panelList struct {
 	// CanAll is which changes can be made to every loop at once
 	// (client review|apply --all): pause and stop, while any loop can be.
 	CanAll []string `json:"canAll"`
+	// InstalledBuild is the build answering this read, shortened for display;
+	// absent when it has no version (a dev build).
+	InstalledBuild string `json:"installedBuild,omitempty"`
 	// EarlierBuildPanel: as in panel status.
 	EarlierBuildPanel string `json:"earlierBuildPanel,omitempty"`
 }
@@ -1041,12 +1044,19 @@ type panelListLoop struct {
 	// have stopped: the time of its last check. A new value is a new gap, so
 	// a client can tell people once per gap.
 	OverdueSince *time.Time `json:"overdueSince,omitempty"`
+	// RecordedBuild is the build the loop's supervisor last recorded
+	// running, shortened for display; absent when none is recorded or it has
+	// no version. BuildDiffers is set when it is a different build from the
+	// one answering this read; it never says which is newer.
+	RecordedBuild string `json:"recordedBuild,omitempty"`
+	BuildDiffers  bool   `json:"buildDiffers,omitempty"`
 }
 
 func buildPanelList(r dockReport) panelList {
 	out := panelList{SchemaVersion: 1, ReadAt: r.ReadAt, Registry: r.Registry.Availability, Complete: r.Complete, AllClear: r.AllClear,
 		NeedsYou: len(r.NeedsYou), Unread: r.Unread, Omitted: r.Registry.Omitted, Loops: []panelListLoop{}}
 	out.AccountQuotas = panelQuotaSummary(r)
+	out.InstalledBuild = shortBuildLabel(version)
 	needs := map[string]bool{}
 	overdue := map[string]*time.Time{}
 	for _, n := range r.NeedsYou {
@@ -1062,7 +1072,14 @@ func buildPanelList(r dockReport) panelList {
 				out.CanAll = append(out.CanAll, a)
 			}
 		}
-		row := panelListLoop{Key: l.Key, Name: l.Name, State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key]}
+		row := panelListLoop{Key: l.Key, Name: l.Name, State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key],
+			BuildDiffers: l.Build.Availability == "different"}
+		// Lengthened with the installed label when the two would read the same.
+		var inst string
+		row.RecordedBuild, inst = shortBuildPair(l.Build.Recorded, version)
+		if len(inst) > len(out.InstalledBuild) {
+			out.InstalledBuild = inst
+		}
 		if np := l.NoProgress; np != nil && np.Availability == "flagged" {
 			row.NoProgress = np.Text
 		}

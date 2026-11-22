@@ -99,3 +99,18 @@ test("reference provenance does not imply CLI coverage or provider health", asyn
     } finally { ui.lifecycle.unmount(); cleanup(); }
   }
 });
+
+test("the status label keeps the state word first and adds the running build, and says when the installed build differs", async () => {
+  const withBuild = (runtime: object) => ({ ...loop, controlState: "enabled", supervising: true, details: { ...loop.details, completed: false, failedChecks: 0, runtime: { state: "recent", source: "state", freshness: "recent", ...runtime } } });
+  const render = (l: object, id: string) => renderSlot(app.threadContextCardRows[0]!, { threadId: id, projectId: "proj_example", environment: null }, { rpc: { forThread: () => ({ loops: [l], errors: [] }) } });
+  const a = render(withBuild({ recordedBuild: "v0.2.0-dev.ccd2310", installedBuild: "v0.2.0-dev.ccd2310", binaryComparison: "match" }), "thr_build_match");
+  try { assert.ok(await a.findByText("looptender: enabled v0.2.0-dev.ccd2310")); } finally { a.lifecycle.unmount(); cleanup(); }
+  const b = render(withBuild({ recordedBuild: "v0.1.0", installedBuild: "v0.2.0", binaryComparison: "different" }), "thr_build_differs");
+  try {
+    const label = await b.findByText("looptender: enabled v0.1.0 (installed v0.2.0)");
+    assert.match(label.closest("[title]")?.getAttribute("title") ?? "", /Build: last check ran v0\.1\.0 · installed v0\.2\.0/);
+  } finally { b.lifecycle.unmount(); cleanup(); }
+  // An older looptender, or a build with no version, keeps the plain label.
+  const c = render(withBuild({}), "thr_build_unknown");
+  try { assert.ok(await c.findByText("looptender: enabled")); } finally { c.lifecycle.unmount(); cleanup(); }
+});

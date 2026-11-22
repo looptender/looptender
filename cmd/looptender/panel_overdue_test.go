@@ -35,3 +35,29 @@ func TestPanelListGivesTheLastCheckOfAnOverdueLoop(t *testing.T) {
 		t.Fatalf("%s", s)
 	}
 }
+
+// panel list carries each loop's recorded build and the installed one as
+// short labels, and says plainly when they differ; an unknown build is absent.
+func TestPanelListCarriesBuilds(t *testing.T) {
+	old := version
+	defer func() { version = old }()
+	version = "v0.2.0"
+	r := dockReport{Loops: []dockLoop{
+		{Key: "l0123456789ab", Name: "a", Build: dockBuildOf("v0.2.0-dev.ccd23105e0aa", version)},
+		{Key: "l0123456789cd", Name: "b", Build: dockBuildOf("v0.2.0", version)},
+		{Key: "l0123456789ef", Name: "c", Build: dockBuildOf("", version)},
+	}}
+	list := buildPanelList(r)
+	if list.InstalledBuild != "v0.2.0" || list.Loops[0].RecordedBuild != "v0.2.0-dev.ccd2310" || !list.Loops[0].BuildDiffers ||
+		list.Loops[1].RecordedBuild != "v0.2.0" || list.Loops[1].BuildDiffers || list.Loops[2].RecordedBuild != "" || list.Loops[2].BuildDiffers {
+		t.Fatalf("%+v", list)
+	}
+	b, _ := json.Marshal(list.Loops[2])
+	if strings.Contains(string(b), "uild") {
+		t.Fatalf("an unknown build must be absent: %s", b)
+	}
+	version = "dev"
+	if buildPanelList(r).InstalledBuild != "" {
+		t.Fatal("a dev build has no version to show")
+	}
+}

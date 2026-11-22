@@ -25,8 +25,11 @@ type daemonStatus struct {
 	NextCheck              string     `json:"nextCheck"`
 	BinaryComparison       string     `json:"binaryComparison"`
 	// version is the build label the daemon reported, made safe to show.
-	// Status JSON withholds raw build labels; only the panel's Versions
-	// view, which already shows each loop's last-check label, reads it.
+	// Status JSON carries only the comparison for the daemon's label; the
+	// panel's Versions view reads the label. The last recorded check's label
+	// and the installed build's are in runtime.recordedBuild and
+	// runtime.installedBuild, in every mode including client status and
+	// private mode, after a shape check (see shortBuildLabel).
 	version string
 	DryRun  bool `json:"dryRun"`
 }
