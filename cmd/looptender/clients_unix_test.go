@@ -83,6 +83,7 @@ func sameReply(s string) string {
 		return "unparsed: " + s
 	}
 	delete(m, "readAt")
+	delete(m, "diskSpace") // a live reading of the volume, as readAt is of the clock
 	b, _ := json.Marshal(m)
 	return string(b)
 }
