@@ -186,7 +186,7 @@ func prepareCompletionWith(e env, cfg *config.Config, run doctorRun) (*completio
 	return &completionSnapshot{d, b, r}, nil
 }
 func completionInteractions(ctx context.Context, cli, id string, run doctorRun) bool {
-	q, cancel := context.WithTimeout(ctx, 2*time.Second)
+	q, cancel := context.WithTimeout(ctx, assignmentCallTimeout())
 	defer cancel()
 	raw, err := run(q, cli, []string{"thread", "interactions", "list", id, "--json"}, nil, "")
 	var rows []struct {
