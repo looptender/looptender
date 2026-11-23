@@ -34,6 +34,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         center?.requestAuthorization(options: [.alert]) { _, _ in }
     }
 
+    /// The gaps already told, for the menu that replaces this one.
+    func exportTold() -> String { rule.exportTold() }
+    func restoreTold(_ text: String) { rule.restoreTold(text) }
+
     static let updateIdentifier = "menu-update-available"
 
     /// One notification about the menu's own update. The caller says when

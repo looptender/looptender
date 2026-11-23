@@ -45,6 +45,31 @@ public enum InstalledBuild {
         return "the installed build"
     }
 
+    /// What the install says now. `noMenu` is the layout rule finding that
+    /// `<root>/current` leads to a build that ships no menu app there.
+    public enum State: Equatable {
+        case same
+        case newer(BuildIdentity)
+        case noMenu(label: String)
+    }
+
+    /// `current`, with the case where the install moved to a build that has no
+    /// menu app told apart from nothing having changed.
+    public static func state(launchPath: String, running: BuildIdentity, fileManager: FileManager = .default) -> State {
+        if let found = current(launchPath: launchPath, running: running, fileManager: fileManager) { return .newer(found) }
+        let parts = running.path.split(separator: "/").map(String.init)
+        guard let i = parts.lastIndex(of: "builds"), i + 2 < parts.count else { return .same }
+        let root = "/" + parts[0..<i].joined(separator: "/")
+        let link = root == "/" ? "/current" : root + "/current"
+        let target = URL(fileURLWithPath: link).resolvingSymlinksInPath().path
+        let mine = "/" + parts[0...(i + 1)].joined(separator: "/")
+        var isDir: ObjCBool = false
+        guard target != mine, fileManager.fileExists(atPath: target, isDirectory: &isDir), isDir.boolValue else { return .same }
+        let rest = parts[(i + 2)...].joined(separator: "/")
+        guard identity(of: target + "/" + rest, fileManager: fileManager) == nil else { return .same }
+        return .noMenu(label: label(forRealPath: target + "/" + rest))
+    }
+
     /// The build installed now, for a menu running `running` that was
     /// started as `launchPath` (the path in argv[0], made absolute, links not
     /// resolved). Two ways the install can move, each only a file system read:
@@ -95,8 +120,13 @@ public enum UpdateStep: Equatable {
 public final class MenuUpdater {
     static let autoKey = "updateAutomatically"
     static let notifiedKey = "updateNotifiedBuild"
-    static let attemptedKey = "updateAttemptedBuild"
+    static let attemptsKey = "updateAttempts"
     static let relaunchedKey = "updateRelaunchedTo"
+    static let toldKey = "updateToldGaps"
+    /// Automatic attempts in any hour, whatever the builds: a path rewritten in
+    /// place gives each rewrite a new identity, and this stops that being
+    /// unlimited.
+    public static let maxAttemptsPerHour = 3
 
     public let running: BuildIdentity
     private let store: UpdateStore
@@ -114,18 +144,30 @@ public final class MenuUpdater {
         set { store.set(newValue ? nil : "off", forKey: Self.autoKey) }
     }
 
+    private struct Attempt: Codable { let id: String; let at: TimeInterval }
+    private func attempts(now: Date) -> [Attempt] {
+        guard let raw = store.string(forKey: Self.attemptsKey), let list = try? JSONDecoder().decode([Attempt].self, from: Data(raw.utf8)) else { return [] }
+        return list
+    }
+    private func save(_ list: [Attempt]) {
+        let data = try? JSONEncoder().encode(list)
+        store.set(list.isEmpty ? nil : data.flatMap { String(data: $0, encoding: .utf8) }, forKey: Self.attemptsKey)
+    }
+    private func mayAttempt(_ installed: BuildIdentity, now: Date) -> Bool {
+        let list = attempts(now: now)
+        return !list.contains { $0.id == installed.id } && list.filter { now.timeIntervalSince1970 - $0.at < 3600 }.count < Self.maxAttemptsPerHour
+    }
+
     /// What to do, given the installed build read now. `menuOpen` and
-    /// `controlInFlight` hold back an automatic relaunch only. A relaunch is
-    /// attempted once for each installed build, so a failing one never loops;
-    /// the person's own choice (`relaunchByRequest`) is not counted.
-    public func step(installed: BuildIdentity?, menuOpen: Bool, controlInFlight: Bool) -> UpdateStep {
+    /// `controlInFlight` hold back an automatic relaunch only; nothing is
+    /// recorded until `beginAttempt`, so being held back costs nothing. Each
+    /// installed build is attempted once, and at most `maxAttemptsPerHour`
+    /// in any hour, so a failing one never loops; the person's own choice is
+    /// not counted.
+    public func step(installed: BuildIdentity?, menuOpen: Bool, controlInFlight: Bool, now: Date = Date()) -> UpdateStep {
         guard let installed, installed.id != running.id else { return .nothing }
-        let attempted = store.string(forKey: Self.attemptedKey) == installed.id
-        if automatic, !attempted {
+        if automatic, mayAttempt(installed, now: now) {
             if menuOpen || controlInFlight { return .offer(label: installed.label, notify: false) }
-            // Marked before anything starts, so a failure cannot repeat.
-            store.set(installed.id, forKey: Self.attemptedKey)
-            store.set(installed.id, forKey: Self.relaunchedKey)
             return .relaunch(label: installed.label)
         }
         // Said once for each build; with automatic updating on, only after its
@@ -133,6 +175,23 @@ public final class MenuUpdater {
         let notify = store.string(forKey: Self.notifiedKey) != installed.id
         if notify { store.set(installed.id, forKey: Self.notifiedKey) }
         return .offer(label: installed.label, notify: notify)
+    }
+
+    /// Records an automatic attempt, just before anything is started, so a
+    /// failure cannot repeat. False when this build was tried or the hour's
+    /// cap is reached.
+    public func beginAttempt(_ installed: BuildIdentity, now: Date = Date()) -> Bool {
+        guard mayAttempt(installed, now: now) else { return false }
+        save(attempts(now: now).filter { now.timeIntervalSince1970 - $0.at < 3600 } + [Attempt(id: installed.id, at: now.timeIntervalSince1970)])
+        store.set(installed.id, forKey: Self.relaunchedKey)
+        return true
+    }
+
+    /// An attempt that never started anything (the menu got busy first) is
+    /// given back: it does not use the build's one attempt.
+    public func postponeAttempt(_ installed: BuildIdentity) {
+        save(attempts(now: Date()).filter { $0.id != installed.id })
+        store.set(nil, forKey: Self.relaunchedKey)
     }
 
     /// The relaunch the person chose. It is not limited to one attempt, and
@@ -156,6 +215,57 @@ public final class MenuUpdater {
     }
 
     public static func availableNotice(_ label: String) -> String { "looptender menu: update available (\(label))" }
+
+    /// The checks-have-stopped notices already told, handed to the menu that
+    /// replaces this one so it does not tell them again. Taken once.
+    public func handOverTold(_ told: String?) { store.set(told, forKey: Self.toldKey) }
+    public func takeTold() -> String? {
+        defer { store.set(nil, forKey: Self.toldKey) }
+        return store.string(forKey: Self.toldKey)
+    }
+}
+
+/// Work the menu must not quit under: reads, confirmation windows and
+/// changes being made. Each piece of work holds a token from `begin` to
+/// `end`, so nothing is counted twice or released twice.
+public final class BusyCounter {
+    private var open: Set<Int> = []
+    private var next = 0
+    public init() {}
+    public func begin() -> Int {
+        next += 1
+        open.insert(next)
+        return next
+    }
+    /// Releasing a token twice, or one never issued, changes nothing.
+    public func end(_ token: Int) { open.remove(token) }
+    public var count: Int { open.count }
+    /// Whether the menu may not quit now: it is open, or work is in flight.
+    public func isBusy(menuOpen: Bool) -> Bool { menuOpen || !open.isEmpty }
+}
+
+/// The two moments a relaunch re-asks whether it may go on. Each is decided
+/// from what is true then, not from what was true when it was chosen.
+public enum RelaunchGate {
+    public static let busyMessage = "Finish or cancel the open action first; the menu will not quit under it."
+
+    public enum Start: Equatable { case go, busy, changed }
+    /// Just before the new menu is started, after the checks: still idle, and
+    /// the file about to run is the one that was checked (same real path, size
+    /// and modification time).
+    public static func beforeStart(busy: Bool, checked: BuildIdentity, now: BuildIdentity?) -> Start {
+        if busy { return .busy }
+        return now?.id == checked.id ? .go : .changed
+    }
+
+    public enum Quit: Equatable { case quit, abort, failed(String) }
+    /// When the new menu has had a moment to start: quit only if it is still
+    /// running and the menu is still idle. `abort` means the new menu is
+    /// stopped and this one keeps running, nothing counted against the build.
+    public static func beforeQuit(busy: Bool, newMenuRunning: Bool, exitStatus: Int32) -> Quit {
+        if !newMenuRunning { return .failed("the new menu exited at once (status \(exitStatus))") }
+        return busy ? .abort : .quit
+    }
 }
 
 /// Checks a build before the menu quits for it. Each check is something that

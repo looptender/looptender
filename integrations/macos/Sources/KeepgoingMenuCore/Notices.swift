@@ -24,6 +24,18 @@ public struct OverdueNotices {
     private var told: [String: Date] = [:]
     public init() {}
 
+    /// The gaps told so far, as text, for the menu that replaces this one on
+    /// an update: otherwise it would tell each open gap again.
+    public func exportTold() -> String {
+        told.map { "\($0.key)=\(Int($0.value.timeIntervalSince1970))" }.sorted().joined(separator: ";")
+    }
+    public mutating func restoreTold(_ text: String) {
+        for pair in text.split(separator: ";") {
+            let parts = pair.split(separator: "=")
+            if parts.count == 2, Contract.validKey(String(parts[0])), let t = TimeInterval(parts[1]) { told[String(parts[0])] = Date(timeIntervalSince1970: t) }
+        }
+    }
+
     /// The notifications to post after this read. Only a read that gave a
     /// list counts; a loop missing from a list that was cut off keeps what
     /// was told about it.

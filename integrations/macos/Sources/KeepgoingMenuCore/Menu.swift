@@ -220,10 +220,14 @@ public struct UpdateOffer: Equatable {
     public let automatic: Bool
     /// Why the last relaunch did not happen, when it did not.
     public let failure: String?
-    public init(availableLabel: String?, automatic: Bool, failure: String? = nil) {
+    /// Set when the installed build ships no menu app: said in the menu
+    /// rather than nothing.
+    public let noMenuLabel: String?
+    public init(availableLabel: String?, automatic: Bool, failure: String? = nil, noMenuLabel: String? = nil) {
         self.availableLabel = availableLabel
         self.automatic = automatic
         self.failure = failure
+        self.noMenuLabel = noMenuLabel
     }
 }
 
@@ -291,8 +295,11 @@ public enum MenuBuilder {
                                help: "Starts the installed build of this menu and quits this one. Your loops and Open at Login are not affected."))
             if let why = update.failure.map(Contract.text), !why.isEmpty { rows.append(status("The last automatic relaunch did not happen: " + why + ".")) }
         }
+        if let label = update.noMenuLabel.map(Contract.text), !label.isEmpty, update.availableLabel == nil {
+            rows.append(status("The installed build (" + label + ") has no menu app, so this menu cannot update to it."))
+        }
         rows.append(action("Update the menu automatically", .toggleAutoUpdate, symbol: update.automatic ? "checkmark.circle" : "circle",
-                           help: "When on, the menu relaunches itself from the installed build while it is closed and no change is being made.", detail: update.automatic ? "on" : "off"))
+                           help: "When on, the menu relaunches itself from the installed build while it is closed and no change is being made. Turning it on does not relaunch under an open menu; it happens once the menu is closed.", detail: update.automatic ? "on" : "off"))
         return rows
     }
 

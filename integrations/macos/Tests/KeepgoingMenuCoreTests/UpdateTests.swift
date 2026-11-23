@@ -37,12 +37,43 @@ final class UpdateTests: XCTestCase {
         XCTAssertEqual(u.step(installed: next, menuOpen: true, controlInFlight: false), .offer(label: "bbb", notify: false))
         XCTAssertEqual(u.step(installed: next, menuOpen: false, controlInFlight: true), .offer(label: "bbb", notify: false))
         XCTAssertEqual(u.step(installed: next, menuOpen: false, controlInFlight: false), .relaunch(label: "bbb"))
+        // Being held back used nothing up: the attempt is only recorded when one begins.
+        XCTAssertTrue(u.beginAttempt(next))
+    }
+
+    func testAPostponedAttemptIsGivenBackAndCostsNothing() {
+        let store = MemoryStore()
+        let u = updater(store)
+        XCTAssertTrue(u.beginAttempt(next))
+        XCTAssertFalse(u.beginAttempt(next), "one attempt for each build")
+        u.postponeAttempt(next)
+        XCTAssertEqual(u.step(installed: next, menuOpen: false, controlInFlight: false), .relaunch(label: "bbb"))
+        XCTAssertTrue(u.beginAttempt(next))
+        // A postponed attempt leaves no "updated" claim behind.
+        u.postponeAttempt(next)
+        XCTAssertNil(MenuUpdater(running: next, store: store).updatedNotice())
+    }
+
+    func testAPathRewrittenInPlaceCannotGiveUnlimitedAttempts() {
+        let store = MemoryStore()
+        let u = updater(store)
+        let start = Date(timeIntervalSince1970: 1_900_000_000)
+        for i in 0..<MenuUpdater.maxAttemptsPerHour {
+            let rewritten = BuildIdentity(path: next.path, stamp: "1-\(10 + i)", label: next.label)
+            XCTAssertTrue(u.beginAttempt(rewritten, now: start.addingTimeInterval(Double(i) * 60)))
+        }
+        let again = BuildIdentity(path: next.path, stamp: "1-99", label: next.label)
+        XCTAssertEqual(u.step(installed: again, menuOpen: false, controlInFlight: false, now: start.addingTimeInterval(600)), .offer(label: "bbb", notify: true))
+        XCTAssertFalse(u.beginAttempt(again, now: start.addingTimeInterval(600)))
+        // An hour after the first attempt, one is allowed again.
+        XCTAssertEqual(u.step(installed: again, menuOpen: false, controlInFlight: false, now: start.addingTimeInterval(3601)), .relaunch(label: "bbb"))
     }
 
     func testARelaunchIsAttemptedOncePerInstalledBuildSoItNeverLoops() {
         let store = MemoryStore()
         let u = updater(store)
         XCTAssertEqual(u.step(installed: next, menuOpen: false, controlInFlight: false), .relaunch(label: "bbb"))
+        XCTAssertTrue(u.beginAttempt(next))
         u.attemptFailed(RelaunchFailure("the new menu program is missing or not runnable"))
         XCTAssertEqual(u.lastFailure, "the new menu program is missing or not runnable")
         // The same build again, even from a later menu: no second attempt, an offer instead, said once.
@@ -73,6 +104,7 @@ final class UpdateTests: XCTestCase {
         let store = MemoryStore()
         let old = updater(store)
         XCTAssertEqual(old.step(installed: next, menuOpen: false, controlInFlight: false), .relaunch(label: "bbb"))
+        XCTAssertTrue(old.beginAttempt(next))
         XCTAssertNil(store.values["updateNotifiedBuild"], "no 'available' was said")
         // The new menu is the build that was installed.
         let fresh = MenuUpdater(running: next, store: store)
@@ -84,7 +116,7 @@ final class UpdateTests: XCTestCase {
     func testAFailedAutomaticAttemptOrARequestedOneNeverClaimsToHaveUpdated() {
         let store = MemoryStore()
         let u = updater(store)
-        _ = u.step(installed: next, menuOpen: false, controlInFlight: false)
+        XCTAssertTrue(u.beginAttempt(next))
         u.attemptFailed(RelaunchFailure("x"))
         XCTAssertNil(MenuUpdater(running: next, store: store).updatedNotice())
         let manual = MemoryStore()
@@ -146,6 +178,71 @@ final class UpdateTests: XCTestCase {
         }
     }
 
+    func testAnInstallWithNoMenuAppIsToldApartFromNothingChanged() throws {
+        try withInstall { root in
+            try makeBuild(root, "aaa111")
+            try FileManager.default.createDirectory(at: root.appendingPathComponent("builds/bbb222"), withIntermediateDirectories: true)
+            let link = root.appendingPathComponent("current")
+            try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "builds/aaa111")
+            let launch = link.appendingPathComponent("KeepgoingMenu").path
+            let me = try XCTUnwrap(InstalledBuild.identity(of: launch))
+            XCTAssertEqual(InstalledBuild.state(launchPath: launch, running: me), .same)
+            try FileManager.default.removeItem(at: link)
+            try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "builds/bbb222")
+            XCTAssertEqual(InstalledBuild.state(launchPath: launch, running: me), .noMenu(label: "bbb222"))
+            try makeBuild(root, "bbb222")
+            if case .newer(let found) = InstalledBuild.state(launchPath: launch, running: me) { XCTAssertEqual(found.label, "bbb222") } else { XCTFail("should be newer") }
+        }
+    }
+
+    // MARK: quitting only when idle
+
+    func testBusyWorkIsHeldFromItsStartToItsLastStepWindowsIncluded() {
+        let busy = BusyCounter()
+        XCTAssertFalse(busy.isBusy(menuOpen: false))
+        XCTAssertTrue(busy.isBusy(menuOpen: true), "an open menu is busy")
+        // A review: read, then the confirmation window, then the apply, one token throughout.
+        let review = busy.begin()
+        XCTAssertTrue(busy.isBusy(menuOpen: false), "while the window is up")
+        // openWithControls hands over to run(): the second token is taken before the first is let go.
+        let run = busy.begin()
+        busy.end(review)
+        XCTAssertTrue(busy.isBusy(menuOpen: false), "between the stop and the start of the panel")
+        busy.end(run)
+        XCTAssertFalse(busy.isBusy(menuOpen: false))
+        // Letting go twice, or a token never issued, changes nothing.
+        let other = busy.begin()
+        busy.end(run)
+        busy.end(999)
+        XCTAssertEqual(busy.count, 1)
+        busy.end(other)
+        XCTAssertEqual(busy.count, 0)
+    }
+
+    func testTheGateAsksAgainBeforeStartingAndBeforeQuitting() {
+        let checked = BuildIdentity(path: "/i/builds/bbb/KeepgoingMenu", stamp: "1-2", label: "bbb")
+        XCTAssertEqual(RelaunchGate.beforeStart(busy: false, checked: checked, now: checked), .go)
+        XCTAssertEqual(RelaunchGate.beforeStart(busy: true, checked: checked, now: checked), .busy)
+        XCTAssertEqual(RelaunchGate.beforeStart(busy: false, checked: checked, now: BuildIdentity(path: checked.path, stamp: "9-9", label: "bbb")), .changed, "swapped after the checks")
+        XCTAssertEqual(RelaunchGate.beforeStart(busy: false, checked: checked, now: BuildIdentity(path: "/i/builds/ccc/KeepgoingMenu", stamp: "1-2", label: "ccc")), .changed, "the link moved on")
+        XCTAssertEqual(RelaunchGate.beforeStart(busy: false, checked: checked, now: nil), .changed)
+        XCTAssertEqual(RelaunchGate.beforeQuit(busy: false, newMenuRunning: true, exitStatus: 0), .quit)
+        // The person opened the menu or started a review in the moment since: keep this menu.
+        XCTAssertEqual(RelaunchGate.beforeQuit(busy: true, newMenuRunning: true, exitStatus: 0), .abort)
+        XCTAssertEqual(RelaunchGate.beforeQuit(busy: false, newMenuRunning: false, exitStatus: 3), .failed("the new menu exited at once (status 3)"))
+        XCTAssertEqual(RelaunchGate.beforeQuit(busy: true, newMenuRunning: false, exitStatus: 3), .failed("the new menu exited at once (status 3)"))
+        XCTAssertTrue(RelaunchGate.busyMessage.hasPrefix("Finish or cancel the open action first"))
+    }
+
+    func testTheToldGapsAreHandedToTheNextMenuOnce() {
+        let store = MemoryStore()
+        let u = updater(store)
+        XCTAssertNil(u.takeTold())
+        u.handOverTold("l000000000001=1893488400")
+        XCTAssertEqual(MenuUpdater(running: next, store: store).takeTold(), "l000000000001=1893488400")
+        XCTAssertNil(u.takeTold(), "once")
+    }
+
     // MARK: checks before quitting
 
     func testRelaunchChecksRefuseABrokenBundleAndLeaveThisMenuRunning() throws {
@@ -190,6 +287,9 @@ final class UpdateTests: XCTestCase {
         let offer = MenuBuilder.build(.unavailable, now: Date(), update: UpdateOffer(availableLabel: "0b4e12399667", automatic: false, failure: "the new app has no readable Info.plist"))
         XCTAssertEqual(offer.rows.first { $0.command == .relaunchMenu }?.title, "Update available: relaunch to use 0b4e12399667")
         XCTAssertEqual(offer.rows.first { $0.command == .toggleAutoUpdate }?.detail, "off")
+        let none2 = MenuBuilder.build(.unavailable, now: Date(), update: UpdateOffer(availableLabel: nil, automatic: true, noMenuLabel: "bbb222"))
+        XCTAssertTrue(none2.rows.contains { $0.title == "The installed build (bbb222) has no menu app, so this menu cannot update to it." })
+        XCTAssertFalse(none2.rows.contains { $0.command == .relaunchMenu })
         XCTAssertTrue(offer.rows.contains { $0.title == "The last automatic relaunch did not happen: the new app has no readable Info.plist." })
         // Neither runs a CLI command.
         XCTAssertNil(MenuBuilder.arguments(.relaunchMenu))
