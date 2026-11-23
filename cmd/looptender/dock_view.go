@@ -76,7 +76,11 @@ type dockReport struct {
 	Lede string `json:"lede"`
 	// Worth are loops that do not need a person but are not routine.
 	Worth []dockWorth `json:"worth"`
-	Loops []dockLoop  `json:"loops"`
+	// Volumes is one notice for each volume holding loops' state that is
+	// filling or nearly full, said once for all the loops on it; absent
+	// when none is.
+	Volumes []dockVolume `json:"volumes,omitempty"`
+	Loops   []dockLoop   `json:"loops"`
 	// Routes is the same data grouped by route: a model on an account at an
 	// effort level, as configured. Each loop's chain entries name their
 	// route by key, so the views are one feed.
@@ -90,6 +94,9 @@ type dockReport struct {
 	// Versions is where each build on this computer runs, against the newest
 	// one seen here. Only the page's endpoint fills it.
 	Versions *dockVersions `json:"versions,omitempty"`
+	// Freshness is the one line about how many supervisors run the installed
+	// build; nil when no loop's build is known.
+	BuildFreshness *buildFreshnessSummary `json:"buildFreshness,omitempty"`
 	// UsagePicker is the Usage row's sub-line in the picker: the week's
 	// withheld wakes across loops, as a plain count. The page itself is
 	// served from dockUsagePath, worded by the same read.
@@ -211,6 +218,9 @@ type dockNeed struct {
 type dockLoop struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
+	// DiskSpace is set when the volume that holds the loop's state is
+	// filling or nearly full (the reading status gives).
+	DiskSpace *dockDiskSpace `json:"diskSpace,omitempty"`
 	// LoopArg is "--loop NAME" with the loop's registered name quoted for a
 	// shell, for the commands the loop page shows to copy. It is absent when
 	// the name is longer than a page shows in full, so a clipped name never
@@ -286,6 +296,9 @@ type dockLoop struct {
 	// Versions is what else the read found about the builds the loop runs:
 	// its daemon's label and its service's file. The Versions view lists them.
 	Versions dockLoopVersions `json:"versions"`
+	// Freshness is the loop's supervisor build against the installed build,
+	// in the words build_freshness.go gives; nil when nothing can be said.
+	BuildFreshness *buildFreshness `json:"buildFreshness,omitempty"`
 	// BuildChange is what may be done about the file that runs its checks;
 	// offered as a button only by a panel started with --allow-changes.
 	BuildChange *dockBuildChange `json:"buildChange,omitempty"`
@@ -1192,6 +1205,10 @@ type dockInput struct {
 	// view was not asked for.
 	Daemon      daemonStatus
 	ServiceFile string
+	// AdoptRecord is the daemon's last build change, nil when it has none.
+	AdoptRecord *adoptRecord
+	// FreshService is the loop's recorded service, for the restart words.
+	FreshService *freshService
 	// BuildChange is what a panel allowed to make changes could do about
 	// the file that runs the loop's checks (replace_build.go); nil when the
 	// Versions view was not asked for.
@@ -1263,6 +1280,11 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 	statuses := make(map[string]*statusOut, len(inputs))
 	for _, in := range inputs {
 		loop, need := projectDockLoop(in, now, staleAfter, identifiers)
+		if in.Status != nil && in.Status.DiskSpace.lowDisk() {
+			d := in.Status.DiskSpace
+			loop.DiskSpace = &dockDiskSpace{Level: d.Level, Message: d.Message, AvailableBytes: d.AvailableBytes, TotalBytes: d.TotalBytes}
+			r.Volumes = dockAddVolume(r.Volumes, d, loop.Key)
+		}
 		r.Loops = append(r.Loops, loop)
 		statuses[loop.Key] = in.Status
 		if need != nil {
@@ -1273,6 +1295,11 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 		}
 	}
 	r.AllClear = complete && omitted == 0 && len(r.NeedsYou) == 0
+	fresh := make([]*buildFreshness, 0, len(r.Loops))
+	for _, l := range r.Loops {
+		fresh = append(fresh, l.BuildFreshness)
+	}
+	r.BuildFreshness = summarizeBuildFreshness(fresh, version, now)
 	sort.SliceStable(r.Loops, func(i, j int) bool {
 		a, b := dockLoopPriority(r.Loops[i]), dockLoopPriority(r.Loops[j])
 		if a != b {
@@ -1777,6 +1804,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	if in.Daemon.State == "responsive" {
 		l.Versions.Daemon = in.Daemon.version
 	}
+	l.BuildFreshness = deriveBuildFreshness(in.Daemon, in.AdoptRecord, version, now, freshContextOfSnapshot(snap, in.FreshService))
 	l.Versions.Service = in.ServiceFile
 	l.BuildChange = in.BuildChange
 	if l.LanesFailed != "" && need == nil {
@@ -2740,6 +2768,39 @@ func dockCheckedByOf(snap *clientSnapshot, st *statusOut, serviceFile string) do
 		return dockCheckedBy{"none", "Not checked yet."}
 	}
 	return dockCheckedBy{"none", "Nothing on record checks it."}
+}
+
+// dockDiskSpace is a loop's filling or nearly full volume.
+type dockDiskSpace struct {
+	Level          string `json:"level"` // low or critical
+	Message        string `json:"message"`
+	AvailableBytes uint64 `json:"availableBytes"`
+	TotalBytes     uint64 `json:"totalBytes"`
+}
+
+// dockVolume is one volume that holds loops' state and is filling or nearly
+// full, with the loops on it.
+type dockVolume struct {
+	dockDiskSpace
+	Loops []string `json:"loops"` // their keys
+	id    string
+}
+
+// dockAddVolume adds a loop to its volume's notice. Loops whose volume
+// cannot be named get a notice each.
+func dockAddVolume(vs []dockVolume, d diskSpaceStatus, key string) []dockVolume {
+	if d.volume != "" {
+		for i := range vs {
+			if vs[i].id == d.volume {
+				vs[i].Loops = append(vs[i].Loops, key)
+				if d.AvailableBytes < vs[i].AvailableBytes { // read moments apart: the lowest is shown
+					vs[i].dockDiskSpace = dockDiskSpace{Level: d.Level, Message: d.Message, AvailableBytes: d.AvailableBytes, TotalBytes: d.TotalBytes}
+				}
+				return vs
+			}
+		}
+	}
+	return append(vs, dockVolume{dockDiskSpace: dockDiskSpace{Level: d.Level, Message: d.Message, AvailableBytes: d.AvailableBytes, TotalBytes: d.TotalBytes}, Loops: []string{key}, id: d.volume})
 }
 
 // dockNoteState is the state as the wording about tests and routes reads it: a
