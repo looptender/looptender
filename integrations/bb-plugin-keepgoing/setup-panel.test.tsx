@@ -256,3 +256,20 @@ test("the preview shows the takeover, and the person can turn it off and preview
     assert.deepEqual(sent, ["on", "off"]);
   } finally { cleanup(); }
 });
+
+test("a failed preview says what happened and that nothing was created; it never suggests a setup may exist", async () => {
+  const call = async (input: { action: string }): Promise<SetupResult> => {
+    if (input.action === "preview") throw Object.assign(new Error("PRIVATE text"), { name: "TimeoutError" });
+    return { ok: true, message: "Enter a task" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Enter a task");
+    fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
+    fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task" } });
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    const alert = await ui.findByRole("alert");
+    assert.match(alert.textContent ?? "", /The preview did not finish: the request timed out after \d+ s\. Nothing was created; a preview never writes anything\./);
+    assert.ok(!/may already exist/.test(ui.container.textContent ?? "")); assert.ok(!(ui.container.textContent ?? "").includes("PRIVATE"));
+  } finally { cleanup(); }
+});

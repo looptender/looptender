@@ -3,6 +3,7 @@ import { goalLabel } from "./status-details.ts";
 import type { SetupResult } from "./setup-contract.ts";
 import type { z } from "zod";
 import type { setupInput } from "./setup-contract.ts";
+import { lostMessage } from "./setup-lost.ts";
 
 type Call = (input: z.infer<typeof setupInput>) => Promise<SetupResult>;
 // `hideStart` leaves starting to another control on the same thread, so a
@@ -33,7 +34,7 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
   useEffect(() => {
     let mounted = true;
     call({ action: "inspect", threadId }).then(r => { if (mounted) { setResult(r); setStandardRoutes(r.standardRoutes === true); setConversation(r.conversation ?? "unknown"); } })
-      .catch(() => { if (mounted) setResult({ ok: false, message: "Setup status is unavailable. Check the host connection and retry." }); })
+      .catch(e => { if (mounted) setResult({ ok: false, message: lostMessage("inspect", e, 0, name) }); })
       .finally(() => { if (mounted) setBusy(false); });
     return () => { mounted = false; };
   }, [threadId, call]);
@@ -41,9 +42,13 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
   const mode = chosen ?? (empty ? "own" : "conversation");
   async function act(action: "preview" | "create" | "inspect" | "start") {
     setBusy(true);
+    const began = Date.now();
     try {
       const follow = followStandard && standardRoutes;
-      const r = await call({ action, threadId, ...(action === "preview" || action === "create" ? { name, mode, ...(mode === "conversation" ? { note } : { task }), withGoal, ticket: result?.ticket, ...(follow ? { followStandard: true } : { takeover }) } : {}) });
+      // BB's RPC layer refuses an input with an undefined value anywhere in it
+      // ("is not a JSON value") before the request leaves the browser, so a key
+      // with nothing to say is left out, never set to undefined.
+      const r = await call({ action, threadId, ...(action === "preview" || action === "create" ? { name, mode, ...(mode === "conversation" ? { note } : { task }), withGoal, ...(result?.ticket ? { ticket: result.ticket } : {}), ...(follow ? { followStandard: true } : { takeover }) } : {}) });
       if (r.plan?.takeoverOffer) setOffer(r.plan.takeoverOffer);
       setResult({
         ...r,
@@ -51,7 +56,7 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
         ...(!r.record && (action === "inspect" || action === "start") ? { record: result?.record } : {}),
       });
       if (r.record) { setTask(""); setNote(""); onChanged(); }
-    } catch { setResult({ ok: false, record: result?.record, plan: result?.plan, message: "The request could not be confirmed. Refresh status before retrying; a disabled setup may already exist." }); }
+    } catch (e) { setResult({ ok: false, record: result?.record, plan: result?.plan, message: lostMessage(action, e, Math.round((Date.now() - began) / 1000), name) }); }
     finally { setBusy(false); }
   }
   const edit = () => setResult(undefined);
