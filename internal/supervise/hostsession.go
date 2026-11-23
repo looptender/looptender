@@ -85,9 +85,6 @@ func (t *tick) gateHostSession(obs decide.Observation, in decide.Input, d decide
 	return t.decide("host_session_restored", in)
 }
 
-// hostReaders reads this computer; tests replace it.
-var hostReaders = hostcheck.System
-
 // consoleSeen: this process has seen someone logged in at the console. A
 // console that belongs to root from the start (a headless computer, one
 // reached over ssh, one at the login window) is not an outage; one whose
@@ -99,10 +96,10 @@ var consoleSeen struct {
 
 // noteConsole remembers a console user seen at any check (a stat only).
 func noteConsole() {
-	if hostReaders.Console == nil {
+	if hostcheck.System.Console == nil {
 		return
 	}
-	if present, known := hostReaders.Console(); known && present {
+	if present, known := hostcheck.System.Console(); known && present {
 		consoleSeen.Lock()
 		consoleSeen.seen = true
 		consoleSeen.Unlock()
@@ -115,7 +112,7 @@ func (t *tick) hostSessionAvailable() bool {
 	if t.opts.HostSession != nil {
 		return t.opts.HostSession(ctx)
 	}
-	s := hostReaders.ReadSession(ctx)
+	s := hostcheck.System.ReadSession(ctx)
 	consoleSeen.Lock()
 	defer consoleSeen.Unlock()
 	if s.Console == hostcheck.OK {
@@ -136,7 +133,7 @@ func (t *tick) hostOverloadObservation(obs decide.Observation) bool {
 	if t.opts.HostLoad != nil {
 		level = t.opts.HostLoad()
 	} else {
-		level = hostReaders.ReadLoad().Level
+		level = hostcheck.System.ReadLoad().Level
 	}
 	if level != hostcheck.LoadOverloaded {
 		if level != hostcheck.LoadUnknown {
