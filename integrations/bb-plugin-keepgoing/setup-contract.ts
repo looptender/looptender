@@ -97,6 +97,40 @@ export const refusedReportSchema = z.object({ schemaVersion: z.literal(1), outco
 export function refusalMessage(r: Refusal, command: "init" | "start"): string {
   return `looptender refused to ${command === "init" ? "set up" : "start"} this loop: loop ${r.otherLoop} already supervises this thread's session, and two loops on one session would both prompt it. ${command === "init" ? "Nothing was created." : "Nothing was started."} To have this thread supervised here instead, pause or disable ${r.otherLoop} first.`;
 }
+/**
+ * Why a looptender command the plugin ran for setup did not give a plan, said
+ * as what happened: it took too long, it exited non-zero (with the first line
+ * it printed), or it answered in a form the plugin does not recognise. Only
+ * these fields cross back from the host, never the command's other output.
+ */
+export const failureSchema = z.object({
+  kind: z.enum(["timeout", "exit", "output", "exists"]),
+  seconds: z.number().int().positive().max(3600).optional(),
+  code: z.number().int().min(0).max(255).optional(),
+  line: z.string().max(240).optional(),
+});
+export type SetupFailure = z.infer<typeof failureSchema>;
+/**
+ * What to tell the person for a failed command. `creating` is true when the
+ * failed command was the real one: a timeout there may have written the
+ * disabled setup before it was cut off. A preview, which creates nothing, never
+ * says that a setup may exist unless the command itself said so.
+ */
+export function failureMessage(f: SetupFailure, creating: boolean, name?: string): string {
+  const what = creating ? "Creating the setup" : "The preview";
+  switch (f.kind) {
+    case "timeout":
+      return creating
+        ? `The looptender command timed out after ${f.seconds ?? 20} s and was stopped. A switched-off setup${name ? ` named ${name}` : ""} may have been written before that: refresh status and review or remove it before trying again.`
+        : `The preview timed out: the looptender command was still running after ${f.seconds ?? 20} s and was stopped. Nothing was created. The machine may be busy; try again, and if it keeps timing out check \`looptender doctor\`.`;
+    case "exists":
+      return `A setup${name ? ` named ${name}` : ""} already exists on this host${f.line ? ` (looptender said: ${f.line})` : ""}. Review or remove it, or choose another loop name. Nothing was created by this ${creating ? "attempt" : "preview"}.`;
+    case "exit":
+      return `${what} failed: the looptender command exited with status ${f.code ?? 1}${f.line ? ` and said: ${f.line}` : " and printed nothing to explain it"}. ${creating ? "The plugin saved nothing." : "Nothing was created."}`;
+    default:
+      return `${what} failed: the looptender command ran but its answer was not in a form this plugin understands${f.line ? ` (it said: ${f.line})` : ""}. The installed looptender and this plugin may be different builds. ${creating ? "The plugin saved nothing; check the destination before trying again." : "Nothing was created."}`;
+  }
+}
 export const checkSchema = z.object({ id: text, status: z.enum(["ok", "warning", "error", "unavailable"]), message: text, fix: z.string().max(4096).optional() });
 export const setupResult = z.object({
   ok: z.boolean(), message: z.string(), ticket: z.string().optional(), plan: planSchema.optional(),

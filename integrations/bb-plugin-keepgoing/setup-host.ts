@@ -6,25 +6,47 @@ import { realpath } from "node:fs/promises";
 import { z } from "zod";
 import { refusesFlag, withClientFlag } from "./client-flag.ts";
 import { goalSummarySchema } from "./status-details.ts";
-import { planSchema, refusedReportSchema, type Refusal, type SetupTarget, type SetupRecord } from "./setup-contract.ts";
+import { planSchema, refusedReportSchema, type Refusal, type SetupFailure, type SetupTarget, type SetupRecord } from "./setup-contract.ts";
 import { durationMs, type Bounds } from "./new-thread-contract.ts";
 
 // code is the real exit code (1 when there is none); emptyStdout and
 // timedOut are set by execute, so a refusal of --client can be told apart.
-export type Execute = (bin: string, args: string[], input: string, threadId: string, signal?: AbortSignal) => Promise<{ code: number; data: unknown; emptyStdout?: boolean; timedOut?: boolean }>;
+// stderr is at most 4 KiB of what the command printed to its error output; the
+// plugin reads one line of it, for a failure, and never logs it.
+export type Execute = (bin: string, args: string[], input: string, threadId: string, signal?: AbortSignal) => Promise<{ code: number; data: unknown; emptyStdout?: boolean; timedOut?: boolean; stderr?: string }>;
+export const EXECUTE_TIMEOUT_MS = 20_000;
 // Bounded output and duration; task text travels only through stdin. Neither
 // command output nor child-process errors are logged or included in errors.
 export const execute: Execute = (bin, args, input, threadId, signal) => new Promise((resolve) => {
-  const child = execFile(bin, args, { timeout: 20_000, maxBuffer: 1 << 20, signal, env: { ...process.env, BB_THREAD_ID: threadId } }, (error, stdout) => {
+  const child = execFile(bin, args, { timeout: EXECUTE_TIMEOUT_MS, maxBuffer: 1 << 20, signal, env: { ...process.env, BB_THREAD_ID: threadId } }, (error, stdout, stderr) => {
     let data: unknown = null;
     try { data = JSON.parse(String(stdout)); } catch { /* text commands need no output */ }
     const e = error as { code?: unknown; killed?: boolean } | null;
     const code = e ? (typeof e.code === "number" && e.code !== 0 ? e.code : 1) : 0;
-    resolve({ code, data, emptyStdout: String(stdout) === "", timedOut: !!e && e.killed === true });
+    resolve({ code, data, emptyStdout: String(stdout) === "", timedOut: !!e && e.killed === true, stderr: String(stderr ?? "").slice(0, 4096) });
   });
   child.stdin?.on("error", () => { /* early exit/EPIPE is reported by callback */ });
   child.stdin?.end(input);
 });
+/**
+ * The first line the command printed that says what went wrong: not a warning
+ * (init warns about other loops and routes before it fails), no control
+ * characters, short. Empty when it printed none.
+ */
+export function firstErrorLine(stderr: string | undefined): string {
+  for (const raw of (stderr ?? "").split("\n")) {
+    const line = raw.replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]/g, " ").trim();
+    if (line && !/^warning:/i.test(line)) return line.length > 200 ? `${line.slice(0, 197)}...` : line;
+  }
+  return "";
+}
+function failureOf(result: { code: number; timedOut?: boolean; stderr?: string }, parsedOk: boolean): SetupFailure {
+  const line = firstErrorLine(result.stderr);
+  if (result.timedOut) return { kind: "timeout", seconds: Math.round(EXECUTE_TIMEOUT_MS / 1000) };
+  if (/already exists?/i.test(line)) return { kind: "exists", ...(line ? { line } : {}) };
+  if (result.code !== 0) return { kind: "exit", code: Math.min(255, Math.max(0, result.code)), ...(line ? { line } : {}) };
+  return { kind: "output", ...(parsedOk ? {} : line ? { line } : {}) };
+}
 const cliPlan = z.object({
   schemaVersion: z.literal(1), outcome: z.enum(["preview", "created"]),
   goal: z.unknown().optional(), taskPath: z.string().optional(),
@@ -90,7 +112,7 @@ export async function standardRoutesOnHost(input: { bin: string; target: SetupTa
     return { available: false };
   }
 }
-export async function setupOnHost(input: { bin: string; target: SetupTarget; name: string; task: string; dryRun: boolean; withGoal?: boolean; bounds?: Bounds; followStandard?: true; takeover?: TakeoverChoice }, signal?: AbortSignal, run: Execute = execute): Promise<{ plan: z.infer<typeof planSchema>; registration?: Publication } | { refused: Refusal } | { noRoutes: true }> {
+export async function setupOnHost(input: { bin: string; target: SetupTarget; name: string; task: string; dryRun: boolean; withGoal?: boolean; bounds?: Bounds; followStandard?: true; takeover?: TakeoverChoice }, signal?: AbortSignal, run: Execute = execute): Promise<{ plan: z.infer<typeof planSchema>; registration?: Publication } | { refused: Refusal } | { noRoutes: true } | { failed: SetupFailure }> {
   const { bin, target, name, task, dryRun, withGoal = false, bounds, followStandard, takeover } = input;
   const project = await realpath(target.project);
   const args = ["init", "--non-interactive", "--json", "--name", name, "--agent", "bb", "--thread", target.threadId, "--provider", target.provider, "--project", project, "--task-file", "-"];
@@ -123,7 +145,7 @@ export async function setupOnHost(input: { bin: string; target: SetupTarget; nam
     if (!nt || nt.provider !== takeover.provider || nt.model !== takeover.model) throw new Error("Setup did not report the takeover that was asked for. Nothing was created.");
   }
   const parsed = following ?? taking ?? cliPlan.safeParse(result.data);
-  if (result.code !== 0 || !parsed.success) throw new Error("Setup failed or returned an unsupported result. " + (withGoal ? "Goal setup needs a CLI with init --with-goal (after v0.1.4); update the CLI or explicitly turn off goal creation and preview again. " : "") + "Check the setup destination; existing files are never overwritten.");
+  if (result.code !== 0 || !parsed.success) return { failed: failureOf(result, parsed.success) };
   const p = parsed.data;
   if (!isAbsolute(p.configPath) || !["looptender.yaml", "keepgoing.yaml"].includes(basename(p.configPath)) || p.stateDir !== join(dirname(p.configPath), "state")) throw new Error("Setup paths could not be verified.");
   if (p.outcome !== (dryRun ? "preview" : "created") || p.loop !== name || p.project !== project || p.primary.agent.bbThread !== target.threadId || p.primary.agent.provider !== target.provider) throw new Error("Setup returned a different target. No supervisor was started.");

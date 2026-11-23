@@ -127,3 +127,22 @@ test("a held loop that was moved reads differently from an ordinary awaiting-use
   const b = render(held(), "thr_plain_hold");
   try { assert.ok(await b.findByText("looptender: awaiting user")); assert.equal(b.queryByText(/moved, resume/), null); } finally { b.lifecycle.unmount(); cleanup(); }
 });
+
+
+test("Preview setup reaches the plugin through BB's RPC layer, which refuses undefined values in an input",async()=>{
+  const seen:{action:string;ticket?:unknown}[]=[];
+  const plan={loop:"example-loop",project:"/projects/example",configPath:"/private/example/looptender.yaml",stateDir:"/private/example/state",threadId:"thr_preview_rpc",provider:"codex",limits:{interval:"5m",wakeEvery:"1h",stallAfter:"30m",backoff:"10m",maxNudges:3,maxReprompts:3}};
+  const ui=renderSlot(app.threadContextCardRows[0]!,{threadId:"thr_preview_rpc",projectId:"proj_example",environment:null},{rpc:{
+    forThread:()=>({loops:[],errors:[]}),transfer:()=>({ok:true,message:"No moves",choices:[]}),attachment:()=>({ok:true,candidates:[],message:"Registry read"}),
+    setup:(raw:unknown)=>{const i=raw as {action:string;ticket?:unknown}; seen.push(i); if(i.action==="inspect")return{ok:true,message:"Nothing set up yet"}; if(i.action==="preview")return{ok:true,message:"Preview only",ticket:"t",plan}; return{ok:false,message:"unexpected"};},
+  }});
+  try{
+    fireEvent.click(await ui.findByRole("button",{name:"Add to Looptender"}));
+    await ui.findByText("Nothing set up yet");
+    fireEvent.click(ui.getByRole("button",{name:"Preview setup"}));
+    await ui.findByRole("button",{name:"Create disabled setup"});
+    assert.equal(ui.container.querySelector("[role=alert]"),null,"the request was not refused before it left the browser");
+    assert.deepEqual(seen.map(s=>s.action),["inspect","preview"]);
+    assert.ok(!("ticket" in seen[1]!),"no ticket key on the first preview");
+  }finally{ui.lifecycle.unmount();cleanup();}
+});
