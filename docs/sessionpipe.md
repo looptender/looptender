@@ -32,8 +32,9 @@ sessionpipe sink add file:/home/example/.local/state/looptender-sessionpipe/even
 ```
 
 On Windows use the same command with a Windows path. sessionpipe creates the
-file with the first event after the sink is added. Find the session's id with
-`sessionpipe tail --tier 0` while it runs, or in your receiver. Then:
+file with the first event after the sink is added. Find the session's full id
+in `session.id` of `sessionpipe tail --tier 0 --json` while it runs (the text
+form shows only its first characters), or in your receiver. Then:
 
 ```yaml
 version: 1
