@@ -54,11 +54,11 @@ test("SDK RPC resolves host metadata, persists references, and routes controls w
     // says where a person resumes and never runs the CLI.
     const clicked = await harness.behavior.callRpc("control", { configPath: created.record.configPath, managedId: created.record.id, action: "resume", expectedThreadId: thread.id }) as { ok: boolean; message: string };
     assert.equal(clicked.ok, false); assert.equal(clicked.message, resumeByPerson(created.record.configPath));
-    assert.match(clicked.message, /keepgoing panel --allow-changes/); assert.match(clicked.message, /keepgoing resume -c /);
+    assert.match(clicked.message, /looptender panel --allow-changes/); assert.match(clicked.message, /looptender resume -c /);
     const listed = await harness.behavior.callRpc("control", { configPath: "/private/listed/keepgoing.yaml", action: "resume" }) as { ok: boolean; message: string };
     assert.equal(listed.ok, false); assert.equal(listed.message, resumeByPerson("/private/listed/keepgoing.yaml"));
     const typed = await harness.behavior.runCli(["resume", "example-loop"]);
-    assert.equal(typed.exitCode, 1, JSON.stringify(typed)); assert.ok(String(typed.stdout ?? "").includes("keepgoing resume -c "), JSON.stringify(typed));
+    assert.equal(typed.exitCode, 1, JSON.stringify(typed)); assert.ok(String(typed.stdout ?? "").includes("looptender resume -c "), JSON.stringify(typed));
     assert.ok(!operations.includes("resume"));
     await harness.behavior.callRpc("setup", { action: "start", threadId: thread.id });
     assert.equal(operations.filter(o => o === "start").length, 1);

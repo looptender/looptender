@@ -81,11 +81,24 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var menuOpen = false
     var notice: String?
     var loading = false
-    init(client: LocalClient, notifier: Notifier, renderPath: String?, renderDark: Bool) {
+    /// Nil when the menu cannot tell which build it runs: it then never offers an update.
+    var flow: UpdateFlow?
+    let launchPath: String
+    let updater: MenuUpdater?
+    /// Work the menu must not quit under: a change being read, confirmed (its
+    /// window open) or applied, and the panel being restarted. Shared with the
+    /// update flow, which asks it at each step.
+    var busy: BusyCounter { flow?.busy ?? spareBusy }
+    private let spareBusy = BusyCounter()
+    init(client: LocalClient, notifier: Notifier, renderPath: String?, renderDark: Bool, launchPath: String, updater: MenuUpdater?) {
+        self.launchPath = launchPath
+        self.updater = updater
         self.client = client
         self.notifier = notifier
         self.renderPath = renderPath
         self.renderDark = renderDark
+        super.init()
+        notifier.onUpdateClick = { [weak self] in self?.flow?.relaunch(byRequest: true) }
     }
 
     // Verification aid: once the first read has finished, draw the menu bar
@@ -180,6 +193,10 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in self?.timer?.invalidate() }
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.refresh() }
         NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { [weak self] _ in self?.scheduleNextRead() }
+        if let told = updater?.takeTold() { notifier.restoreTold(told) }
+        // "Updated" is said once the menu this one replaced has really exited.
+        flow?.confirmUpdateAfterStart()
+        checkForUpdate()
         refresh()
     }
     func menuWillOpen(_ menu: NSMenu) {
@@ -191,6 +208,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A notice is shown for one opening of the menu.
         notice = nil
         render()
+        checkForUpdate()
     }
 
     /// Arms the one timer for the next unasked read, or none in Low Power Mode.
@@ -210,10 +228,14 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// are updated in place when they are the same rows, and otherwise the
     /// rebuild waits until nothing is highlighted or the menu has closed.
     func render() {
-        let model = MenuBuilder.build(reading, now: Date(), notice: notice, refreshing: loading, panel: panel)
+        let offer = updater.map { UpdateOffer(availableLabel: flow?.installed?.label, automatic: $0.automatic, failure: $0.lastFailure, noMenuLabel: flow?.noMenuLabel) }
+        let model = MenuBuilder.build(reading, now: Date(), notice: notice, refreshing: loading, panel: panel, update: renderPath == nil ? offer : nil)
         if let button = item.button {
-            button.title = model.badge.isEmpty ? "" : " " + model.badge
-            button.setAccessibilityLabel(model.iconAccessibilityLabel)
+            // A dot after the count marks an update that is waiting; the label says so in words.
+            let mark = flow?.installed != nil && renderPath == nil ? "\u{2022}" : ""
+            let title = [model.badge, mark].filter { !$0.isEmpty }.joined(separator: " ")
+            button.title = title.isEmpty ? "" : " " + title
+            button.setAccessibilityLabel(model.iconAccessibilityLabel + (mark.isEmpty ? "" : ", menu update available"))
         }
         let column = stateColumn(model.rows)
         if MenuBuilder.sameShape(model.rows, shown), menu.items.count == model.rows.count {
@@ -285,6 +307,15 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .quit:
             NSApplication.shared.terminate(nil)
             return
+        case .relaunchMenu:
+            flow?.relaunch(byRequest: true)
+            return
+        case .toggleAutoUpdate:
+            // Turning it on does not relaunch under the open menu: the check
+            // runs when the menu closes.
+            if let updater { updater.automatic.toggle() }
+            render()
+            return
         case .review(let action, let key):
             review(action, key: key)
             return
@@ -345,23 +376,29 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// confirmed while the review is current. The result is said in the
     /// page's words; nothing is retried by itself.
     func review(_ action: LoopAction, key: String) {
+        // One token from the start to the last step, windows included.
+        let work = busy.begin()
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let reading = try? client.review(action, key: key)
             DispatchQueue.main.async { [self] in
                 switch reading {
                 case .none:
                     tell("looptender could not prepare this review", "Nothing was changed. Run keepgoing client review \(action.rawValue) --loop \(key) in a terminal to see why.")
+                    busy.end(work)
                 case .refused(let result):
                     tell("Nothing was changed", Contract.text(result.text))
+                    busy.end(work)
                 case .review(let review):
-                    guard let command = ask(ConfirmationBuilder.build(review)) else { return }
+                    guard let command = ask(ConfirmationBuilder.build(review)) else { busy.end(work); return }
                     guard ConfirmationBuilder.current(review, now: Date()) else {
                         tell("Nothing was changed", Contract.text(review.expired))
+                        busy.end(work)
                         return
                     }
                     DispatchQueue.global(qos: .userInitiated).async { [self] in
                         let result = client.apply(command, review: review)
                         DispatchQueue.main.async { [self] in
+                            defer { busy.end(work) }
                             if result.outcome == "done" {
                                 // Seen on the next look at the menu.
                                 notice = Contract.text(result.text)
@@ -381,23 +418,28 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// names each loop's outcome, so a partial result is never taken for
     /// success; nothing is retried by itself.
     func reviewAll(_ action: LoopAction) {
+        let work = busy.begin()
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let reading = try? client.reviewAll(action)
             DispatchQueue.main.async { [self] in
                 switch reading {
                 case .none:
                     tell("looptender could not prepare this review", "Nothing was changed. Run keepgoing client review \(action.rawValue) --all in a terminal to see why.")
+                    busy.end(work)
                 case .refused(let result):
                     tell("Nothing was changed", Contract.text(result.text))
+                    busy.end(work)
                 case .review(let review):
-                    guard let command = ask(ConfirmationBuilder.build(review)) else { return }
+                    guard let command = ask(ConfirmationBuilder.build(review)) else { busy.end(work); return }
                     guard ConfirmationBuilder.current(review, now: Date()) else {
                         tell("Nothing was changed", Contract.text(review.expired))
+                        busy.end(work)
                         return
                     }
                     DispatchQueue.global(qos: .userInitiated).async { [self] in
                         let result = client.applyAll(command, review: review)
                         DispatchQueue.main.async { [self] in
+                            defer { busy.end(work) }
                             tell(Contract.text(result.text), (result.lines ?? []).map(Contract.text).joined(separator: "\n"))
                             refresh()
                         }
@@ -413,6 +455,9 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// which mode, is read again first, off the main thread: the menu's last
     /// read can be minutes old, and a panel may have stopped by itself since.
     func openWithControls(accountID: String? = nil) {
+        // Held through the status read, the confirmation window and the stop and
+        // start of the panel, so the menu never quits between the stop and the start.
+        let work = busy.begin()
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let fresh = try? client.panelStatus()
             DispatchQueue.main.async { [self] in
@@ -421,30 +466,38 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // Offered only with the footer's statement, which is always shown.
                 guard let status = fresh, status.exposure != nil else {
                     tell("The looptender panel could not be read", "Nothing was started. Run keepgoing panel status in a terminal to see why. Your loops are not affected.")
+                    busy.end(work)
                     return
                 }
                 if let confirmation = ConfirmationBuilder.openWithControls(status) {
-                    guard ask(confirmation) != nil else { return }
+                    guard ask(confirmation) != nil else { busy.end(work); return }
                 }
                 let restart = status.running && status.changesAllowed != true
                 DispatchQueue.global(qos: .userInitiated).async { [self] in
                     if restart, (try? client.open(.stopPanel)) == nil {
                         DispatchQueue.main.async { [self] in
                             tell("The looptender panel could not be stopped", "Run keepgoing panel stop in a terminal to see why, then keepgoing panel --allow-changes. Your loops are not affected.")
+                            busy.end(work)
                             refresh()
                         }
                         return
                     }
-                    DispatchQueue.main.async { [self] in run(accountID.map { .openAccountWithChanges(id: $0) } ?? .openPanelWithChanges) }
+                    DispatchQueue.main.async { [self] in
+                        // run() holds its own token before this one is let go.
+                        run(accountID.map { .openAccountWithChanges(id: $0) } ?? .openPanelWithChanges)
+                        busy.end(work)
+                    }
                 }
             }
         }
     }
 
     func run(_ command: MenuCommand) {
+        let work = busy.begin()
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let failed = (try? client.open(command)) == nil
             DispatchQueue.main.async { [self] in
+                defer { busy.end(work) }
                 if failed {
                     // The menu has closed by now, so say it where it will be
                     // seen and heard, and leave it in the menu for the next look.
@@ -461,6 +514,12 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 refresh()
             }
         }
+    }
+
+    /// The update flow's check (UpdateFlow.check); not in a drawing run.
+    func checkForUpdate() {
+        guard renderPath == nil else { return }
+        flow?.check()
     }
 
     func refresh() {
@@ -490,9 +549,70 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 scheduleNextRead()
                 render()
                 notifier.update(result)
+                checkForUpdate()
                 if let path = renderPath { renderMenu(to: path) }
             }
         }
+    }
+}
+
+/// The menu a relaunch started, as a running process.
+final class ChildMenu: RunningMenu {
+    let process: Process
+    init(_ process: Process) { self.process = process }
+    var isRunning: Bool { process.isRunning }
+    var exitStatus: Int32 { process.isRunning ? 0 : process.terminationStatus }
+    func terminate() { process.terminate() }
+    func kill() { if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) } }
+}
+
+extension MenuApp: UpdateEnvironment {
+    func installedState() -> InstalledBuild.State {
+        guard let running = updater?.running else { return .same }
+        return InstalledBuild.state(launchPath: launchPath, running: running)
+    }
+    func verify(_ target: BuildIdentity, runningPath: String, completion: @escaping (RelaunchFailure?) -> Void) {
+        // The signature check can take a while: off the main thread.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let problem = RelaunchCheck.verify(target, runningPath: runningPath, verifySignature: MenuApp.signatureProblem)
+            DispatchQueue.main.async { completion(problem) }
+        }
+    }
+    func start(_ target: BuildIdentity) throws -> RunningMenu {
+        let process = Process()
+        let throughLink = URL(fileURLWithPath: launchPath).resolvingSymlinksInPath().path == target.path
+        process.executableURL = URL(fileURLWithPath: throughLink ? launchPath : target.path)
+        process.arguments = Array(CommandLine.arguments.dropFirst())
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        return ChildMenu(process)
+    }
+    func after(_ seconds: TimeInterval, _ work: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work) }
+    func quit() { NSApplication.shared.terminate(nil) }
+    func processAlive(_ pid: Int32) -> Bool { Darwin.kill(pid, 0) == 0 || errno == EPERM }
+    var processID: Int32 { ProcessInfo.processInfo.processIdentifier }
+    func postAvailable(_ text: String) { notifier.post(update: text, clickable: true) }
+    func postUpdated(_ text: String) { notifier.post(update: text, clickable: false) }
+    func setNotice(_ text: String) { notice = text }
+    func changed() { render() }
+    func exportTold() -> String { notifier.exportTold() }
+
+    /// nil when the bundle's signature verifies, else why not. Reads the
+    /// pipe before waiting, so a long answer cannot fill it and stall the check.
+    static func signatureProblem(_ bundle: String) -> String? {
+        let check = Process()
+        check.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        check.arguments = ["--verify", "--deep", "--strict", bundle]
+        let err = Pipe()
+        check.standardError = err
+        check.standardOutput = FileHandle.nullDevice
+        do { try check.run() } catch { return "codesign could not run" }
+        let output = err.fileHandleForReading.readDataToEndOfFile()
+        check.waitUntilExit()
+        if check.terminationStatus == 0 { return nil }
+        return String(decoding: output, as: UTF8.self).split(separator: "\n").first.map(String.init) ?? "status \(check.terminationStatus)"
     }
 }
 
@@ -502,9 +622,23 @@ final class Command: NSObject {
     init(_ value: MenuCommand) { self.value = value }
 }
 
+/// Keeps what must survive a relaunch in the app's own preferences.
+final class DefaultsStore: UpdateStore {
+    func string(forKey key: String) -> String? { UserDefaults.standard.string(forKey: key) }
+    func set(_ value: String?, forKey key: String) { UserDefaults.standard.set(value, forKey: key) }
+}
+
+// The path this menu was started through, links not resolved: where an
+// install that moves a link is seen. Without a build it can identify, the
+// menu offers no update.
+let argv0 = CommandLine.arguments[0]
+let launchPath = argv0.contains("/") ? URL(fileURLWithPath: argv0).standardizedFileURL.path : (Bundle.main.executablePath ?? argv0)
+let updater = InstalledBuild.identity(of: launchPath).map { MenuUpdater(running: $0, store: DefaultsStore()) }
+
 let app = NSApplication.shared
 let delegate = MenuApp(client: LocalClient(executable: URL(fileURLWithPath: path), directory: values["--registry-directory"], panelDirectory: values["--panel-directory"]),
-                       notifier: Notifier(enabled: notifications && values["--render-menu"] == nil), renderPath: values["--render-menu"], renderDark: dark)
+                       notifier: Notifier(enabled: notifications && values["--render-menu"] == nil), renderPath: values["--render-menu"], renderDark: dark, launchPath: launchPath, updater: updater)
+delegate.flow = updater.map { UpdateFlow(updater: $0, launchPath: launchPath, env: delegate) }
 app.setActivationPolicy(.accessory)
 app.delegate = delegate
 app.run()

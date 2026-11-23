@@ -461,6 +461,16 @@
     });
     return changeBox({ key: "all", can: can }, true);
   }
+  // How fresh a supervisor's build is, in the server's words (it comes from
+  // one place in Go, which the menu reads too). Visible text, never a title only.
+  function freshnessChip(l) {
+    var f = l.buildFreshness;
+    if (!f || !f.text) return null;
+    var chip = el("span", "fresh fresh-" + String(f.state).replace(/[^a-z]/g, ""), f.text);
+    chip.setAttribute("data-fresh", String(f.state));
+    return chip;
+  }
+
   function renderHome(d, pane) {
     pane.appendChild(paneHead("Overview"));
     var group = groupBox(d);
@@ -472,6 +482,7 @@
     }
     var needs = list(d.needsYou);
     if (d.lede) pane.appendChild(el("p", "lede", d.lede));
+    if (d.buildFreshness && d.buildFreshness.text && list(d.loops).length) pane.appendChild(el("p", "sub fresh-summary", d.buildFreshness.text));
     if (!list(d.loops).length) {
       pane.appendChild(emptyBox("No loops are registered yet.", "Register one with looptender registry add -c path/to/looptender.yaml (or keepgoing.yaml), and it appears here on the next read."));
       return;
@@ -522,6 +533,8 @@
       if (l.lanesFailed && tone === "good") tone = "warn";
       status.appendChild(el("span", "dot dot-" + tone));
       status.appendChild(el("span", null, l.phrase));
+      var freshChip = freshnessChip(l);
+      if (freshChip) status.appendChild(freshChip);
       if (l.state === "finished") status.appendChild(tag("calm", "Unverified"));
       if (l.lanesFailed) status.appendChild(tag("needs", l.lanesFailed));
       summary.appendChild(status);
@@ -739,6 +752,21 @@
     // The build its last check ran; "version unknown" when none is recorded.
     // An older server sends no line, and then nothing is shown.
     if (l.build && l.build.line) pane.appendChild(el("p", "sub build-line", l.build.line));
+    // The supervisor's build against the installed one, with its detail and,
+    // for an older daemon, the command a person would run. Nothing here acts.
+    if (l.buildFreshness && l.buildFreshness.text) {
+      var fresh = el("p", "sub build-line fresh-line");
+      fresh.appendChild(freshnessChip(l));
+      if (l.buildFreshness.detail) fresh.appendChild(document.createTextNode(" " + l.buildFreshness.detail));
+      pane.appendChild(fresh);
+      if (l.buildFreshness.action) pane.appendChild(el("p", "sub build-line fresh-action", l.buildFreshness.action));
+      if (l.buildFreshness.command) {
+        var run = el("p", "sub build-line fresh-command");
+        run.appendChild(document.createTextNode("Command: "));
+        run.appendChild(el("code", null, l.buildFreshness.command));
+        pane.appendChild(run);
+      }
+    }
     var need = needFor(key);
     if (!need) pane.appendChild(el("p", "detail", l.detail));
     if (need) {
