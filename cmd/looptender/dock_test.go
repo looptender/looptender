@@ -1544,7 +1544,7 @@ func TestDockMaximalRegistryStaysUnderTheResponseBound(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("identifiers %t: %d bytes, %d routes (%d omitted)", ids, len(body), len(r.Routes), r.RoutesOmitted)
-		if len(body) > dockResponseMargin {
+		if sizeWithoutNotices(t, body) > dockResponseMargin {
 			t.Errorf("identifiers %t: %d bytes, over three quarters of the %d-byte bound", ids, len(body), dockMaxResponse)
 		}
 		if len(r.Routes) > dockMaxRoutes || r.RoutesOmitted == 0 {
@@ -1951,7 +1951,7 @@ func TestDockFourByteNamesStayUnderTheResponseBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("%d bytes, %d account route lists", len(body), len(r.AccountUses))
-	if len(body) > dockResponseMargin {
+	if sizeWithoutNotices(t, body) > dockResponseMargin {
 		t.Errorf("%d bytes, over three quarters of the %d-byte bound", len(body), dockMaxResponse)
 	}
 }

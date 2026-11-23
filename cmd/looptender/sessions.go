@@ -44,6 +44,9 @@ type otherLoop struct {
 	// person), or is empty while it supervises: enabled is a flag, not
 	// activity.
 	Held string
+	// Archived: the loop is archived, so it is neither called enabled nor
+	// supervising, whatever its flag says.
+	Archived bool
 }
 
 // loopSessions are the sessions a loop acts on: its primary and each
@@ -135,6 +138,9 @@ func findOtherLoops(cfg *config.Config) []otherLoop {
 			continue
 		}
 		o := otherLoop{Loop: other.Loop.Name, Config: other.Path(), StateDir: c.stateDir, Held: loopHeld(ctl, false)}
+		if a, _ := loopArchive(c.stateDir, ctl); a != nil {
+			o.Archived = true
+		}
 		theirPrimary, theirHave, theirs := loopSessions(other)
 		if havePrimary && theirHave && theirPrimary == primary {
 			o.Primary = true
@@ -225,8 +231,13 @@ func sharedLoopWarnings(cfg *config.Config, others []otherLoop) []string {
 			}
 			state = "is enabled but held (" + o.Held + "): " + until
 		}
+		if o.Archived {
+			state = "is archived (held: " + o.Held + "): it sends nothing and cannot be resumed until it is unarchived"
+		}
 		if o.Primary {
-			if o.Held != "" {
+			if o.Archived {
+				out = append(out, fmt.Sprintf("loop %s (%s) also names %s but %s", o.Loop, o.Config, primary.Describe(), strings.TrimPrefix(state, "is ")))
+			} else if o.Held != "" {
 				out = append(out, fmt.Sprintf("loop %s (%s) also supervises %s but %s; once it resumes, the two can both prompt it, though never at the same moment", o.Loop, o.Config, primary.Describe(), strings.TrimPrefix(state, "is enabled but ")))
 			} else {
 				out = append(out, fmt.Sprintf("loop %s (%s) also supervises %s; the two can both prompt it, though never at the same moment", o.Loop, o.Config, primary.Describe()))

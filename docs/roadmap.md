@@ -30,7 +30,7 @@ See [integrations.md](integrations.md) for what is verified live.
 - signed reports in the bearer and text formats;
 - the release workflow, by publishing 0.1.0.
 
-**BB plugin.** `integrations/bb-plugin-keepgoing` shows keepgoing's state in each supervised thread's context banner or card and adds `bb keepgoing status`, `pause`, `resume`, and `stop`.
+**BB plugin.** `integrations/bb-plugin-keepgoing` shows keepgoing's state in each supervised thread's context banner or card and adds `bb looptender status`, `pause`, `resume`, and `stop`.
 
 **Homebrew.** `brew install looptender/tap/looptender` installs the published v0.2.0 `keepgoing` binary and a `looptender` symlink from the [canonical tap](https://github.com/looptender/homebrew-tap). Both names run the same released code; source-only features are not included. [Tap PR #7](https://github.com/looptender/homebrew-tap/pull/7) added the formula rename and executable link, with disposable install/upgrade fixtures on macOS arm64. Intel macOS, Linux and existing owner installations remain separate verification; running loops and services are not updated by this packaging change.
 
