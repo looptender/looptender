@@ -2061,3 +2061,93 @@ func TestDockNoProgressOnAHeldLoopIsNotCurrent(t *testing.T) {
 		}
 	}
 }
+
+// dockControlSaved is a timeline holding one control change, made by caller,
+// that turned on the flags in after.
+func dockControlSaved(op, caller string, at time.Time, before, after incident.Controls) *timelineReport {
+	return &timelineReport{Events: []timelineEntry{{At: at, Kinds: []string{"control"}, Incident: &incident.Record{Kind: "control", CheckStartedAt: at,
+		ControlBefore: &before, ControlAfter: &after, ControlChange: &incident.ControlChange{Operation: op, Caller: caller, SaveObservedAt: at}}}}}
+}
+
+// Every held row says, at the data level, what it waits for and who set it,
+// and carries one line of reason, when its facts were read and whether a
+// supervisor answered: the agent's own question is not a person's hold, and
+// neither is a limit a check reached.
+func TestDockWaitingSaysWhatAndWho(t *testing.T) {
+	on := incident.Controls{Enabled: true}
+	waiting := incident.Controls{Enabled: true, AwaitingUser: true}
+	paused := incident.Controls{Enabled: true, Paused: true}
+	since := dockNow.Add(-90 * time.Minute)
+	for _, c := range []struct {
+		name             string
+		controls         clientControls
+		tl               *timelineReport
+		hold             *dockHold
+		kind, by, reason string
+		state            string
+	}{
+		{"the agent asked", clientControls{Enabled: true, AwaitingUser: true}, nil, &dockHold{At: since, Marked: true, Caller: "owner_thread"},
+			"asked", "agent", "Its agent asked for a person; its note says what for.", "waiting_for_you"},
+		{"a person marked it", clientControls{Enabled: true, AwaitingUser: true}, nil, &dockHold{At: since, Marked: true, Caller: "terminal"},
+			"held", "person", "A person marked it as waiting.", "waiting_for_you"},
+		{"another thread marked it", clientControls{Enabled: true, AwaitingUser: true}, nil, &dockHold{At: since, Marked: true, Caller: "other_thread"},
+			"held", "other_thread", "Another BB thread marked it as waiting for a person.", "waiting_for_you"},
+		{"a deadline", clientControls{Enabled: true, AwaitingUser: true}, nil, &dockHold{At: since, Cause: "deadline"},
+			"limit", "check", "It reached its deadline.", "waiting_for_you"},
+		{"a person paused it", clientControls{Enabled: true, Paused: true}, dockControlSaved("pause", "terminal", since, on, paused), nil,
+			"held", "person", "A person paused it.", "paused"},
+		{"its own thread paused it", clientControls{Enabled: true, Paused: true}, dockControlSaved("pause", "owner_thread", since, waiting, incident.Controls{Enabled: true, AwaitingUser: true, Paused: true}), nil,
+			"held", "agent", "Its own thread paused it.", "paused"},
+	} {
+		in := dockEvidence{controls: &c.controls, hold: c.hold}.input()
+		in.Timeline = c.tl
+		in.Daemon = daemonStatus{State: "responsive"}
+		r := buildDockReport([]dockInput{in}, dockNow, time.Minute, defaultStaleAfter, false, true, 0, true)
+		l := r.Loops[0]
+		if l.State != c.state || l.Waiting == nil || l.Waiting.Kind != c.kind || l.Waiting.By != c.by || l.Waiting.Reason != c.reason || l.Waiting.Since == nil || !l.Waiting.Since.Equal(since) {
+			t.Errorf("%s: state %s waiting %+v", c.name, l.State, l.Waiting)
+			continue
+		}
+		row := buildPanelList(r).Loops[0]
+		if row.Reason != c.reason || row.Waiting == nil || row.Waiting.Kind != c.kind || row.Waiting.By != c.by || row.Supervisor != "answering" || row.CheckedAt == nil {
+			t.Errorf("%s: panel list row %+v %+v", c.name, row, row.Waiting)
+		}
+	}
+	// A retired loop's own note asks to stop it: the advice never says only
+	// to resume.
+	if !strings.Contains(dockHoldAdviceNote, "or stop it") {
+		t.Errorf("advice %q", dockHoldAdviceNote)
+	}
+}
+
+// A loop is shown as supervising only while nothing says its supervisor is
+// gone: a daemon recorded for it that does not answer is said, whatever its
+// last check's age. A row that waits on nothing carries no waiting record.
+func TestDockSupervisingNeedsASupervisor(t *testing.T) {
+	on := &clientControls{Enabled: true}
+	for state, want := range map[string][2]string{
+		"responsive":   {"supervising", "answering"},
+		"not_recorded": {"supervising", "none_recorded"},
+		"unavailable":  {"unknown", "not_answering"},
+		"skipped":      {"supervising", "not_asked"},
+	} {
+		in := dockEvidence{controls: on}.input()
+		in.Daemon = daemonStatus{State: state}
+		r := buildDockReport([]dockInput{in}, dockNow, time.Minute, defaultStaleAfter, false, true, 0, true)
+		l := r.Loops[0]
+		if l.State != want[0] || l.Supervisor != want[1] || (state == "unavailable") != (l.Phrase == "Supervisor not answering") || (l.State == "supervising" && l.Waiting != nil) {
+			t.Errorf("%s: %s %q %s %+v", state, l.State, l.Phrase, l.Supervisor, l.Waiting)
+		}
+		if row := buildPanelList(r).Loops[0]; row.Supervisor != want[1] || row.Reason == "" || row.CheckedAt == nil {
+			t.Errorf("%s: row %+v", state, row)
+		}
+	}
+	r := buildDockReport([]dockInput{func() dockInput {
+		in := dockEvidence{controls: on}.input()
+		in.Daemon = daemonStatus{State: "responsive"}
+		return in
+	}()}, dockNow, time.Minute, defaultStaleAfter, false, true, 0, true)
+	if got := dockLede(r); !strings.Contains(got, "Not live") || !strings.Contains(got, "1 loop's supervisor answered just now") {
+		t.Errorf("lede %q", got)
+	}
+}
