@@ -1008,14 +1008,17 @@ func panelStopAt(e env, dir string) (bool, error) {
 // no registration ID, thread ID, path or note.
 type panelList struct {
 	AccountQuotas *panelQuotaList `json:"accountQuotas,omitempty"`
-	SchemaVersion int             `json:"schemaVersion"`
-	ReadAt        time.Time       `json:"readAt"`
-	Registry      string          `json:"registry"` // available or unavailable
-	Complete      bool            `json:"complete"`
-	AllClear      bool            `json:"allClear"`
-	NeedsYou      int             `json:"needsYou"`
-	Unread        int             `json:"unread"`
-	Omitted       int             `json:"omitted"`
+	// UsageLimitWords are the words behind the loops' usageLimit codes, once
+	// per list; absent when no loop has a limit.
+	UsageLimitWords *usageLimitWords `json:"usageLimitWords,omitempty"`
+	SchemaVersion   int              `json:"schemaVersion"`
+	ReadAt          time.Time        `json:"readAt"`
+	Registry        string           `json:"registry"` // available or unavailable
+	Complete        bool             `json:"complete"`
+	AllClear        bool             `json:"allClear"`
+	NeedsYou        int              `json:"needsYou"`
+	Unread          int              `json:"unread"`
+	Omitted         int              `json:"omitted"`
 	// Loops is every loop read, archived ones last (State "archived");
 	// Archived counts those. A list shows the others and one line for these.
 	Loops    []panelListLoop `json:"loops"`
@@ -1068,6 +1071,10 @@ type panelListLoop struct {
 	// read found running its checks (dockLoop.Supervisor).
 	CheckedAt  *time.Time `json:"checkedAt,omitempty"`
 	Supervisor string     `json:"supervisor"`
+	// UsageLimit is the provider usage limit on the loop's active target, with
+	// labels and placeholders only: no path, ID or real command
+	// (usageLimitStatus.public).
+	UsageLimit *usageLimitStatus `json:"usageLimit,omitempty"`
 	// NoProgress is the no-progress flag's sentence when it is raised, in
 	// the page's words; empty otherwise. It is never a need.
 	NoProgress string `json:"noProgress,omitempty"`
@@ -1147,6 +1154,10 @@ func buildPanelList(r dockReport) panelList {
 			row.NoProgress = np.Text
 		}
 		row.Reason, row.CheckedAt, row.Supervisor = l.Detail, l.LastCheck.At, l.Supervisor
+		row.UsageLimit = l.UsageLimit.compact()
+		if row.UsageLimit != nil && out.UsageLimitWords == nil {
+			out.UsageLimitWords = usageLimitGlossary()
+		}
 		if w := l.Waiting; w != nil {
 			row.Reason = w.Reason
 			row.Waiting = &panelWaiting{Kind: w.Kind, By: w.By, Since: w.Since, AtLeast: w.SinceEvidence == "control_changed"}

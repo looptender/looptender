@@ -109,6 +109,9 @@ type Observation struct {
 	RetryUnverified bool
 	// ResetsAt, when known, is when the current usage limit lifts.
 	ResetsAt time.Time
+	// LimitWindow, when known, is which usage window is blocked: the one
+	// that lifts at ResetsAt (LimitWindow).
+	LimitWindow LimitWindow
 	// AwaitingInput means the session is blocked on a person: a pending
 	// permission prompt, question, or form, reported by the provider.
 	AwaitingInput bool

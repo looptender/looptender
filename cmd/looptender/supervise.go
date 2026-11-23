@@ -612,6 +612,10 @@ type statusOut struct {
 	// cannot be read.
 	WakePolicy *wakePolicyStatus `json:"wakePolicy,omitempty"`
 	LimitWait  limitWaitStatus   `json:"limitWait"`
+	// UsageLimit is the provider usage limit on the active target: which
+	// window, until when, which account, what else is configured, and what
+	// a person can do (usage_limit_status.go).
+	UsageLimit *usageLimitStatus `json:"usageLimit,omitempty"`
 	TurnRetry  turnRetryStatus   `json:"turnRetry"`
 	// ContextWindow is the active target's latest context window reading.
 	ContextWindow contextStatus `json:"contextWindow"`
@@ -986,6 +990,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	}
 	if !out.stateUnreadable {
 		printLimitWait(w, out.LimitWait)
+		printUsageLimit(w, out.UsageLimit, now)
 		printIdleSpacing(w, out.IdleSpacing, now)
 	}
 	fmt.Fprintf(w, "progress flag: %s\n", noProgressText(out.NoProgress, loopHeld(out.Control, out.controlUnreadable)))
@@ -1417,6 +1422,9 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		out.PromptSend.GoalCopy = st.GoalCopy
 	}
 	out.LimitWait = describeLimitWait(st.LimitWaitReport, l, loopHeld(ctl, out.controlUnreadable), now)
+	if u, err := state.LoadUsageLimit(l.StateDir); err == nil {
+		out.UsageLimit = describeUsageLimit(u, cfg, loopHeld(ctl, out.controlUnreadable), now)
+	}
 	out.IdleSpacing = describeIdleSpacing(st, l.Progress)
 	out.TurnRetry = describeTurnRetry(st.LastTurnRetry)
 	out.ContextWindow = describeContext(st.Context, st.Target(), activeBB(cfg, st.Target()) != nil, now)
