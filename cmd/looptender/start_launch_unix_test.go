@@ -24,18 +24,25 @@ import (
 )
 
 // launchStandIns writes stand-ins for launchctl, systemd-run and systemctl
-// that record their arguments and start the submitted command detached, as
-// the service manager would. LAUNCH_FAIL=1 makes a submission fail.
-func launchStandIns(t *testing.T, dir string) string {
+// that record their arguments and start the submitted command detached and
+// with an empty environment, as the service manager would. They keep a copy
+// of the environment file the command names, for the test to read.
+// LAUNCH_FAIL=1 makes a submission fail.
+func launchStandIns(t *testing.T, dir, record string) string {
 	t.Helper()
+	// The record's path is written in: the submitted command, the job's
+	// wrapper and its launchctl remove run with an empty environment.
 	script := `#!/bin/sh
+LAUNCH_RECORD=` + record + `
 echo "$(basename "$0") $*" >> "$LAUNCH_RECORD"
 case "$1" in
 submit|--user)
   [ "$LAUNCH_FAIL" = 1 ] && exit 1
   while [ "$1" != "--" ]; do shift; done
   shift
-  nohup "$@" </dev/null >/dev/null 2>&1 &
+  prev=
+  for a in "$@"; do [ "$prev" = --env-file ] && cp "$a" "$LAUNCH_RECORD.env"; prev=$a; done
+  /usr/bin/env -i /usr/bin/nohup "$@" </dev/null >/dev/null 2>&1 &
   ;;
 esac
 exit 0
@@ -63,8 +70,8 @@ func TestStartBackgroundInABBThreadOutlivesBB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := launchStandIns(t, t.TempDir())
 	record := filepath.Join(dir, "launch-record")
+	fake := launchStandIns(t, t.TempDir(), record)
 	quote := func(v string) string { b, _ := json.Marshal(v); return string(b) }
 	cfg := filepath.Join(dir, "looptender.yaml")
 	if err := os.WriteFile(cfg, []byte(fmt.Sprintf(`version: 1
@@ -159,12 +166,11 @@ loop:
 	if st.LaunchJob == nil || st.LaunchJob.Label != job || st.LaunchJob.Kind != kind {
 		t.Fatalf("status: %+v", st.LaunchJob)
 	}
-	if runtime.GOOS == "linux" {
-		// The daemon's environment has no token from the starting command.
-		env, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", int(v["pid"].(float64))))
-		if err != nil || strings.Contains(string(env), "fictional-secret") || strings.Contains(string(env), "thr_example_launch") {
-			t.Fatalf("daemon environment: %v %q", err, env)
-		}
+	// The environment the daemon was given has what it needs and no token
+	// or thread ID of the starting command.
+	env, err := os.ReadFile(record + ".env")
+	if err != nil || strings.Contains(string(env), "fictional-secret") || strings.Contains(string(env), "thr_example_launch") || !strings.Contains(string(env), `"PATH=`) {
+		t.Fatalf("daemon environment: %v %s", err, env)
 	}
 	end(v)
 	if readLaunchJob(stateDir) != nil {
@@ -201,8 +207,8 @@ loop:
 // launchd's job wrapper removes its job however the program ends, including
 // when the launch path no longer exists, so launchd never retries it.
 func TestLaunchWrapperRemovesItsJobWhateverTheProgramDoes(t *testing.T) {
-	fake := launchStandIns(t, t.TempDir())
 	record := filepath.Join(t.TempDir(), "record")
+	fake := launchStandIns(t, t.TempDir(), record)
 	for _, program := range [][]string{{"/bin/false"}, {filepath.Join(t.TempDir(), "pruned-build", "looptender")}} {
 		cmd := exec.Command("/bin/sh", append([]string{"-c", launchWrapper, "looptender-launch", filepath.Join(fake, "launchctl"), "dev.looptender.loop.example"}, program...)...)
 		cmd.Env = append(os.Environ(), "LAUNCH_RECORD="+record)
