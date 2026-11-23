@@ -20,6 +20,7 @@ type Agent struct {
 	Codex       *Codex       `yaml:"codex,omitempty"`
 	Cursor      *Cursor      `yaml:"cursor,omitempty"`
 	Antigravity *Antigravity `yaml:"antigravity,omitempty"`
+	Sessionpipe *Sessionpipe `yaml:"sessionpipe,omitempty"`
 	// Custom is an agent defined in configuration.
 	Custom *Custom `yaml:"custom,omitempty"`
 }
@@ -226,8 +227,51 @@ type Antigravity struct {
 	Env     map[string]string `yaml:"env,omitempty"`
 }
 
+// Sessionpipe configures an observed-only target: one agent session that
+// sessionpipe reports, read from a tier-0 events file the person told
+// sessionpipe to write (`sessionpipe sink add file:PATH --tier 0`).
+// looptender reads that file and nothing else. It never sends to, wakes or
+// stops the session, and it never runs sessionpipe during a check.
+type Sessionpipe struct {
+	// Session is the session as sessionpipe names it: <harness>:<id>.
+	Session string `yaml:"session"`
+	// EventsFile is the tier-0 file sink's path.
+	EventsFile string `yaml:"events_file"`
+	// StaleAfter is how long the session may be silent in the events file
+	// before its state reads unknown. Silence is never idle.
+	StaleAfter Duration `yaml:"stale_after,omitempty"`
+	// CLI is the sessionpipe command doctor runs to check the version and
+	// the sink. Checks never run it.
+	CLI string `yaml:"cli,omitempty"`
+}
+
+// SessionpipeAdapter is the observed-only target kind.
+const SessionpipeAdapter = "sessionpipe"
+
+// DefaultSessionpipeStaleAfter is used when stale_after is unset. sessionpipe
+// writes a heartbeat at most once a minute while a turn runs.
+const DefaultSessionpipeStaleAfter = 10 * time.Minute
+
+// sessionpipeRefRE is <harness>:<id>: a harness name as sessionpipe's
+// protocol allows it and a session id of at most 128 characters.
+var sessionpipeRefRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}:[A-Za-z0-9._:-]{1,128}$`)
+
+// SplitSessionpipeRef splits <harness>:<id>; ok is false when s is not one.
+func SplitSessionpipeRef(s string) (harness, id string, ok bool) {
+	if !sessionpipeRefRE.MatchString(s) {
+		return "", "", false
+	}
+	harness, id, _ = strings.Cut(s, ":")
+	return harness, id, true
+}
+
+// ObservedOnly reports whether a target of this adapter kind is observed and
+// never woken: looptender never sends to it, never re-prompts it and never
+// stops it, whatever its state.
+func ObservedOnly(adapter string) bool { return adapter == SessionpipeAdapter }
+
 // Adapters lists the supported adapter names.
-var Adapters = []string{"bb", "process", "claude", "codex", "cursor", "antigravity", CustomAdapter}
+var Adapters = []string{"bb", "process", "claude", "codex", "cursor", "antigravity", SessionpipeAdapter, CustomAdapter}
 
 func (a *Agent) applyDefaults() {
 	if a.Cursor != nil && a.Cursor.CLI == "" {
@@ -235,6 +279,14 @@ func (a *Agent) applyDefaults() {
 	}
 	if a.Antigravity != nil && a.Antigravity.CLI == "" {
 		a.Antigravity.CLI = "agy"
+	}
+	if a.Sessionpipe != nil {
+		if a.Sessionpipe.CLI == "" {
+			a.Sessionpipe.CLI = "sessionpipe"
+		}
+		if a.Sessionpipe.StaleAfter.Duration == 0 {
+			a.Sessionpipe.StaleAfter.Duration = DefaultSessionpipeStaleAfter
+		}
 	}
 	if a.Provider == "" {
 		switch a.Adapter {
@@ -246,6 +298,8 @@ func (a *Agent) applyDefaults() {
 			a.Provider = "cursor"
 		case "antigravity":
 			a.Provider = "antigravity"
+		case SessionpipeAdapter:
+			a.Provider = SessionpipeAdapter
 		case CustomAdapter:
 			if a.Custom != nil {
 				a.Provider = a.Custom.Name
@@ -284,7 +338,7 @@ func (a Agent) validate(where string) []error {
 	add := func(format string, args ...any) {
 		errs = append(errs, fmt.Errorf(where+format, args...))
 	}
-	set := map[string]bool{"bb": a.BB != nil, "process": a.Process != nil, "claude": a.Claude != nil, "codex": a.Codex != nil, "cursor": a.Cursor != nil, "antigravity": a.Antigravity != nil, CustomAdapter: a.Custom != nil}
+	set := map[string]bool{"bb": a.BB != nil, "process": a.Process != nil, "claude": a.Claude != nil, "codex": a.Codex != nil, "cursor": a.Cursor != nil, "antigravity": a.Antigravity != nil, SessionpipeAdapter: a.Sessionpipe != nil, CustomAdapter: a.Custom != nil}
 	known := false
 	for _, n := range Adapters {
 		if a.Adapter == n {
@@ -375,6 +429,16 @@ func (a Agent) validate(where string) []error {
 				break
 			}
 		}
+	case a.Adapter == SessionpipeAdapter && a.Sessionpipe != nil:
+		if _, _, ok := SplitSessionpipeRef(a.Sessionpipe.Session); !ok {
+			add("sessionpipe.session must be <harness>:<id> as sessionpipe names the session, for example claude-code:8c132906-8c3f-4814-870a-afc3d05e1d2e")
+		}
+		if strings.TrimSpace(a.Sessionpipe.EventsFile) == "" {
+			add("sessionpipe.events_file is required: the file given to `sessionpipe sink add file:PATH --tier 0`")
+		}
+		if d := a.Sessionpipe.StaleAfter.Duration; d != 0 && (d < 2*time.Minute || d > 7*24*time.Hour) {
+			add("sessionpipe.stale_after must be between 2m and 168h")
+		}
 	case a.Adapter == "claude" && a.Claude != nil:
 		if a.Claude.Workdir == "" {
 			add("claude.workdir is required")
@@ -418,6 +482,8 @@ func (a Agent) Describe() string {
 		s += " " + a.Cursor.Workdir
 	case a.Antigravity != nil:
 		s += " " + a.Antigravity.Workdir
+	case a.Sessionpipe != nil:
+		s += " " + a.Sessionpipe.Session + " (observed)"
 	case a.Claude != nil:
 		s += " " + a.Claude.Workdir
 	case a.Codex != nil:
@@ -445,6 +511,10 @@ func (a *Agent) resolvePaths(base string) {
 		for i, d := range a.Antigravity.AddDirs {
 			a.Antigravity.AddDirs[i] = resolve(base, d)
 		}
+	}
+	if a.Sessionpipe != nil {
+		a.Sessionpipe.EventsFile = resolve(base, a.Sessionpipe.EventsFile)
+		a.Sessionpipe.CLI = resolveExec(base, a.Sessionpipe.CLI)
 	}
 	if a.BB != nil {
 		a.BB.CLI = resolveExec(base, a.BB.CLI)

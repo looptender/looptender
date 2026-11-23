@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -79,16 +80,24 @@ func noticeID(kind, key string, since time.Time, what string) string {
 
 func noticeTime(t time.Time) string { return t.Format("Mon 15:04") }
 
-// noticeName is the name a notice uses: the loop's display name, or "a loop"
-// when all there is is a slug that carries a thread ID in disguise
-// (`bb-thr-…` or `thr_…`), which must not reach a banner.
-func noticeName(name string) string {
-	low := strings.ToLower(name)
-	if strings.Contains(low, "bb-thr-") || strings.Contains(low, "thr_") || strings.Contains(low, "thr-") {
+// noticeName is the name a notice uses: the loop's display name when it has
+// one (already masked by the naming rule), else its registered slug, which is
+// "A loop" when it is a thread ID in disguise (`bb-thr-…`, `thr_…`) and
+// otherwise as it is. Only those shapes: a real name that happens to contain
+// "thr-" is kept, so loops stay apart.
+func noticeName(l dockLoop) string {
+	if l.Naming != nil && l.Naming.DisplayName != "" {
+		return l.Naming.DisplayName
+	}
+	if noticeSlugIsThreadID(l.Name) {
 		return "A loop"
 	}
-	return name
+	return l.Name
 }
+
+var noticeThreadSlug = regexp.MustCompile(`^(bb-thr-|thr_)[0-9A-Za-z_-]+$`)
+
+func noticeSlugIsThreadID(name string) bool { return noticeThreadSlug.MatchString(name) }
 
 // noticeMid is the name inside a sentence: "a loop" for the generic one.
 func noticeMid(name string) string {
@@ -105,7 +114,7 @@ func archivedLoop(l dockLoop) bool { return l.Archived != nil || l.State == "arc
 // noticesOf is the notices for one loop. needs says it is under Needs you.
 func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 	var out []panelNotice
-	name := noticeName(l.Name)
+	name := noticeName(l)
 	mid := noticeMid(name)
 	add := func(n panelNotice) {
 		n.Loop, n.Name = l.Key, name
@@ -138,25 +147,48 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 		}
 		add(n)
 	}
-	if w := l.Waiting; w != nil && w.Kind == "limit" || l.State == "waiting_on_limit" {
-		cause := "a usage limit"
-		if lw := l.LimitWait; lw != nil && lw.ResetsAt != nil && !lw.Passed {
-			cause = "usage limit until " + noticeTime(lw.ResetsAt.In(now.Location()))
-		} else {
-			cause = "usage limit"
+	if w := l.Waiting; w != nil && w.Kind == "limit" || l.State == "waiting_on_limit" || l.UsageLimit != nil {
+		// When it resets, to the hour: a reset read a few seconds differently
+		// at the next check is the same limit, and loops on one window group.
+		var reset time.Time
+		window, words := "", "usage limit"
+		if u := l.UsageLimit; u != nil {
+			window = u.WindowKey
+			if window == "" {
+				window = u.Window
+			}
+			if w := strings.TrimSpace(u.Words); w != "" && len(w) <= 60 {
+				words = w
+			}
+			if !u.ResetPassed && !u.ResetsAt.IsZero() {
+				reset = u.ResetsAt
+			}
+		} else if lw := l.LimitWait; lw != nil && lw.ResetsAt != nil && !lw.Passed {
+			reset = *lw.ResetsAt
+		}
+		if !reset.IsZero() {
+			reset = reset.In(now.Location()).Truncate(time.Hour)
+		}
+		cause := words
+		if !reset.IsZero() {
+			cause += " until " + noticeTime(reset)
 		}
 		text := name + " stopped: " + cause + "."
-		if l.Away != nil {
+		moved := l.Away != nil
+		if moved {
 			text = name + " reached a usage limit and moved to its next route."
 			cause = "usage limit, moved on"
+		} else if u := l.UsageLimit; u != nil && len(u.Actions) > 0 && u.Actions[0].Text != "" && len(u.Actions[0].Text) <= 140 {
+			// What a person can do, in the record's own fixed words (never its command).
+			text += " " + strings.TrimSpace(u.Actions[0].Text)
 		}
-		// Keyed on the window the limit is in (when it resets), which holds for
-		// as long as the limit does; never on the last check, which moves.
-		window := time.Time{}
-		if lw := l.LimitWait; lw != nil && lw.ResetsAt != nil {
-			window = *lw.ResetsAt
+		// Keyed on the window and its reset hour, which hold for as long as the
+		// limit does; never on the last check, which moves.
+		what := window
+		if moved {
+			what += "moved"
 		}
-		add(panelNotice{Kind: noticeLimit, Severity: sevHigh, Since: checked, ID: noticeID(noticeLimit, l.Key, window, map[bool]string{true: "moved", false: ""}[l.Away != nil]),
+		add(panelNotice{Kind: noticeLimit, Severity: sevHigh, Since: checked, ID: noticeID(noticeLimit, l.Key, reset, what),
 			Text: text, Group: noticeLimit + "." + cause, GroupText: "{n} loops stopped: " + cause + "."})
 	}
 	if l.Supervisor == "not_answering" && l.State != "stopped" && l.State != "finished" && l.State != "off" && l.State != "paused" {

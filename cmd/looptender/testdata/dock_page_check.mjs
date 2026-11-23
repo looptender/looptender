@@ -171,6 +171,14 @@ const expectations = [
     [{ hash: "#/", fn: (w) => (text(w, "#pane .work-tree .fresh") === "v0.2.0" ? null : "the chip is not just the version: " + text(w, "#pane .work-tree .fresh")) }]],
   ["no freshness, no chip and no summary", (d) => target(d, (l) => { delete l.buildFreshness; }),
     [{ hash: "#/", fn: (w) => (!w.document.querySelector("#pane .fresh") && !w.document.querySelector("#pane .fresh-summary") ? null : "a chip or summary appeared with nothing known") }]],
+  ["a waiting kind or by that is an Object.prototype name says nothing, not a function's source", (d) => {
+    for (const [i, name] of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"].entries()) {
+      const l = d.loops[i % d.loops.length];
+      l.waiting = { kind: i % 2 ? "held" : name, by: i % 2 ? name : "terminal", reason: "r", since: "2030-01-01T00:00:00Z", sinceEvidence: "hold_recorded" };
+    }
+    return d;
+  },
+    [{ hash: "#/", fn: (w) => { const t = text(w, "#pane .work-tree"); return /function|\[object|native code|\{\s*\}|undefined|NaN/.test(t) ? "a prototype name printed garbage: " + t.match(/.{0,40}(function|\[object|native code|undefined|NaN).{0,40}/)[0] : null; } }]],
   ["the Overview tree names an unsupervised loop", (d) => target(d, (l) => { l.state = "not_checked_recently"; l.phrase = "Not supervised"; }),
     [{ hash: "#/", fn: (w) => (/Not supervised/.test(text(w, "#pane .work-tree")) ? null : "no 'Not supervised' row in the Overview tree") }]],
 ];

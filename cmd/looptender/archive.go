@@ -29,6 +29,9 @@ type archiveView struct {
 	// could not be read has none, and Unreadable set.
 	Hold       string `json:"hold,omitempty"`
 	Unreadable bool   `json:"unreadable,omitempty"`
+	// ContinuedIn is the loop that continues this one, when a succession
+	// archived it; in lists only its key.
+	ContinuedIn *continuedRef `json:"continuedIn,omitempty"`
 }
 
 // loopArchive reads the loop's archive record against its control record:
@@ -40,6 +43,10 @@ func loopArchive(stateDir string, ctl control.File) (archived, lapsed *archiveVi
 		return nil, nil
 	}
 	v := &archiveView{At: a.At, Note: a.Note, Hold: a.Hold, Unreadable: err != nil}
+	if c := a.ContinuedIn; c != nil {
+		at := c.At
+		v.ContinuedIn = &continuedRef{Loop: c.Loop, Thread: c.Thread, Key: refKey(c.RegistryID), At: &at}
+	}
 	if control.Archived(a, ctl) {
 		return v, nil
 	}
@@ -174,6 +181,13 @@ func withoutNote(a *archiveView) *archiveView {
 	}
 	c := *a
 	c.Note = ""
+	if r := a.ContinuedIn; r != nil {
+		// A list names the successor by its key only.
+		c.ContinuedIn = nil
+		if r.Key != "" {
+			c.ContinuedIn = &continuedRef{Key: r.Key}
+		}
+	}
 	return &c
 }
 

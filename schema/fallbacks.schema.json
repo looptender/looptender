@@ -99,6 +99,7 @@
           },
           "cursor": false,
           "antigravity": false,
+          "sessionpipe": false,
           "custom": {
             "$ref": "#/$defs/custom"
           },

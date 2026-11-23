@@ -323,3 +323,71 @@ func TestAnArchivedLoopHasNoNotices(t *testing.T) {
 		t.Errorf("an archived loop is out of the way: %v", ns)
 	}
 }
+
+func TestNoticeNameUsesTheDisplayNameAndOnlyDisguisesRealThreadSlugs(t *testing.T) {
+	l := noticeLoop("l1", "bb-thr-ab12cd34ef")
+	l.Naming = &loopNaming{DisplayName: "Billing cleanup"}
+	if got := noticeName(l); got != "Billing cleanup" {
+		t.Errorf("a display name is used: %q", got)
+	}
+	l.Naming = nil
+	for _, slug := range []string{"bb-thr-ab12cd34ef", "thr_example123"} {
+		l.Name = slug
+		if got := noticeName(l); got != "A loop" {
+			t.Errorf("%s: %q", slug, got)
+		}
+	}
+	// Real names that merely contain the letters are kept, so loops stay apart.
+	for _, name := range []string{"example-thr-api", "my-thr-loop", "throttle-docs", "example-api"} {
+		l.Name = name
+		if got := noticeName(l); got != name {
+			t.Errorf("%s was turned into %q", name, got)
+		}
+	}
+}
+
+func TestTheLimitIDHoldsForTheSameWindowAndChangesWithANewOne(t *testing.T) {
+	mk := func(reset time.Time, key string) dockLoop {
+		l := noticeLoop("l1", "example-api")
+		l.State = "waiting_on_limit"
+		l.UsageLimit = &usageLimitStatus{Window: "weekly", WindowKey: key, Words: "weekly usage limit", ResetsAt: reset}
+		return l
+	}
+	base := time.Date(2026, 11, 28, 4, 0, 10, 0, time.UTC)
+	id := func(l dockLoop) string { return reportNotices([]dockLoop{l}, nil, noticeNow)[0].ID }
+	group := func(l dockLoop) string { return reportNotices([]dockLoop{l}, nil, noticeNow)[0].Group }
+	a := mk(base, "seven_day")
+	if id(mk(base.Add(30*time.Second), "seven_day")) != id(a) || group(mk(base.Add(30*time.Second), "seven_day")) != group(a) {
+		t.Error("a reset read 30 seconds later is the same limit, and the same group")
+	}
+	// Across a minute boundary the group does not split either: it is told by the hour.
+	edge := time.Date(2026, 11, 28, 4, 30, 55, 0, time.UTC)
+	if group(mk(edge, "seven_day")) != group(mk(edge.Add(10*time.Second), "seven_day")) {
+		t.Error("the group split across a minute")
+	}
+	if id(mk(base, "seven_day_opus")) == id(a) {
+		t.Error("a new window is a new limit")
+	}
+	if id(mk(base.Add(time.Hour), "seven_day")) == id(a) || id(mk(base.Add(7*24*time.Hour), "seven_day")) == id(a) {
+		t.Error("an hour or a week later is a new limit")
+	}
+	if got := reportNotices([]dockLoop{a}, nil, noticeNow)[0].Text; got != "example-api stopped: weekly usage limit until Sat 04:00." {
+		t.Errorf("%q", got)
+	}
+	// The first action's own words are carried; its command is not.
+	a.UsageLimit.Actions = []usageAction{{Kind: "login_bb_directory", Text: "Another configured account has quota.", Command: "claude auth login --secret"}}
+	n := reportNotices([]dockLoop{a}, nil, noticeNow)[0]
+	if !strings.HasSuffix(n.Text, "Another configured account has quota.") || strings.Contains(n.Text, "secret") {
+		t.Errorf("%q", n.Text)
+	}
+	// Without the new record, the older limit-wait data still works, to the hour.
+	old := noticeLoop("l2", "example-docs")
+	old.State = "waiting_on_limit"
+	old.LimitWait = &dockLimitWait{ResetsAt: &base}
+	o2 := old
+	later := base.Add(40 * time.Second)
+	o2.LimitWait = &dockLimitWait{ResetsAt: &later}
+	if id(old) != id(o2) {
+		t.Error("the fallback is stable too")
+	}
+}
