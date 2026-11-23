@@ -36,10 +36,10 @@ public struct PanelLoop: Decodable, Equatable {
     /// The loop's supervisor build against the installed one, in the CLI's
     /// words (the panel shows the same). Absent from a CLI that predates it
     /// and when nothing can be said; the menu then says nothing.
-    public var freshness: PanelFreshness? = nil
+    public var buildFreshness: PanelFreshness? = nil
 
-    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, freshness: PanelFreshness? = nil) {
-        self.freshness = freshness
+    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil) {
+        self.buildFreshness = buildFreshness
         self.key = key
         self.name = name
         self.state = state
@@ -100,7 +100,7 @@ public struct PanelList: Decodable, Equatable {
     public var installedBuild: String? = nil
     /// "Build X installed … · N supervisors on it · M older"; absent from a
     /// CLI that predates it.
-    public var freshness: PanelFreshnessSummary? = nil
+    public var buildFreshness: PanelFreshnessSummary? = nil
 }
 
 /// What `keepgoing panel status --json` says about the panel's background
@@ -351,7 +351,7 @@ public enum MenuBuilder {
                 rows.append(contentsOf: quotaRows(quota))
             }
             if !list.loops.isEmpty { rows.append(separator) }
-            if let summary = list.freshness.map({ Contract.text($0.text) }), !summary.isEmpty, !list.loops.isEmpty { rows.append(status(summary)) }
+            if let summary = list.buildFreshness.map({ Contract.text($0.text) }), !summary.isEmpty, !list.loops.isEmpty { rows.append(status(summary)) }
             for loop in list.loops.prefix(maxLoops) {
                 let name = Contract.text(loop.name), short = shortened(name, to: maxName)
                 let flag = loop.noProgress.map(Contract.text) ?? ""
@@ -435,7 +435,7 @@ public enum MenuBuilder {
     /// installed build: the CLI's own words. Nothing for "current" (the build
     /// text already says the version) and nothing when none was sent.
     static func freshnessMark(_ loop: PanelLoop) -> String {
-        guard let f = loop.freshness, f.state != "current" else { return "" }
+        guard let f = loop.buildFreshness, f.state != "current" else { return "" }
         return Contract.text(f.text)
     }
 
@@ -443,7 +443,7 @@ public enum MenuBuilder {
     /// installed build, as text in the loop's submenu. Nothing here runs: no
     /// row restarts, resumes or re-enables a supervisor.
     static func freshnessRows(_ loop: PanelLoop) -> [MenuRow] {
-        guard let f = loop.freshness, f.state != "current" else { return [] }
+        guard let f = loop.buildFreshness, f.state != "current" else { return [] }
         var rows: [MenuRow] = []
         if let detail = f.detail.map(Contract.text), !detail.isEmpty { rows.append(status(detail)) }
         if let action = f.action.map(Contract.text), !action.isEmpty { rows.append(status(action)) }

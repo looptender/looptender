@@ -661,7 +661,7 @@ type statusOut struct {
 	// words the dock and the menu use (build_freshness.go); absent when the
 	// daemon does not answer or reports no build. Not runtime.freshness,
 	// which is about the last check's age.
-	Freshness *buildFreshness `json:"freshness,omitempty"`
+	BuildFreshness *buildFreshness `json:"buildFreshness,omitempty"`
 	// SupervisorStartRefused is the last supervisor start refused for
 	// ownership or a pending transfer, until a supervisor starts.
 	SupervisorStartRefused *startRefusal `json:"supervisorStartRefused,omitempty"`
@@ -1427,8 +1427,8 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.BuildAdoption = describeBuildAdoption(l.StateDir, out.Daemon, now)
 	{
 		rec, _ := loadAdoptRecord(l.StateDir)
-		out.Freshness = deriveBuildFreshness(out.Daemon, rec, version, installedBuildTime(), now,
-			freshContextOf(ctl.Enabled, ctl.Paused, ctl.Stop, ctl.AwaitingUser, ctl.Completed, ctl.SupersededBy != ""))
+		out.BuildFreshness = deriveBuildFreshness(out.Daemon, rec, version, installedBuildTime(), now,
+			freshContextOf(ctl.Enabled, ctl.Paused, ctl.Stop, ctl.AwaitingUser, ctl.Completed, ctl.SupersededBy != "", freshServiceOf(l.StateDir)))
 	}
 	out.SupervisorStartRefused = currentStartRefusal(l.StateDir, st.CheckedAt, out.Daemon)
 	out.DiskSpace = describeDiskSpace(l.StateDir)

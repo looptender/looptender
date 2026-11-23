@@ -356,10 +356,10 @@ final class MenuTests: XCTestCase {
     func testFreshnessIsShownInTheCLIsWordsAndOffersNothingToRun() throws {
         let json = """
         {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":true,"needsYou":0,"unread":0,"omitted":0,
-         "installedBuild":"v0.2.0","freshness":{"text":"Build v0.2.0 installed 3 h ago · 1 supervisor on it · 2 older","onIt":1,"older":2},
-         "loops":[{"key":"l000000000001","name":"example-api","state":"supervising","phrase":"Supervising","needsYou":false,"freshness":{"state":"current","text":"v0.2.0"}},
-                  {"key":"l000000000002","name":"example-docs","state":"supervising","phrase":"Supervising","needsYou":false,"freshness":{"state":"pending","text":"Update pending · switches at next check"}},
-                  {"key":"l000000000003","name":"example-site","state":"paused","phrase":"Paused","needsYou":false,"can":["resume"],"freshness":{"state":"older","text":"Older build · restart the supervisor to update","detail":"Runs v0.1.0.","action":"Run this, then start supervision again the way it was started. The loop stays held; this does not resume it.","command":"looptender daemon-shutdown -c CONFIG"}}]}
+         "installedBuild":"v0.2.0","buildFreshness":{"text":"Build v0.2.0 installed 3 h ago · 1 supervisor on it · 2 older","onIt":1,"notOnIt":2},
+         "loops":[{"key":"l000000000001","name":"example-api","state":"supervising","phrase":"Supervising","needsYou":false,"buildFreshness":{"state":"current","text":"v0.2.0"}},
+                  {"key":"l000000000002","name":"example-docs","state":"supervising","phrase":"Supervising","needsYou":false,"buildFreshness":{"state":"pending","text":"Update pending · switches at next check"}},
+                  {"key":"l000000000003","name":"example-site","state":"paused","phrase":"Paused","needsYou":false,"can":["resume"],"buildFreshness":{"state":"older","text":"Older build · restart the supervisor to update","detail":"Runs v0.1.0.","action":"Run this, then start supervision again the way it was started. The loop stays held; this does not resume it.","command":"looptender daemon-shutdown -c CONFIG"}}]}
         """
         let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
         let model = MenuBuilder.build(.read(decoded, at: now), now: now)

@@ -41,10 +41,10 @@
  "nextCheck.text.t",
  "wakePolicy.t",
  "limits.text.t",
- "freshness",
- "freshness.state",
- "freshness.text",
- "freshness.detail",
- "freshness.command",
- "freshness.action"
+ "buildFreshness",
+ "buildFreshness.state",
+ "buildFreshness.text",
+ "buildFreshness.detail",
+ "buildFreshness.command",
+ "buildFreshness.action"
 ]

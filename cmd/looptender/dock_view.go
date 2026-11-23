@@ -96,7 +96,7 @@ type dockReport struct {
 	Versions *dockVersions `json:"versions,omitempty"`
 	// Freshness is the one line about how many supervisors run the installed
 	// build; nil when no loop's build is known.
-	Freshness *buildFreshnessSummary `json:"freshness,omitempty"`
+	BuildFreshness *buildFreshnessSummary `json:"buildFreshness,omitempty"`
 	// UsagePicker is the Usage row's sub-line in the picker: the week's
 	// withheld wakes across loops, as a plain count. The page itself is
 	// served from dockUsagePath, worded by the same read.
@@ -298,7 +298,7 @@ type dockLoop struct {
 	Versions dockLoopVersions `json:"versions"`
 	// Freshness is the loop's supervisor build against the installed build,
 	// in the words build_freshness.go gives; nil when nothing can be said.
-	Freshness *buildFreshness `json:"freshness,omitempty"`
+	BuildFreshness *buildFreshness `json:"buildFreshness,omitempty"`
 	// BuildChange is what may be done about the file that runs its checks;
 	// offered as a button only by a panel started with --allow-changes.
 	BuildChange *dockBuildChange `json:"buildChange,omitempty"`
@@ -1207,6 +1207,8 @@ type dockInput struct {
 	ServiceFile string
 	// AdoptRecord is the daemon's last build change, nil when it has none.
 	AdoptRecord *adoptRecord
+	// FreshService is the loop's recorded service, for the restart words.
+	FreshService *freshService
 	// BuildChange is what a panel allowed to make changes could do about
 	// the file that runs the loop's checks (replace_build.go); nil when the
 	// Versions view was not asked for.
@@ -1295,9 +1297,9 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 	r.AllClear = complete && omitted == 0 && len(r.NeedsYou) == 0
 	fresh := make([]*buildFreshness, 0, len(r.Loops))
 	for _, l := range r.Loops {
-		fresh = append(fresh, l.Freshness)
+		fresh = append(fresh, l.BuildFreshness)
 	}
-	r.Freshness = summarizeBuildFreshness(fresh, version, now)
+	r.BuildFreshness = summarizeBuildFreshness(fresh, version, now)
 	sort.SliceStable(r.Loops, func(i, j int) bool {
 		a, b := dockLoopPriority(r.Loops[i]), dockLoopPriority(r.Loops[j])
 		if a != b {
@@ -1802,7 +1804,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	if in.Daemon.State == "responsive" {
 		l.Versions.Daemon = in.Daemon.version
 	}
-	l.Freshness = deriveBuildFreshness(in.Daemon, in.AdoptRecord, version, installedBuildTime(), now, freshContextOfSnapshot(snap))
+	l.BuildFreshness = deriveBuildFreshness(in.Daemon, in.AdoptRecord, version, installedBuildTime(), now, freshContextOfSnapshot(snap, in.FreshService))
 	l.Versions.Service = in.ServiceFile
 	l.BuildChange = in.BuildChange
 	if l.LanesFailed != "" && need == nil {

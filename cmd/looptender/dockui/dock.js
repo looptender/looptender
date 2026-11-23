@@ -464,7 +464,7 @@
   // How fresh a supervisor's build is, in the server's words (it comes from
   // one place in Go, which the menu reads too). Visible text, never a title only.
   function freshnessChip(l) {
-    var f = l.freshness;
+    var f = l.buildFreshness;
     if (!f || !f.text) return null;
     var chip = el("span", "fresh fresh-" + String(f.state).replace(/[^a-z]/g, ""), f.text);
     chip.setAttribute("data-fresh", String(f.state));
@@ -482,7 +482,7 @@
     }
     var needs = list(d.needsYou);
     if (d.lede) pane.appendChild(el("p", "lede", d.lede));
-    if (d.freshness && d.freshness.text && list(d.loops).length) pane.appendChild(el("p", "sub fresh-summary", d.freshness.text));
+    if (d.buildFreshness && d.buildFreshness.text && list(d.loops).length) pane.appendChild(el("p", "sub fresh-summary", d.buildFreshness.text));
     if (!list(d.loops).length) {
       pane.appendChild(emptyBox("No loops are registered yet.", "Register one with looptender registry add -c path/to/looptender.yaml (or keepgoing.yaml), and it appears here on the next read."));
       return;
@@ -754,16 +754,16 @@
     if (l.build && l.build.line) pane.appendChild(el("p", "sub build-line", l.build.line));
     // The supervisor's build against the installed one, with its detail and,
     // for an older daemon, the command a person would run. Nothing here acts.
-    if (l.freshness && l.freshness.text) {
+    if (l.buildFreshness && l.buildFreshness.text) {
       var fresh = el("p", "sub build-line fresh-line");
       fresh.appendChild(freshnessChip(l));
-      if (l.freshness.detail) fresh.appendChild(document.createTextNode(" " + l.freshness.detail));
+      if (l.buildFreshness.detail) fresh.appendChild(document.createTextNode(" " + l.buildFreshness.detail));
       pane.appendChild(fresh);
-      if (l.freshness.action) pane.appendChild(el("p", "sub build-line fresh-action", l.freshness.action));
-      if (l.freshness.command) {
+      if (l.buildFreshness.action) pane.appendChild(el("p", "sub build-line fresh-action", l.buildFreshness.action));
+      if (l.buildFreshness.command) {
         var run = el("p", "sub build-line fresh-command");
         run.appendChild(document.createTextNode("Command: "));
-        run.appendChild(el("code", null, l.freshness.command));
+        run.appendChild(el("code", null, l.buildFreshness.command));
         pane.appendChild(run);
       }
     }
