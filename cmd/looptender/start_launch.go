@@ -12,7 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -148,6 +150,9 @@ func startLaunched(e env, executable, path string, cfg *config.Config, allowShar
 	child := []string{executable, "__start-background", "--launch-label", label, "--env-file", envFile, "--ack-file", ackFile, "-c", path}
 	if allowShare {
 		child = append(child, "--allow-second-loop")
+	}
+	if runtime.GOOS == "darwin" {
+		clearStaleLaunches(stateDir, os.Getuid())
 	}
 	plan, found := backgroundLaunch(runtime.GOOS, exec.LookPath, label, child, os.Getuid(), stateDir)
 	if !found {
@@ -423,25 +428,55 @@ func recordLaunchJob(stateDir string) func() {
 }
 
 // readLaunchJob is the daemon's launch job, for status and doctor; nil when
-// it runs in none, or when its service manager no longer has the job (a
-// daemon killed outright leaves its record behind).
+// it runs in none, or when its job is not running: the service manager no
+// longer has it, or has it with no process (a daemon or its job script
+// killed outright leaves the record, and on macOS the job, behind).
 func readLaunchJob(stateDir string) *launchJob {
 	j := readLaunchJobRecord(stateDir)
-	if j == nil || !launchJobExists(*j) {
+	if j == nil || !launchJobRunning(*j) {
 		return nil
 	}
 	return j
 }
 
-// launchJobExists asks the service manager whether it still has the job.
-// It is a stand-in in tests.
-var launchJobExists = func(j launchJob) bool {
+// launchctlPrint is launchctl print of a service target: its output, and
+// whether launchd has the job at all. It is a stand-in in tests.
+var launchctlPrint = func(target string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	p, err := exec.LookPath("launchctl")
+	if err != nil {
+		return "", false
+	}
+	out, err := exec.CommandContext(ctx, p, "print", target).Output()
+	return string(out), err == nil
+}
+
+var launchdPIDLine = regexp.MustCompile(`(?m)^\s*pid = ([0-9]+)\s*$`)
+
+// launchdPID is the job's process in launchctl print's output; 0 when the
+// job has none.
+func launchdPID(out string) int {
+	m := launchdPIDLine.FindStringSubmatch(out)
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
+
+// launchJobRunning asks the service manager whether the job is there and
+// has a process.
+var launchJobRunning = func(j launchJob) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	switch j.Kind {
 	case "launchd":
-		p, err := exec.LookPath("launchctl")
-		return err == nil && j.Target != "" && exec.CommandContext(ctx, p, "print", j.Target).Run() == nil
+		if j.Target == "" {
+			return false
+		}
+		out, ok := launchctlPrint(j.Target)
+		return ok && launchdPID(out) > 0
 	case "systemd":
 		p, err := exec.LookPath("systemctl")
 		return err == nil && exec.CommandContext(ctx, p, "--user", "is-active", "--quiet", j.Label+".service").Run() == nil
@@ -466,4 +501,47 @@ func launchStopCommand(kind, label, target string) string {
 		return "systemctl --user stop " + label + ".service"
 	}
 	return "launchctl bootout " + target
+}
+
+// clearStaleLaunches removes what an earlier launch left when its job
+// script was killed before its last lines (SIGKILL, power loss): the
+// property list and script in the state directory, the job registered in
+// launchd with no process, and the launch-job record. A job that still
+// has a process is left alone: its daemon holds the loop's lock, and the
+// new daemon is turned away by it.
+func clearStaleLaunches(stateDir string, uid int) {
+	plists, _ := filepath.Glob(filepath.Join(stateDir, "launch-dev.looptender.loop.*.plist"))
+	scripts, _ := filepath.Glob(filepath.Join(stateDir, "launch-dev.looptender.loop.*.sh"))
+	labels := map[string]bool{}
+	for _, f := range append(plists, scripts...) {
+		name := strings.TrimPrefix(filepath.Base(f), "launch-")
+		labels[strings.TrimSuffix(strings.TrimSuffix(name, ".plist"), ".sh")] = true
+	}
+	if j := readLaunchJobRecord(stateDir); j != nil && j.Kind == "launchd" {
+		labels[j.Label] = true
+	}
+	for label := range labels {
+		target := fmt.Sprintf("user/%d/%s", uid, label)
+		out, registered := launchctlPrint(target)
+		if registered && launchdPID(out) > 0 {
+			continue
+		}
+		if registered {
+			launchctlBootout(target)
+		}
+		_ = os.Remove(filepath.Join(stateDir, "launch-"+label+".plist"))
+		_ = os.Remove(filepath.Join(stateDir, "launch-"+label+".sh"))
+		if j := readLaunchJobRecord(stateDir); j != nil && j.Label == label {
+			_ = os.Remove(filepath.Join(stateDir, launchJobName))
+		}
+	}
+}
+
+// launchctlBootout boots a job out; a stand-in in tests.
+var launchctlBootout = func(target string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if p, err := exec.LookPath("launchctl"); err == nil {
+		_ = exec.CommandContext(ctx, p, "bootout", target).Run()
+	}
 }

@@ -45,6 +45,18 @@ case "$(basename "$0") $1" in
   env=$(sed -n "s/.*'--env-file' '\([^']*\)'.*/\1/p" "$job")
   cp "$env" "$LAUNCH_RECORD.env"
   /usr/bin/env -i /usr/bin/nohup /bin/sh "$job" </dev/null >/dev/null 2>&1 &
+  echo $! > "$LAUNCH_RECORD.pid.$(basename "$3" .plist)"
+  ;;
+"launchctl print")
+  # A job with a live process prints its pid, as launchd does.
+  f="$LAUNCH_RECORD.pid.launch-${2##*/}"
+  [ -f "$f" ] || exit 113
+  pid=$(cat "$f")
+  kill -0 "$pid" 2>/dev/null && printf '\tstate = running\n\tpid = %s\n' "$pid"
+  exit 0
+  ;;
+"launchctl bootout")
+  rm -f "$LAUNCH_RECORD.pid.launch-${2##*/}"
   ;;
 "systemd-run --user")
   [ "$LAUNCH_FAIL" = 1 ] && exit 1
@@ -267,19 +279,70 @@ func TestLaunchJobScriptRemovesItsJobWhateverTheProgramDoes(t *testing.T) {
 	}
 }
 
-// A record left by a daemon killed outright is not shown as its job when
-// the service manager no longer has it.
-func TestStatusShowsALaunchJobOnlyWhileItExists(t *testing.T) {
+// status shows a launch job only while it is running: launchd has it and
+// it has a process. A record left by a daemon killed outright, or a job its
+// script was killed in, is not shown.
+func TestStatusShowsALaunchJobOnlyWhileItRuns(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, launchJobName), []byte(`{"kind":"launchd","label":"dev.looptender.loop.example","target":"user/501/dev.looptender.loop.example","since":"2026-03-04T12:00:00Z"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	saved := launchJobExists
-	t.Cleanup(func() { launchJobExists = saved })
-	for _, exists := range []bool{true, false} {
-		launchJobExists = func(launchJob) bool { return exists }
-		if got := readLaunchJob(dir) != nil; got != exists {
-			t.Fatalf("job exists %v, shown %v", exists, got)
+	saved := launchctlPrint
+	t.Cleanup(func() { launchctlPrint = saved })
+	for _, c := range []struct {
+		out        string
+		registered bool
+		shown      bool
+	}{
+		{"gui/501/x = {\n\tstate = running\n\tpid = 4242\n}\n", true, true},
+		{"user/501/x = {\n\tstate = not running\n}\n", true, false},
+		{"", false, false},
+	} {
+		launchctlPrint = func(string) (string, bool) { return c.out, c.registered }
+		if got := readLaunchJob(dir) != nil; got != c.shown {
+			t.Fatalf("%q registered %v: shown %v", c.out, c.registered, got)
 		}
+	}
+	if launchdPID("\tpid = 12\n") != 12 || launchdPID("\tlast exit code = 0\n") != 0 {
+		t.Fatal("pid parse")
+	}
+}
+
+// A start first clears what an earlier launch left when its job script was
+// killed before its last lines: its files, its job if launchd still has it
+// with no process, and its launch-job record. A job with a process is left
+// alone.
+func TestStartClearsStaleLaunches(t *testing.T) {
+	dir := t.TempDir()
+	for _, label := range []string{"dev.looptender.loop.stale", "dev.looptender.loop.live"} {
+		for _, ext := range []string{".plist", ".sh"} {
+			if err := os.WriteFile(filepath.Join(dir, "launch-"+label+ext), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, launchJobName), []byte(`{"kind":"launchd","label":"dev.looptender.loop.stale","target":"user/501/dev.looptender.loop.stale","since":"2026-03-04T12:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	savedPrint, savedBootout := launchctlPrint, launchctlBootout
+	t.Cleanup(func() { launchctlPrint, launchctlBootout = savedPrint, savedBootout })
+	launchctlPrint = func(target string) (string, bool) {
+		if strings.HasSuffix(target, ".live") {
+			return "\tpid = 4242\n", true
+		}
+		return "\tstate = not running\n", true
+	}
+	var booted []string
+	launchctlBootout = func(target string) { booted = append(booted, target) }
+	clearStaleLaunches(dir, 501)
+	if len(booted) != 1 || booted[0] != "user/501/dev.looptender.loop.stale" {
+		t.Fatalf("booted out %v", booted)
+	}
+	left, _ := filepath.Glob(filepath.Join(dir, "launch-*"))
+	if len(left) != 2 || !strings.Contains(left[0], ".live.") || !strings.Contains(left[1], ".live.") {
+		t.Fatalf("left %v", left)
+	}
+	if readLaunchJobRecord(dir) != nil {
+		t.Fatal("stale launch-job record kept")
 	}
 }
