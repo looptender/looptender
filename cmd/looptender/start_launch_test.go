@@ -15,21 +15,33 @@ func TestBackgroundLaunchPerPlatform(t *testing.T) {
 	found := func(name string) (string, error) { return "/example/bin/" + name, nil }
 	missing := func(string) (string, error) { return "", errors.New("not found") }
 	child := []string{"/example/looptender", "__start-background", "-c", "/example/looptender.yaml"}
-	p, ok := backgroundLaunch("darwin", found, "dev.looptender.loop.example", child)
-	if !ok || p.Kind != "launchd" || !reflect.DeepEqual(p.Argv, append([]string{"/example/bin/launchctl", "submit", "-l", "dev.looptender.loop.example", "--",
-		"/bin/sh", "-c", launchWrapper, "looptender-launch", "/example/bin/launchctl", "dev.looptender.loop.example"}, child...)) {
+	p, ok := backgroundLaunch("darwin", found, "dev.looptender.loop.example", child, 501, "/example/state")
+	plist, script := "/example/state/launch-dev.looptender.loop.example.plist", "/example/state/launch-dev.looptender.loop.example.sh"
+	if !ok || p.Kind != "launchd" || p.Target != "user/501/dev.looptender.loop.example" ||
+		!reflect.DeepEqual(p.Argv, []string{"/example/bin/launchctl", "bootstrap", "user/501", plist}) || len(p.Files) != 2 {
 		t.Fatalf("%+v", p)
 	}
-	p, ok = backgroundLaunch("linux", found, "looptender-example", child)
+	// The background domain, at load, not kept alive, running the script.
+	for _, want := range []string{"<key>Label</key><string>dev.looptender.loop.example</string>", "<key>LimitLoadToSessionType</key><string>Background</string>",
+		"<key>RunAtLoad</key><true/>", "<key>KeepAlive</key><false/>", "<string>/bin/sh</string><string>" + script + "</string>"} {
+		if !strings.Contains(string(p.Files[plist]), want) {
+			t.Fatalf("plist lacks %s: %s", want, p.Files[plist])
+		}
+	}
+	if s := string(p.Files[script]); !strings.Contains(s, "'/example/looptender' '__start-background' '-c' '/example/looptender.yaml'\n") ||
+		!strings.HasSuffix(s, "rm -f '"+plist+"' '"+script+"'\nexec '/example/bin/launchctl' bootout 'user/501/dev.looptender.loop.example'\n") {
+		t.Fatalf("script: %s", s)
+	}
+	p, ok = backgroundLaunch("linux", found, "looptender-example", child, 1000, "/example/state")
 	if !ok || p.Kind != "systemd" || !reflect.DeepEqual(p.Argv, append([]string{"/example/bin/systemd-run", "--user", "--unit", "looptender-example", "--collect", "--quiet", "--"}, child...)) {
 		t.Fatalf("%+v", p)
 	}
 	for _, goos := range []string{"darwin", "linux"} {
-		if _, ok := backgroundLaunch(goos, missing, "x", child); ok {
+		if _, ok := backgroundLaunch(goos, missing, "x", child, 501, "/example/state"); ok {
 			t.Fatalf("%s: launched without its service manager", goos)
 		}
 	}
-	if _, ok := backgroundLaunch("windows", found, "x", child); ok {
+	if _, ok := backgroundLaunch("windows", found, "x", child, 501, "/example/state"); ok {
 		t.Fatal("windows has no service-manager launch")
 	}
 	a, b := launchLabel("darwin", "/example/state"), launchLabel("darwin", "/example/state")

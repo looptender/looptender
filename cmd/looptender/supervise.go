@@ -1019,7 +1019,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	printUsageWatch(w, out.UsageWatch)
 	printUsageBurn(w, out.UsageBurn)
 	if j := out.LaunchJob; j != nil {
-		fmt.Fprintf(w, "daemon job: %s %s, since %s (end it with %s)\n", j.Kind, j.Label, j.Since.Format(time.RFC3339), launchStopCommand(j.Kind, j.Label))
+		fmt.Fprintf(w, "daemon job: %s %s, since %s (end it with %s)\n", j.Kind, j.Label, j.Since.Format(time.RFC3339), launchStopCommand(j.Kind, j.Label, j.Target))
 	}
 	if !out.stateUnreadable {
 		printTurnRetry(w, out.TurnRetry)

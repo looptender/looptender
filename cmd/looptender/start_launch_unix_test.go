@@ -24,19 +24,29 @@ import (
 )
 
 // launchStandIns writes stand-ins for launchctl, systemd-run and systemctl
-// that record their arguments and start the submitted command detached and
-// with an empty environment, as the service manager would. They keep a copy
-// of the environment file the command names, for the test to read.
-// LAUNCH_FAIL=1 makes a submission fail.
+// that record their arguments and start the job detached and with an empty
+// environment, as the service manager would: launchctl bootstrap runs the
+// script its property list names, systemd-run the command after --. They
+// keep a copy of the environment file the daemon is given, for the test to
+// read. LAUNCH_FAIL=1 makes the launch fail.
 func launchStandIns(t *testing.T, dir, record string) string {
 	t.Helper()
-	// The record's path is written in: the submitted command, the job's
-	// wrapper and its launchctl remove run with an empty environment.
+	// The record's path is written in: the job, its script and its
+	// launchctl bootout run with an empty environment.
 	script := `#!/bin/sh
 LAUNCH_RECORD=` + record + `
 echo "$(basename "$0") $*" >> "$LAUNCH_RECORD"
 case "$(basename "$0") $1" in
-"launchctl submit"|"systemd-run --user")
+"launchctl bootstrap")
+  [ "$LAUNCH_FAIL" = 1 ] && exit 1
+  case "$2" in user/*) ;; *) exit 5;; esac
+  grep -q '<key>LimitLoadToSessionType</key><string>Background</string>' "$3" || exit 5
+  job=$(sed -n 's|.*<string>\(/[^<]*\.sh\)</string>.*|\1|p' "$3")
+  env=$(sed -n "s/.*'--env-file' '\([^']*\)'.*/\1/p" "$job")
+  cp "$env" "$LAUNCH_RECORD.env"
+  /usr/bin/env -i /usr/bin/nohup /bin/sh "$job" </dev/null >/dev/null 2>&1 &
+  ;;
+"systemd-run --user")
   [ "$LAUNCH_FAIL" = 1 ] && exit 1
   while [ "$1" != "--" ]; do shift; done
   shift
@@ -151,7 +161,7 @@ loop:
 		return last
 	}
 
-	kind, submit := "launchd", "launchctl submit -l dev.looptender.loop."
+	kind, submit := "launchd", fmt.Sprintf("launchctl bootstrap user/%d %s/launch-dev.looptender.loop.", os.Getuid(), stateDir)
 	if runtime.GOOS == "linux" {
 		kind, submit = "systemd", "systemd-run --user --unit looptender-"
 	}
@@ -197,11 +207,15 @@ loop:
 	}
 	if runtime.GOOS == "darwin" {
 		// The job is removed once its daemon ended, after the record.
-		for deadline := time.Now().Add(5 * time.Second); !strings.Contains(string(b), "launchctl remove "+job) && time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
+		bootout := fmt.Sprintf("launchctl bootout user/%d/%s", os.Getuid(), job)
+		for deadline := time.Now().Add(5 * time.Second); !strings.Contains(string(b), bootout) && time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
 			b, _ = os.ReadFile(record)
 		}
-		if !strings.Contains(string(b), "launchctl remove "+job) {
+		if !strings.Contains(string(b), bootout) {
 			t.Fatalf("job not removed: %q", b)
+		}
+		if left, _ := filepath.Glob(filepath.Join(stateDir, "launch-dev.looptender.loop.*")); len(left) != 0 {
+			t.Fatalf("job files left: %v", left)
 		}
 	}
 	if e := lastDaemonEvent(); e.Reason != "stopped" || e.Extra["signal"] != "SIGTERM" {
@@ -219,20 +233,36 @@ loop:
 	end(v)
 }
 
-// launchd's job wrapper removes its job however the program ends, including
-// when the launch path no longer exists, so launchd never retries it.
-func TestLaunchWrapperRemovesItsJobWhateverTheProgramDoes(t *testing.T) {
+// launchd's job script boots its job out and removes its files however the
+// daemon ends, including when the launch path no longer exists.
+func TestLaunchJobScriptRemovesItsJobWhateverTheProgramDoes(t *testing.T) {
 	record := filepath.Join(t.TempDir(), "record")
 	fake := launchStandIns(t, t.TempDir(), record)
-	for _, program := range [][]string{{"/bin/false"}, {filepath.Join(t.TempDir(), "pruned-build", "looptender")}} {
-		cmd := exec.Command("/bin/sh", append([]string{"-c", launchWrapper, "looptender-launch", filepath.Join(fake, "launchctl"), "dev.looptender.loop.example"}, program...)...)
-		cmd.Env = append(os.Environ(), "LAUNCH_RECORD="+record)
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("%v: %v", program, err)
+	find := func(string) (string, error) { return filepath.Join(fake, "launchctl"), nil }
+	for _, program := range []string{"/bin/false", filepath.Join(t.TempDir(), "pruned-build", "looptender")} {
+		dir := t.TempDir()
+		p, ok := backgroundLaunch("darwin", find, "dev.looptender.loop.example", []string{program, "__start-background"}, 501, dir)
+		if !ok {
+			t.Fatal("no plan")
+		}
+		var script string
+		for path, b := range p.Files {
+			if err := os.WriteFile(path, b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if strings.HasSuffix(path, ".sh") {
+				script = path
+			}
+		}
+		if err := exec.Command("/bin/sh", script).Run(); err != nil {
+			t.Fatalf("%s: %v", program, err)
+		}
+		if left, _ := filepath.Glob(filepath.Join(dir, "launch-*")); len(left) != 0 {
+			t.Fatalf("%s: files left %v", program, left)
 		}
 	}
 	b, _ := os.ReadFile(record)
-	if strings.Count(string(b), "launchctl remove dev.looptender.loop.example") != 2 {
+	if strings.Count(string(b), "launchctl bootout user/501/dev.looptender.loop.example") != 2 {
 		t.Fatalf("%q", b)
 	}
 }
@@ -241,7 +271,7 @@ func TestLaunchWrapperRemovesItsJobWhateverTheProgramDoes(t *testing.T) {
 // the service manager no longer has it.
 func TestStatusShowsALaunchJobOnlyWhileItExists(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, launchJobName), []byte(`{"kind":"launchd","label":"dev.looptender.loop.example","since":"2026-03-04T12:00:00Z"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, launchJobName), []byte(`{"kind":"launchd","label":"dev.looptender.loop.example","target":"user/501/dev.looptender.loop.example","since":"2026-03-04T12:00:00Z"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	saved := launchJobExists

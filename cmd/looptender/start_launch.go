@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
@@ -22,7 +23,7 @@ import (
 // A background daemon started inside a BB thread is a child of that
 // thread's process, and quitting BB ends it. There it is handed to the
 // user's own service manager instead, as a one-off job outside BB: launchd
-// (launchctl submit) on macOS, the user's systemd (systemd-run --user) on
+// (launchctl bootstrap in the per-user background domain) on macOS, the user's systemd (systemd-run --user) on
 // Linux. When that is not available it is started as before, with a
 // warning that it stops when BB quits. Windows is not handled: whether a
 // detached process survives BB quitting there is not established.
@@ -39,30 +40,50 @@ const launchLabelEnv = "LOOPTENDER_LAUNCHD_LABEL"
 // in, written at start and removed when it ends.
 const launchJobName = "launch-job.json"
 
-// launchWrapper is the program launchd runs for the job: the daemon, then,
-// however it ended (stopped, crashed, refused, an adopted older build, a
-// launch path that no longer exists), the removal of its own job.
-// launchctl submit restarts a job's program whenever it exits, so without
-// this an ended daemon would be started again, and a missing program
-// retried for ever. $1 is launchctl, $2 the label, the rest the daemon.
-const launchWrapper = `launchctl=$1; label=$2; shift 2; "$@"; exec "$launchctl" remove "$label"`
-
 type launchPlan struct {
 	Kind  string // launchd or systemd
 	Label string
-	Argv  []string
+	// Target is the launchd job's service target, user/<uid>/<label>.
+	Target string
+	Argv   []string
+	// Files are written before Argv runs: for launchd, the job's property
+	// list and the script it runs, in the loop's state directory.
+	Files map[string][]byte
 }
 
 // backgroundLaunch is the service-manager launch for this platform, or
 // false when there is none to use.
-func backgroundLaunch(goos string, lookPath func(string) (string, error), label string, child []string) (launchPlan, bool) {
+//
+// On macOS the job goes in the per-user background domain (launchctl
+// bootstrap user/<uid>), not the GUI login domain that launchctl submit
+// uses from a thread: the login domain is torn down at logout or when the
+// window server crashes, and a submitted job has no property list to bring
+// it back. A job in the background domain must say so in its property list
+// (LimitLoadToSessionType Background, without which bootstrap refuses
+// it). It runs at load and is not kept alive. It runs a script that runs
+// the daemon and then, however the daemon ended (stopped, crashed, refused,
+// an adopted older build, a launch path that no longer exists), removes its
+// own files and boots its job out.
+func backgroundLaunch(goos string, lookPath func(string) (string, error), label string, child []string, uid int, stateDir string) (launchPlan, bool) {
 	switch goos {
 	case "darwin":
 		p, err := lookPath("launchctl")
 		if err != nil {
 			return launchPlan{}, false
 		}
-		return launchPlan{Kind: "launchd", Label: label, Argv: append([]string{p, "submit", "-l", label, "--", "/bin/sh", "-c", launchWrapper, "looptender-launch", p, label}, child...)}, true
+		target := fmt.Sprintf("user/%d/%s", uid, label)
+		plist := filepath.Join(stateDir, "launch-"+label+".plist")
+		script := filepath.Join(stateDir, "launch-"+label+".sh")
+		quoted := make([]string, len(child))
+		for i, a := range child {
+			quoted[i] = launchQuote(a)
+		}
+		body := "#!/bin/sh\n# looptender: the launchd job " + label + ". It runs the daemon, then removes this job and its files, however the daemon ended.\n" +
+			strings.Join(quoted, " ") + "\n" +
+			"rm -f " + launchQuote(plist) + " " + launchQuote(script) + "\n" +
+			"exec " + launchQuote(p) + " bootout " + launchQuote(target) + "\n"
+		return launchPlan{Kind: "launchd", Label: label, Target: target, Argv: []string{p, "bootstrap", fmt.Sprintf("user/%d", uid), plist},
+			Files: map[string][]byte{script: []byte(body), plist: launchPlist(label, script)}}, true
 	case "linux":
 		p, err := lookPath("systemd-run")
 		if err != nil {
@@ -71,6 +92,30 @@ func backgroundLaunch(goos string, lookPath func(string) (string, error), label 
 		return launchPlan{Kind: "systemd", Label: label, Argv: append([]string{p, "--user", "--unit", label, "--collect", "--quiet", "--"}, child...)}, true
 	}
 	return launchPlan{}, false
+}
+
+// launchQuote single-quotes a word for the job's script, always.
+func launchQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// launchPlist is the job's property list.
+func launchPlist(label, script string) []byte {
+	esc := func(v string) string {
+		var b strings.Builder
+		_ = xml.EscapeText(&b, []byte(v))
+		return b.String()
+	}
+	return []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>` + esc(label) + `</string>
+<key>ProgramArguments</key><array><string>/bin/sh</string><string>` + esc(script) + `</string></array>
+<key>LimitLoadToSessionType</key><string>Background</string>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><false/>
+<key>StandardOutPath</key><string>/dev/null</string>
+<key>StandardErrorPath</key><string>/dev/null</string>
+</dict></plist>
+`)
 }
 
 // launchLabel names the job: the loop's state directory, hashed, and a
@@ -87,7 +132,7 @@ func launchLabel(goos, stateDir string) string {
 
 // startLaunched starts the daemon through the service manager. ok is false
 // when the manager refused before anything started, so the caller falls
-// back; once the job is submitted, the result is final.
+// back; once the job is loaded, the result is final.
 func startLaunched(e env, executable, path string, cfg *config.Config, allowShare bool) (code int, ok bool) {
 	stateDir := cfg.Loop.StateDir
 	if os.Getenv("BB_THREAD_ID") == "" || os.Getenv(backgroundLaunchEnv) == "child" {
@@ -104,9 +149,15 @@ func startLaunched(e env, executable, path string, cfg *config.Config, allowShar
 	if allowShare {
 		child = append(child, "--allow-second-loop")
 	}
-	plan, found := backgroundLaunch(runtime.GOOS, exec.LookPath, label, child)
+	plan, found := backgroundLaunch(runtime.GOOS, exec.LookPath, label, child, os.Getuid(), stateDir)
 	if !found {
 		return 0, false
+	}
+	for path, b := range plan.Files {
+		if os.WriteFile(path, b, 0o600) != nil {
+			removeLaunchFiles(plan)
+			return 0, false
+		}
 	}
 	// The daemon's environment goes in a private file it reads and removes,
 	// never in argv. Only what it needs is passed (launchEnvironment): the
@@ -119,6 +170,7 @@ func startLaunched(e env, executable, path string, cfg *config.Config, allowShar
 	ctx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
 	defer cancel()
 	if out, err := exec.CommandContext(ctx, plan.Argv[0], plan.Argv[1:]...).CombinedOutput(); err != nil {
+		removeLaunchFiles(plan)
 		e.errf("start: warning: %s did not take the daemon (%s)", plan.Kind, strings.TrimSpace(clip(string(out), 200)))
 		return 0, false
 	}
@@ -196,11 +248,18 @@ func removeLaunched(p launchPlan) {
 	defer cancel()
 	switch p.Kind {
 	case "launchd":
-		_ = exec.CommandContext(ctx, p.Argv[0], "remove", p.Label).Run()
+		_ = exec.CommandContext(ctx, p.Argv[0], "bootout", p.Target).Run()
+		removeLaunchFiles(p)
 	case "systemd":
 		if sc, err := exec.LookPath("systemctl"); err == nil {
 			_ = exec.CommandContext(ctx, sc, "--user", "stop", p.Label+".service").Run()
 		}
+	}
+}
+
+func removeLaunchFiles(p launchPlan) {
+	for path := range p.Files {
+		_ = os.Remove(path)
 	}
 }
 
@@ -279,7 +338,7 @@ func reportStartedBy(e env, reply startReply, plan launchPlan) int {
 		_ = json.NewEncoder(e.stdout).Encode(startJSON{SchemaVersion: 1, Outcome: "started", PID: reply.PID, Control: reply.Control, ReferenceUnavailable: reply.ReferenceUnavailable, Launch: plan.Kind, Job: plan.Label})
 		return exitOK
 	}
-	stop := launchStopCommand(plan.Kind, plan.Label)
+	stop := launchStopCommand(plan.Kind, plan.Label, plan.Target)
 	fmt.Fprintf(e.stdout, "started background daemon (PID %d) as a %s job, so it keeps running when BB quits; control: %s\nUse status to inspect, pause to hold, or stop to stop the agent. End the daemon with %s or by terminating its PID. No service was installed.\n", reply.PID, plan.Kind, reply.Control, stop)
 	return exitOK
 }
@@ -337,9 +396,11 @@ func launchSecretName(k string) bool {
 }
 
 type launchJob struct {
-	Kind  string    `json:"kind"`
-	Label string    `json:"label"`
-	Since time.Time `json:"since"`
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
+	// Target is the launchd service target, user/<uid>/<label>.
+	Target string    `json:"target,omitempty"`
+	Since  time.Time `json:"since"`
 }
 
 // recordLaunchJob writes the daemon's launch-job record, when it runs in
@@ -349,11 +410,11 @@ func recordLaunchJob(stateDir string) func() {
 	if label == "" {
 		return func() {}
 	}
-	kind := "launchd"
+	j := launchJob{Kind: "launchd", Label: label, Target: fmt.Sprintf("user/%d/%s", os.Getuid(), label), Since: time.Now().UTC()}
 	if runtime.GOOS == "linux" {
-		kind = "systemd"
+		j.Kind, j.Target = "systemd", ""
 	}
-	b, _ := json.Marshal(launchJob{Kind: kind, Label: label, Since: time.Now().UTC()})
+	b, _ := json.Marshal(j)
 	path := filepath.Join(stateDir, launchJobName)
 	if os.WriteFile(path, append(b, '\n'), 0o600) != nil {
 		return func() {}
@@ -380,7 +441,7 @@ var launchJobExists = func(j launchJob) bool {
 	switch j.Kind {
 	case "launchd":
 		p, err := exec.LookPath("launchctl")
-		return err == nil && exec.CommandContext(ctx, p, "list", j.Label).Run() == nil
+		return err == nil && j.Target != "" && exec.CommandContext(ctx, p, "print", j.Target).Run() == nil
 	case "systemd":
 		p, err := exec.LookPath("systemctl")
 		return err == nil && exec.CommandContext(ctx, p, "--user", "is-active", "--quiet", j.Label+".service").Run() == nil
@@ -400,9 +461,9 @@ func readLaunchJobRecord(stateDir string) *launchJob {
 	return &j
 }
 
-func launchStopCommand(kind, label string) string {
+func launchStopCommand(kind, label, target string) string {
 	if kind == "systemd" {
 		return "systemctl --user stop " + label + ".service"
 	}
-	return "launchctl remove " + label
+	return "launchctl bootout " + target
 }
