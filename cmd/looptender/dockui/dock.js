@@ -415,7 +415,34 @@
     foot.appendChild(pickRow("#/versions", vs.behind ? "dot-limit" : "dot-calm", "Versions", vs.summary || "", r.view === "versions"));
     foot.appendChild(pickRow("#/usage", "dot-calm", "Activity", d.usagePicker || "", r.view === "usage"));
     nav.appendChild(foot);
+    fitPickerRows();
   }
+  // The loop list scrolls inside the sidebar, and its edge used to cut a row in
+  // half. When it overflows, size it to a whole number of rows; the leftover
+  // space (less than one row) stays empty below it. Scrolling, wheel, keyboard
+  // and focus are the browser's own.
+  function fitPickerRows() {
+    var box = document.querySelector("#picker .pick-scroll");
+    if (!box) return;
+    box.style.flex = "";
+    box.style.height = "";
+    var rows = box.querySelectorAll(".pick-list > li");
+    if (rows.length < 2 || box.scrollHeight <= box.clientHeight) return;
+    var pitch = rows[1].offsetTop - rows[0].offsetTop;
+    var gap = pitch - rows[0].offsetHeight;
+    var cs = window.getComputedStyle(box);
+    var inner = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    var fit = Math.max(1, Math.floor((inner + gap) / pitch));
+    if (fit >= rows.length) return;
+    box.style.flex = "0 0 auto";
+    box.style.height = (fit * pitch - gap + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)) + "px";
+  }
+  var fitPending = false;
+  window.addEventListener("resize", function () {
+    if (fitPending) return;
+    fitPending = true;
+    window.requestAnimationFrame(function () { fitPending = false; fitPickerRows(); });
+  });
 
   function paneHead(title, pill) {
     var head = el("div", "pane-head");

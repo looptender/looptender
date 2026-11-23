@@ -104,15 +104,17 @@ h2 { margin: 0; font-size: 1.05rem; letter-spacing: -0.005em; font-weight: 650; 
 .work-summary { cursor: pointer; padding: 1rem 0.25rem; display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, 1fr); gap: 0.25rem 1.5rem; }
 .work-summary::marker { content: ""; }
 .work-summary::-webkit-details-marker { display: none; }
-.work-name { font-weight: 650; display: flex; align-items: baseline; gap: 0.6rem; overflow-wrap: anywhere; }
-.work-name::before { content: ""; flex: none; width: 0.45rem; height: 0.45rem; border-inline-end: 1.5px solid currentColor; border-block-end: 1.5px solid currentColor; transform: rotate(-45deg); }
+/* Flowing text, not a flex row: with the chips unable to shrink, a flex row left the
+   name only what the chips did not need, one fragment per line. */
+.work-name { font-weight: 650; overflow-wrap: break-word; min-width: 0; }
+.work-name::before { content: ""; display: inline-block; margin-inline-end: 0.6rem; vertical-align: 0.05em; width: 0.45rem; height: 0.45rem; border-inline-end: 1.5px solid currentColor; border-block-end: 1.5px solid currentColor; transform: rotate(-45deg); }
 details[open] > .work-summary .work-name::before { transform: rotate(45deg); }
 .work-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
 .work-status .dot { align-self: center; }
 .work-observation { padding-inline-start: 1.05rem; }
 .work-age, .work-observation, .work-status { font-size: 0.8125rem; overflow-wrap: anywhere; }
 .work-summary:hover { background: var(--sunk); }
-.work-role { flex: none; padding: 0 0.4rem; border-radius: 5px; font-size: 0.72rem; font-weight: 600; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--line-2); }
+.work-role { display: inline-block; margin-inline-start: 0.6rem; font-weight: 600; padding: 0 0.4rem; border-radius: 5px; font-size: 0.72rem; font-weight: 600; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--line-2); }
 .work-body { margin-inline-start: 0.45rem; padding: 0 0 1.25rem 1.25rem; border-inline-start: 1px solid var(--line-2); }
 .work-body > p { max-width: 70ch; }
 .work-body > .sub { font-size: 0.8125rem; }
@@ -187,8 +189,7 @@ body.has-banner { padding-bottom: 8rem; }
 /* The needs-you line and the Routes view stay put; only the loop list scrolls. */
 .picker { position: sticky; top: 4.5rem; display: flex; flex-direction: column; max-height: calc(100vh - 5.5rem); min-height: 0; }
 .pick-fixed { display: grid; gap: 0.35rem; flex: none; }
-.pick-scroll { flex: 1 1 auto; min-height: 3.5rem; overflow-y: auto; padding: 4px; margin: 0 -4px; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; scroll-padding-block: 4px; scroll-snap-type: y proximity; overscroll-behavior: contain; border-top: 1px solid var(--line); }
-.pick-list > li { scroll-snap-align: start; }
+.pick-scroll { flex: 1 1 auto; min-height: 3.5rem; overflow-y: auto; padding: 4px; margin: 0 -4px; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; scroll-padding-block: 4px; overscroll-behavior: contain; border-top: 1px solid var(--line); }
 .pick-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .pick-label { margin: 0.9rem 0 0.2rem 0.6rem; font-size: 0.75rem; font-weight: 600; color: var(--ink-2); flex: none; }
 .pick-empty { padding: 0.4rem 0.6rem; font-size: 0.875rem; }
@@ -247,11 +248,9 @@ html:not(.has-script) .needs-script { visibility: hidden; }
 .panel > h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.75rem; }
 .panel > h2 .sub, .panel > h2 .unknown { font-size: 0.8125rem; font-weight: 400; }
 /* Needs you: an even 1px amber-tinted border and a quiet tint around white cards,
-   with a small dot beside the heading and the wait. No edge is heavier than
+   with a small dot before the wait, on the Overview and on a loop's own page. No edge is heavier than
    another; the words carry the meaning and the colour only supports them. */
 .panel.is-need { background: color-mix(in oklab, var(--attn-soft) 60%, var(--bg)); border-color: color-mix(in oklab, var(--attn) 45%, var(--line)); padding: 0.85rem; }
-.overview-heading:has(+ .panel.is-need) { display: flex; align-items: center; gap: 0.55rem; }
-.overview-heading:has(+ .panel.is-need)::before { content: ""; flex: none; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--attn); }
 .panel-fold { padding: 0; }
 .panel-fold-summary { cursor: pointer; display: flex; align-items: center; gap: 0.55rem; padding: 0.85rem 1.2rem; font-weight: 600; font-size: 0.9375rem; color: var(--ink-2); border-radius: 12px; list-style: none; }
 .panel-fold-summary::-webkit-details-marker { display: none; }
@@ -278,7 +277,7 @@ html:not(.has-script) .needs-script { visibility: hidden; }
 .waited { color: var(--attn); font-weight: 600; font-size: 0.875rem; }
 .need p { margin: 0; }
 .need .reason { font-weight: 500; }
-.note { margin: 0; padding: 0.5rem 0.75rem; background: var(--sunk); border-radius: 8px; color: var(--ink); overflow-wrap: anywhere; }
+.note { margin: 0; padding: 0.5rem 0.75rem; background: var(--sunk); border: 1px solid var(--line-2); border-radius: 8px; color: var(--ink); overflow-wrap: anywhere; }
 .note-label, .todo-label { display: block; margin-bottom: 0.1rem; font-size: 0.75rem; font-weight: 600; color: var(--ink-2); letter-spacing: 0.01em; }
 .need .resume-where { overflow-wrap: anywhere; }
 .need .resume-where code { font-family: var(--mono); }
@@ -552,8 +551,8 @@ html:not(.has-script) .needs-script { visibility: hidden; }
 .account-body { padding: 0 1.2rem 1.2rem; border-top: 1px solid var(--line); }
 .account-body .work-facts { margin-top: 1rem; }
 .account-evidence .tag { align-self: flex-start; }
-.account-note { margin: 0; padding: .5rem .75rem; background: var(--sunk); border-radius: 8px; }
-.account-card.is-attention { border-color: color-mix(in oklch, var(--warn) 55%, var(--line)); }
+.account-note { margin: 0; padding: .5rem .75rem; background: var(--sunk); border: 1px solid var(--line-2); border-radius: 8px; }
+.account-card.is-attention { border-color: color-mix(in oklab, var(--warn) 70%, var(--line)); }
 .account-attention { display: flex; flex-direction: column; gap: .3rem; margin-top: .5rem; color: var(--ink); font-size: .875rem; }
 .account-attention .tag { align-self: flex-start; margin-left: 0; }
 .account-hint { margin: 0; padding: 0 1.2rem 1rem 2.6rem; font-size: .8125rem; overflow-wrap: anywhere; }
