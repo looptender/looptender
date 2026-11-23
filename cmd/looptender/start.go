@@ -112,6 +112,10 @@ func startResolved(e env, path string, background, allowShare bool, ready startR
 		return exitUsage
 	}
 	_, asJSON := e.stdout.(*startJSONWriter)
+	if a, archived := archivedNow(cfg.Loop.StateDir); archived {
+		e.errf("start refused, nothing changed: loop %s is archived (since %s). Unarchive it first with `looptender unarchive -c %s`, which resumes nothing.", cfg.Loop.Name, a.At.UTC().Format(time.RFC3339), shellQuote(abs))
+		return exitFailed
+	}
 	if background {
 		// Checked here as well as in the daemon it starts, so the refusal
 		// can be reported in the caller's own words and as JSON.

@@ -43,7 +43,7 @@ func singleRouteWarning(cfg *config.Config) string {
 func doctorRoutes(r *doctorReport, cfg *config.Config, cfgPath string, st state.File, stateReadable bool, held string, now time.Time) {
 	// A completed or disabled loop sends nothing, so a limit can not stop work
 	// it is not doing: the warning is for loops that can run.
-	if w := singleRouteWarning(cfg); w != "" && held != "completed" && held != "disabled" {
+	if w := singleRouteWarning(cfg); w != "" && held != "completed" && held != "disabled" && held != "archived" {
 		r.add("routes.single", "warning", w, singleRouteFix(cfg, cfgPath))
 	}
 	for _, p := range successorPlans(cfg) {

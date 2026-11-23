@@ -1016,7 +1016,10 @@ type panelList struct {
 	NeedsYou      int             `json:"needsYou"`
 	Unread        int             `json:"unread"`
 	Omitted       int             `json:"omitted"`
-	Loops         []panelListLoop `json:"loops"`
+	// Loops is every loop read, archived ones last (State "archived");
+	// Archived counts those. A list shows the others and one line for these.
+	Loops    []panelListLoop `json:"loops"`
+	Archived int             `json:"archived"`
 	// CanAll is which changes can be made to every loop at once
 	// (client review|apply --all): pause and stop, while any loop can be.
 	CanAll []string `json:"canAll"`
@@ -1057,6 +1060,14 @@ type panelListLoop struct {
 	Provider string       `json:"provider,omitempty"`
 	Model    string       `json:"model,omitempty"`
 	Moved    *clientMoved `json:"moved,omitempty"`
+	// Archived: as on the page's loop (when, the hold it had, the note with
+	// identifier-shaped tokens hidden). ArchiveLapsed: a record the loop no
+	// longer honours.
+	Archived      *archiveView `json:"archived,omitempty"`
+	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	// Naming is the loop's one display name and what goes with it
+	// (loop_naming.go): the same on every surface; no reader composes its own.
+	Naming loopNaming `json:"naming"`
 }
 
 func buildPanelList(r dockReport) panelList {
@@ -1090,6 +1101,15 @@ func buildPanelList(r dockReport) panelList {
 		if np := l.NoProgress; np != nil && np.Availability == "flagged" {
 			row.NoProgress = np.Text
 		}
+		// The list carries no note (it never has): when, and the hold.
+		row.Archived, row.ArchiveLapsed = withoutNote(l.Archived), withoutNote(l.ArchiveLapsed)
+		row.Naming = namingFallback(l.Name).inList()
+		if n := l.Naming; n != nil {
+			row.Naming = n.inList()
+		}
+		if row.Archived != nil {
+			out.Archived++
+		}
 		out.Loops = append(out.Loops, row)
 	}
 	return out
@@ -1103,8 +1123,9 @@ func panelListCommand(e env, args []string) int {
 	staleAfter := fs.Duration("stale-after", defaultStaleAfter, "age at which a check is shown as stale")
 	offline := fs.Bool("offline", false, "do not ask each loop's local daemon for its next check")
 	client := fs.String("client", "", "the calling program's NAME@VERSION (bb-plugin, macos-menu), recorded for the panel's Versions view in a panel directory that already exists")
+	archived := fs.Bool("archived", false, "text: list the archived loops instead of the others (JSON always has every loop)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *staleAfter <= 0 {
-		e.errf("panel list: invalid arguments; usage: looptender panel list [--json] [--directory private-registry] [--client NAME@VERSION]")
+		e.errf("panel list: invalid arguments; usage: looptender panel list [--json] [--archived] [--directory private-registry] [--client NAME@VERSION]")
 		return exitUsage
 	}
 	// Recorded after the answer, and never changing it.
@@ -1142,7 +1163,20 @@ func panelListCommand(e env, args []string) int {
 			fmt.Fprintln(w, "No loops are registered. Register one with looptender registry add.")
 		}
 		for _, l := range list.Loops {
-			fmt.Fprintf(w, "%s: %s\n", l.Name, l.Phrase)
+			if (l.Archived != nil) != *archived {
+				continue
+			}
+			if l.Archived != nil {
+				fmt.Fprintf(w, "%s: archived %s\n", l.Naming.nameLine(), archiveSince(l.Archived))
+				continue
+			}
+			fmt.Fprintf(w, "%s: %s\n", l.Naming.nameLine(), l.Phrase)
+		}
+		switch {
+		case *archived && list.Archived == 0:
+			fmt.Fprintln(w, "No loop is archived.")
+		case !*archived && list.Archived > 0:
+			fmt.Fprintf(w, "%s archived, not shown: looptender panel list --archived lists %s.\n", dockPlural(list.Archived, "loop", "loops"), plural(list.Archived, "it", "them"))
 		}
 		switch {
 		case list.NeedsYou == 1:
