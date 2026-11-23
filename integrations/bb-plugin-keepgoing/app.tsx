@@ -13,7 +13,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
-import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, buildFreshness, lastLabel, noteSaysRetired } from "./status-details";
+import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, noteSaysRetired } from "./status-details";
 import { SetupPanel } from "./setup-panel";
 import { AttachPanel } from "./attach-panel";
 import { TransferPanel } from "./transfer-panel";
@@ -97,7 +97,7 @@ function describe(loop: LoopView): string[] {
     ...diagnosticLines(loop.details, loop.target, loop.supervising),
     // Which build is which: the supervisor's (above) and the plugin's own code.
     ...(loop.pluginBuild && loop.details?.runtime?.installedBuild && !sameBuild(loop.pluginBuild, loop.details.runtime.installedBuild) ? [`Plugin build: ${loop.pluginBuild} (the code drawing this card); the builds above are each supervisor's, read from looptender status`] : []),
-    ...(() => { const f = buildFreshness(loop.details, loop.configPath); return f?.detail ? [`Build: ${f.detail}`] : []; })(),
+    ...(() => { const f = freshnessToShow(loop.details); return f?.detail ? [`Build: ${f.detail}`] : []; })(),
     // The word bb keepgoing status prints as last=, beside the recorded action it does not mean.
     `Last check state: ${lastLabel(loop.lastState, loop.details)} (as in bb keepgoing status)`,
     loop.note ? `Note: ${loop.note}` : null,
@@ -257,10 +257,11 @@ function detailLines(l: LoopView, reasons: string[]): string[] {
 
 // The build line: how this loop's supervisor compares with the installed build, visible, never a tooltip.
 function BuildFreshness({ loop }: { loop: LoopView }) {
-  const f = buildFreshness(loop.details, loop.configPath);
-  if (!f || f.state === "current" || !f.text) return null;
+  const f = freshnessToShow(loop.details);
+  if (!f) return null;
+  // looptender's own words: the chip, and either the command that is true for that supervisor or what to do in words.
   return <div aria-label="Build" style={{ margin: 0, padding: "0 12px 4px 12px", fontSize: 12, overflowWrap: "anywhere" }}>
-    <span>{f.text}</span>{f.command && <> — <code>{f.command}</code></>}
+    <span>{f.text}</span>{f.command && <> — <code>{f.command}</code></>}{!f.command && f.action && <> — {f.action}</>}
   </div>;
 }
 
