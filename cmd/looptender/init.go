@@ -31,6 +31,8 @@ type initOptions struct {
 	noProgressTimeout                              time.Duration
 	maxSends                                       int64
 	name, project, directory, task, taskFile       string
+	displayName                                    string // --display-name: the line of work's name every list shows
+	succeeds                                       string // --succeeds: the configuration of the loop this one continues
 	deadline                                       string
 	agent, thread, provider, account, group, model string
 	routes                                         string          // standard or own; "" is own
@@ -66,6 +68,8 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 	fs.SetOutput(e.stderr)
 	fs.StringVar(&o.name, "name", "", "loop name: lowercase letters, digits, hyphens")
 	fs.StringVar(&o.project, "project", "", "existing Git project with a commit (default: current directory)")
+	fs.StringVar(&o.succeeds, "succeeds", "", "the configuration of the loop this one continues: it is archived after this loop's first completed check, and this loop takes its display name")
+	fs.StringVar(&o.displayName, "display-name", "", "the name every list shows for this line of work (default: the BB thread's title at the first check, else --name); never a provider or model")
 	fs.StringVar(&o.directory, "directory", "", "new private setup directory outside any checkout")
 	fs.StringVar(&o.task, "task", "", "task text (use --task-file to keep it out of shell history)")
 	fs.BoolVar(&o.withGoal, "with-goal", false, "record a goal referencing the private task snapshot and share its current revision in future prompts")
@@ -171,6 +175,8 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 				e.errf("init: %v", err)
 				return exitFailed
 			}
+			// stdout carries the one JSON object.
+			initRecordNames(e, o, filepath.Join(o.directory, config.FileName), e.stderr)
 		}
 		return printInitJSON(e, o, cfg, goal)
 	}
@@ -230,6 +236,7 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 		return exitFailed
 	}
 	cfgPath := filepath.Join(o.directory, config.FileName)
+	initRecordNames(e, o, cfgPath, e.stdout)
 	if goal != nil {
 		printGoal(e, goal.Summary(), false)
 	}
@@ -1094,5 +1101,30 @@ func readInitLine(ctx context.Context, r *bufio.Reader) (string, error) {
 		return "", ctx.Err()
 	case v := <-done:
 		return v.line, v.err
+	}
+}
+
+// initRecordNames records, once the setup is written, the display name a
+// person gave (--display-name) and the loop this one continues (--succeeds).
+// Failures are warnings: the setup stands, and each can be recorded later.
+func initRecordNames(e env, o initOptions, cfgPath string, tell io.Writer) {
+	if o.displayName != "" {
+		if cfg, err := config.Load(cfgPath); err != nil || state.SaveDisplayName(cfg.Loop.StateDir, o.displayName, state.DisplayNameSet, time.Now()) != nil {
+			e.errf("init: warning: the display name could not be recorded; set it with looptender display-name -c %s", commandQuote(cfgPath))
+		}
+	}
+	if o.succeeds != "" {
+		pred, perr := config.Load(o.succeeds)
+		succ, serr := config.Load(cfgPath)
+		switch {
+		case perr != nil || serr != nil:
+			e.errf("init: warning: the succession was not recorded: a configuration could not be loaded; record it with looptender archive -c OLD --succeeded-by %s", commandQuote(cfgPath))
+		default:
+			if _, err := declareSuccession(pred, succ, "declared", time.Now()); err != nil {
+				e.errf("init: warning: the succession was not recorded: %v", err)
+			} else {
+				fmt.Fprintf(tell, "This loop continues loop %s and is shown by its name; %s is archived after this loop's first completed check.\n", pred.Loop.Name, pred.Loop.Name)
+			}
+		}
 	}
 }

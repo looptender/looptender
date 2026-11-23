@@ -1527,6 +1527,26 @@ func dockMaximalInput(i int) dockInput {
 	return in
 }
 
+// dockMaximalUsageLimit is the longest usage limit a loop can carry, as
+// client status gives it to the dock.
+func dockMaximalUsageLimit(i int, target string) *usageLimitStatus {
+	long := func(prefix string, n int) string {
+		return prefix + strings.Repeat("x", dockMaxText+40-len(prefix)) + fmt.Sprint(n)
+	}
+	// At the longest usage limit a loop can carry: a model's weekly window
+	// with the longest label, an account with the caveat and the longest
+	// quota sentence, and both actions. The other accounts are said once
+	// per read, not here.
+	quotaAt := dockNow.Add(-time.Hour)
+	return (&usageLimitStatus{Target: target, Provider: "claude-code", Window: "weekly_model", WindowKey: strings.Repeat("k", 40), Model: strings.Repeat("m", 30),
+		Words: "weekly limit for " + strings.Repeat("m", 30), ResetsAt: dockNow.Add(100 * time.Hour), ObservedAt: dockNow.Add(-time.Minute),
+		Account: &usageAccount{Handle: strings.Repeat("a", 32), Label: long("example-label-", i), Provider: "claude-code", Match: "supervisor_directory", Caveat: usageSupervisorDirCaveat, SameProvider: true,
+			Quota: strings.Repeat("q", 200), QuotaAt: &quotaAt},
+		OtherAccounts: 63,
+		Actions: []usageAction{{Kind: "login_bb_directory", Text: usageLoginText, Command: "CLAUDE_CONFIG_DIR=/example/path claude auth login", PublicCommand: "CLAUDE_CONFIG_DIR='<BB'\\''s Claude directory>' claude auth login"},
+			{Kind: "arm_takeover", Text: usageArmText("antigravity"), Command: "looptender fallbacks arm -c CONFIG", PublicCommand: "looptender fallbacks arm -c CONFIG"}}}).public()
+}
+
 // The largest registry, with every loop maximal, stays well inside the
 // response bound, with and without identifiers. It measured about 5.5 MB
 // with identifiers and ASCII names (6.2 MB with four-byte ones, below), with
@@ -1536,6 +1556,8 @@ func TestDockMaximalRegistryStaysUnderTheResponseBound(t *testing.T) {
 	inputs := make([]dockInput, dockMaxLoops)
 	for i := range inputs {
 		inputs[i] = dockMaximalInput(i)
+		// Every loop at a usage limit too.
+		inputs[i].Client.Snapshot.UsageLimit = dockMaximalUsageLimit(i, inputs[i].Status.Target)
 	}
 	for _, ids := range []bool{false, true} {
 		r := buildDockReport(inputs, dockNow, time.Minute, defaultStaleAfter, ids, true, 0, true)
@@ -1544,6 +1566,15 @@ func TestDockMaximalRegistryStaysUnderTheResponseBound(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("identifiers %t: %d bytes, %d routes (%d omitted)", ids, len(body), len(r.Routes), r.RoutesOmitted)
+		// The menu reads panel list with a 1 MiB cap.
+		list, err := json.Marshal(buildPanelList(r))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("panel list: %d bytes", len(list))
+		if len(list) > 1<<20/2 || r.Loops[0].UsageLimit == nil {
+			t.Errorf("panel list %d bytes, over half the menu's 1 MiB cap, or no usage limit in the fixture", len(list))
+		}
 		if len(body) > dockMaxResponse*3/4 {
 			t.Errorf("identifiers %t: %d bytes, over three quarters of the %d-byte bound", ids, len(body), dockMaxResponse)
 		}
@@ -1930,9 +1961,25 @@ func TestDockFourByteNamesStayUnderTheResponseBound(t *testing.T) {
 	if got := clip(strings.Repeat("\U0001D4B3", 200), dockMaxText); len(got) > 2*dockMaxText || !strings.HasSuffix(got, "…") || !utf8.ValidString(got) {
 		t.Errorf("%d bytes", len(got))
 	}
+	for _, limited := range []bool{false, true} {
+		dockFourByteReport(t, limited)
+	}
+}
+
+// dockFourByteReport builds the four-byte registry and checks its size.
+// Every loop at a usage limit (limited) is the one case allowed past three
+// quarters, to four fifths: the limit's state, detail and waiting reason
+// add about 0.9 KB a loop, said on the row and in "worth a look", and the
+// maximal four-byte registry had about 2.4 KB of room in all. It stays
+// about 2 MB inside the bound itself.
+func dockFourByteReport(t *testing.T, limited bool) {
+	t.Helper()
 	inputs := make([]dockInput, dockMaxLoops)
 	for i := range inputs {
 		in := dockMaximalInput(i)
+		if limited {
+			in.Client.Snapshot.UsageLimit = dockMaximalUsageLimit(i, in.Status.Target)
+		}
 		wide := func(s string) string { return strings.Repeat("\U0001D4B3", 200) + s }
 		in.Entry.Loop = wide(in.Entry.Loop)
 		for j := range in.Chain.Candidates {
@@ -1950,9 +1997,12 @@ func TestDockFourByteNamesStayUnderTheResponseBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("%d bytes, %d account route lists", len(body), len(r.AccountUses))
-	if len(body) > dockMaxResponse*3/4 {
+	t.Logf("usage limits %t: %d bytes, %d account route lists", limited, len(body), len(r.AccountUses))
+	if limit := dockMaxResponse * 3 / 4; !limited && len(body) > limit {
 		t.Errorf("%d bytes, over three quarters of the %d-byte bound", len(body), dockMaxResponse)
+	}
+	if limit := dockMaxResponse * 4 / 5; limited && len(body) > limit {
+		t.Errorf("every loop at a usage limit: %d bytes, over four fifths of the %d-byte bound", len(body), dockMaxResponse)
 	}
 }
 

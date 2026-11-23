@@ -718,6 +718,8 @@ func panelOutcome(action string, r clientHoldReport) panelResult {
 			why = "Its records could not be read and checked the way a resume requires."
 		case "supervised_session":
 			why = panelSupervisedSession
+		case "archived":
+			why = "The loop is archived. Unarchive it first with looptender unarchive; unarchiving resumes nothing."
 		case "ticket_unavailable":
 			why = "A review could not be prepared."
 		case "cancelled":

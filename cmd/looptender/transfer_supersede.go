@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
@@ -81,6 +82,13 @@ func transferSupersede(e env, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	// The loop on the successor thread, when one is registered, continues
+	// this one: this loop is archived after its first completed check.
+	tell := e
+	if *asJSON {
+		tell.stdout = e.stderr // stdout carries the one JSON object
+	}
+	supersedeSuccession(tell, cfg, *successor, time.Now())
 	if *asJSON {
 		if json.NewEncoder(e.stdout).Encode(struct {
 			Outcome         string `json:"outcome"`

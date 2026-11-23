@@ -28,18 +28,22 @@ type clientStatusReport struct {
 	Snapshot       *clientSnapshot `json:"snapshot,omitempty"`
 }
 type clientSnapshot struct {
-	Loop               string               `json:"loop"`
-	Controls           *clientControls      `json:"controls,omitempty"`
-	ControlState       string               `json:"controlState,omitempty"`
-	CompletionEvidence string               `json:"completionEvidence"`
-	Target             *clientTarget        `json:"target,omitempty"`
-	Runtime            *clientRuntime       `json:"runtime,omitempty"`
-	Moved              *clientMoved         `json:"moved,omitempty"`
-	LastCheck          *clientCheck         `json:"lastCheck,omitempty"`
-	GoalState          string               `json:"goalState"`
-	Goal               *control.GoalSummary `json:"goal,omitempty"`
-	PrivateGoal        *clientGoalDisplay   `json:"privateGoal,omitempty"`
-	Daemon             daemonStatus         `json:"daemon"`
+	Loop               string          `json:"loop"`
+	Controls           *clientControls `json:"controls,omitempty"`
+	ControlState       string          `json:"controlState,omitempty"`
+	CompletionEvidence string          `json:"completionEvidence"`
+	Target             *clientTarget   `json:"target,omitempty"`
+	Runtime            *clientRuntime  `json:"runtime,omitempty"`
+	Moved              *clientMoved    `json:"moved,omitempty"`
+	// UsageLimit is the provider usage limit on the active target
+	// (usageLimitStatus); its commands carry placeholders unless the read is
+	// private.
+	UsageLimit  *usageLimitStatus    `json:"usageLimit,omitempty"`
+	LastCheck   *clientCheck         `json:"lastCheck,omitempty"`
+	GoalState   string               `json:"goalState"`
+	Goal        *control.GoalSummary `json:"goal,omitempty"`
+	PrivateGoal *clientGoalDisplay   `json:"privateGoal,omitempty"`
+	Daemon      daemonStatus         `json:"daemon"`
 	// Freshness is the daemon's build against the installed one, in the
 	// words the dock and the menu use; absent when it does not answer or
 	// reports no build. In every mode: labels only, no path.
@@ -48,6 +52,17 @@ type clientSnapshot struct {
 	// filling or nearly full.
 	DiskSpace         *dockDiskSpace `json:"diskSpace,omitempty"`
 	ExternalScheduler string         `json:"externalScheduler"`
+	// Archived is set while the loop is archived (as in status --json); its
+	// note only with --private. ArchiveLapsed: a record the loop no longer
+	// honours, since it supervises again.
+	Archived      *archiveView `json:"archived,omitempty"`
+	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	// Naming: as in status --json (loop_naming.go); the unmasked thread
+	// title only with --private.
+	Naming *loopNaming `json:"naming,omitempty"`
+	// Lineage is the count of earlier loops of this line of work and the
+	// key of the one it continues; the chain is in status --json.
+	Lineage *listLineage `json:"lineage,omitempty"`
 }
 type clientControls struct {
 	Enabled      bool `json:"enabled"`
@@ -278,6 +293,12 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 		}
 		s.Controls = &clientControls{ctl.Gate().Enabled, ctl.Paused, ctl.Stop, ctl.AwaitingUser, ctl.Completed}
 		s.ControlState = ctl.Summary()
+		s.Archived, s.ArchiveLapsed = loopArchive(entry.StateDir, ctl)
+		for _, a := range []*archiveView{s.Archived, s.ArchiveLapsed} {
+			if a != nil && !private {
+				a.Note = ""
+			}
+		}
 	}
 	var st state.File
 	stateOK := readTransferRecord(entry.StateDir, state.FileName, &st) == nil
@@ -314,6 +335,16 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 		if !configured {
 			issue("target_unavailable")
 		}
+		thread := ""
+		if s.Target != nil {
+			thread = s.Target.BBThread
+		}
+		n := namingOf(cfg.Loop, thread)
+		if !private {
+			n = n.withoutPrivate()
+		}
+		s.Naming = &n
+		s.Lineage = listLineageOf(lineageOf(entry.StateDir))
 		if controlOK {
 			in, _, err := window.Inside(cfg.Loop.Window, now)
 			if err != nil {
@@ -327,6 +358,13 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 		}
 		if m := movedOf(ctl, st); controlOK && m != nil {
 			s.Moved = &clientMoved{Held: m.Held, Text: m.Text}
+		}
+		ul, _ := state.LoadUsageLimit(entry.StateDir)
+		if u := describeUsageLimit(ul, cfg, loopHeld(ctl, !controlOK), now); u != nil {
+			if !private {
+				u = u.public()
+			}
+			s.UsageLimit = u
 		}
 		if c := st.LastCheck; c != nil {
 			s.LastCheck = &clientCheck{At: clientTime(c.At), Target: clientAlias(cfg, c.Target), Action: clientToken(c.Action, "none", "wake", "nudge", "reprompt", "await_user", "stop", "handoff", "switch_back"), Outcome: clientToken(c.Outcome, "succeeded", "failed", "dry_run"), DryRun: c.DryRun}

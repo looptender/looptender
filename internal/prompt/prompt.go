@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
@@ -115,6 +116,20 @@ func WithChildErrorsRetried(m Message, n, retried int) Message {
 		"keepgoing notice: %d direct child thread(s) of this thread were in an error state at this check. "+
 		"%s "+
 		"This notice is sent once when a child newly enters an error state.\n", n, retried, n, retriedSentence(n, retried))
+	return m
+}
+
+// WithLimitedLanes adds to a child-error notice how many of the errored
+// children are at a provider usage limit, which window, and until when.
+// Fixed wording, counts only: one line for all of them.
+func WithLimitedLanes(m Message, n int, until time.Time, window string) Message {
+	if n <= 0 || until.IsZero() {
+		return m
+	}
+	at := until.UTC().Format(time.RFC3339)
+	m.Text += fmt.Sprintf("[keepgoing:lanes-limited count=%d resets=%s]\n"+
+		"looptender notice: %d of them are at a provider usage limit (%s) until %s, and cannot run before it on the account they use. "+
+		"looptender has not retried, messaged or stopped them. looptender status names the account and what can be done about it.\n", n, at, n, window, at)
 	return m
 }
 
