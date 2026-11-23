@@ -13,7 +13,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
-import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, noteSaysRetired, shortNote } from "./status-details";
+import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, archivedLine, shortNote } from "./status-details";
 import { SetupPanel } from "./setup-panel";
 import { SetupStyles } from "./setup-style";
 import { AttachPanel } from "./attach-panel";
@@ -80,6 +80,7 @@ function label(loop: LoopView): string {
 function stateLabel(loop: LoopView): string {
   // status exits 1 and says which record it could not read; the control state beside it cannot be trusted.
   if (recordsUnreadable(loop.details)) return "looptender: records unreadable";
+  if (loop.details?.archived) return "looptender: archived";
   if (loop.imported && loop.controlState === "enabled" && ((loop.details?.failedChecks ?? 0) > 0 || ["failed", "error"].includes(loop.details?.lastCheck?.outcome ?? ""))) return "looptender: checks failing";
   if (loop.imported && loop.controlState === "enabled" && !loop.details?.lastCheck) return "looptender: no check recorded";
   if (loop.controlState === "enabled" && loop.details?.schedule?.overdue) return "looptender: checks have stopped";
@@ -95,12 +96,12 @@ function describe(loop: LoopView): string[] {
     `Loop ${loop.loop}`,
     loop.referenceSource === "plugin_setting" ? "Reference: plugin setting; CLI menu registration checked separately" : loop.referenceSource === "registry_attachment" ? "Reference: explicitly attached from CLI registry" : loop.referenceSource === "plugin_setup" ? "Reference: saved BB setup" : "Reference source: unavailable",
     loop.publication?.state === "registered" ? "Last explicit CLI menu publication: registered; current health checked separately" : loop.referenceSource === "plugin_setup" ? "CLI menu publication: unverified; use explicit registry reconcile on the host" : null,
-    ...diagnosticLines(loop.details, loop.target, loop.supervising),
+    // One Build line: status's, with looptender's freshness detail joined to it.
+    ...diagnosticLines(loop.details, loop.target, loop.supervising).map(l => l.startsWith("Build: ") && freshnessToShow(loop.details)?.detail ? `${l} · ${freshnessToShow(loop.details)!.detail}` : l),
     // Which build is which: the supervisor's (above) and the plugin's own code.
     ...(loop.pluginBuild && loop.details?.runtime?.installedBuild && !sameBuild(loop.pluginBuild, loop.details.runtime.installedBuild) ? [`Plugin build: ${loop.pluginBuild} (the code drawing this card); the builds above are each supervisor's, read from looptender status`] : []),
-    ...(() => { const f = freshnessToShow(loop.details); return f?.detail ? [`Build: ${f.detail}`] : []; })(),
     // The word bb keepgoing status prints as last=, beside the recorded action it does not mean.
-    `Last check state: ${lastLabel(loop.lastState, loop.details)} (as in bb keepgoing status)`,
+    `Last check state: ${lastLabel(loop.lastState, loop.details)} (the listing's last= field)`,
     loop.note ? `Note: ${loop.note}` : null,
     loop.details?.schedule?.overdue ? `Needs you: ${loop.details.schedule.message ?? "no check has run for longer than usual"}` : null,
     dateLabel(loop.lastWakeAt) !== "unavailable" ? `Last sent ${dateLabel(loop.lastWakeAt)}` : "Last sent: unavailable",
@@ -128,7 +129,7 @@ const actionsStyle = { display: "flex", gap: 8, flexWrap: "wrap" } as const;
 
 // A loop a person can resume: held in any way but superseded, and its records readable.
 function needsResume(loop: LoopView): boolean {
-  if (loop.controlState === "enabled" || loop.controlState === "superseded" || recordsUnreadable(loop.details) || noteSaysRetired(loop)) return false;
+  if (loop.controlState === "enabled" || loop.controlState === "superseded" || recordsUnreadable(loop.details) || loop.details?.archived) return false;
   return !(loop.managedId && ["disabled", "move requires inspection"].includes(loop.controlState));
 }
 const RESUME_SHARED = "A person resumes a held loop from an ordinary terminal, or from the looptender panel started there. Each held loop's own command is under its name.";
@@ -137,7 +138,7 @@ const RESUME_SHARED = "A person resumes a held loop from an ordinary terminal, o
  *  and readable text wherever the pointer is a finger or the screen is narrow. */
 const PHONE = "(max-width: 640px), (pointer: coarse)";
 const STYLE = [
-  "button[data-kg]:focus-visible, summary[data-kg]:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }",
+  "button[data-kg]:focus-visible, summary[data-kg]:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }",
   `@media ${PHONE} {`,
   "  button[data-kg]:not(.kgs-chip) { min-height: 44px !important; min-width: 44px; box-sizing: border-box; display: inline-flex !important; align-items: center; font-size: 14px !important; line-height: 20px !important; padding: 0 14px !important; }",
   "  summary[data-kg] { display: list-item !important; min-height: 44px; box-sizing: border-box; padding: 12px 0; font-size: 14px !important; line-height: 20px !important; cursor: pointer; }",
@@ -202,11 +203,12 @@ function ToggleButton({ loop, threadId, onDone, compactResume = false }: { loop:
 // same state. A superseded loop is never resumed: its successor continues.
 const wrap = { minWidth: 0, overflowWrap: "anywhere" } as const;
 function ResumeNote({ loop, compact }: { loop: LoopView; compact: boolean }) {
+  // An archived loop is not resumed: looptender says so, and a person unarchives it first.
+  if (loop.details?.archived) return <span>{archivedLine(loop.details.archived)}.</span>;
   if (loop.controlState === "superseded") {
     const successor = loop.details?.supersededBy;
     return <span className="kg-t" style={wrap}>Resume is refused for a superseded loop; its successor continues the work{successor ? ` (${successor})` : ""}.</span>;
   }
-  if (noteSaysRetired(loop)) return <span className="kg-t" style={wrap}>Its note says it is retired or not to be resumed, so no resume command is shown here. A person who decides otherwise resumes it from the looptender panel or the command line.</span>;
   // With several held loops the sentence is said once for the card; each loop keeps only its command.
   if (compact) return <details style={wrap}><summary {...kg}>Command to resume (run in a terminal)</summary><code>looptender resume -c {JSON.stringify(loop.configPath)}</code></details>;
   return <span className="kg-t" style={wrap}>A person resumes this from an ordinary terminal: <code>looptender resume -c {JSON.stringify(loop.configPath)}</code>, or the looptender panel started there.</span>;

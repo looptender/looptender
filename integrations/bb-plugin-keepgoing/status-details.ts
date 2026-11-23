@@ -83,6 +83,8 @@ export const detailsSchema = z.object({
   noProgress: z.object({ text: z.string().max(400) }).optional(),
   // status --json buildFreshness (looptender's own words, shared with the dock and the menu): how this
   // loop's supervisor build compares with the installed one. Absent from a looptender that does not send it.
+  // status --json archived (from a looptender that can archive a loop): when, and the hold it had. Absent otherwise.
+  archived: z.object({ at: z.string().max(40), note: z.string().max(300).optional(), hold: z.string().max(40).optional(), unreadable: z.boolean().optional() }).optional(),
   buildFreshness: z.object({ state: z.string().max(24), text: z.string().max(200), detail: z.string().max(600).optional(), command: z.string().max(400).optional(), action: z.string().max(300).optional() }).optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
@@ -171,10 +173,8 @@ const resetAfterDeadline = (d: StatusDetails | undefined): boolean => {
 /** The send allowance as status prints it: `used/max attempts reserved; N remaining`. */
 const sendsText = (s: NonNullable<StatusDetails["sends"]>) => s.unavailable || s.used === undefined || s.remaining === undefined ? `${s.max} allowed; the count is unavailable` : `${s.used}/${s.max} attempts reserved; ${s.remaining} remaining`;
 
-// A held loop whose own note says it is retired or not to be resumed. Deliberately narrow: only an
-// awaiting-user hold, and only those words in the note; every other held loop keeps its command.
-export const noteSaysRetired = (loop: { controlState: string; note: string | null }): boolean =>
-  loop.controlState === "awaiting user" && !!loop.note && /\b(retired|do not resume|don't resume|not to be resumed)\b/i.test(loop.note);
+/** "Archived since <date> · unarchive to use it again", as looptender words an archived loop: no resume applies. */
+export const archivedLine = (a: NonNullable<StatusDetails["archived"]>): string => `Archived since ${dateLabel(a.at)} · unarchive to use it again`;
 
 /** What status calls a hold, in the sentence it puts after a no-progress flag recorded before the hold. */
 const HELD_WORD: Record<string, string> = { "stop requested": "stopped", completed: "completed", "awaiting user": "awaiting a person", paused: "paused", disabled: "disabled" };
@@ -238,6 +238,7 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
     `Build: ${buildSummary(d.runtime).text}${d.runtime?.installedBuild && !buildSummary(d.runtime).differs ? ` · installed ${d.runtime.installedBuild}` : ""}`,
     ...(d.targetProvider ? [`Provider: ${d.targetProvider}${d.targetModel ? ` · model ${d.targetModel}` : ""} (configured)`] : []),
     ...(d.moved ? [`Moved: ${d.moved.text}`] : []),
+    ...(d.archived ? [archivedLine(d.archived)] : []),
     // The words `looptender status` prints, with the successor when it names one.
     ...(d.supersededBy !== undefined ? [`Superseded: successor reference is recorded${d.supersededBy ? ` (${d.supersededBy})` : ""}; resume and takeover are refused`] : []),
     d.runtime ? `Check evidence: ${d.runtime.state} · ${d.runtime.freshness} · source ${d.runtime.source}` : "Check evidence: unavailable from this build",
