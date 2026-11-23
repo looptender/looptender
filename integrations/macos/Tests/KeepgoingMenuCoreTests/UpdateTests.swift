@@ -51,7 +51,7 @@ final class UpdateTests: XCTestCase {
         XCTAssertTrue(u.beginAttempt(next))
         // A postponed attempt leaves no "updated" claim behind.
         u.postponeAttempt(next)
-        XCTAssertNil(MenuUpdater(running: next, store: store).updatedNotice())
+        XCTAssertNil(MenuUpdater(running: next, store: store).pendingUpdate())
     }
 
     func testAPathRewrittenInPlaceCannotGiveUnlimitedAttempts() {
@@ -108,9 +108,11 @@ final class UpdateTests: XCTestCase {
         XCTAssertNil(store.values["updateNotifiedBuild"], "no 'available' was said")
         // The new menu is the build that was installed.
         let fresh = MenuUpdater(running: next, store: store)
-        XCTAssertEqual(fresh.updatedNotice(), "looptender menu updated to bbb")
-        XCTAssertNil(fresh.updatedNotice(), "once")
-        XCTAssertNil(MenuUpdater(running: next, store: store).updatedNotice(), "and not after another start")
+        XCTAssertEqual(fresh.pendingUpdate()?.text, "looptender menu updated to bbb")
+        XCTAssertEqual(fresh.pendingUpdate()?.text, "looptender menu updated to bbb", "not used up until it is finished")
+        fresh.finishUpdate()
+        XCTAssertNil(fresh.pendingUpdate(), "once")
+        XCTAssertNil(MenuUpdater(running: next, store: store).pendingUpdate(), "and not after another start")
     }
 
     func testAFailedAutomaticAttemptOrARequestedOneNeverClaimsToHaveUpdated() {
@@ -118,11 +120,11 @@ final class UpdateTests: XCTestCase {
         let u = updater(store)
         XCTAssertTrue(u.beginAttempt(next))
         u.attemptFailed(RelaunchFailure("x"))
-        XCTAssertNil(MenuUpdater(running: next, store: store).updatedNotice())
+        XCTAssertNil(MenuUpdater(running: next, store: store).pendingUpdate())
         let manual = MemoryStore()
         let m = MenuUpdater(running: running, store: manual)
         m.relaunchByRequest(installed: next)
-        XCTAssertNil(MenuUpdater(running: next, store: manual).updatedNotice())
+        XCTAssertNil(MenuUpdater(running: next, store: manual).pendingUpdate())
     }
 
     func testNoticeWords() {
