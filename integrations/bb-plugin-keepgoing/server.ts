@@ -4,7 +4,6 @@
 import { publicationSchema } from "./registry-contract.ts";
 import { BUILD_LABEL } from "./build-label.ts";
 import { recordsUnreadable, isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
-import { execFile } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract } from "./host-contract.ts";
@@ -18,6 +17,7 @@ import { attachInput, attachResult } from "./attach-contract.ts";
 import { createAttachController } from "./attach-controller.ts";
 import { randomUUID } from "node:crypto";
 import { withClientFlag } from "./client-flag.ts";
+import { configuredProgram, execProgram } from "./executable.ts";
 
 /** The subset of `keepgoing status --json` this plugin reads. */
 const agentRef = z.object({ adapter: z.string(), bbThread: z.string().optional(), provider: z.string().optional(), model: z.string().optional() });
@@ -158,26 +158,28 @@ export const rpcContract = defineRpcContract({
 const CHANGED = "changed";
 
 function run(bin: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
-  return new Promise((resolve) => {
-    execFile(bin, args, { timeout: 15_000, maxBuffer: 1 << 20 }, (error, stdout, stderr) => {
-      const e = error as { code?: unknown; killed?: boolean; signal?: unknown } | null;
-      const timedOut = !!e && e.killed === true;
-      const code = e ? (typeof e.code === "number" ? e.code : 1) : 0;
-      resolve({ code, stdout: String(stdout), stderr: String(stderr), timedOut });
-    });
+  return execProgram(bin, args, { timeout: 15_000, maxBuffer: 1 << 20 }).then(({ error, stdout, stderr }) => {
+    const timedOut = !!error && error.killed === true;
+    const code = error ? (typeof error.code === "number" ? error.code : 1) : 0;
+    return { code, stdout, stderr, timedOut };
   });
 }
 
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
+    looptenderPath: {
+      type: "string",
+      label: "looptender binary",
+      description: "Absolute path to the looptender executable. Empty: looptender on the BB server's PATH. A bare name is looked up on that PATH.",
+      default: "",
+    },
+    // The setting's earlier key. A value saved under it before is still used
+    // while the one above is empty.
     keepgoingPath: {
       type: "string",
-      // The key and the default keep the tool's earlier name: the key is
-      // stored with the setting, and releases up to v0.2.0 install the
-      // executable as keepgoing.
-      label: "looptender binary",
-      description: "Absolute path to the looptender executable, which releases up to v0.2.0 install as keepgoing. A bare name is looked up on the BB server's PATH.",
-      default: "keepgoing",
+      label: "looptender binary (earlier setting)",
+      description: "Used only while the setting above is empty. Leave it empty.",
+      default: "",
     },
     configs: {
       type: "string",
@@ -197,12 +199,13 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   const configured = async () => {
-    const { keepgoingPath, configs } = await settings.get();
+    const values = await settings.get();
+    const { configs } = values;
     const paths = configs
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line !== "" && !line.startsWith("#"));
-    return { bin: keepgoingPath.trim() || "keepgoing", paths };
+    return { bin: configuredProgram(values), paths };
   };
 
   // Serialize setup, moves and resume across clients. Restrictive pause/stop
@@ -331,7 +334,7 @@ export default async function plugin(bb: BbPluginApi) {
   // Control only registered loops: the path comes from the browser,
   // so it must never choose an arbitrary config file.
   const control = async (configPath: string, action: z.infer<typeof actionSchema>, managedId?: string, expectedThreadId?: string) => {
-    // A Resume click, an agent's `bb plugin rpc call` and `bb keepgoing
+    // A Resume click, an agent's `bb plugin rpc call` and `bb looptender
     // resume` all reach this plugin the same way, so it cannot tell a person
     // from the session the loop supervises. Supervision never clears its own
     // hold: the plugin never resumes and says where a person can.
@@ -434,7 +437,7 @@ export default async function plugin(bb: BbPluginApi) {
       if (!hookAvailable) return "This version of BB does not offer the hook Add to Looptender needs on the New thread screen to learn which thread a message created, so it is unavailable here. Add to Looptender still works on an existing thread.";
       const { bin } = await configured();
       const result = await run(bin, ["version"]);
-      return result.code === 0 ? null : "The looptender program (installed as keepgoing up to v0.2.0) was not found or did not run. Install it, or set its path in this plugin's settings, then check again.";
+      return result.code === 0 ? null : "The looptender program was not found or did not run. Install it, or set its path in this plugin's settings, then check again.";
     },
     ready: async threadId => {
       try {
@@ -498,13 +501,13 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.cli.register({
-    name: "keepgoing",
+    name: "looptender",
     summary: "Show and control the looptender loops this plugin is configured for",
     commands: [
-      { name: "status", summary: "List configured loops with their control state and target", usage: "bb keepgoing status" },
-      { name: "pause", summary: "Pause a loop by name", usage: "bb keepgoing pause <loop>" },
-      { name: "resume", summary: "Refused: says where a person resumes the loop", usage: "bb keepgoing resume <loop>" },
-      { name: "stop", summary: "Stop a loop's running session by name", usage: "bb keepgoing stop <loop>" },
+      { name: "status", summary: "List configured loops with their control state and target", usage: "bb looptender status" },
+      { name: "pause", summary: "Pause a loop by name", usage: "bb looptender pause <loop>" },
+      { name: "resume", summary: "Refused: says where a person resumes the loop", usage: "bb looptender resume <loop>" },
+      { name: "stop", summary: "Stop a loop's running session by name", usage: "bb looptender stop <loop>" },
     ],
     async run(argv) {
       const [command, name, ...rest] = argv;
@@ -529,7 +532,7 @@ export default async function plugin(bb: BbPluginApi) {
         return { exitCode: errors.length > 0 ? 1 : 0, stdout: `${lines.join("\n")}\n${notShown ? `${notShown}\n` : ""}${built}\nReferences: explicit plugin settings and saved host references; CLI registry/menu coverage is separate. This is not a complete process inventory.\n`, stderr: errors.join("\n") };
       }
       const parsed = actionSchema.safeParse(command);
-      if (!parsed.success || !name || rest.length > 0) return { exitCode: 2, stderr: "Usage: bb keepgoing status | pause <loop> | resume <loop> | stop <loop>" };
+      if (!parsed.success || !name || rest.length > 0) return { exitCode: 2, stderr: "Usage: bb looptender status | pause <loop> | resume <loop> | stop <loop>" };
       const { loops } = await allLoops(null);
       const matches = loops.filter((l) => l.loop === name);
       if (matches.length > 1) return { exitCode: 1, stderr: "That loop name is ambiguous across hosts/configs; use the thread's controls or the CLI on its host." };

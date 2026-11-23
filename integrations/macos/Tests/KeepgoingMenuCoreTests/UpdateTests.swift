@@ -51,7 +51,7 @@ final class UpdateTests: XCTestCase {
         XCTAssertTrue(u.beginAttempt(next))
         // A postponed attempt leaves no "updated" claim behind.
         u.postponeAttempt(next)
-        XCTAssertNil(MenuUpdater(running: next, store: store).updatedNotice())
+        XCTAssertNil(MenuUpdater(running: next, store: store).pendingUpdate())
     }
 
     func testAPathRewrittenInPlaceCannotGiveUnlimitedAttempts() {
@@ -108,9 +108,11 @@ final class UpdateTests: XCTestCase {
         XCTAssertNil(store.values["updateNotifiedBuild"], "no 'available' was said")
         // The new menu is the build that was installed.
         let fresh = MenuUpdater(running: next, store: store)
-        XCTAssertEqual(fresh.updatedNotice(), "looptender menu updated to bbb")
-        XCTAssertNil(fresh.updatedNotice(), "once")
-        XCTAssertNil(MenuUpdater(running: next, store: store).updatedNotice(), "and not after another start")
+        XCTAssertEqual(fresh.pendingUpdate()?.text, "looptender menu updated to bbb")
+        XCTAssertEqual(fresh.pendingUpdate()?.text, "looptender menu updated to bbb", "not used up until it is finished")
+        fresh.finishUpdate()
+        XCTAssertNil(fresh.pendingUpdate(), "once")
+        XCTAssertNil(MenuUpdater(running: next, store: store).pendingUpdate(), "and not after another start")
     }
 
     func testAFailedAutomaticAttemptOrARequestedOneNeverClaimsToHaveUpdated() {
@@ -118,11 +120,11 @@ final class UpdateTests: XCTestCase {
         let u = updater(store)
         XCTAssertTrue(u.beginAttempt(next))
         u.attemptFailed(RelaunchFailure("x"))
-        XCTAssertNil(MenuUpdater(running: next, store: store).updatedNotice())
+        XCTAssertNil(MenuUpdater(running: next, store: store).pendingUpdate())
         let manual = MemoryStore()
         let m = MenuUpdater(running: running, store: manual)
         m.relaunchByRequest(installed: next)
-        XCTAssertNil(MenuUpdater(running: next, store: manual).updatedNotice())
+        XCTAssertNil(MenuUpdater(running: next, store: manual).pendingUpdate())
     }
 
     func testNoticeWords() {
@@ -192,6 +194,66 @@ final class UpdateTests: XCTestCase {
             XCTAssertEqual(InstalledBuild.state(launchPath: launch, running: me), .noMenu(label: "bbb222"))
             try makeBuild(root, "bbb222")
             if case .newer(let found) = InstalledBuild.state(launchPath: launch, running: me) { XCTAssertEqual(found.label, "bbb222") } else { XCTFail("should be newer") }
+        }
+    }
+
+    /// A build laid out as make-app.sh and the install lay it out: the app
+    /// under `app`, its program under `program`, and, for the current name,
+    /// the links that let a menu of an earlier build find it.
+    func makeAppBuild(_ root: URL, _ id: String, app: String, program: String, earlierLinks: Bool = false, contents: String = "x") throws {
+        let macos = root.appendingPathComponent("builds/\(id)/\(app)/Contents/MacOS")
+        try FileManager.default.createDirectory(at: macos, withIntermediateDirectories: true)
+        let file = macos.appendingPathComponent(program)
+        try contents.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        let plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>local.keepgoing.menu-preview</string><key>CFBundleExecutable</key><string>\(program)</string></dict></plist>"
+        try plist.write(to: macos.deletingLastPathComponent().appendingPathComponent("Info.plist"), atomically: true, encoding: .utf8)
+        if earlierLinks {
+            try FileManager.default.createSymbolicLink(atPath: macos.appendingPathComponent("KeepgoingMenu").path, withDestinationPath: program)
+            try FileManager.default.createSymbolicLink(atPath: root.appendingPathComponent("builds/\(id)/KeepgoingMenu.app").path, withDestinationPath: app)
+        }
+    }
+
+    func pointCurrent(_ root: URL, at id: String) throws {
+        let link = root.appendingPathComponent("current")
+        try? FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "builds/" + id)
+    }
+
+    func testAMenuOfEitherNameFindsABuildWhoseAppHasTheOtherName() throws {
+        try withInstall { root in
+            // An earlier build's menu, launched from the build directory, and
+            // an install that moves on to a build of the current name.
+            try makeAppBuild(root, "aaa111", app: "KeepgoingMenu.app", program: "KeepgoingMenu")
+            try makeAppBuild(root, "bbb222", app: "LooptenderMenu.app", program: "LooptenderMenu", contents: "yy")
+            try pointCurrent(root, at: "aaa111")
+            let earlier = try XCTUnwrap(InstalledBuild.identity(of: root.appendingPathComponent("builds/aaa111/KeepgoingMenu.app/Contents/MacOS/KeepgoingMenu").path))
+            XCTAssertNil(InstalledBuild.current(launchPath: earlier.path, running: earlier))
+            try pointCurrent(root, at: "bbb222")
+            let found = try XCTUnwrap(InstalledBuild.current(launchPath: earlier.path, running: earlier))
+            XCTAssertEqual(found.label, "bbb222")
+            XCTAssertTrue(found.path.hasSuffix("/LooptenderMenu.app/Contents/MacOS/LooptenderMenu"))
+            if case .newer = InstalledBuild.state(launchPath: earlier.path, running: earlier) {} else { XCTFail("should be newer, not a build without a menu") }
+            // And back: a current-name menu finds a build that has only the earlier name.
+            try pointCurrent(root, at: "aaa111")
+            let current = try XCTUnwrap(InstalledBuild.identity(of: root.appendingPathComponent("builds/bbb222/LooptenderMenu.app/Contents/MacOS/LooptenderMenu").path))
+            XCTAssertEqual(InstalledBuild.current(launchPath: current.path, running: current)?.label, "aaa111")
+        }
+    }
+
+    /// What a menu of an earlier build looks for, it finds in a build of the
+    /// current name through the links beside and inside the app: a program
+    /// that runs, whose Info.plist names it and whose bundle identifier is
+    /// unchanged, so its relaunch checks pass.
+    func testAnEarlierMenuFindsAndAcceptsABuildOfTheCurrentName() throws {
+        try withInstall { root in
+            try makeAppBuild(root, "aaa111", app: "KeepgoingMenu.app", program: "KeepgoingMenu")
+            try makeAppBuild(root, "bbb222", app: "LooptenderMenu.app", program: "LooptenderMenu", earlierLinks: true, contents: "yy")
+            try pointCurrent(root, at: "bbb222")
+            let seen = try XCTUnwrap(InstalledBuild.identity(of: root.appendingPathComponent("current/KeepgoingMenu.app/Contents/MacOS/KeepgoingMenu").path))
+            XCTAssertTrue(seen.path.hasSuffix("builds/bbb222/LooptenderMenu.app/Contents/MacOS/LooptenderMenu"), seen.path)
+            let running = root.appendingPathComponent("builds/aaa111/KeepgoingMenu.app/Contents/MacOS/KeepgoingMenu").path
+            XCTAssertNil(RelaunchCheck.verify(seen, runningPath: running, verifySignature: { _ in nil }))
         }
     }
 

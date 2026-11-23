@@ -25,7 +25,7 @@ Adding the same config/name/runtime binding again returns its existing ID withou
 
 ## Bound BB publication and repair (unreleased source)
 
-BB plugin settings, saved host-bound setups and the CLI registry are distinct reference sets. The native menu and looptender panel read the CLI registry; `bb keepgoing status` reads the plugin's explicit references. Neither discovers all configurations, processes or schedulers. A missing entry can therefore be a reference-coverage gap even when supervision exists. Status reads do not repair either set. The plugin reports reference provenance and the last explicit publication outcome separately from check/daemon evidence.
+BB plugin settings, saved host-bound setups and the CLI registry are distinct reference sets. The native menu and looptender panel read the CLI registry; `bb looptender status` reads the plugin's explicit references. Neither discovers all configurations, processes or schedulers. A missing entry can therefore be a reference-coverage gap even when supervision exists. Status reads do not repair either set. The plugin reports reference provenance and the last explicit publication outcome separately from check/daemon evidence.
 
 After a confirmed plugin setup, start, or supported transfer/recovery, the rebuilt plugin explicitly previews and publishes the reference on the verified target host. Preview/diagnostics, status/page reads, failed or unconfirmed operations and attachment lookups never publish. Attachment already selects an existing CLI reference. Ordinary CLI init/start/transfer commands retain their current behavior; use explicit repair for configurations created or moved outside the plugin. No filesystem discovery or pruning is added.
 

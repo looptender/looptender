@@ -22,18 +22,8 @@ const (
 // versionOnePrompt is a prompt file as the first setup wrote it.
 func versionOnePrompt(t *testing.T) string {
 	t.Helper()
-	text := prompt.GeneratedPrompt(`'/fictional/bin/looptender'`, `'/fictional/loop/looptender.yaml'`, fictionalTaskText)
-	m, ok := prompt.MatchPolicy(text)
-	if !ok {
-		t.Fatal("current prompt not recognised")
-	}
-	// Remove the paragraphs later versions added, giving version 1.
-	for _, p := range []string{"At the start of substantial work", "After a phase finishes", currentOnlyPolicy} {
-		i := strings.Index(text, p)
-		j := strings.Index(text[i:], "\n\n")
-		text = text[:i] + text[i+j+2:]
-	}
-	if v, ok := prompt.MatchPolicy(text); !ok || v.Version != 1 || v.Task != m.Task {
+	text := prompt.GeneratedPromptVersion(1, `'/fictional/bin/looptender'`, `'/fictional/loop/looptender.yaml'`, fictionalTaskText)
+	if v, ok := prompt.MatchPolicy(text); !ok || v.Version != 1 || v.Task != fictionalTaskText || strings.Contains(text, currentOnlyPolicy) {
 		t.Fatalf("not version 1: %+v %v", v, ok)
 	}
 	return text

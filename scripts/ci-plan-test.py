@@ -17,7 +17,59 @@ NEVER = lambda: None
 
 class PlanTests(unittest.TestCase):
     def test_draft_pull_request_skips_macos_only(self):
-        self.assertEqual(plan.plan('pull_request', 'true', NEVER)[:2], (plan.UBUNTU_ONLY, False))
+        for files in (['cmd/looptender/main.go'], ['docs/testing.md', 'scripts/ci-plan.py'], ['integrationsmacos/x.swift'],
+                      ['integrations/bb-plugin-keepgoing/a.ts'], ['notintegrations/macos/x.swift']):
+            with self.subTest(files=files):
+                got = plan.plan('pull_request', 'true', NEVER, lambda: files)
+                self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.UBUNTU_ONLY))
+
+    def test_draft_that_changes_the_swift_menu_runs_other_checks_on_macos_but_not_the_race_partitions(self):
+        for files in (['integrations/macos/Sources/KeepgoingMenu/App.swift'],
+                      ['cmd/looptender/main.go', 'integrations/macos/Package.swift'],
+                      ['integrations/macos/scripts/smoke-contract.py', 'README.md']):
+            with self.subTest(files=files):
+                got = plan.plan('pull_request', 'true', NEVER, lambda: files)
+                self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.FULL))
+                self.assertIn('integrations/macos/', got[2])
+
+    def test_a_draft_whose_files_are_unknown_empty_or_too_many_runs_everything(self):
+        def broken():
+            raise OSError('api down')
+        for files in (broken, lambda: [], lambda: ['a.go'] * plan.FILE_LIST_LIMIT, None):
+            with self.subTest(files=files):
+                got = plan.plan('pull_request', 'true', NEVER, files)
+                self.assertEqual((got[0], got[1], got[3]), (plan.FULL, False, plan.FULL))
+
+    def test_only_a_draft_reads_the_file_list(self):
+        def trap():
+            raise AssertionError('listed files for a run that does not need them')
+        for event, draft in [('pull_request', 'false'), ('merge_group', ''), ('push', '')]:
+            plan.plan(event, draft, lambda: None, trap)
+
+    def test_an_error_body_or_odd_shape_is_doubt_never_a_list_of_names(self):
+        import json, os
+        for body in ({'message': 'Bad credentials', 'filename': 'integrations/macos/x.swift'}, [{'message': 'Not Found'}],
+                     [{'filename': 5}], ['x'], 'text', None, [{}], [[{'filename': 'a'}], {'filename': 'b'}]):
+            with self.subTest(body=body):
+                os.environ['CI_PLAN_FILES_JSON'] = json.dumps(body)
+                try:
+                    with self.assertRaises(ValueError):
+                        plan.pull_request_files('o/r', 1)
+                    # And a draft whose list raises runs everything.
+                    def listed():
+                        return plan.pull_request_files('o/r', 1)
+                    got = plan.plan('pull_request', 'true', NEVER, listed)
+                    self.assertEqual((got[0], got[3]), (plan.FULL, plan.FULL))
+                finally:
+                    del os.environ['CI_PLAN_FILES_JSON']
+
+    def test_file_list_from_the_api_includes_renames_and_pages(self):
+        import json, os
+        os.environ['CI_PLAN_FILES_JSON'] = json.dumps([[{'filename': 'a.go'}, {'filename': 'integrations/macos/B.swift', 'previous_filename': 'integrations/macos/A.swift'}], [{'filename': 'c.md'}]])
+        try:
+            self.assertEqual(plan.pull_request_files('o/r', 1), ['a.go', 'integrations/macos/B.swift', 'integrations/macos/A.swift', 'c.md'])
+        finally:
+            del os.environ['CI_PLAN_FILES_JSON']
 
     def test_everything_else_runs_everything(self):
         for event, draft in [('pull_request', 'false'), ('pull_request', ''), ('merge_group', ''), ('merge_group', 'true'),
@@ -60,7 +112,8 @@ class OutputTests(unittest.TestCase):
         import contextlib, io, os, tempfile
         with tempfile.TemporaryDirectory() as temp:
             out = Path(temp) / 'output'
-            env = {'EVENT': 'pull_request', 'DRAFT': 'true', 'GITHUB_OUTPUT': str(out)}
+            env = {'EVENT': 'pull_request', 'DRAFT': 'true', 'GITHUB_OUTPUT': str(out), 'REPO': 'o/r', 'PR': '1',
+                   'CI_PLAN_FILES_JSON': '[["main.go"]]'}
             captured = io.StringIO()
             old = dict(os.environ)
             os.environ.update(env)
@@ -70,7 +123,7 @@ class OutputTests(unittest.TestCase):
             finally:
                 os.environ.clear(); os.environ.update(old)
             lines = out.read_text().splitlines()
-            self.assertEqual(lines, ['os=["ubuntu-24.04"]', 'duplicate=false'])
+            self.assertEqual(lines, ['os=["ubuntu-24.04"]', 'checks_os=["ubuntu-24.04"]', 'duplicate=false'])
             # Every line of a file GitHub reads must be name=value; stdout is a sentence.
             self.assertNotIn('=', captured.getvalue().split(':')[0])
             self.assertTrue(all('=' in l for l in lines))
