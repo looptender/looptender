@@ -186,8 +186,16 @@ func reportNotices(loops []dockLoop, needs []dockNeed, now time.Time) []panelNot
 		}
 		return out[i].Since.After(out[j].Since)
 	})
+	if len(out) > maxNotices {
+		out = out[:maxNotices]
+	}
 	return out
 }
+
+// maxNotices bounds the list: a registry of a thousand loops all stopped by
+// one limit is told as the newest few and their group, and the loops list
+// itself says the rest.
+const maxNotices = 40
 
 // noticeGroupSentence is the sentence for n notices of one group.
 func noticeGroupSentence(groupText string, n int) string {

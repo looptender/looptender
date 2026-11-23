@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -153,5 +154,18 @@ func TestPanelListCarriesNoticesAlwaysAsAList(t *testing.T) {
 	b, _ := json.Marshal(buildPanelList(dockReport{ReadAt: noticeNow}))
 	if !strings.Contains(string(b), `"notices":[]`) {
 		t.Errorf("%s", b)
+	}
+}
+
+func TestNoticesAreBounded(t *testing.T) {
+	var loops []dockLoop
+	for i := 0; i < 500; i++ {
+		l := noticeLoop(fmt.Sprintf("l%d", i), fmt.Sprintf("example-%d", i))
+		l.Supervisor = "not_answering"
+		l.LanesFailed = "1 lane failed"
+		loops = append(loops, l)
+	}
+	if n := len(reportNotices(loops, nil, noticeNow)); n != maxNotices {
+		t.Errorf("%d", n)
 	}
 }
