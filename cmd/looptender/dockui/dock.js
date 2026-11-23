@@ -23,7 +23,7 @@
   // What looptender did: worded by the same read as API, served on its own
   // for its size, and read only for the Usage page and a loop's page.
   var USAGE = "api/v1/usage";
-  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false };
+  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false };
 
   var TONES = {
     supervising: "good", waiting_for_you: "attn", waiting_on_limit: "limit", waiting_on_network: "limit", checks_failing: "warn",
@@ -299,6 +299,70 @@
     b.addEventListener("click", function () { if (!state.identifiers) $("identifiers").click(); });
     return b;
   }
+  // What a loop waits for and who set it, in words, from the report's kind and
+  // by. by is a role the journal records, not proof of who: it is never said as
+  // "you".
+  var WAIT_WORDS = {
+    asked: { owner_thread: "Its own thread asked for a person", check: "A check found it waiting on a question", other_thread: "Another BB thread asked for a person", terminal: "A question was left from a terminal", client: "A question was left from a local client", unknown: "Waiting on a question" },
+    held: { terminal: "Held from a terminal", client: "Held from a local client, such as the menu", other_thread: "Held by another BB thread", owner_thread: "Held by its own thread", unknown: "Held; who set it is not recorded" },
+    limit: { check: "Waiting on a limit" },
+    checks: { check: "Its checks have stopped" },
+    unreadable: { unknown: "Its records cannot be read" },
+    unknown: { unknown: "What it waits for is not recorded" }
+  };
+  function waitWords(kind, by) {
+    var k = WAIT_WORDS[kind];
+    if (!k) return "";
+    return k[by] || k.unknown || k.check || "";
+  }
+  // The page's own span words, as the server says them (dockSpan).
+  function spanWords(ms) {
+    var s = Math.floor(Math.abs(ms) / 1000), m = Math.floor((Math.abs(ms) + 30000) / 60000);
+    if (s < 45) return "under a minute";
+    if (m < 60) return m + " min";
+    var h = Math.floor(m / 60), mm = m % 60;
+    if (h < 48) return mm > 0 && h < 6 ? h + " h " + mm + " min" : h + " h";
+    var days = Math.floor(h / 24), hh = h % 24;
+    return hh > 0 ? days + " days " + hh + " h" : days + " days";
+  }
+  // "for 3 days 18 h", or "for at least ..." when only the last control change
+  // is known. Empty when the report gives no start.
+  function waitingFor(w, readAt) {
+    if (!w || !w.since || !readAt) return "";
+    var ms = Date.parse(readAt) - Date.parse(w.since);
+    if (!isFinite(ms) || ms < 0) return "";
+    var exact = w.sinceEvidence === "hold_recorded" || w.sinceEvidence === "limit_detected";
+    return "for " + (exact ? "" : "at least ") + spanWords(ms);
+  }
+  function waitsLine(w, readAt, withTime) {
+    var words = w ? waitWords(w.kind, w.by) : "";
+    if (!words) return null;
+    var when = withTime ? waitingFor(w, readAt) : "";
+    return el("span", "waits", when ? words + " \u00B7 " + when : words);
+  }
+  // Questions an agent asked first, then deliberate holds, then limits and
+  // checks that stopped; a server that sends no kind keeps the flat list.
+  var NEED_GROUPS = [
+    { label: "Questions an agent asked", kinds: ["asked"] },
+    { label: "Deliberate holds", kinds: ["held"] },
+    { label: "Limits and checks that stopped", kinds: ["limit", "checks", "unreadable", "unknown"] }
+  ];
+  function needGroups(needs) {
+    if (!needs.some(function (n) { return !!n.waiting; })) return [{ label: "", needs: needs }];
+    var out = NEED_GROUPS.map(function (g) { return { label: g.label, needs: [] }; });
+    needs.forEach(function (n) {
+      var at = NEED_GROUPS.length - 1;
+      NEED_GROUPS.forEach(function (g, i) { if (g.kinds.indexOf(n.waiting) >= 0) at = i; });
+      out[at].needs.push(n);
+    });
+    return out.filter(function (g) { return g.needs.length; });
+  }
+  // A loop whose recorded supervisor did not answer says how old its last check
+  // is, since that check is all that is known.
+  function supervisorAge(l) {
+    if (l.supervisor !== "not_answering" || !l.lastCheck || l.lastCheck.ageSeconds == null) return "";
+    return "\u00B7 last check " + spanWords(l.lastCheck.ageSeconds * 1000) + " ago";
+  }
   function needCard(n, onOverview) {
     var li = el("li", "need");
     var head = el("div", "need-head");
@@ -309,6 +373,10 @@
     }
     head.appendChild(el("span", "waited", n.waited || "Waiting time unknown"));
     li.appendChild(head);
+    // The card's own sentence (reason) already says what it waits for and who set
+    // it, in the server's fixed words, and its head says for how long; the
+    // group it sits in says the kind. Rows and a loop's page have no such
+    // sentence, so they use waitsLine.
     li.appendChild(el("p", "reason", n.reason));
     // Data read with identifiers carries the masked note too, so turning
     // identifiers off hides them at once.
@@ -319,9 +387,16 @@
       note.appendChild(document.createTextNode("“" + text + "”"));
       li.appendChild(note);
       if (n.noteMasked && !state.identifiers) {
-        var p = el("p", "sub", "Parts that look like an ID, an absolute or home path (a /, ~/, ~name, C:\\ or C:/ or \\ path, with its spaces when each word after the first starts with a capital letter, a digit or a bracket, also one that contains .. or starts with Users, home or root, with / or \\ between its parts, a \\\\server\\share path, and a path with %2F or %5C in it), a web address, a user name and password before a host, an email address, an IPv4 or IPv6 address or a long code are hidden; another relative path such as docs/plan.md or docs\\plan.md is shown. ");
+        var p = el("p", "sub", "Some identifiers are hidden. ");
         p.appendChild(showNotesButton());
         li.appendChild(p);
+        var rule = el("details", "mask-rule");
+        rule.dataset.rule = n.key;
+        rule.open = !!state.ruleOpen[n.key];
+        rule.addEventListener("toggle", function () { state.ruleOpen[n.key] = rule.open; });
+        rule.appendChild(el("summary", null, "What is hidden"));
+        rule.appendChild(el("p", "sub", "Parts that look like an ID, an absolute or home path (a /, ~/, ~name, C:\\ or C:/ or \\ path, with its spaces when each word after the first starts with a capital letter, a digit or a bracket, also one that contains .. or starts with Users, home or root, with / or \\ between its parts, a \\\\server\\share path, and a path with %2F or %5C in it), a web address, a user name and password before a host, an email address, an IPv4 or IPv6 address or a long code are hidden; another relative path such as docs/plan.md or docs\\plan.md is shown. "));
+        li.appendChild(rule);
       }
     }
     var todo = el("p", "todo");
@@ -523,10 +598,13 @@
       pane.appendChild(p);
     } else {
       pane.appendChild(el("h2", "overview-heading", "Needs you"));
-      var ol = el("ol", "need-list");
-      needs.forEach(function (x) { ol.appendChild(needCard(x, true)); });
       var wrap = el("div", "panel is-need");
-      wrap.appendChild(ol);
+      needGroups(needs).forEach(function (g) {
+        if (g.label) wrap.appendChild(el("h3", "need-group", g.label));
+        var ol = el("ol", "need-list");
+        g.needs.forEach(function (x) { ol.appendChild(needCard(x, true)); });
+        wrap.appendChild(ol);
+      });
       pane.appendChild(wrap);
     }
     pane.appendChild(workTree(d));
@@ -560,10 +638,14 @@
       if (l.lanesFailed && tone === "good") tone = "warn";
       status.appendChild(el("span", "dot dot-" + tone));
       status.appendChild(el("span", null, l.phrase));
+      var silent = supervisorAge(l);
+      if (silent) status.appendChild(el("span", "sub work-silent", silent));
       var freshChip = freshnessChip(l);
       if (freshChip) status.appendChild(freshChip);
       if (l.state === "finished") status.appendChild(tag("calm", "Unverified"));
       if (l.lanesFailed) status.appendChild(tag("needs", l.lanesFailed));
+      var rowWaits = waitsLine(l.waiting, d.readAt, true);
+      if (rowWaits) { rowWaits.classList.add("sub", "work-waits"); status.appendChild(rowWaits); }
       summary.appendChild(status);
       if (l.lanes && l.lanes.summary) summary.appendChild(el("span", "sub work-observation", "Lanes: " + l.lanes.summary));
       // Age in plain words, as for usage readings; see lastCheck().
@@ -796,6 +878,8 @@
     }
     var need = needFor(key);
     if (!need) pane.appendChild(el("p", "detail", l.detail));
+    var pageWaits = need ? null : waitsLine(l.waiting, d.readAt, true);
+    if (pageWaits) { pageWaits.classList.add("sub"); pane.appendChild(el("p", "waits-line", null)).appendChild(pageWaits); }
     if (need) {
       var nb = el("div", "panel is-need");
       var nl = el("ol", "need-list");

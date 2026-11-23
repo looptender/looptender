@@ -271,6 +271,18 @@ html:not(.has-script) .needs-script { visibility: hidden; }
 .need-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; min-width: 0; }
 .need-head > .waited::before { content: ""; display: inline-block; width: 0.45rem; height: 0.45rem; margin-inline-end: 0.4rem; border-radius: 50%; background: currentColor; vertical-align: 0.05em; }
 .need-head + .reason { margin-top: -0.3rem; }
+/* What the loop waits for and who set it, in words; groups of cards in Needs you. */
+.waits-line { margin: -0.3rem 0 0; }
+.need .waits-line + .reason { margin-top: 0; }
+.waits { color: var(--ink-2); font-size: 0.8125rem; font-weight: 550; }
+.work-waits { flex-basis: 100%; }
+.work-silent { white-space: nowrap; }
+.need-group { margin: 0.1rem 0 0.5rem 0.15rem; font-size: 0.8125rem; font-weight: 650; color: var(--ink-2); letter-spacing: 0.01em; }
+.need-list + .need-group { margin-top: 1rem; }
+.mask-rule { margin: 0; }
+.mask-rule > summary { cursor: pointer; width: max-content; max-width: 100%; font-size: 0.8125rem; color: var(--ink-2); border-radius: 4px; }
+.mask-rule > summary:hover { color: var(--ink); }
+.mask-rule[open] > p { margin-top: 0.35rem; }
 .need-name { font-size: 1rem; font-weight: 650; overflow-wrap: anywhere; min-width: 0; }
 .need-name a { color: inherit; text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 0.2em; }
 .need-name a:hover { text-decoration-color: currentColor; }
