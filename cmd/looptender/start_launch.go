@@ -200,9 +200,20 @@ func startLaunched(e env, executable, path string, cfg *config.Config, allowShar
 		e.errf("start: invalid startup acknowledgement; its job was removed")
 		return exitFailed, true
 	}
-	if len(dropped) > 0 {
-		// Names only, never values.
-		e.errf("start: warning: the daemon does not get %s from this environment: they are named like credentials and this loop's report does not name them. Give a report its secret with secret_file in the configuration.", strings.Join(dropped, ", "))
+	var secrets, tests []string
+	for _, k := range dropped {
+		if strings.HasPrefix(k, envvar.Prefix+"TEST_") || strings.HasPrefix(k, envvar.LegacyPrefix+"TEST_") {
+			tests = append(tests, k)
+		} else {
+			secrets = append(secrets, k)
+		}
+	}
+	// Names only, never values.
+	if len(secrets) > 0 {
+		e.errf("start: warning: the daemon does not get %s from this environment: they are named like credentials and this loop's report does not name them. Give a report its secret with secret_file in the configuration.", strings.Join(secrets, ", "))
+	}
+	if len(tests) > 0 {
+		e.errf("start: warning: the daemon does not get %s from this environment: test switches are never passed to a supervisor.", strings.Join(tests, ", "))
 	}
 	if plan.Kind == "systemd" && !lingerOn() {
 		e.errf("start: warning: lingering is off for this user, so the user's systemd, and this daemon with it, stops at logout. Run loginctl enable-linger, or looptender service install.")
@@ -378,7 +389,13 @@ func launchEnvironment(env []string, report map[string]bool) (out, dropped []str
 			continue
 		}
 		ours := strings.HasPrefix(k, envvar.Prefix) || strings.HasPrefix(k, envvar.LegacyPrefix)
+		// Test switches (LOOPTENDER_TEST_*, KEEPGOING_TEST_*) are never passed:
+		// some are honoured by the shipped binary for the scenario tests, so a
+		// stray value in a person's shell would change a real supervisor.
+		test := strings.HasPrefix(k, envvar.Prefix+"TEST_") || strings.HasPrefix(k, envvar.LegacyPrefix+"TEST_")
 		switch {
+		case test:
+			dropped = append(dropped, k)
 		case keep[k] || strings.HasPrefix(k, "LC_") || report[k]:
 			out = append(out, kv)
 		case ours && !launchSecretName(k):

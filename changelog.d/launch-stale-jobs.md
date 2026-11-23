@@ -1,1 +1,2 @@
 - A `start --background` from a BB thread on macOS first clears what a killed launch left behind (its job registered with no process, its property list and script), and `status` and `doctor` show a launch job only while launchd shows it with a process.
+- A launched daemon never gets a `LOOPTENDER_TEST_*` or `KEEPGOING_TEST_*` test switch from the starting environment; `start` names any it left out.
