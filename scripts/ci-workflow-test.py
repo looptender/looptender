@@ -43,9 +43,9 @@ def validate(text):
     for job in sorted(jobs - {'plan'}):
         part = re.search(r'^  ' + job + r':\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', body, re.M | re.S)[1]
         assert re.search(r'^    needs: plan$', part, re.M) and "if: needs.plan.outputs.duplicate != 'true'" in part, f'{job} must follow the plan'
-    for job in ('race', 'checks'):
+    for job, output in (('race', 'os'), ('checks', 'checks_os')):
         part = re.search(r'^  ' + job + r':\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', body, re.M | re.S)[1]
-        assert 'os: ${{ fromJSON(needs.plan.outputs.os) }}' in part, f'{job} must take its operating systems from the plan'
+        assert 'os: ${{ fromJSON(needs.plan.outputs.' + output + ') }}' in part, f'{job} must take its operating systems from the plan'
     assert 'types: [opened, synchronize, reopened, ready_for_review]' in text, 'macOS must run when a draft is marked ready'
     # A pinned -run pattern that matches nothing must fail, not pass silently.
     for step in steps:
@@ -91,6 +91,7 @@ class WorkflowTests(unittest.TestCase):
     def test_a_job_that_ignores_the_plan_or_the_ready_trigger_is_rejected(self):
         for old, new in (("    needs: plan\n    if: needs.plan.outputs.duplicate != 'true'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10", "    runs-on: ubuntu-24.04\n    timeout-minutes: 10"),
                          ('os: ${{ fromJSON(needs.plan.outputs.os) }}', 'os: [ubuntu-24.04, macos-15]'),
+                         ('os: ${{ fromJSON(needs.plan.outputs.checks_os) }}', 'os: ${{ fromJSON(needs.plan.outputs.os) }}'),
                          ('synchronize, reopened, ready_for_review]', 'synchronize, reopened]')):
             with self.subTest(old=old[:40]), self.assertRaises(AssertionError):
                 validate(WORKFLOW.replace(old, new, 1))
