@@ -138,6 +138,8 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var flow: UpdateFlow?
     let launchPath: String
     let updater: MenuUpdater?
+    var tracker = NoticeTracker()
+    let noticeSettings = NoticeSettings(store: DefaultsStore())
     /// Work the menu must not quit under: a change being read, confirmed (its
     /// window open) or applied, and the panel being restarted. Shared with the
     /// update flow, which asks it at each step.
@@ -152,6 +154,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.renderDark = renderDark
         super.init()
         notifier.onUpdateClick = { [weak self] in self?.flow?.relaunch(byRequest: true) }
+        notifier.onNoticeClick = { [weak self] loop in self?.run(loop.isEmpty ? .openPanel : .openLoop(key: loop)) }
     }
 
     // Verification aid: once the first read has finished, draw the menu bar
@@ -280,7 +283,8 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// rebuild waits until nothing is highlighted or the menu has closed.
     func render() {
         let offer = updater.map { UpdateOffer(availableLabel: flow?.installed?.label, automatic: $0.automatic, failure: $0.lastFailure, noMenuLabel: flow?.noMenuLabel) }
-        let model = MenuBuilder.build(reading, now: Date(), notice: notice, refreshing: loading, panel: panel, update: renderPath == nil ? offer : nil)
+        let model = MenuBuilder.build(reading, now: Date(), notice: notice, refreshing: loading, panel: panel, update: renderPath == nil ? offer : nil,
+                                       notices: renderPath == nil ? NoticeView(recent: tracker.recent, on: noticeSettings.map) : nil)
         if let button = item.button {
             // A dot after the count marks an update that is waiting; the label says so in words.
             let mark = flow?.installed != nil && renderPath == nil ? "\u{2022}" : ""
@@ -355,6 +359,10 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         case .relaunchMenu:
             flow?.relaunch(byRequest: true)
+            return
+        case .toggleNoticeKind(let kind):
+            noticeSettings.toggle(kind)
+            render()
             return
         case .toggleAutoUpdate:
             // Turning it on does not relaunch under the open menu: the check
@@ -595,6 +603,10 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 scheduleNextRead()
                 render()
                 notifier.update(result)
+                if renderPath == nil {
+                    for posted in tracker.next(result, now: Date(), isOn: noticeSettings.isOn) { notifier.post(notice: posted) }
+                    render()
+                }
                 checkForUpdate()
                 if let path = renderPath { renderMenu(to: path) }
             }

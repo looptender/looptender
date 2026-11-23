@@ -98,6 +98,9 @@ public struct PanelList: Decodable, Equatable {
     /// The installed CLI's build, shortened by the CLI; absent when it has no
     /// version or from a CLI that predates it.
     public var installedBuild: String? = nil
+    /// Events to tell the person about, the same list the panel page reads.
+    /// Absent from a CLI that predates it.
+    public var notices: [PanelNotice]? = nil
     /// "Build X installed … · N supervisors on it · M older"; absent from a
     /// CLI that predates it.
     public var buildFreshness: PanelFreshnessSummary? = nil
@@ -183,6 +186,8 @@ public enum MenuCommand: Equatable {
     case openPanelWithChanges
     /// Runs `keepgoing panel stop`. Supervision is not affected.
     case stopPanel
+    /// Turns one kind of notification on or off. Runs no CLI command.
+    case toggleNoticeKind(String)
     /// Relaunches the menu from the installed build. Runs no CLI command.
     case relaunchMenu
     /// Turns "Update the menu automatically" on or off. Runs no CLI command.
@@ -258,6 +263,13 @@ public enum MenuReading: Equatable {
     case unsupported
     /// The CLI could not be run, timed out or answered something unreadable.
     case unavailable
+}
+
+/// What the menu shows of its notifications.
+public struct NoticeView: Equatable {
+    public let recent: [RecentNotice]
+    public let on: [String: Bool]
+    public init(recent: [RecentNotice], on: [String: Bool]) { self.recent = recent; self.on = on }
 }
 
 /// What the menu says about its own update.
@@ -342,6 +354,28 @@ public enum MenuBuilder {
         MenuRow(kind: .status, title: text, detail: "", symbol: "", accessibilityLabel: text, accessibilityHelp: "", toolTip: "", command: nil)
     }
 
+    /// The Recent section (the last ten events, pushed or not, with their age)
+    /// and the per-kind settings.
+    static func noticeRows(_ view: NoticeView, now: Date) -> [MenuRow] {
+        var rows: [MenuRow] = []
+        if !view.recent.isEmpty {
+            rows.append(separator)
+            rows.append(status("Recent"))
+            for r in view.recent.prefix(NoticeTracker.maxRecent) {
+                rows.append(status(r.text + " · " + age(now.timeIntervalSince(r.at)).replacingOccurrences(of: "Read ", with: "")))
+            }
+        }
+        let toggles = NoticeKinds.all.map { entry -> MenuRow in
+            let on = view.on[entry.kind] ?? false
+            return action(entry.label, .toggleNoticeKind(entry.kind), symbol: on ? "checkmark.circle" : "circle",
+                          help: "Turns the notification for this on or off. It is still listed under Recent.", detail: on ? "on" : "off")
+        }
+        let parent = MenuRow(kind: .action, title: "Notify me when…", detail: "", symbol: "bell", accessibilityLabel: "Notify me when",
+                             accessibilityHelp: "Chooses which events are pushed as notifications.", toolTip: "", command: nil, submenu: toggles)
+        rows.append(parent)
+        return rows
+    }
+
     /// The menu's own update: the offer when the installed build differs (and
     /// why the last attempt failed, if it did), then the setting.
     static func updateRows(_ update: UpdateOffer) -> [MenuRow] {
@@ -372,7 +406,7 @@ public enum MenuBuilder {
     /// in place and the status line says a read is under way. `panel` is the
     /// panel server's status when it was read; the row that stops it is there
     /// only while it is running.
-    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil) -> MenuModel {
+    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil, notices: NoticeView? = nil) -> MenuModel {
         // The first row is always there and always tries, whatever was read.
         var rows = [action("Open looptender Panel", .openPanel, symbol: "macwindow", help: "Opens the looptender panel in your browser.")]
         var badge = ""
@@ -469,6 +503,7 @@ public enum MenuBuilder {
             // stopping a loop; what happens to the loops is in the help.
             rows.append(action("Stop the Panel Page", .stopPanel, symbol: "xmark.circle", help: "Stops the panel's background process. Your loops keep running.", detail: stopsIn(panel.idleRemainingSeconds)))
         }
+        if let notices { rows.append(contentsOf: noticeRows(notices, now: now)) }
         if let update { rows.append(contentsOf: updateRows(update)) }
         rows.append(action("Quit looptender Menu", .quit, symbol: "power", help: "Quits this menu. Supervision keeps running."))
         rows.append(separator)
@@ -560,7 +595,7 @@ public enum MenuBuilder {
             for e in expects { arguments += ["--expect", e.key + "=" + e.expect] }
             if lanes { arguments.append("--lanes") }
             return arguments + ["--json"]
-        case .quit, .relaunchMenu, .toggleAutoUpdate: return nil
+        case .quit, .relaunchMenu, .toggleAutoUpdate, .toggleNoticeKind: return nil
         }
     }
 
