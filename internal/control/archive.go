@@ -41,6 +41,9 @@ type Archive struct {
 	// control record: paused, stop requested, awaiting user, completed,
 	// disabled or superseded), for the record.
 	Hold string `json:"hold"`
+	// ContinuedIn is the loop that continues this one's work, when the
+	// archive was made by a succession (Succession).
+	ContinuedIn *LoopRef `json:"continuedIn,omitempty"`
 }
 
 // ErrArchived refuses a control change that would leave an archived loop
@@ -108,6 +111,11 @@ func CleanArchiveNote(note string) (string, error) {
 // an archived loop again replaces the note and keeps the first time; it
 // returns the record saved and the control record it was judged on.
 func ArchiveLoop(stateDir, note string, now time.Time, check func(File) error) (Archive, File, error) {
+	return ArchiveLoopFor(stateDir, note, now, check, nil)
+}
+
+// ArchiveLoopFor is ArchiveLoop recording the loop that continues this one.
+func ArchiveLoopFor(stateDir, note string, now time.Time, check func(File) error, continuedIn *LoopRef) (Archive, File, error) {
 	note, err := CleanArchiveNote(note)
 	if err != nil {
 		return Archive{}, File{}, err
@@ -132,7 +140,7 @@ func ArchiveLoop(stateDir, note string, now time.Time, check func(File) error) (
 	if f.Supervising() {
 		return Archive{}, f, ErrArchiveSupervising
 	}
-	a := Archive{Version: 1, At: now.UTC(), Note: note, Hold: f.Summary()}
+	a := Archive{Version: 1, At: now.UTC(), Note: note, Hold: f.Summary(), ContinuedIn: continuedIn}
 	if old, err := LoadArchive(stateDir); err == nil && old != nil {
 		a.At = old.At
 	}

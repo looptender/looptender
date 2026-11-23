@@ -1103,6 +1103,8 @@ type panelListLoop struct {
 	// (loop_naming.go), the same on every surface; no reader composes its
 	// own. Absent when it is the loop's name and nothing more.
 	Naming *loopNaming `json:"naming,omitempty"`
+	// Lineage: as on the page's loop.
+	Lineage *listLineage `json:"lineage,omitempty"`
 }
 
 func buildPanelList(r dockReport) panelList {
@@ -1145,7 +1147,7 @@ func buildPanelList(r dockReport) panelList {
 		}
 		// The list carries no note (it never has): when, and the hold.
 		row.Archived, row.ArchiveLapsed = withoutNote(l.Archived), withoutNote(l.ArchiveLapsed)
-		row.Naming = l.Naming // already as lists carry it (listNaming)
+		row.Naming, row.Lineage = l.Naming, l.Lineage // already as lists carry them
 		if row.Archived != nil {
 			out.Archived++
 		}
