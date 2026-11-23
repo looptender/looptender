@@ -41,11 +41,18 @@ type Archive struct {
 	// control record: paused, stop requested, awaiting user, completed,
 	// disabled or superseded), for the record.
 	Hold string `json:"hold"`
+	// ContinuedIn is the loop that continues this one's work, when the
+	// archive was made by a succession (Succession).
+	ContinuedIn *LoopRef `json:"continuedIn,omitempty"`
 }
 
 // ErrArchived refuses a control change that would leave an archived loop
 // supervising: resuming or enabling it needs unarchiving first.
 var ErrArchived = errors.New("the loop is archived: unarchive it first (looptender unarchive -c CONFIG), then resume it; unarchiving resumes nothing")
+
+// ErrContinuedElsewhere refuses a succession's archive of a loop already
+// archived as continued in another loop.
+var ErrContinuedElsewhere = errors.New("the loop is already continued in another loop")
 
 // ErrArchiveSupervising refuses to archive a loop that is supervising.
 var ErrArchiveSupervising = errors.New("the loop is supervising: pause or stop it first, then archive it; archiving changes no hold")
@@ -108,6 +115,11 @@ func CleanArchiveNote(note string) (string, error) {
 // an archived loop again replaces the note and keeps the first time; it
 // returns the record saved and the control record it was judged on.
 func ArchiveLoop(stateDir, note string, now time.Time, check func(File) error) (Archive, File, error) {
+	return ArchiveLoopFor(stateDir, note, now, check, nil)
+}
+
+// ArchiveLoopFor is ArchiveLoop recording the loop that continues this one.
+func ArchiveLoopFor(stateDir, note string, now time.Time, check func(File) error, continuedIn *LoopRef) (Archive, File, error) {
 	note, err := CleanArchiveNote(note)
 	if err != nil {
 		return Archive{}, File{}, err
@@ -132,9 +144,19 @@ func ArchiveLoop(stateDir, note string, now time.Time, check func(File) error) (
 	if f.Supervising() {
 		return Archive{}, f, ErrArchiveSupervising
 	}
-	a := Archive{Version: 1, At: now.UTC(), Note: note, Hold: f.Summary()}
+	a := Archive{Version: 1, At: now.UTC(), Note: note, Hold: f.Summary(), ContinuedIn: continuedIn}
 	if old, err := LoadArchive(stateDir); err == nil && old != nil {
 		a.At = old.At
+		if old.ContinuedIn != nil {
+			// A loop continued in one successor is never claimed by another,
+			// and archiving it again by hand keeps its successor.
+			if continuedIn != nil && filepath.Clean(old.ContinuedIn.StateDir) != filepath.Clean(continuedIn.StateDir) {
+				return Archive{}, f, ErrContinuedElsewhere
+			}
+			if continuedIn == nil {
+				a.ContinuedIn = old.ContinuedIn
+			}
+		}
 	}
 	b, err := json.MarshalIndent(a, "", "  ")
 	if err != nil {

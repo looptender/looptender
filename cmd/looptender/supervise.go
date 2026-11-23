@@ -236,6 +236,7 @@ func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, l
 	res, err := supervise.Tick(e.ctx, cfg, opts)
 	if res.Recorded && !dryRun {
 		clearStartRefused(cfg.Loop.StateDir) // a check ran: something supervises the loop
+		completeSuccession(e, cfg, time.Now())
 	}
 	out, _ := json.Marshal(res)
 	fmt.Fprintln(e.stdout, string(out))
@@ -653,6 +654,10 @@ type statusOut struct {
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
 	// Naming is what a list needs to show a readable name (loop_naming.go).
 	Naming loopNaming `json:"naming"`
+	// ContinuedFrom is the loop this one continues (succession.go), and
+	// Lineage the whole chain of earlier loops, oldest first.
+	ContinuedFrom *continuedFromView `json:"continuedFrom,omitempty"`
+	Lineage       []lineageStep      `json:"lineage,omitempty"`
 	// Unreadable lists the records status could not read. The rest of the
 	// output is what it could; the command still exits 1.
 	Unreadable      []unreadableRecord `json:"unreadable,omitempty"`
@@ -1040,6 +1045,33 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	}
 	if a := out.Archived; a != nil {
 		fmt.Fprintf(w, "archived:  %s; listed apart, needs nobody, and checked by no daemon. Resume and enable are refused until `looptender unarchive -c %s`, which resumes nothing\n", archiveSince(a), shellQuote(cfg.Path()))
+	}
+	if c := out.ContinuedFrom; c != nil {
+		line := "continues: loop " + c.Loop
+		if c.Thread != "" {
+			line += " (" + c.Thread + ")"
+		}
+		switch {
+		case c.CancelledAt != nil:
+			line += ", cancelled " + when(*c.CancelledAt) + ": " + c.Cancelled
+		case c.ArchivedAt != nil:
+			line += ", archived " + when(*c.ArchivedAt) + " after this loop's first completed check"
+		case c.Waiting != "":
+			line += ", not archived yet: " + c.Waiting
+		default:
+			line += ", archived after this loop's first check that completes"
+		}
+		if n := len(out.Lineage); n > 1 {
+			line += fmt.Sprintf("; %d earlier loops in this line of work", n)
+		}
+		fmt.Fprintln(w, line)
+	}
+	if a := out.Archived; a != nil && a.ContinuedIn != nil {
+		line := "continued in: loop " + a.ContinuedIn.Loop
+		if a.ContinuedIn.Thread != "" {
+			line += " (" + a.ContinuedIn.Thread + ")"
+		}
+		fmt.Fprintln(w, line)
 	}
 	if a := out.ArchiveLapsed; a != nil {
 		fmt.Fprintf(w, "archive:   the record %s is ignored: the loop supervises again (resumed by a build from before archiving). `looptender unarchive -c %s` removes it\n", archiveSince(a), shellQuote(cfg.Path()))
@@ -1445,6 +1477,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		out.Archived, out.ArchiveLapsed = loopArchive(l.StateDir, out.Control)
 	}
 	out.Naming = namingOf(l, out.TargetAgent.BBThread)
+	out.Lineage, out.ContinuedFrom = lineageOf(l.StateDir)
 	out.NewThreads = newThreadStatus{Created: st.NewThreadsCreated, Max: l.Limits.MaxNewThreads, Pending: st.NewThreadIntent != nil}
 	out.SuccessorPlans = successorPlans(cfg)
 	if s := st.ChildSuccessors; s != nil || st.ChildSuccessorsCreated > 0 {

@@ -56,6 +56,9 @@ type clientSnapshot struct {
 	// Naming: as in status --json (loop_naming.go); the unmasked thread
 	// title only with --private.
 	Naming *loopNaming `json:"naming,omitempty"`
+	// Lineage is the count of earlier loops of this line of work and the
+	// key of the one it continues; the chain is in status --json.
+	Lineage *listLineage `json:"lineage,omitempty"`
 }
 type clientControls struct {
 	Enabled      bool `json:"enabled"`
@@ -337,6 +340,7 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 			n = n.withoutPrivate()
 		}
 		s.Naming = &n
+		s.Lineage = listLineageOf(lineageOf(entry.StateDir))
 		if controlOK {
 			in, _, err := window.Inside(cfg.Loop.Window, now)
 			if err != nil {

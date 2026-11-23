@@ -334,6 +334,9 @@ type dockLoop struct {
 	Archived      *archiveView `json:"archived,omitempty"`
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
 	Naming        *loopNaming  `json:"naming,omitempty"`
+	// Lineage: the count of earlier loops and the key of the one it
+	// continues; absent for a loop that continues none.
+	Lineage *listLineage `json:"lineage,omitempty"`
 	// LanesFailed is "1 lane failed" when the last check's current lane
 	// listing has lanes in error, from their structured status only; empty
 	// otherwise. A failed lane does not hold the loop, so it is never a need,
@@ -2010,6 +2013,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	if snap != nil {
 		l.ArchiveLapsed = snap.ArchiveLapsed
 		l.Naming = listNaming(l.Name, snap.Naming, false)
+		l.Lineage = snap.Lineage
 		// The note and the thread title from the full status, as hold notes
 		// are: identifier-shaped tokens hidden unless identifiers are shown.
 		mask := func(s string) string {
@@ -2026,6 +2030,13 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			a := *snap.Archived
 			a.Note = mask(st.Archived.Note)
 			snap.Archived = &a
+		}
+		if a := snap.Archived; a != nil && a.ContinuedIn != nil && !identifiers {
+			// The successor's thread is an identifier.
+			c, r := *a, *a.ContinuedIn
+			r.Thread = ""
+			c.ContinuedIn = &r
+			snap.Archived = &c
 		}
 		if a := snap.Archived; a != nil {
 			// Archived: listed apart, needing nobody, with no control offered
