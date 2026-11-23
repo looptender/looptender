@@ -1,5 +1,7 @@
 package main
 
+// Throwaway CI control: a comment-only Go change.
+
 import (
 	"path/filepath"
 	"runtime"
