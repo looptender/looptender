@@ -80,7 +80,7 @@ func TestDockLoopArgStaysUnderTheResponseBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("%d bytes, loopArg %d bytes each", len(body), len(r.Loops[0].LoopArg))
-	if len(body) > dockMaxResponse*3/4 {
+	if len(body) > dockResponseMargin {
 		t.Errorf("%d bytes, over three quarters of the %d-byte bound", len(body), dockMaxResponse)
 	}
 }

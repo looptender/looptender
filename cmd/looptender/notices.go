@@ -197,7 +197,17 @@ func reportNotices(loops []dockLoop, needs []dockNeed, now time.Time) []panelNot
 // itself says the rest.
 const maxNotices = 40
 
+// maxNoticesBytes is what the notices may add to a report, worst case (every
+// name four-byte, every notice a long sentence); TestNoticesAreBounded holds
+// them to it. The response-size tests keep their three-quarters margin for
+// everything else and allow for this.
+const maxNoticesBytes = 64 << 10
+
 // noticeGroupSentence is the sentence for n notices of one group.
 func noticeGroupSentence(groupText string, n int) string {
 	return strings.ReplaceAll(groupText, "{n}", fmt.Sprint(n))
 }
+
+// dockResponseMargin is the size the page's reply may reach before it is
+// near its bound: three quarters of it, and the notices' own allowance.
+const dockResponseMargin = dockMaxResponse*3/4 + maxNoticesBytes
