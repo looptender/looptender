@@ -871,6 +871,18 @@ Unreleased, opt-in; **fixtures only**.
 - **One wake.** When the run-out is also within `--warn-within` (default `12h`, 1h to 168h), the agent is told once per window: `[keepgoing:usage-burn window=weekly used=… exhausts=… resets=…]` with one notice. It rides on the ordinary wake of an idle session. A session idle on purpose while its children run gets it alone, once, under the same spacing as the child-error notice, and is told that it is not an instruction to continue. It is recorded as sent only when the send is accepted. A reading whose reset is within an hour of the warned one is the same window, however the reported reset drifts between reads; a new window warns again.
 - **Never acts.** It reads no lane, messages, pauses or stops no child, and changes no route. A failed read is recorded (`reason`) and retried when next due.
 
+### Stepping down a model at one model's weekly limit
+
+Unreleased, opt-in; **fixtures only**.
+- **The setting.** `looptender model-step -c CONFIG --models <strongest>,<next>[,…]` (2 to 6 model names, strongest first) turns it on, `--off` turns it off, and with no flags the command shows it. Like the usage watch it is a record in the state directory (`model-step-setting.json`), not a configuration key, and `status` shows it.
+- **When.** A check finds the loop's own BB conversation at a usage limit whose window is one model's (Claude's `seven_day_<model>`, from BB's rate-limit event; see [which limit](#which-limit-which-account-and-what-you-can-do)), with its reset ahead.
+  - That window, not the all-models one, is what blocked it, so the same account still has the other models.
+  - The blocked model is found in the order by name (the window names `opus`, the order `claude-opus-…`).
+  - If there is a weaker model after it, the conversation's model is changed to that one (`bb thread update --model`: the same thread, account, settings and hooks), and its failed turn is retried by reference, with no text sent. It counts as a send. The check makes no other decision.
+- **Not when.** Never for the all-models or 5-hour window, a model not in the order or the last one, a dry run, a fallback target, or a loop that is off, paused, stopped, waiting for a person or finished. With no weaker model left, the loop waits for the reset as before.
+- **Stepping back.** `model-step.json` records the step: from, to, the window and its reset. At the first check after that reset that finds the conversation between turns, its model is changed back to the stronger one and the record is cleared. A second step-down keeps the first's model and reset.
+- **Never acts on lanes**, routes or accounts.
+
 ### Which limit, which account, and what you can do
 
 Unreleased. When a check finds the loop's active target at a provider usage limit, it records which window the provider says is blocked and when it resets (`usage-limit.json` in the state directory, its own record rather than a field of `state.json`, so no state format changes and a build without it neither reads nor rewrites it; after a rollback to such a build the record stays as it was, unread, until a newer build's next check replaces or removes it), and `status` says it:

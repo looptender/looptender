@@ -490,6 +490,12 @@ func (a *Adapter) Activate(ctx context.Context) error {
 	return a.call(ctx, "", args...)
 }
 
+// SetModel changes the conversation's model for its next turn (bb thread
+// update --model). It sends no text.
+func (a *Adapter) SetModel(ctx context.Context, model string) error {
+	return a.call(ctx, "", "thread", "update", a.cfg.Thread, "--json", "--model", model)
+}
+
 func (a *Adapter) call(ctx context.Context, stdin string, args ...string) error {
 	out, err := a.run(ctx, stdin, args...)
 	what := "bb " + strings.Join(args[:2], " ")

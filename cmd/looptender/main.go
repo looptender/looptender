@@ -53,6 +53,7 @@ Supervision (read -c FILE; default ./looptender.yaml, or ./keepgoing.yaml when o
   doctor                   Diagnose setup and recent checks without model calls
   runs                     Show recorded runs, sends and chat/session references offline; follow one with --id (text or --json)
   adapter check            Check one process status observation; no resume/stop or loop-state writes by this command
+  model-step               Step the loop's conversation down a model at one model's weekly limit, and back after it resets (--models A,B, --off)
   usage-watch              Warn a loop's agent once before its account's weekly window runs out (--account ID, --off)
   timeline                 Explain retained incident history offline; filter with --kind, --target, --since, --until (text or --json)
 
@@ -213,6 +214,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return startCommand(e, rest, nil)
 	case "__start-background":
 		return startChild(e, rest)
+	case "model-step":
+		return modelStepCommand(e, rest)
 	case "usage-watch":
 		return usageWatchCommand(e, rest)
 	case "timeline":

@@ -606,6 +606,9 @@ type statusOut struct {
 	// UsageWatch is the usage watch's setting (looptender usage-watch);
 	// nil while it is off.
 	UsageWatch *usageWatchView `json:"usageWatch,omitempty"`
+	// ModelStep is the model step-down setting and any step in force
+	// (looptender model-step); nil while it is off and nothing is in force.
+	ModelStep *modelStepView `json:"modelStep,omitempty"`
 	// SharedWith lists, in words, other enabled loops that share this loop's
 	// session, a fallback's session, its working directory or a repository.
 	SharedWith []string `json:"sharedWith,omitempty"`
@@ -1001,6 +1004,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	}
 	fmt.Fprintf(w, "progress flag: %s\n", noProgressText(out.NoProgress, loopHeld(out.Control, out.controlUnreadable)))
 	printUsageWatch(w, out.UsageWatch)
+	printModelStep(w, out.ModelStep)
 	printUsageBurn(w, out.UsageBurn)
 	if !out.stateUnreadable {
 		printTurnRetry(w, out.TurnRetry)
@@ -1400,6 +1404,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.NoProgress = noProgressOf(cfg, flagState, ctl, journal, graph, now)
 	out.UsageBurn = describeUsageBurn(l.StateDir, now)
 	out.UsageWatch = describeUsageWatch(l.StateDir)
+	out.ModelStep = describeModelStep(l.StateDir)
 	if file := unreadableFile(out); file != "" {
 		// The flag needs both records; computed from an empty one it would
 		// say the loop is off, or that no check has run.

@@ -171,6 +171,10 @@ type Result struct {
 	// Recovery says how a re-prompt was carried out: turn_retry re-ran the
 	// failed turn by reference with no new text, prompt sent the wake text.
 	Recovery string `json:"recovery,omitempty"`
+	// ModelStep is stepped_down when this check moved the conversation to a
+	// weaker model at a model-specific limit, stepped_back when it moved it
+	// back after that window reset (modelstep.go).
+	ModelStep string `json:"modelStep,omitempty"`
 	// Lanes is the lane work this check did under bb.children.retry_errored:
 	// counts only. Absent when it did none.
 	Lanes *state.LaneCheck `json:"lanes,omitempty"`
@@ -940,6 +944,9 @@ func (t *tick) run() error {
 		return err
 	}
 	res.Window = why
+	if done, err := t.modelStep(a, target, obs, inWindow); done {
+		return t.record(err)
+	}
 
 	// Fallback health: scheduled probes, then the redundancy picture.
 	var summary health.Summary
