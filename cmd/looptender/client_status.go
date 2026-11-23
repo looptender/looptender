@@ -40,7 +40,10 @@ type clientSnapshot struct {
 	Goal               *control.GoalSummary `json:"goal,omitempty"`
 	PrivateGoal        *clientGoalDisplay   `json:"privateGoal,omitempty"`
 	Daemon             daemonStatus         `json:"daemon"`
-	ExternalScheduler  string               `json:"externalScheduler"`
+	// DiskSpace is set when the volume that holds the loop's state is
+	// filling or nearly full.
+	DiskSpace         *dockDiskSpace `json:"diskSpace,omitempty"`
+	ExternalScheduler string         `json:"externalScheduler"`
 	// Archived is set while the loop is archived (as in status --json); its
 	// note only with --private. ArchiveLapsed: a record the loop no longer
 	// honours, since it supervises again.
@@ -367,6 +370,9 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 	// scheduler queries, task files, output logs or provider session files.
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second)
 	s.Daemon = query(queryCtx, entry.StateDir, version, offline)
+	if d := describeDiskSpace(entry.StateDir); d.lowDisk() {
+		s.DiskSpace = &dockDiskSpace{Level: d.Level, Message: d.Message, AvailableBytes: d.AvailableBytes, TotalBytes: d.TotalBytes}
+	}
 	// After the daemon is asked: one that ran the last check and is still
 	// running means the computer slept.
 	if scheduleOf != nil && s.Runtime != nil {
