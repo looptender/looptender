@@ -1,3 +1,4 @@
+// Throwaway CI control: a comment-only Swift change.
 import Foundation
 
 /// A notification that a loop's checks have stopped.
