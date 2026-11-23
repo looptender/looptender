@@ -353,41 +353,50 @@ func TestTheLimitIDHoldsForTheSameWindowAndChangesWithANewOne(t *testing.T) {
 		l.UsageLimit = &usageLimitStatus{Window: "weekly", WindowKey: key, Words: "weekly usage limit", ResetsAt: reset}
 		return l
 	}
-	base := time.Date(2026, 11, 28, 4, 0, 10, 0, time.UTC)
-	id := func(l dockLoop) string { return reportNotices([]dockLoop{l}, nil, noticeNow)[0].ID }
-	group := func(l dockLoop) string { return reportNotices([]dockLoop{l}, nil, noticeNow)[0].Group }
-	a := mk(base, "seven_day")
-	if id(mk(base.Add(30*time.Second), "seven_day")) != id(a) || group(mk(base.Add(30*time.Second), "seven_day")) != group(a) {
-		t.Error("a reset read 30 seconds later is the same limit, and the same group")
+	base := time.Date(2026, 11, 28, 4, 55, 10, 0, time.UTC)
+	first := func(l dockLoop) panelNotice { return reportNotices([]dockLoop{l}, nil, noticeNow)[0] }
+	a := first(mk(base, "seven_day"))
+	// The text tells the real minute, not the hour it falls in.
+	if a.Text != "example-api stopped: weekly usage limit until Sat 04:55." || a.GroupText != "{n} loops stopped: weekly usage limit until Sat 04:55." {
+		t.Errorf("%q / %q", a.Text, a.GroupText)
 	}
-	// Across a minute boundary the group does not split either: it is told by the hour.
-	edge := time.Date(2026, 11, 28, 4, 30, 55, 0, time.UTC)
-	if group(mk(edge, "seven_day")) != group(mk(edge.Add(10*time.Second), "seven_day")) {
-		t.Error("the group split across a minute")
+	// A reset read differently by seconds or minutes, even across the top of an hour, is the same limit.
+	for _, drift := range []time.Duration{30 * time.Second, 4 * time.Minute, 6 * time.Minute} {
+		b := first(mk(base.Add(drift), "seven_day"))
+		if b.ID != a.ID || b.Group != a.Group {
+			t.Errorf("drift %v: %q %q", drift, b.ID, a.ID)
+		}
 	}
-	if id(mk(base, "seven_day_opus")) == id(a) {
+	top := first(mk(time.Date(2026, 11, 28, 4, 59, 58, 0, time.UTC), "seven_day"))
+	over := first(mk(time.Date(2026, 11, 28, 5, 0, 2, 0, time.UTC), "seven_day"))
+	if top.ID != over.ID || top.Group != over.Group {
+		t.Errorf("the top of an hour split it: %q %q", top.ID, over.ID)
+	}
+	if first(mk(base, "seven_day_opus")).ID == a.ID {
 		t.Error("a new window is a new limit")
 	}
-	if id(mk(base.Add(time.Hour), "seven_day")) == id(a) || id(mk(base.Add(7*24*time.Hour), "seven_day")) == id(a) {
-		t.Error("an hour or a week later is a new limit")
+	if first(mk(base.Add(7*24*time.Hour), "seven_day")).ID == a.ID || first(mk(base.Add(24*time.Hour), "seven_day")).ID == a.ID {
+		t.Error("a day or a week later is a new limit")
 	}
-	if got := reportNotices([]dockLoop{a}, nil, noticeNow)[0].Text; got != "example-api stopped: weekly usage limit until Sat 04:00." {
-		t.Errorf("%q", got)
-	}
-	// The first action's own words are carried; its command is not.
-	a.UsageLimit.Actions = []usageAction{{Kind: "login_bb_directory", Text: "Another configured account has quota.", Command: "claude auth login --secret"}}
-	n := reportNotices([]dockLoop{a}, nil, noticeNow)[0]
-	if !strings.HasSuffix(n.Text, "Another configured account has quota.") || strings.Contains(n.Text, "secret") {
+	// The action is said in short fixed words by kind, which the record keeps; never its command.
+	l := mk(base, "seven_day")
+	l.UsageLimit.Actions = []usageAction{{Kind: "login_bb_directory", Command: "claude auth login --secret"}}
+	n := first(l)
+	if !strings.HasSuffix(n.Text, "Another Claude account can take over; see the panel.") || strings.Contains(n.Text, "secret") || len(n.Text) > 140 {
 		t.Errorf("%q", n.Text)
 	}
-	// Without the new record, the older limit-wait data still works, to the hour.
+	l.UsageLimit.Actions = []usageAction{{Kind: "a kind added later"}}
+	if got := first(l).Text; got != "example-api stopped: weekly usage limit until Sat 04:55." {
+		t.Errorf("an unknown kind says nothing: %q", got)
+	}
+	// Without the new record, the older limit-wait data works the same way.
 	old := noticeLoop("l2", "example-docs")
 	old.State = "waiting_on_limit"
 	old.LimitWait = &dockLimitWait{ResetsAt: &base}
 	o2 := old
 	later := base.Add(40 * time.Second)
 	o2.LimitWait = &dockLimitWait{ResetsAt: &later}
-	if id(old) != id(o2) {
+	if first(old).ID != first(o2).ID {
 		t.Error("the fallback is stable too")
 	}
 }

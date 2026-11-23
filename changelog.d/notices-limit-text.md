@@ -1,0 +1,1 @@
+- A usage-limit notice now says the real reset time to the minute (it had been rounded down to the hour), keys its id and group on a coarse bucket so a reset read a few minutes differently, even across the top of an hour, is still one limit, and names what can be done in short fixed words by the action's kind (the per-loop record keeps only the kind).
