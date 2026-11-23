@@ -91,15 +91,23 @@ def pull_request_files(repo, number):
     if answer is None:
         answer = subprocess.check_output(
             ['gh', 'api', '--paginate', '--slurp', f'repos/{repo}/pulls/{number}/files?per_page=100'], text=True)
+    pages = json.loads(answer)
+    # An error body is a JSON object, not a list: that is doubt, never a list of names.
+    if not isinstance(pages, list):
+        raise ValueError(f'the files answer is not a list: {str(pages)[:80]}')
     names = []
-    for item in json.loads(answer):
-        for entry in (item if isinstance(item, list) else [item]):
-            if isinstance(entry, str):
+    for page in pages:
+        if not isinstance(page, list):
+            raise ValueError(f'a page of the files answer is not a list: {str(page)[:80]}')
+        for entry in page:
+            if isinstance(entry, str):  # the test hook's plain names
                 names.append(entry)
-            else:
-                names.append(entry['filename'])
-                if entry.get('previous_filename'):
-                    names.append(entry['previous_filename'])
+                continue
+            if not isinstance(entry, dict) or not isinstance(entry.get('filename'), str):
+                raise ValueError(f'a changed-file entry has no filename: {str(entry)[:80]}')
+            names.append(entry['filename'])
+            if isinstance(entry.get('previous_filename'), str):
+                names.append(entry['previous_filename'])
     return names
 
 

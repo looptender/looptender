@@ -45,6 +45,7 @@ def validate(text):
         assert re.search(r'^    needs: plan$', part, re.M) and "if: needs.plan.outputs.duplicate != 'true'" in part, f'{job} must follow the plan'
     for job, output in (('race', 'os'), ('checks', 'checks_os')):
         part = re.search(r'^  ' + job + r':\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', body, re.M | re.S)[1]
+        assert 'fail-fast: false' in part, f'a failing {job} leg must not cancel the others'
         assert 'os: ${{ fromJSON(needs.plan.outputs.' + output + ') }}' in part, f'{job} must take its operating systems from the plan'
     assert 'types: [opened, synchronize, reopened, ready_for_review]' in text, 'macOS must run when a draft is marked ready'
     # A pinned -run pattern that matches nothing must fail, not pass silently.
@@ -95,6 +96,13 @@ class WorkflowTests(unittest.TestCase):
                          ('synchronize, reopened, ready_for_review]', 'synchronize, reopened]')):
             with self.subTest(old=old[:40]), self.assertRaises(AssertionError):
                 validate(WORKFLOW.replace(old, new, 1))
+
+    def test_a_matrix_without_fail_fast_false_is_rejected(self):
+        for job in ('race', 'checks'):
+            with self.subTest(job=job), self.assertRaises(AssertionError):
+                i = WORKFLOW.index(f'\n  {job}:\n')
+                j = WORKFLOW.index('      fail-fast: false', i)
+                validate(WORKFLOW[:j] + '      fail-fast: true' + WORKFLOW[WORKFLOW.index('\n', j):])
 
     def test_an_unwrapped_pinned_go_test_is_rejected(self):
         with self.assertRaises(AssertionError):

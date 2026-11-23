@@ -46,6 +46,23 @@ class PlanTests(unittest.TestCase):
         for event, draft in [('pull_request', 'false'), ('merge_group', ''), ('push', '')]:
             plan.plan(event, draft, lambda: None, trap)
 
+    def test_an_error_body_or_odd_shape_is_doubt_never_a_list_of_names(self):
+        import json, os
+        for body in ({'message': 'Bad credentials', 'filename': 'integrations/macos/x.swift'}, [{'message': 'Not Found'}],
+                     [{'filename': 5}], ['x'], 'text', None, [{}], [[{'filename': 'a'}], {'filename': 'b'}]):
+            with self.subTest(body=body):
+                os.environ['CI_PLAN_FILES_JSON'] = json.dumps(body)
+                try:
+                    with self.assertRaises(ValueError):
+                        plan.pull_request_files('o/r', 1)
+                    # And a draft whose list raises runs everything.
+                    def listed():
+                        return plan.pull_request_files('o/r', 1)
+                    got = plan.plan('pull_request', 'true', NEVER, listed)
+                    self.assertEqual((got[0], got[3]), (plan.FULL, plan.FULL))
+                finally:
+                    del os.environ['CI_PLAN_FILES_JSON']
+
     def test_file_list_from_the_api_includes_renames_and_pages(self):
         import json, os
         os.environ['CI_PLAN_FILES_JSON'] = json.dumps([[{'filename': 'a.go'}, {'filename': 'integrations/macos/B.swift', 'previous_filename': 'integrations/macos/A.swift'}], [{'filename': 'c.md'}]])

@@ -435,6 +435,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.duplicate != 'true'
     strategy:
+      fail-fast: false # a macOS failure must not cancel the Ubuntu leg and lose its results
       matrix:
         os: ${{ fromJSON(needs.plan.outputs.checks_os) }}
     runs-on: ${{ matrix.os }}
