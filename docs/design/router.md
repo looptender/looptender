@@ -174,7 +174,7 @@ Two inputs: its source, and an isolated lab that ran version 0.18.2 against a st
 | R15 | Disk full | The front needs no disk. The router keeps deciding from memory and stops saving; a restart then loses pins made since the last save, which costs at most a prompt-cache miss per conversation. The pointer is never written when a write cannot be completed atomically. | The existing `disk` notice, plus "router state not saved since <time>". |
 | R16 | Two users on one machine | Each user has their own front, port, client secrets, router and state directory. The private channel is per user. One user's front cannot be asked for another user's tokens. | Nothing. See the security review for a port taken over by another user. |
 | R17 | The router's decision is slow (machine overloaded) | A conversation the front already holds a decision for is not affected: no question is asked. A first request waits up to the bound, which grows with observed delay to at most 500 ms, then goes on its own login. If that answer is a 429, the second decision may wait 2 s. Slow answers never stop the front from asking. | Counted; shown in `router status` as "decisions missed". |
-| R18 | The provider is unreachable or answers 5xx/529 | The provider's answer or the connection error passes through. No switch: an unclassified error never causes a move. | Nothing new. |
+| R18 | The provider is unreachable or answers 5xx/529 | The provider's answer passes through; with no connection at all, the front answers 502 and says so. No switch: an unclassified error never causes a move. | Nothing new. |
 | R19 | The next subscription cannot use the model | The first such answer passes through once; the pair (subscription, model) is then skipped for that model. | "<label> does not offer <model>" on `router status`. |
 | R20 | The home subscription itself is logged out | The session cannot start a request at all; that is the provider tool's own "not logged in". The router is not involved. | The existing account check. |
 | R21 | State file damaged or from a newer version | The router starts with empty pins and the order from configuration, and keeps the unreadable file aside. | "Router state could not be read; started fresh. Kept as <name>." |
@@ -215,6 +215,7 @@ A client acts on status codes, so the front's own answers are few and fixed:
 - **Never 401 and never 429.** Those mean "sign in again" and "you are at a limit" to the client, and only the provider may say them.
 - **403** for a guard failure (wrong `Host`, an `Origin` header, a refused path): these are not the client's requests.
 - **503 with `Retry-After`** when the front itself cannot forward (out of connections, shutting down past its drain).
+- **502** when no connection to the provider can be made.
 - **504** for R24.
 - Everything else is the provider's answer, unchanged.
 
