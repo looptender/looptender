@@ -42,17 +42,14 @@ type doctorCheck struct {
 }
 
 type doctorReport struct {
-	Notifications *report.DeliveryStatus `json:"notifications,omitempty"`
-	SchemaVersion int                    `json:"schemaVersion"`
-	Version       string                 `json:"version"`
-	Loop          string                 `json:"loop,omitempty"`
-	Target        string                 `json:"target,omitempty"`
-	TargetAgent   *agentRef              `json:"targetAgent,omitempty"`
-	QuotaGroup    string                 `json:"quotaGroup,omitempty"`
-	ControlState  string                 `json:"controlState,omitempty"`
-	// Archived: as in status --json.
-	Archived      *archiveView              `json:"archived,omitempty"`
-	ArchiveLapsed *archiveView              `json:"archiveLapsed,omitempty"`
+	Notifications *report.DeliveryStatus    `json:"notifications,omitempty"`
+	SchemaVersion int                       `json:"schemaVersion"`
+	Version       string                    `json:"version"`
+	Loop          string                    `json:"loop,omitempty"`
+	Target        string                    `json:"target,omitempty"`
+	TargetAgent   *agentRef                 `json:"targetAgent,omitempty"`
+	QuotaGroup    string                    `json:"quotaGroup,omitempty"`
+	ControlState  string                    `json:"controlState,omitempty"`
 	CheckedAt     time.Time                 `json:"checkedAt"`
 	LastCheckAt   *time.Time                `json:"lastCheckAt,omitempty"`
 	StaleAfter    string                    `json:"staleAfter"`
@@ -210,13 +207,6 @@ func doctor(e env, args []string, run doctorRun) int {
 		}
 		r.ControlState = ctl.Summary()
 		r.add("control", "ok", "Control state: "+r.ControlState+".", "")
-		r.Archived, r.ArchiveLapsed = loopArchive(cfg.Loop.StateDir, ctl)
-		if a := r.Archived; a != nil {
-			r.add("loop.archived", "ok", "The loop is archived "+archiveSince(a)+": it is listed apart, needs nobody and is checked by no daemon; warnings about its routes are not given.", "")
-		}
-		if a := r.ArchiveLapsed; a != nil {
-			r.add("loop.archived", "warning", "An archive record "+archiveSince(a)+" is ignored: the loop supervises again, resumed by a build from before archiving.", "Run looptender unarchive -c "+shellQuote(cfg.Path())+" to remove the record, or pause the loop to archive it again.")
-		}
 	}
 	st, stateErr := state.Load(cfg.Loop.StateDir)
 	if stateErr != nil {
@@ -365,11 +355,7 @@ func doctor(e env, args []string, run doctorRun) int {
 		r.add("supervisor.follows_installs", level, "Daemon follows new installs: "+text+".", fix)
 	}
 	doctorFailedChecks(&r, st, stateErr == nil)
-	held := loopHeld(ctl, ctlErr != nil)
-	if r.Archived != nil {
-		held = "archived"
-	}
-	doctorRoutes(&r, cfg, *path, st, stateErr == nil, held, r.CheckedAt)
+	doctorRoutes(&r, cfg, *path, st, stateErr == nil, loopHeld(ctl, ctlErr != nil), r.CheckedAt)
 	if stateErr == nil {
 		if ctl, err := control.Load(cfg.Loop.StateDir); err == nil {
 			sch := describeSchedule(&cfg.Loop, st, ctl, &d, r.CheckedAt)

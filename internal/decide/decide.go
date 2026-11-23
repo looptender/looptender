@@ -139,9 +139,6 @@ type Observation struct {
 	// ChildTitles are the titles BB reported for verified direct children, by
 	// ID. They are for display only: no decision reads them.
 	ChildTitles map[string]string
-	// Title is the title BB reported for the observed thread itself, for
-	// display only: no decision reads it (state.ThreadTitleName).
-	Title string
 	// HealthyChildren contains verified direct child IDs with a known status
 	// other than error. Decide never reads it; the owner report uses it to
 	// tell a child that recovered from one an incomplete listing did not show.

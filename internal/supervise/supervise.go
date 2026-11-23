@@ -75,6 +75,11 @@ type Options struct {
 	Now          time.Time
 	DryRun       bool            // decide and record; send nothing and run no probes
 	BacklogQuery prbacklog.Query // nil uses fixed read-only gh query when opted in
+	// AccountCheck runs the accounts catalog's own login check (the CLI's
+	// version and auth status: no model request) of an entry, so its login
+	// fingerprint is current. Called when the active target is at a usage
+	// limit and its route states the entry; nil checks nothing.
+	AccountCheck func(ctx context.Context, account string)
 	Fingerprint  func([]string) (string, error)
 	NewAdapter   factory.Func
 	Probe        ProbeFunc
@@ -918,6 +923,7 @@ func (t *tick) run() error {
 		r := obs.ResetsAt.UTC()
 		res.ResetsAt = &r
 	}
+	t.limitAccountCheck(agent, obs)
 	inWindow, why, err := window.Inside(loop.Window, t.now)
 	if err != nil {
 		return err
@@ -3001,11 +3007,6 @@ func (t *tick) observe(a adapter.Adapter) (decide.Observation, error) {
 	}
 	if err == nil && ctx.Err() != nil {
 		err = fmt.Errorf("observation exceeded %s", limit)
-	}
-	// The thread's title, for display only, from the read just made; a
-	// failed write changes nothing.
-	if th, ok := a.(interface{ ObservedThread() string }); ok && err == nil && obs.Title != "" && !t.opts.DryRun {
-		_ = state.NoteThreadTitle(t.loop.StateDir, th.ObservedThread(), obs.Title, t.cfg.RouteLabels(), t.now)
 	}
 	if c, ok := a.(adapter.CLIPather); ok && !t.opts.DryRun && !t.opts.StopOnly {
 		// Where the system found the configured executable for this check,

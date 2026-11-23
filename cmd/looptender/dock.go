@@ -471,6 +471,9 @@ func (d *dockReader) read(ctx context.Context, identifiers bool) (result dockRep
 			if f, err := accounts.Load(dir); err == nil {
 				view, catalog = accounts.Project(f, d.clock()), &f
 				accounts.AttachQuota(&view, accounts.QuotaViews(dir, f, os.Environ(), d.clock()))
+				if logins, err := accounts.LoadLogins(dir); err == nil {
+					accounts.AttachLogins(&view, logins)
+				}
 			}
 		}
 		dockLinkAccountRoutes(&view, result)

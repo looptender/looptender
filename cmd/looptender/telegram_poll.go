@@ -541,8 +541,6 @@ func formatTelegramPrepareResumeFailure(r clientResumeReport, code int) (toast, 
 			return "Loop busy; retry shortly", "Resume review unavailable because another command holds the loop lock. Retry shortly."
 		case "supervised_session":
 			return "Resume refused", "Resume refused because a supervised session cannot clear its own hold."
-		case "archived":
-			return "Loop archived", "Resume refused because the loop is archived. A person unarchives it with looptender unarchive first; unarchiving resumes nothing."
 		}
 	}
 	if code == exitSkipped {

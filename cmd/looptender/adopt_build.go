@@ -411,10 +411,6 @@ func (a *buildAdopter) loopReady(lease *ownerLease) string {
 	case checkOwnership(a.stateDir, lease) != nil:
 		return "the loop's owner changed"
 	}
-	if _, archived := archivedNow(a.stateDir); archived {
-		// The daemon exits at its next check; a new build would too.
-		return "the loop is archived"
-	}
 	return ""
 }
 

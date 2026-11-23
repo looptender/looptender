@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -88,11 +89,6 @@ Control:
   stop                     Stop the running session on the next pass, then send nothing
   complete                 Mark the task finished; hold until resume
   await-user               Mark the loop as waiting for a person
-  archive | unarchive      List a loop that is not supervising apart (--note TEXT), or normally again;
-                           an archived loop needs nobody and cannot be resumed until unarchived.
-                           Neither changes a hold; unarchive resumes nothing
-  display-name [NAME]      Show, or set, the one name every list shows for this line of work
-                           (never a provider or model; the slug and the BB thread keep theirs)
   session reset            Forget a headless target's saved session, so its next turn starts
                            a new conversation on purpose (--target NAME; default the active one)
   session clear-unconfirmed
@@ -138,10 +134,38 @@ func main() {
 	// Headless turns run through a copy of this binary on every platform;
 	// this returns immediately for ordinary CLI invocations.
 	runner.MaybeRunTurn()
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(context.Background())
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		s := <-signals
+		receivedSignal.Store(signalName(s))
+		cancel()
+	}()
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	cancel()
 	os.Exit(code)
+}
+
+// receivedSignal is the signal that ended this process's command, if one
+// did; the daemon's stopped record says it.
+var receivedSignal atomic.Value
+
+func stopSignal() string {
+	s, _ := receivedSignal.Load().(string)
+	return s
+}
+
+func signalName(s os.Signal) string {
+	switch s {
+	case os.Interrupt:
+		return "SIGINT"
+	case syscall.SIGTERM:
+		return "SIGTERM"
+	case syscall.SIGHUP:
+		return "SIGHUP"
+	}
+	return "other"
 }
 
 type env struct {
@@ -421,28 +445,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return code
 	case "stop":
 		return stopCmd(e, cfg, *f.note, *f.lanes, *f.dropQueued, *f.immediately)
-	case "archive":
-		if len(positional) != 0 {
-			e.errf("usage: looptender archive [-c looptender.yaml] [--note TEXT] [--json]")
-			return exitUsage
-		}
-		return archiveCmd(e, cfg, *f.note, now, *f.asJSON)
-	case "display-name":
-		if len(positional) > 1 {
-			e.errf("usage: looptender display-name [-c looptender.yaml] [NAME]")
-			return exitUsage
-		}
-		name := ""
-		if len(positional) == 1 {
-			name = positional[0]
-		}
-		return displayNameCmd(e, cfg, name, len(positional) == 1, now)
-	case "unarchive":
-		if len(positional) != 0 || *f.note != "" {
-			e.errf("usage: looptender unarchive [-c looptender.yaml] [--json]")
-			return exitUsage
-		}
-		return unarchiveCmd(e, cfg, *f.asJSON)
 	case "complete":
 		return completionCommand(e, cfg, *f.note, *f.reviewFile)
 	case "disable", "pause", "resume", "await-user":

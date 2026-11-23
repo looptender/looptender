@@ -31,6 +31,9 @@ func TestStartBackgroundProcess(t *testing.T) {
 	}
 	dir := t.TempDir()
 	t.Setenv("BB_THREAD_ID", "thr_start_fixture")
+	// The child start this test covers; start_launch_unix_test.go covers the
+	// service-manager one with stand-ins.
+	t.Setenv(backgroundLaunchEnv, "child")
 	// Both programs are built here and run by this test. testexec runs each
 	// once as it is built, so a refusal by the host of a file it has not
 	// seen is retried there and never reaches an assertion below.
