@@ -115,6 +115,7 @@ func PinForTests(r Readers) {
 		panic("hostcheck: PinForTests called outside a test binary")
 	}
 	System = r
+	FixedByEnv = false // pinned on purpose: nothing to say
 }
 
 // ReadSession reads the session, each part within Bound.
