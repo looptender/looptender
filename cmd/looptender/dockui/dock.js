@@ -759,11 +759,11 @@
       fresh.appendChild(freshnessChip(l));
       if (l.freshness.detail) fresh.appendChild(document.createTextNode(" " + l.freshness.detail));
       pane.appendChild(fresh);
+      if (l.freshness.action) pane.appendChild(el("p", "sub build-line fresh-action", l.freshness.action));
       if (l.freshness.command) {
         var run = el("p", "sub build-line fresh-command");
-        run.appendChild(document.createTextNode("To update it, run "));
+        run.appendChild(document.createTextNode("Command: "));
         run.appendChild(el("code", null, l.freshness.command));
-        run.appendChild(document.createTextNode(", then start supervision again the way you started it; holds and controls stay as they are."));
         pane.appendChild(run);
       }
     }

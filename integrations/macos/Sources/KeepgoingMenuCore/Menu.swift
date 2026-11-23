@@ -61,13 +61,17 @@ public struct PanelFreshness: Decodable, Equatable {
     public let state: String
     public let text: String
     public var detail: String? = nil
-    /// What a person would run for an older daemon. Shown, never run.
+    /// What a person does, in words, when no command fits that supervisor.
+    public var action: String? = nil
+    /// What a person would run, only where the CLI says it is true for that
+    /// supervisor. Shown, never run.
     public var command: String? = nil
 
-    public init(state: String, text: String, detail: String? = nil, command: String? = nil) {
+    public init(state: String, text: String, detail: String? = nil, action: String? = nil, command: String? = nil) {
         self.state = state
         self.text = text
         self.detail = detail
+        self.action = action
         self.command = command
     }
 }
@@ -442,6 +446,7 @@ public enum MenuBuilder {
         guard let f = loop.freshness, f.state != "current" else { return [] }
         var rows: [MenuRow] = []
         if let detail = f.detail.map(Contract.text), !detail.isEmpty { rows.append(status(detail)) }
+        if let action = f.action.map(Contract.text), !action.isEmpty { rows.append(status(action)) }
         if let command = f.command.map(Contract.text), !command.isEmpty { rows.append(status("Run: " + command)) }
         return rows.isEmpty ? [] : [separator] + rows
     }

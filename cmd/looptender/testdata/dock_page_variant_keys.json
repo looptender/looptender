@@ -45,5 +45,6 @@
  "freshness.state",
  "freshness.text",
  "freshness.detail",
- "freshness.command"
+ "freshness.command",
+ "freshness.action"
 ]

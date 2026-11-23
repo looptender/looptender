@@ -359,7 +359,7 @@ final class MenuTests: XCTestCase {
          "installedBuild":"v0.2.0","freshness":{"text":"Build v0.2.0 installed 3 h ago · 1 supervisor on it · 2 older","onIt":1,"older":2},
          "loops":[{"key":"l000000000001","name":"example-api","state":"supervising","phrase":"Supervising","needsYou":false,"freshness":{"state":"current","text":"v0.2.0"}},
                   {"key":"l000000000002","name":"example-docs","state":"supervising","phrase":"Supervising","needsYou":false,"freshness":{"state":"pending","text":"Update pending · switches at next check"}},
-                  {"key":"l000000000003","name":"example-site","state":"paused","phrase":"Paused","needsYou":false,"can":["resume"],"freshness":{"state":"older","text":"Older build · restart the supervisor to update","detail":"Runs v0.1.0.","command":"keepgoing daemon-shutdown -c CONFIG"}}]}
+                  {"key":"l000000000003","name":"example-site","state":"paused","phrase":"Paused","needsYou":false,"can":["resume"],"freshness":{"state":"older","text":"Older build · restart the supervisor to update","detail":"Runs v0.1.0.","action":"Run this, then start supervision again the way it was started. The loop stays held; this does not resume it.","command":"looptender daemon-shutdown -c CONFIG"}}]}
         """
         let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
         let model = MenuBuilder.build(.read(decoded, at: now), now: now)
@@ -369,7 +369,7 @@ final class MenuTests: XCTestCase {
         XCTAssertTrue(lines.contains("example-docs | Supervising · Update pending · switches at next check"))
         XCTAssertTrue(lines.contains("example-site | Paused · Older build · restart the supervisor to update"))
         let older = try XCTUnwrap(model.rows.first { $0.title == "example-site" })
-        XCTAssertEqual(older.submenu.filter { $0.kind == .status }.map(\.title), ["Runs v0.1.0.", "Run: keepgoing daemon-shutdown -c CONFIG"])
+        XCTAssertEqual(older.submenu.filter { $0.kind == .status }.map(\.title), ["Runs v0.1.0.", "Run this, then start supervision again the way it was started. The loop stays held; this does not resume it.", "Run: looptender daemon-shutdown -c CONFIG"])
         // The command is only shown: every action in the submenu is one the menu already had.
         XCTAssertEqual(older.submenu.compactMap(\.command), [.openLoop(key: "l000000000003"), .review(.resume, key: "l000000000003")])
         // A CLI that sends none of it keeps the plain menu.
