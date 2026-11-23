@@ -23,7 +23,7 @@ const (
 func versionOnePrompt(t *testing.T) string {
 	t.Helper()
 	text := prompt.GeneratedPromptVersion(1, `'/fictional/bin/looptender'`, `'/fictional/loop/looptender.yaml'`, fictionalTaskText)
-	if v, ok := prompt.MatchPolicy(text); !ok || v.Version != 1 || strings.Contains(text, currentOnlyPolicy) {
+	if v, ok := prompt.MatchPolicy(text); !ok || v.Version != 1 || v.Task != fictionalTaskText || strings.Contains(text, currentOnlyPolicy) {
 		t.Fatalf("not version 1: %+v %v", v, ok)
 	}
 	return text
