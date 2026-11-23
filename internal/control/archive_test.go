@@ -17,7 +17,7 @@ func TestArchiveIsRefusedWhileSupervisingAndChangesNoHold(t *testing.T) {
 	if err := Save(dir, File{Enabled: true, Note: "fictional"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := ArchiveLoop(dir, "", now); !errors.Is(err, ErrArchiveSupervising) {
+	if _, _, err := ArchiveLoop(dir, "", now, nil); !errors.Is(err, ErrArchiveSupervising) {
 		t.Fatalf("archived a supervising loop: %v", err)
 	}
 	if a, _ := LoadArchive(dir); a != nil {
@@ -30,7 +30,7 @@ func TestArchiveIsRefusedWhileSupervisingAndChangesNoHold(t *testing.T) {
 			t.Fatal(err)
 		}
 		before, _ := os.ReadFile(filepath.Join(d, FileName))
-		a, f, err := ArchiveLoop(d, "  retired\tto   the example  ", now)
+		a, f, err := ArchiveLoop(d, "  retired\tto   the example  ", now, nil)
 		if err != nil || a.Note != "retired to the example" || !a.At.Equal(now) || a.Hold != held.Summary() || f.Supervising() {
 			t.Fatalf("%+v: %+v %v", held, a, err)
 		}
@@ -39,7 +39,7 @@ func TestArchiveIsRefusedWhileSupervisingAndChangesNoHold(t *testing.T) {
 			t.Fatalf("control.json changed:\n%s\n%s", before, after)
 		}
 		// Again: the first time is kept, the note replaced.
-		if a2, _, err := ArchiveLoop(d, "second", now.Add(time.Hour)); err != nil || !a2.At.Equal(now) || a2.Note != "second" {
+		if a2, _, err := ArchiveLoop(d, "second", now.Add(time.Hour), nil); err != nil || !a2.At.Equal(now) || a2.Note != "second" {
 			t.Fatalf("again: %+v %v", a2, err)
 		}
 	}
@@ -51,7 +51,7 @@ func TestArchivedLoopCannotBeResumedOrEnabledUntilUnarchived(t *testing.T) {
 	if err := Save(dir, File{Enabled: true, Paused: true, AwaitingUser: true, Note: "held for a person"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := ArchiveLoop(dir, "", now); err != nil {
+	if _, _, err := ArchiveLoop(dir, "", now, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Changes that keep it held are allowed; lifting the last hold is not.
@@ -66,14 +66,14 @@ func TestArchivedLoopCannotBeResumedOrEnabledUntilUnarchived(t *testing.T) {
 		t.Fatalf("saved: %+v", got)
 	}
 	// Unarchiving resumes nothing; then resuming works.
-	a, err := UnarchiveLoop(dir)
+	a, err := UnarchiveLoop(dir, nil)
 	if err != nil || a == nil {
 		t.Fatalf("unarchive: %+v %v", a, err)
 	}
 	if got, _ := Load(dir); !got.Paused || !got.Stop || !got.AwaitingUser || got.Note != "held for a person" {
 		t.Fatalf("unarchive changed control: %+v", got)
 	}
-	if again, err := UnarchiveLoop(dir); again != nil || err != nil {
+	if again, err := UnarchiveLoop(dir, nil); again != nil || err != nil {
 		t.Fatalf("second unarchive: %+v %v", again, err)
 	}
 	if _, err := Update(dir, func(f *File) { f.Paused, f.Stop, f.AwaitingUser = false, false, false }); err != nil {
@@ -81,7 +81,7 @@ func TestArchivedLoopCannotBeResumedOrEnabledUntilUnarchived(t *testing.T) {
 	}
 	// Enabling a disabled archived loop is refused too.
 	d := t.TempDir()
-	if _, _, err := ArchiveLoop(d, "", now); err != nil {
+	if _, _, err := ArchiveLoop(d, "", now, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Update(d, func(f *File) { f.Enabled = true }); !errors.Is(err, ErrArchived) {
@@ -97,7 +97,7 @@ func TestArchiveLapsesWhenTheLoopSupervisesAgain(t *testing.T) {
 	if err := Save(dir, File{Enabled: true, Paused: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := ArchiveLoop(dir, "", time.Now()); err != nil {
+	if _, _, err := ArchiveLoop(dir, "", time.Now(), nil); err != nil {
 		t.Fatal(err)
 	}
 	// What an earlier build's resume writes: control.json alone.
@@ -145,7 +145,7 @@ func TestUnreadableArchiveFailsClosed(t *testing.T) {
 	if _, err := Update(dir, func(f *File) { f.Paused = false }); !errors.Is(err, ErrArchived) {
 		t.Fatalf("resumed past an unreadable record: %v", err)
 	}
-	if _, err := UnarchiveLoop(dir); err != nil {
+	if _, err := UnarchiveLoop(dir, nil); err != nil {
 		t.Fatalf("unarchive of an unreadable record: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ArchiveFileName)); !os.IsNotExist(err) {
@@ -159,7 +159,7 @@ func TestArchiveNoteIsOneBoundedLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, bad := range []string{strings.Repeat("a", ArchiveNoteLimit+1), "bell\a", string([]byte{0xff})} {
-		if _, _, err := ArchiveLoop(dir, bad, time.Now()); err == nil {
+		if _, _, err := ArchiveLoop(dir, bad, time.Now(), nil); err == nil {
 			t.Errorf("accepted %q", bad)
 		}
 	}

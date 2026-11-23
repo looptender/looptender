@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
@@ -88,7 +89,7 @@ func printArchiveOut(e env, out archiveOut, asJSON bool) {
 
 func archiveCmd(e env, cfg *config.Config, note string, now time.Time, asJSON bool) int {
 	path := shellQuote(cfg.Path())
-	a, ctl, err := control.ArchiveLoop(cfg.Loop.StateDir, note, now)
+	a, ctl, err := control.ArchiveLoop(cfg.Loop.StateDir, note, now, archiveOwnerCheck("archive"))
 	switch {
 	case errors.Is(err, control.ErrArchiveSupervising):
 		out := archiveOut{Loop: cfg.Loop.Name, Outcome: "refused", Hold: ctl.Summary(),
@@ -111,7 +112,7 @@ func archiveCmd(e env, cfg *config.Config, note string, now time.Time, asJSON bo
 
 func unarchiveCmd(e env, cfg *config.Config, asJSON bool) int {
 	path := shellQuote(cfg.Path())
-	a, err := control.UnarchiveLoop(cfg.Loop.StateDir)
+	a, err := control.UnarchiveLoop(cfg.Loop.StateDir, archiveOwnerCheck("unarchive"))
 	if err != nil {
 		e.errf("unarchive: %v; nothing changed", err)
 		return exitFailed
@@ -124,7 +125,7 @@ func unarchiveCmd(e env, cfg *config.Config, asJSON bool) int {
 	_ = state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "control", Action: "unarchive", Reason: ctl.Summary()})
 	text := fmt.Sprintf("Unarchived loop %s: it is listed normally again. Nothing was resumed: it is still %s.", cfg.Loop.Name, ctl.Summary())
 	if !ctl.Supervising() {
-		text += fmt.Sprintf(" To run it again, resume it (looptender resume -c %s) and start supervision (looptender start -c %s), since its daemon exited when it was archived.", path, path)
+		text += " " + unarchivedRunAgain(cfg, path)
 	}
 	printArchiveOut(e, archiveOut{Loop: cfg.Loop.Name, Outcome: "unarchived", Archived: &archiveView{At: a.At, Note: a.Note, Hold: a.Hold}, Hold: ctl.Summary(), Text: text}, asJSON)
 	return exitOK
@@ -174,4 +175,27 @@ func withoutNote(a *archiveView) *archiveView {
 	c := *a
 	c.Note = ""
 	return &c
+}
+
+// archiveOwnerCheck refuses archive and unarchive from a BB thread that does
+// not own the loop, as resume is refused: either would change what its
+// owner can do. A person outside BB (no BB_THREAD_ID) is not refused.
+func archiveOwnerCheck(cmd string) func(control.File) error {
+	caller := os.Getenv("BB_THREAD_ID")
+	return func(f control.File) error {
+		if err := control.CheckOwner(f, caller, false); err != nil {
+			return fmt.Errorf("%s refused: BB_THREAD_ID identifies a different thread from this loop's owner (%w); a person can run it from an ordinary terminal outside BB", cmd, err)
+		}
+		return nil
+	}
+}
+
+// unarchivedRunAgain says, after an unarchive, that supervision is not
+// running and how to start it: the daemon exited when the loop was
+// archived, and a service does not restart a daemon that exited cleanly.
+func unarchivedRunAgain(cfg *config.Config, path string) string {
+	if _, exists, _ := readServicePlan(localServiceHost(), cfg.Loop.StateDir); exists {
+		return fmt.Sprintf("Supervision is not running: its service's daemon exited when the loop was archived, and the service does not restart a daemon that exits cleanly. To run it again, resume it (looptender resume -c %s), then start the service again: looptender service remove -c %s, then looptender service install -c %s (or log out and in). Do not use start for a loop with a service: its daemon would hold the lock the service needs.", path, path, path)
+	}
+	return fmt.Sprintf("Supervision is not running: its daemon exited when the loop was archived. To run it again, resume it (looptender resume -c %s) and start supervision (looptender start -c %s, or the scheduler that ticks it).", path, path)
 }

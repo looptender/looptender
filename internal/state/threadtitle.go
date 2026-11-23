@@ -42,15 +42,24 @@ type ThreadTitle struct {
 // NoteThreadTitle records the title read for thread at now, unless the file
 // already holds the same title for it. An empty title or an unexpected thread
 // ID records nothing.
-func NoteThreadTitle(dir, thread, title string, now time.Time) error {
+// labels are the loop's own route labels (providers, models, groups,
+// accounts), which a display name made from the title leaves out.
+func NoteThreadTitle(dir, thread, title string, labels []string, now time.Time) error {
 	title = CleanLaneTitle(title)
 	if title == "" || !threadIDPattern.MatchString(thread) {
 		return nil
 	}
-	// The first title read becomes the display name when none is recorded;
-	// a later title never replaces it.
+	// The first title read becomes the display name when none is recorded,
+	// without the words of a provider, model or generation; a later title
+	// never replaces it. A title with nothing else records nothing.
 	if dn, err := LoadDisplayName(dir); err == nil && dn == nil {
-		_ = SaveDisplayName(dir, title, DisplayNameThreadTitle, now)
+		if name, trimmed := DisplayNameFromTitle(title, labels); name != "" {
+			source := DisplayNameThreadTitle
+			if trimmed {
+				source = DisplayNameTitleTrimmed
+			}
+			_ = SaveDisplayName(dir, name, source, now)
+		}
 	}
 	if old, err := LoadThreadTitle(dir); err == nil && old != nil && old.Thread == thread && old.Title == title {
 		return nil
@@ -99,8 +108,11 @@ const MaxDisplayName = 80
 // Display name sources.
 const (
 	DisplayNameSet         = "set"          // a person set it
-	DisplayNameThreadTitle = "thread_title" // the BB thread's title at the first check that read it
-	DisplayNameInherited   = "inherited"    // taken from the loop this one succeeds
+	DisplayNameThreadTitle = "thread_title" // the BB thread's title at the first check that read it, as it was
+	// DisplayNameTitleTrimmed: that title without its provider, model,
+	// effort or generation words (DisplayNameFromTitle).
+	DisplayNameTitleTrimmed = "thread_title_trimmed"
+	DisplayNameInherited    = "inherited" // taken from the loop this one succeeds
 )
 
 type DisplayName struct {
@@ -123,7 +135,7 @@ func CleanDisplayName(s string) string {
 // SaveDisplayName replaces the display name.
 func SaveDisplayName(dir, name, source string, now time.Time) error {
 	name = CleanDisplayName(name)
-	if name == "" || (source != DisplayNameSet && source != DisplayNameThreadTitle && source != DisplayNameInherited) {
+	if name == "" || (source != DisplayNameSet && source != DisplayNameThreadTitle && source != DisplayNameTitleTrimmed && source != DisplayNameInherited) {
 		return ErrThreadTitle
 	}
 	b, err := json.Marshal(DisplayName{Version: 1, Name: name, Source: source, At: now.UTC()})

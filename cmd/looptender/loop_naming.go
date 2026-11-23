@@ -135,3 +135,10 @@ func (n loopNaming) inList() loopNaming {
 	n.Slug = ""
 	return n
 }
+
+// withSlug is n with its slug: the list surfaces leave it out, since their
+// loops carry it as name, and text needs it to tell two loops apart.
+func (n loopNaming) withSlug(slug string) loopNaming {
+	n.Slug = slug
+	return n
+}

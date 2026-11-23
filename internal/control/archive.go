@@ -103,10 +103,11 @@ func CleanArchiveNote(note string) (string, error) {
 }
 
 // ArchiveLoop records the loop as archived, under the control lock, if its
-// control record does not let it supervise. It writes only archive.json.
-// Archiving an archived loop again replaces the note and keeps the first
-// time; it returns the record saved and the control record it was judged on.
-func ArchiveLoop(stateDir, note string, now time.Time) (Archive, File, error) {
+// control record does not let it supervise and check (the caller's owner
+// check; nil for none) accepts it. It writes only archive.json. Archiving
+// an archived loop again replaces the note and keeps the first time; it
+// returns the record saved and the control record it was judged on.
+func ArchiveLoop(stateDir, note string, now time.Time, check func(File) error) (Archive, File, error) {
 	note, err := CleanArchiveNote(note)
 	if err != nil {
 		return Archive{}, File{}, err
@@ -122,6 +123,11 @@ func ArchiveLoop(stateDir, note string, now time.Time) (Archive, File, error) {
 	f, err := Load(stateDir)
 	if err != nil {
 		return Archive{}, f, err
+	}
+	if check != nil {
+		if err := check(f); err != nil {
+			return Archive{}, f, err
+		}
 	}
 	if f.Supervising() {
 		return Archive{}, f, ErrArchiveSupervising
@@ -140,14 +146,24 @@ func ArchiveLoop(stateDir, note string, now time.Time) (Archive, File, error) {
 	return a, f, writeAtomic(filepath.Join(stateDir, ArchiveFileName), append(b, '\n'), 0o600)
 }
 
-// UnarchiveLoop removes the archive record under the control lock and
-// returns it; nil when there was none. It changes no hold.
-func UnarchiveLoop(stateDir string) (*Archive, error) {
+// UnarchiveLoop removes the archive record under the control lock, if check
+// (nil for none) accepts the control record, and returns it; nil when there
+// was none. It changes no hold.
+func UnarchiveLoop(stateDir string, check func(File) error) (*Archive, error) {
 	l, err := lock.AcquireNamed(stateDir, lock.Control)
 	if err != nil {
 		return nil, err
 	}
 	defer l.Release()
+	if check != nil {
+		f, err := Load(stateDir)
+		if err != nil {
+			return nil, err
+		}
+		if err := check(f); err != nil {
+			return nil, err
+		}
+	}
 	a, err := LoadArchive(stateDir)
 	if a == nil && err == nil {
 		return nil, nil

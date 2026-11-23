@@ -287,14 +287,14 @@ func TestDisplayNameRuleAndStoredName(t *testing.T) {
 	}
 	now := time.Now()
 	// The first title read becomes the name; a later one does not change it.
-	if err := state.NoteThreadTitle(dir, "thr_example1", "Example work", now); err != nil {
+	if err := state.NoteThreadTitle(dir, "thr_example1", "Example work · Sonnet medium", []string{"claude-code"}, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.NoteThreadTitle(dir, "thr_example1", "Renamed in BB", now); err != nil {
+	if err := state.NoteThreadTitle(dir, "thr_example1", "Renamed in BB", nil, now); err != nil {
 		t.Fatal(err)
 	}
 	n := namingOf(l, "thr_example1")
-	if n.DisplayName != "Example work" || n.NameSource != state.DisplayNameThreadTitle || !n.TitleDiffers || n.ThreadTitle != "Renamed in BB" || n.Slug != "example-loop" {
+	if n.DisplayName != "Example work" || n.NameSource != state.DisplayNameTitleTrimmed || !n.TitleDiffers || n.ThreadTitle != "Renamed in BB" || n.Slug != "example-loop" {
 		t.Fatalf("%+v", n)
 	}
 	if w := n.withoutPrivate(); w.ThreadTitle != "" || w.DisplayName != "Example work" {
@@ -322,7 +322,7 @@ func TestGroupChangesAndClientsLeaveArchivedLoopsAlone(t *testing.T) {
 	if r, code := applyClientHold(context.Background(), d.directory, e.ID, "pause"); code != 0 || r.ControlSave != "confirmed" {
 		t.Fatalf("%+v", r)
 	}
-	if _, _, err := control.ArchiveLoop(e.StateDir, "fictional note", time.Now()); err != nil {
+	if _, _, err := control.ArchiveLoop(e.StateDir, "fictional note", time.Now(), nil); err != nil {
 		t.Fatal(err)
 	}
 	g, refused := panelGroupReview(context.Background(), d.directory, d, "stop", dockNow)
@@ -353,5 +353,79 @@ func TestGroupChangesAndClientsLeaveArchivedLoopsAlone(t *testing.T) {
 	private := readClientStatus(context.Background(), d.directory, e.ID, true, true, time.Minute, time.Now(), inspectDaemon)
 	if private.Snapshot == nil || private.Snapshot.Archived == nil || private.Snapshot.Archived.Note != "fictional note" {
 		t.Fatalf("private client status: %+v", private.Snapshot)
+	}
+}
+
+// A person's name is never trimmed, and a title made only of route words
+// leaves the slug.
+func TestDisplayNameKeepsAPersonsNameAndSkipsAnAllRouteTitle(t *testing.T) {
+	dir := t.TempDir()
+	l := config.Loop{Name: "example-loop", StateDir: dir}
+	if err := state.NoteThreadTitle(dir, "thr_example1", "Claude 4 (Opus)", nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if n := namingOf(l, ""); n.NameSource != "slug" || n.DisplayName != "example-loop" {
+		t.Fatalf("all-route title: %+v", n)
+	}
+	if err := state.SaveDisplayName(dir, "Coordinator (Claude 4)", state.DisplayNameSet, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if n := namingOf(l, ""); n.DisplayName != "Coordinator (Claude 4)" || n.NameSource != state.DisplayNameSet {
+		t.Fatalf("set name changed: %+v", n)
+	}
+}
+
+// panel list text names each loop by its display name and, when that
+// differs, its slug: two loops shown by one name stay apart.
+func TestPanelListTextTellsTwoLoopsWithOneNameApart(t *testing.T) {
+	a := dockEvidence{controls: &clientControls{Enabled: true}}.input()
+	a.Client.Snapshot.Naming = &loopNaming{DisplayName: "Coordinator", NameSource: state.DisplayNameSet, Slug: "example-loop"}
+	b := dockEvidence{controls: &clientControls{Enabled: true}}.input()
+	b.Entry.ID, b.Entry.Loop = "loop_0123456789abcdef0123456789abcde2", "example-loop-b"
+	b.Client.Snapshot.Naming = &loopNaming{DisplayName: "Coordinator", NameSource: state.DisplayNameSet, Slug: "example-loop-b"}
+	c := dockEvidence{controls: &clientControls{Enabled: true}}.input()
+	c.Entry.ID, c.Entry.Loop = "loop_0123456789abcdef0123456789abcde3", "example-plain"
+	list := buildPanelList(buildDockReport([]dockInput{a, b, c}, dockNow, 15*time.Second, 30*time.Minute, false, true, 0, true))
+	var lines []string
+	for _, l := range list.Loops {
+		lines = append(lines, l.Naming.withSlug(l.Name).nameLine())
+	}
+	got := strings.Join(lines, "\n")
+	for _, want := range []string{"Coordinator (loop example-loop)", "Coordinator (loop example-loop-b)", "example-plain"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("%q lacks %q", got, want)
+		}
+	}
+	if strings.Contains(got, "(loop )") {
+		t.Fatalf("empty slug: %q", got)
+	}
+}
+
+// A BB thread that does not own the loop can neither archive nor unarchive
+// it; the owner and a person outside BB can.
+func TestArchiveIsTheOwnersOrAPersons(t *testing.T) {
+	f := newFixture(t)
+	t.Setenv("BB_THREAD_ID", "thr_exampleowner")
+	for _, c := range []string{"enable", "pause"} {
+		if code, _, errs := f.run(c); code != exitOK {
+			t.Fatalf("%s: %s", c, errs)
+		}
+	}
+	t.Setenv("BB_THREAD_ID", "thr_exampleother")
+	if code, _, errs := f.run("archive"); code != exitFailed || !strings.Contains(errs, "archive refused: BB_THREAD_ID identifies a different thread from this loop's owner") {
+		t.Fatalf("archive by another thread: %d %s", code, errs)
+	}
+	t.Setenv("BB_THREAD_ID", "thr_exampleowner")
+	if code, _, errs := f.run("archive"); code != exitOK {
+		t.Fatalf("archive by the owner: %s", errs)
+	}
+	t.Setenv("BB_THREAD_ID", "thr_exampleother")
+	if code, _, errs := f.run("unarchive"); code != exitFailed || !strings.Contains(errs, "unarchive refused") {
+		t.Fatalf("unarchive by another thread: %d %s", code, errs)
+	}
+	t.Setenv("BB_THREAD_ID", "")
+	code, out, errs := f.run("unarchive")
+	if code != exitOK || !strings.Contains(out, "Supervision is not running: its daemon exited when the loop was archived.") {
+		t.Fatalf("unarchive by a person: %d %s %s", code, out, errs)
 	}
 }

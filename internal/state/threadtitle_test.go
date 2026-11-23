@@ -13,7 +13,7 @@ func TestThreadTitleIsCleanedAndWrittenOnlyWhenItChanges(t *testing.T) {
 	if f, err := LoadThreadTitle(dir); f != nil || err != nil {
 		t.Fatalf("missing: %+v %v", f, err)
 	}
-	if err := NoteThreadTitle(dir, "thr_example1", "  Fix\tthe\nexample  ", now); err != nil {
+	if err := NoteThreadTitle(dir, "thr_example1", "  Fix\tthe\nexample  ", nil, now); err != nil {
 		t.Fatal(err)
 	}
 	f, err := LoadThreadTitle(dir)
@@ -21,7 +21,7 @@ func TestThreadTitleIsCleanedAndWrittenOnlyWhenItChanges(t *testing.T) {
 		t.Fatalf("%+v %v", f, err)
 	}
 	// The same title again: not rewritten.
-	if err := NoteThreadTitle(dir, "thr_example1", "Fix the example", now.Add(time.Hour)); err != nil {
+	if err := NoteThreadTitle(dir, "thr_example1", "Fix the example", nil, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if f, _ := LoadThreadTitle(dir); !f.ReadAt.Equal(now) {
@@ -29,7 +29,7 @@ func TestThreadTitleIsCleanedAndWrittenOnlyWhenItChanges(t *testing.T) {
 	}
 	// Nothing for an empty title or an unexpected thread.
 	for _, c := range [][2]string{{"thr_example1", " \t"}, {"../x", "A title"}, {"", "A title"}} {
-		if err := NoteThreadTitle(dir, c[0], c[1], now.Add(2*time.Hour)); err != nil {
+		if err := NoteThreadTitle(dir, c[0], c[1], nil, now.Add(2*time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 	}

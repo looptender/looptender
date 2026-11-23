@@ -3005,7 +3005,7 @@ func (t *tick) observe(a adapter.Adapter) (decide.Observation, error) {
 	// The thread's title, for display only, from the read just made; a
 	// failed write changes nothing.
 	if th, ok := a.(interface{ ObservedThread() string }); ok && err == nil && obs.Title != "" && !t.opts.DryRun {
-		_ = state.NoteThreadTitle(t.loop.StateDir, th.ObservedThread(), obs.Title, t.now)
+		_ = state.NoteThreadTitle(t.loop.StateDir, th.ObservedThread(), obs.Title, t.cfg.RouteLabels(), t.now)
 	}
 	if c, ok := a.(adapter.CLIPather); ok && !t.opts.DryRun && !t.opts.StopOnly {
 		// Where the system found the configured executable for this check,

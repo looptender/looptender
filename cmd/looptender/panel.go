@@ -1174,10 +1174,10 @@ func panelListCommand(e env, args []string) int {
 				continue
 			}
 			if l.Archived != nil {
-				fmt.Fprintf(w, "%s: archived %s\n", l.Naming.nameLine(), archiveSince(l.Archived))
+				fmt.Fprintf(w, "%s: archived %s\n", l.Naming.withSlug(l.Name).nameLine(), archiveSince(l.Archived))
 				continue
 			}
-			fmt.Fprintf(w, "%s: %s\n", l.Naming.nameLine(), l.Phrase)
+			fmt.Fprintf(w, "%s: %s\n", l.Naming.withSlug(l.Name).nameLine(), l.Phrase)
 		}
 		switch {
 		case *archived && list.Archived == 0:
