@@ -35,13 +35,24 @@ def validate(text):
     jobs = set(re.findall(r'^  ([a-z][a-z-]*):\n', text.split('\njobs:\n', 1)[1], re.M)) - {'go'}
     needs = re.search(r'^    needs: \[([a-z, -]+)\]$', gate[1], re.M)
     assert needs and set(n.strip() for n in needs[1].split(',')) == jobs, f'the gate must need exactly {sorted(jobs)}'
-    assert "all(.[]; .result == \"success\")" in gate[1], 'the gate must require success from every job it needs'
+    assert re.search(r'^        run: python3 scripts/ci-gate\.py$', gate[1], re.M), 'the gate must use the tested decision script'
+    assert 'NEEDS: ${{ toJSON(needs) }}' in gate[1], 'the gate must read every needed job result'
+    # Every job obeys the plan: it needs it, skips on a duplicate, and the two
+    # jobs with macOS legs take their operating systems from it.
+    body = text.split('\njobs:\n', 1)[1]
+    for job in sorted(jobs - {'plan'}):
+        part = re.search(r'^  ' + job + r':\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', body, re.M | re.S)[1]
+        assert re.search(r'^    needs: plan$', part, re.M) and "if: needs.plan.outputs.duplicate != 'true'" in part, f'{job} must follow the plan'
+    for job in ('race', 'checks'):
+        part = re.search(r'^  ' + job + r':\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', body, re.M | re.S)[1]
+        assert 'os: ${{ fromJSON(needs.plan.outputs.os) }}' in part, f'{job} must take its operating systems from the plan'
+    assert 'types: [opened, synchronize, reopened, ready_for_review]' in text, 'macOS must run when a draft is marked ready'
     # A pinned -run pattern that matches nothing must fail, not pass silently.
     for step in steps:
         for line in step.splitlines():
             if re.search(r'\bgo test\b.* -run ', line) and 'go test' in line:
                 assert re.search(r'python3? scripts/ci-go-test-ran\.py go test', line), f'pinned go test must go through the wrapper: {line.strip()}'
-    for script in ('ci-scope-test.sh', 'check-contributions-test.sh', 'ci-timeout-note-test.sh', 'ci-workflow-test.py', 'ci-go-test-ran-test.py', 'ci-windows-inventory.py'):
+    for script in ('ci-scope-test.sh', 'check-contributions-test.sh', 'ci-timeout-note-test.sh', 'ci-workflow-test.py', 'ci-go-test-ran-test.py', 'ci-windows-inventory.py', 'ci-plan-test.py'):
         assert text.index(script) < text.index('run: go vet ./...'), f'{script} must fail before expensive checks'
 
 
@@ -65,7 +76,7 @@ class WorkflowTests(unittest.TestCase):
                 validate(WORKFLOW.replace('python3 -u scripts/ci-race.py command ${{ matrix.part }}', replacement))
 
     def test_a_gate_that_forgets_a_job_or_tolerates_failure_is_rejected(self):
-        for old, new in (('all(.[]; .result == "success")', 'all(.[]; .result != "failure")'),
+        for old, new in (('run: python3 scripts/ci-gate.py', 'run: true'),
                          ('if: ${{ !cancelled() }}', ''),
                          ('fail-fast: false # each gate reports its own result', '')):
             with self.subTest(old=old), self.assertRaises(AssertionError):
@@ -76,6 +87,13 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(job=job), self.assertRaises(AssertionError):
                 validate(re.sub(r'^(    needs: \[.*)\b' + job + r'\b,? ?(.*\])$', r'\1\2', WORKFLOW, count=1, flags=re.M)
                          .replace(', ]', ']'))
+
+    def test_a_job_that_ignores_the_plan_or_the_ready_trigger_is_rejected(self):
+        for old, new in (("    needs: plan\n    if: needs.plan.outputs.duplicate != 'true'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10", "    runs-on: ubuntu-24.04\n    timeout-minutes: 10"),
+                         ('os: ${{ fromJSON(needs.plan.outputs.os) }}', 'os: [ubuntu-24.04, macos-15]'),
+                         ('synchronize, reopened, ready_for_review]', 'synchronize, reopened]')):
+            with self.subTest(old=old[:40]), self.assertRaises(AssertionError):
+                validate(WORKFLOW.replace(old, new, 1))
 
     def test_an_unwrapped_pinned_go_test_is_rejected(self):
         with self.assertRaises(AssertionError):
