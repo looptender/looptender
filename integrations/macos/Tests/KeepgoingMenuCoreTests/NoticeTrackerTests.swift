@@ -97,8 +97,8 @@ final class NoticeTrackerTests: XCTestCase {
         XCTAssertNil(MenuBuilder.arguments(.notifySet(kind: "--on", on: true)), "only a known kind")
         XCTAssertNil(MenuBuilder.arguments(.notifySet(kind: "disk; rm", on: true)))
         XCTAssertEqual(MenuBuilder.arguments(.notifyHeartbeat(notifying: true, pid: 4242)), ["panel", "notify", "heartbeat", "--notifying=true", "--pid=4242"])
-        XCTAssertEqual(MenuBuilder.arguments(.notifyHeartbeat(notifying: false, pid: 4242)), ["panel", "notify", "heartbeat", "--notifying=false", "--pid=4242"]
-        XCTAssertNil(MenuBuilder.arguments(.notifyHeartbeat(notifying: false, pid: 0)), "a beat always names the menu that wrote it"))
+        XCTAssertEqual(MenuBuilder.arguments(.notifyHeartbeat(notifying: false, pid: 4242)), ["panel", "notify", "heartbeat", "--notifying=false", "--pid=4242"])
+        XCTAssertNil(MenuBuilder.arguments(.notifyHeartbeat(notifying: false, pid: 0)), "a beat always names the menu that wrote it")
     }
 
     func testAGroupIsToldByItsRealTotalNotOnlyByWhatIsNew() {
