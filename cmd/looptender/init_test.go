@@ -3,8 +3,8 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"errors"
 	promptpkg "github.com/looptender/looptender/internal/prompt"
 	"io"
