@@ -96,7 +96,7 @@ type clientReviewPreview struct {
 }
 
 const (
-	clientReviewUsage   = "usage: keepgoing client review pause|stop|resume --loop KEY [--directory private-registry] [--json]; keepgoing client apply pause|stop|resume --loop KEY --expect VALUE [--lanes [--drop-queued]] [--immediately] [--directory private-registry] [--json]; keepgoing client review pause|stop --all [--json]; keepgoing client apply pause|stop --all --expect KEY=VALUE... [--lanes] [--json]"
+	clientReviewUsage   = "usage: looptender client review pause|stop|resume --loop KEY [--directory private-registry] [--json]; looptender client apply pause|stop|resume --loop KEY --expect VALUE [--lanes [--drop-queued]] [--immediately] [--directory private-registry] [--json]; looptender client review pause|stop --all [--json]; looptender client apply pause|stop --all --expect KEY=VALUE... [--lanes] [--json]"
 	clientReviewExpired = "This review expired. Nothing was changed. Review it again."
 	clientReviewOther   = "This review is for another loop or another change. Nothing was changed. Review it again."
 	clientReviewOwned   = "This loop is supervised for another conversation, so it can be resumed only from that conversation or from outside BB. Nothing was changed."
@@ -198,10 +198,10 @@ func clientReviewCommand(e env, args []string) int {
 				if p.Stop.Immediately {
 					flags += " --immediately"
 				}
-				fmt.Fprintf(e.stdout, "%s: keepgoing client apply %s --loop %s --expect %s%s%s\n", o.Label, p.Action, p.Key, p.Expect, flags, dir)
+				fmt.Fprintf(e.stdout, "%s: looptender client apply %s --loop %s --expect %s%s%s\n", o.Label, p.Action, p.Key, p.Expect, flags, dir)
 			}
 		} else {
-			fmt.Fprintf(e.stdout, "To confirm before it expires: keepgoing client apply %s --loop %s --expect %s%s\n", p.Action, p.Key, p.Expect, dir)
+			fmt.Fprintf(e.stdout, "To confirm before it expires: looptender client apply %s --loop %s --expect %s%s\n", p.Action, p.Key, p.Expect, dir)
 		}
 	} else if reply.Result != nil {
 		fmt.Fprintln(e.stdout, reply.Result.Text)

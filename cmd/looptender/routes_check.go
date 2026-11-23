@@ -39,7 +39,7 @@ func routesCheckCommand(e env, args []string) int {
 	positional, rest := splitPositional(args)
 	fs := flag.NewFlagSet("routes check", flag.ContinueOnError)
 	fs.SetOutput(e.stderr)
-	loopName := fs.String("loop", "", "probe this registered loop's routes with keepgoing fallbacks check")
+	loopName := fs.String("loop", "", "probe this registered loop's routes with looptender fallbacks check")
 	directory := fs.String("directory", "", "private registry directory (default: user config/keepgoing/registry)")
 	asJSON := fs.Bool("json", false, "print a versioned result")
 	dryRun := fs.Bool("dry-run", false, "with --loop: preview the probes only")
@@ -59,7 +59,7 @@ func routesCheckCommand(e env, args []string) int {
 		return routesCheckStandard(e, *directory, *asJSON)
 	}
 	if len(positional) > 1 {
-		e.errf("usage: keepgoing routes check --loop NAME [ID] [--dry-run] [--exact] [--json]")
+		e.errf("usage: looptender routes check --loop NAME [ID] [--dry-run] [--exact] [--json]")
 		return exitUsage
 	}
 	dir, err := registryDirectory(*directory)
@@ -142,7 +142,7 @@ func routesCheckStandard(e env, directory string, asJSON bool) int {
 	case "ok":
 		fmt.Fprintf(e.stdout, "Standard route list: valid, %d routes.\n", out.Routes)
 	case "missing":
-		fmt.Fprintln(e.stdout, "Standard route list: none written yet. Add a route with keepgoing routes add.")
+		fmt.Fprintln(e.stdout, "Standard route list: none written yet. Add a route with looptender routes add.")
 	default:
 		fmt.Fprintf(e.stdout, "Standard route list: unreadable (%s): %s.\n", out.Problem, routesProblemText(out.Problem))
 		for _, msg := range out.Errors {
@@ -151,7 +151,7 @@ func routesCheckStandard(e env, directory string, asJSON bool) int {
 	}
 	for _, l := range out.Loops {
 		if l.Problem != "" {
-			fmt.Fprintf(e.stdout, "  %s: configuration unavailable; inspect it with keepgoing validate.\n", l.Loop)
+			fmt.Fprintf(e.stdout, "  %s: configuration unavailable; inspect it with looptender validate.\n", l.Loop)
 			continue
 		}
 		fmt.Fprintf(e.stdout, "  %s: hands off to %s\n", l.Loop, idList(l.Routes))

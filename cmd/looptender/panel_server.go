@@ -63,7 +63,7 @@ const panelExpiredPage = `<!doctype html>
 </header>
 <main class="notice">
   <h1>This link to the looptender panel has expired</h1>
-  <p class="lede">Run <code class="command" id="command">keepgoing panel</code> in a terminal to open the panel again.</p>
+  <p class="lede">Run <code class="command" id="command">looptender panel</code> in a terminal to open the panel again.</p>
   <p class="copy" id="copy-row" hidden><button type="button" class="btn" id="copy">Copy the command</button> <span id="copied" role="status" aria-live="polite"></span></p>
   <p>Each link opens the panel once, within 30 seconds. An open panel stops working when the browser session ends or the panel server stops.</p>
   <p>Your loops are not affected. The panel only shows them.</p>
@@ -650,7 +650,7 @@ func runPanelServer(parent context.Context, c panelServerConfig) int {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	reader := &dockReader{ctx: ctx, directory: c.registry, refresh: c.refresh, staleAfter: c.staleAfter, query: inspectDaemon, versions: true, panelDir: c.dir}
+	reader := &dockReader{ctx: ctx, directory: c.registry, refresh: c.refresh, staleAfter: c.staleAfter, query: inspectDaemon, versions: true, panelDir: c.dir, accountsDir: panelAccountsDir}
 	if c.changes {
 		reader.builds = newBuildSession(c.dir, c.registry)
 		defer reader.builds.close()

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"time"
 )
 
@@ -37,11 +38,23 @@ func (e *RefusedError) Error() string {
 
 func (e *RefusedError) Unwrap() error { return e.Err }
 
+// busyFor bounds how long RunOnce keeps trying a program that cannot be
+// started because a file it runs is open for writing (ETXTBSY, "text file
+// busy", on Linux). A test that has just written a program closes it before
+// running it, but a process that another test of the same binary forks at
+// that moment holds a copy of the write handle until it calls exec. That
+// lasts milliseconds; the program can then be started.
+var busyFor = 10 * time.Second
+
+// busyWait is the pause between such launches.
+const busyWait = 10 * time.Millisecond
+
 // RunOnce runs the program at path until it ends on its own, whatever its
 // exit code, so that the host has checked it before a test depends on it. A
 // launch ended by a signal is the host refusing the program and is tried
-// again, up to a bound; the error is then a *RefusedError. Any other failure
-// to start is returned as it is.
+// again, up to a bound; the error is then a *RefusedError. A launch refused
+// as text file busy is tried again for up to busyFor. Any other failure to
+// start is returned as it is.
 func RunOnce(path string, env []string, args ...string) error {
 	return runOnce(path, env, false, args...)
 }
@@ -50,12 +63,16 @@ func RunOnce(path string, env []string, args ...string) error {
 // non-zero exit is an error too, not retried: the program ran, and failed.
 func runOnce(path string, env []string, mustSucceed bool, args ...string) error {
 	var last error
-	for n := 1; n <= maxLaunches; n++ {
+	busyUntil := time.Now().Add(busyFor)
+	for n := 1; n <= maxLaunches; {
 		last = launch(path, env, args)
 		var exit *exec.ExitError
 		switch {
 		case last == nil:
 			return nil
+		case errors.Is(last, syscall.ETXTBSY) && time.Now().Before(busyUntil):
+			time.Sleep(busyWait)
+			continue // not a launch: the program did not start
 		case !errors.As(last, &exit):
 			return fmt.Errorf("testexec: %s could not be started: %w", path, last)
 		case exit.Exited() && mustSucceed:
@@ -63,6 +80,7 @@ func runOnce(path string, env []string, mustSucceed bool, args ...string) error 
 		case exit.Exited():
 			return nil
 		}
+		n++
 	}
 	return &RefusedError{Path: path, Launches: maxLaunches, Err: last}
 }

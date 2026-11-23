@@ -79,7 +79,7 @@ func TestScenarioInitWithoutAnotherProvider(t *testing.T) {
 		t.Fatalf("a script's init ran bb")
 	}
 	on, cands := loopFallbacks(w)
-	if len(cands) != 0 || len(on) != 0 || !strings.Contains(r.Stderr, "single route") || !strings.Contains(r.Stderr, "keepgoing fallbacks arm -c") {
+	if len(cands) != 0 || len(on) != 0 || !strings.Contains(r.Stderr, "single route") || !strings.Contains(r.Stderr, "looptender fallbacks arm -c") {
 		t.Fatalf("failover_on %v candidates %v\n%s", on, cands, r.Stderr)
 	}
 }
@@ -186,7 +186,7 @@ func TestScenarioFallbacksArm(t *testing.T) {
 	s := w.record("enable as owner", w.RunAs(primaryThread, "enable", "-c", w.Config), nil)
 	w.Check(s, "enable", exit(s, 0))
 	// An enabled single-route loop: doctor names the command.
-	if r := w.Run("doctor", "--offline", "--json", "-c", w.Config); !strings.Contains(r.Stdout, "keepgoing fallbacks arm -c") {
+	if r := w.Run("doctor", "--offline", "--json", "-c", w.Config); !strings.Contains(r.Stdout, "looptender fallbacks arm -c") {
 		t.Fatalf("doctor does not name the command:\n%s", r.Stdout)
 	}
 	if r := w.RunAs("thr_example_other", "fallbacks", "arm", "-c", w.Config, "--yes"); r.Code == 0 {

@@ -104,7 +104,7 @@ func transferCommand(e env, args []string, run doctorRun) int {
 		return transferInventoryCommand(e, args, run, run)
 	}
 	if len(args) == 0 || args[0] != "preview" {
-		e.errf("usage: keepgoing transfer preview|inventory|apply|recover|replace-children|supersede; see transfer <command> --help")
+		e.errf("usage: looptender transfer preview|inventory|apply|recover|replace-children|supersede; see transfer <command> --help")
 		return exitUsage
 	}
 	fs := flag.NewFlagSet("transfer preview", flag.ContinueOnError)

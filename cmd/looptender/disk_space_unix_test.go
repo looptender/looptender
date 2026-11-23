@@ -3,6 +3,9 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,5 +78,50 @@ func TestDaemonTellsOfALowVolumeOncePerEpisode(t *testing.T) {
 func TestRecoveryMargin(t *testing.T) {
 	if diskRecoveryMargin(100<<20) != 256<<20 || diskRecoveryMargin(10<<30) != 1<<30 {
 		t.Fatal(diskRecoveryMargin(100<<20), diskRecoveryMargin(10<<30))
+	}
+}
+
+// A build switch hands the low-disk episode to the new build, so it does
+// not tell of the volume again; a daemon that really starts anew may.
+func TestALowDiskEpisodeSurvivesABuildSwitch(t *testing.T) {
+	f, cfg, _, e := configReportFixture(t)
+	clock := time.Date(2030, 1, 1, 9, 0, 0, 0, time.UTC)
+	old := &diskWatch{now: func() time.Time { return clock }}
+	volume(t, 900<<20, 20<<30)
+	old.check(e, cfg)
+	if got := strings.Count(f.hooks.types(), "keepgoing.error"); got != 1 {
+		t.Fatalf("%d reports", got)
+	}
+	// The handover, through its JSON as the pipe carries it.
+	b, err := json.Marshal(adoptPayload{DiskEpisode: old.episode()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p adoptPayload
+	if err := json.Unmarshal(b, &p); err != nil || p.DiskEpisode == nil {
+		t.Fatalf("%s %v", b, err)
+	}
+	carried := p.DiskEpisode.watch()
+	carried.now = func() time.Time { return clock.Add(5 * time.Minute) }
+	carried.check(e, cfg)
+	if got := strings.Count(f.hooks.types(), "keepgoing.error"); got != 1 {
+		t.Fatalf("the new build told again: %d reports", got)
+	}
+	runs, _ := os.ReadFile(filepath.Join(cfg.Loop.StateDir, state.LogName))
+	if n := strings.Count(string(runs), `"disk_low"`); n != 1 {
+		t.Fatalf("disk_low recorded %d times", n)
+	}
+	// An earlier build's handover has no episode: the new build starts one.
+	if (&diskEpisode{Level: "ok"}).watch() != nil || (*diskEpisode)(nil).watch() != nil || (&diskWatch{}).episode() != nil {
+		t.Fatal("an empty episode was carried")
+	}
+	// A daemon loop takes up the episode handed to it.
+	seed := p.DiskEpisode.watch()
+	a := &buildAdopter{off: "fictional", diskSeed: seed}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	daemonLoop(env{ctx, io.Discard, io.Discard}, cfg, f.cfg, false, nil, nil, a)
+	if a.disk != seed {
+		t.Fatal("the daemon loop did not take up the handed-over episode")
 	}
 }

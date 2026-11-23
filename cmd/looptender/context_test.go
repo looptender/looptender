@@ -97,7 +97,7 @@ func TestContextCommandWithUnreadableState(t *testing.T) {
 
 func TestContextCommandRefusesArguments(t *testing.T) {
 	f := newFixture(t)
-	if code, _, errs := f.run("context", "extra"); code != exitUsage || !strings.Contains(errs, "usage: keepgoing context") {
+	if code, _, errs := f.run("context", "extra"); code != exitUsage || !strings.Contains(errs, "usage: looptender context") {
 		t.Fatalf("%d %s", code, errs)
 	}
 }

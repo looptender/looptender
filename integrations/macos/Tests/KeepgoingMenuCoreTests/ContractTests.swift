@@ -97,6 +97,15 @@ final class ContractTests: XCTestCase {
         XCTAssertTrue(Contract.lines(try Contract.status(data(r), exit: 1, entry: entry), privateText: false).contains("Loop status unavailable"))
         XCTAssertThrowsError(try Contract.status(data(r), exit: 0, entry: entry))
     }
+    func testTickedLoopSaysItIsCheckedByTicks() throws {
+        var r = report(); var s = r["snapshot"] as! [String: Any]
+        s["daemon"] = ["state": "not_recorded", "binaryComparison": "unknown", "dryRun": false, "checkedBy": "ticks", "cadence": "10m"]
+        r["snapshot"] = s
+        let lines = Contract.lines(try Contract.status(data(r), exit: 0, entry: entry), privateText: false).joined(separator: "\n")
+        XCTAssertTrue(lines.contains("Next normal check: not scheduled by a daemon"), lines)
+        XCTAssertTrue(lines.contains("Checked by: ticks without a daemon (an external scheduler or by hand), about every 10m"), lines)
+        XCTAssertFalse(lines.contains("External scheduler: not inspected"), lines)
+    }
     func testUnrecognizedStateAndControlCharactersStayInert() throws {
         var r = report(); var s = r["snapshot"] as! [String: Any]
         s["runtime"] = ["state": "fictional-private-provider-output", "source": "unknown", "freshness": "new", "binaryComparison": "new"]

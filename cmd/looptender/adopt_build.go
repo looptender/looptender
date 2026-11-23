@@ -166,11 +166,14 @@ type buildAdopter struct {
 	from string
 	// loop is the loop's name, for the run log; taken from the
 	// configuration at each safe point.
-	loop     string
-	image    *state.ExecutableImage
-	cfgPath  string
-	stateDir string
-	mode     string // daemon, foreground, background, service
+	loop string
+	// disk is the daemon's disk watch, handed to the new build so a switch
+	// does not start a new low-disk episode; diskSeed is the one handed in.
+	disk, diskSeed *diskWatch
+	image          *state.ExecutableImage
+	cfgPath        string
+	stateDir       string
+	mode           string // daemon, foreground, background, service
 	// expectedStateDir is the service's bound state directory, checked
 	// again by the new build.
 	expectedStateDir string
@@ -433,6 +436,9 @@ type adoptPayload struct {
 	OwnerGeneration uint64 `json:"ownerGeneration"`
 	// ExpectedStateDir is a service's bound state directory.
 	ExpectedStateDir string `json:"expectedStateDir,omitempty"`
+	// DiskEpisode is the daemon's low-disk episode, so the new build does
+	// not tell of it again. Absent from an earlier build's handover.
+	DiskEpisode *diskEpisode `json:"diskEpisode,omitempty"`
 	// Returning, when set, is why the build handing over could not start:
 	// this image is the earlier build, taking the daemon back.
 	Returning string `json:"returning,omitempty"`
@@ -593,7 +599,7 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 		thread, generation = lease.thread, lease.generation
 	}
 	payload := adoptPayload{Config: a.cfgPath, Loop: a.loop, StateDir: a.stateDir, Mode: a.mode, LockFD: uint64(fd), From: a.from, FromSHA: from.SHA256, FromLabel: from.Label,
-		ExpectSHA: c.sha, OwnerThread: thread, OwnerGeneration: generation, ExpectedStateDir: a.expectedStateDir, ConfigArg: true}
+		ExpectSHA: c.sha, OwnerThread: thread, OwnerGeneration: generation, ExpectedStateDir: a.expectedStateDir, ConfigArg: true, DiskEpisode: a.disk.episode()}
 	payload.DaemonStartedAt, payload.DaemonLastPassStartedAt, payload.DaemonLastPassAt = optionalTime(a.monitor.StartedAt()), optionalTime(a.monitor.LastPassStartedAt()), optionalTime(a.monitor.LastPassAt())
 	a.note(adoptRecord{Outcome: adoptSwitching, Mode: a.mode, From: from, To: to})
 	err = handover(payload, a.launch, probe.ConfigArg, func(argv []string, keep []*os.File) error {
@@ -748,6 +754,7 @@ func (p adoptPayload) run(e env) int {
 	}
 	defer daemonLock.Release()
 	a := newBuildAdopter(p.Config, p.StateDir, p.Mode, p.ExpectedStateDir, daemonLock)
+	a.diskSeed = p.DiskEpisode.watch()
 	return daemonLoop(e, cfg, p.Config, false, lease, monitor, a)
 }
 

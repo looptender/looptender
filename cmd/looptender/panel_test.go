@@ -173,7 +173,7 @@ func TestPanelOpeningAddressWorksOnceAndBecomesASessionCookie(t *testing.T) {
 	var pages []string
 	for _, used := range []string{address, base + "/open/" + strings.Repeat("0", 64), base + "/open/"} {
 		resp, body := dockRequest(t, http.MethodGet, used, nil)
-		if resp.StatusCode != http.StatusGone || len(resp.Cookies()) != 0 || !strings.Contains(body, `id="command">keepgoing panel</code>`) || strings.Contains(body, "style=") || strings.Contains(body, "<script>") || strings.Count(body, "<script") != 1 {
+		if resp.StatusCode != http.StatusGone || len(resp.Cookies()) != 0 || !strings.Contains(body, `id="command">looptender panel</code>`) || strings.Contains(body, "style=") || strings.Contains(body, "<script>") || strings.Count(body, "<script") != 1 {
 			t.Fatalf("reused address: %d %q", resp.StatusCode, body)
 		}
 		pages = append(pages, body)
@@ -204,7 +204,7 @@ func TestPanelOpeningAddressWorksOnceAndBecomesASessionCookie(t *testing.T) {
 	for name, edit := range refusedCookies {
 		for _, path := range []string{"", dockAPIPath, dockServerPath, "dock.js"} {
 			resp, body := dockRequest(t, http.MethodGet, base+pagePath+path, edit)
-			if resp.StatusCode != http.StatusForbidden || strings.Contains(body, "schemaVersion") || !strings.Contains(body, "keepgoing panel") {
+			if resp.StatusCode != http.StatusForbidden || strings.Contains(body, "schemaVersion") || !strings.Contains(body, "looptender panel") {
 				t.Fatalf("%s, %q: %d %q", name, path, resp.StatusCode, body)
 			}
 		}
@@ -1517,7 +1517,7 @@ func TestPanelRefusesWhereItIsUnverified(t *testing.T) {
 	d, _ := dockFixtureReader(t)
 	for _, args := range [][]string{{}, {"--no-open"}, {"status"}, {"stop"}} {
 		var out, errs bytes.Buffer
-		if code := panelCommand(env{context.Background(), &out, &errs}, args); code != exitFailed || !strings.Contains(errs.String(), "has not been verified on Windows yet") || !strings.Contains(errs.String(), "keepgoing dock") || out.Len() != 0 {
+		if code := panelCommand(env{context.Background(), &out, &errs}, args); code != exitFailed || !strings.Contains(errs.String(), "has not been verified on Windows yet") || !strings.Contains(errs.String(), "looptender dock") || out.Len() != 0 {
 			t.Fatalf("%v: %d %s", args, code, errs.String())
 		}
 	}
@@ -1691,7 +1691,7 @@ func panelStoppedWithin(t *testing.T, done chan int, what string) {
 func TestPanelStatusAndListReportTheOldLocationAndStopRetiresIt(t *testing.T) {
 	registryDir, legacy, _ := panelTwoLocations(t)
 	done := panelServeAt(t, legacy, registryDir)
-	notice := "A panel started by an earlier build is running at " + legacy + "; keepgoing panel stop ends it."
+	notice := "A panel started by an earlier build is running at " + legacy + "; looptender panel stop ends it."
 	var out, errs bytes.Buffer
 	run := func(args ...string) (int, string) {
 		t.Helper()

@@ -203,7 +203,7 @@ func TestFallbacksAddWizardWithNoNamedAccountsSaysHow(t *testing.T) {
 	f := newAddFixture(t)
 	input := "claude\n" + f.account("claude-b") + "\npool-b\n\n\nno\nyes\n"
 	code, out, errOut := f.add(t, input)
-	if code != exitOK || !strings.Contains(out, "Name your accounts with keepgoing accounts add to pick them here.") {
+	if code != exitOK || !strings.Contains(out, "Name your accounts with looptender accounts add to pick them here.") {
 		t.Fatalf("%d %s\n%s", code, errOut, out)
 	}
 }

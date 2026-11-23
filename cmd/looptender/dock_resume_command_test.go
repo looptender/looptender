@@ -25,7 +25,7 @@ func TestDockHeldNeedGivesTheResumeCommand(t *testing.T) {
 	for _, n := range r.NeedsYou {
 		switch n.Kind {
 		case "held":
-			if n.Resume != "keepgoing resume -c CONFIG" || !strings.Contains(n.Action, "esume") {
+			if n.Resume != "looptender resume -c CONFIG" || !strings.Contains(n.Action, "esume") {
 				t.Errorf("held: %+v", n)
 			}
 		default:
@@ -40,7 +40,7 @@ func TestDockHeldNeedGivesTheResumeCommand(t *testing.T) {
 	// The flags parse: with a missing file the command gets as far as
 	// loading it.
 	args := strings.Fields(dockResumeCommand)
-	if args[0] != "keepgoing" || args[len(args)-1] != "CONFIG" {
+	if args[0] != "looptender" || args[len(args)-1] != "CONFIG" {
 		t.Fatalf("%q", args)
 	}
 	args[len(args)-1] = filepath.Join(t.TempDir(), "missing.yaml")
@@ -57,7 +57,7 @@ func TestDockHeldNeedGivesTheResumeCommand(t *testing.T) {
 		// hold several copy buttons.
 		`copyCommand("p", n.resume, "copy-resume-" + n.key, "resume-where-" + n.key)`,
 		`where.id = "resume-where-" + n.key;`,
-		`"keepgoing registry list --private"`,
+		`"looptender registry list --private"`,
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("dock.js lacks %q", want)

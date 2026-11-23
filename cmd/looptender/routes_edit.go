@@ -128,14 +128,14 @@ type routeChangeRequest struct {
 const routesEditUsage = `Show, change or check route lists without editing YAML.
 
 Usage:
-  keepgoing routes list [--json] [--loop NAME | -c looptender.yaml]
-  keepgoing routes add --id ID --provider P --model M --group G --enter E [options] [--at N]
-  keepgoing routes add --like LOOP:ID [--id ID] [options] [--at N]
-  keepgoing routes move ID --to N [--loop NAME]
-  keepgoing routes remove ID [--loop NAME]
-  keepgoing routes off ID [--loop NAME]
-  keepgoing routes on ID [--loop NAME]
-  keepgoing routes check [--loop NAME [ID] [fallbacks check flags]]
+  looptender routes list [--json] [--loop NAME | -c looptender.yaml]
+  looptender routes add --id ID --provider P --model M --group G --enter E [options] [--at N]
+  looptender routes add --like LOOP:ID [--id ID] [options] [--at N]
+  looptender routes move ID --to N [--loop NAME]
+  looptender routes remove ID [--loop NAME]
+  looptender routes off ID [--loop NAME]
+  looptender routes on ID [--loop NAME]
+  looptender routes check [--loop NAME [ID] [fallbacks check flags]]
 
 Without --loop a change is to the standard route list, which only a person
 can make (not a BB thread). With --loop it is to that loop's own list, which
@@ -143,7 +143,7 @@ its owner or a person can make. Each change previews its effect on every
 loop it applies to and writes only after you answer yes, or with --yes.
 --dry-run previews only. --expect binds --yes to a preview's expect value.
 These commands run nothing (no agent, model or check), except routes check
---loop, which probes that loop's routes as keepgoing fallbacks check does.
+--loop, which probes that loop's routes as looptender fallbacks check does.
 
 Flags:
 `
@@ -175,7 +175,7 @@ func routesEdit(e env, op string, args []string, input io.Reader) int {
 	fs.StringVar(&rt.Model, "model", "", "add: the model")
 	fs.StringVar(&rt.Effort, "effort", "", "add: the effort, if any")
 	fs.StringVar(&rt.Group, "group", "", "add: the usage limit the route draws on")
-	fs.StringVar(&rt.Account, "account", "", "add: the accounts catalog ID of the account you state this route uses (keepgoing accounts list)")
+	fs.StringVar(&rt.Account, "account", "", "add: the accounts catalog ID of the account you state this route uses (looptender accounts list)")
 	fs.StringVar(&rt.Enter, "enter", "", "add: same_conversation, new_conversation or headless")
 	fs.StringVar(&rt.PermissionMode, "permission-mode", "", "add: accept-edits, auto or full, for a new_conversation route")
 	fs.StringVar(&rt.AccountDir, "account-dir", "", "add: an existing login directory, for a headless route")
@@ -191,11 +191,11 @@ func routesEdit(e env, op string, args []string, input io.Reader) int {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	usage := map[string]string{
-		"add":    "usage: keepgoing routes add --id ID --provider P --model M --group G --enter E [--at N], or --like LOOP:ID",
-		"move":   "usage: keepgoing routes move ID --to N [--loop NAME]",
-		"remove": "usage: keepgoing routes remove ID [--loop NAME]",
-		"off":    "usage: keepgoing routes off ID [--loop NAME]",
-		"on":     "usage: keepgoing routes on ID [--loop NAME]",
+		"add":    "usage: looptender routes add --id ID --provider P --model M --group G --enter E [--at N], or --like LOOP:ID",
+		"move":   "usage: looptender routes move ID --to N [--loop NAME]",
+		"remove": "usage: looptender routes remove ID [--loop NAME]",
+		"off":    "usage: looptender routes off ID [--loop NAME]",
+		"on":     "usage: looptender routes on ID [--loop NAME]",
 	}[op]
 	addFlags := []string{"at", "like", "id", "provider", "model", "effort", "group", "account", "enter", "permission-mode", "account-dir", "probe-model", "probe-account-dir"}
 	switch {
@@ -203,7 +203,7 @@ func routesEdit(e env, op string, args []string, input io.Reader) int {
 		e.errf("%s", usage)
 		return exitUsage
 	case op == "add" && *loopName != "":
-		e.errf("routes add --loop: add to a loop's own list with keepgoing fallbacks add --loop NAME")
+		e.errf("routes add --loop: add to a loop's own list with looptender fallbacks add --loop NAME")
 		return exitUsage
 	case op != "move" && set["to"]:
 		e.errf("routes %s: --to applies only to routes move", op)
@@ -434,7 +434,7 @@ func planStandardChange(req routeChangeRequest, path string) (*standardPlan, *ro
 	cur := &config.Routes{Version: 1}
 	if !absent {
 		if cur, err = config.ParseRoutes(raw); err != nil {
-			return nil, refuseRoute(config.RoutesInvalid, "The standard route list is not valid; fix it first (keepgoing routes check shows why).")
+			return nil, refuseRoute(config.RoutesInvalid, "The standard route list is not valid; fix it first (looptender routes check shows why).")
 		}
 	}
 	p := &standardPlan{out: newRouteChangeOut(req)}
@@ -875,7 +875,7 @@ func findRegisteredLoop(f registry.File, name string) (*config.Config, *routeRef
 		if entry.Loop == name {
 			cfg, err := config.Load(entry.ConfigPath)
 			if err != nil {
-				return nil, refuseRoute("configuration_unavailable", "Loop %s's configuration cannot be loaded; inspect it with keepgoing validate.", name)
+				return nil, refuseRoute("configuration_unavailable", "Loop %s's configuration cannot be loaded; inspect it with looptender validate.", name)
 			}
 			return cfg, nil
 		}
@@ -1083,7 +1083,7 @@ func ownRouteChange(req routeChangeRequest, apply bool) (routeChangeOut, int) {
 	case cfg.Loop.FollowsStandard():
 		return routeChangeRefused(req, refuseRoute("follows_standard", "Loop %s follows the standard route list; change that list (leave out --loop) or give the loop its own list.", req.loop)), exitUsage
 	case cfg.FallbackSet == nil:
-		return routeChangeRefused(req, refuseRoute("no_list", "Loop %s has no other routes. Add one with: keepgoing fallbacks add", req.loop)), exitUsage
+		return routeChangeRefused(req, refuseRoute("no_list", "Loop %s has no other routes. Add one with: looptender fallbacks add", req.loop)), exitUsage
 	}
 	if info, err := os.Lstat(cfg.Loop.Fallbacks); err != nil || !info.Mode().IsRegular() {
 		return routeChangeRefused(req, refuseRoute("edit_by_hand", "Loop %s's fallbacks file is a symbolic link or not a regular file.", req.loop)), exitUsage
@@ -1135,7 +1135,7 @@ func ownRouteChange(req routeChangeRequest, apply bool) (routeChangeOut, int) {
 		return routeChangeRefused(req, refuseRoute("write_failed", "%v", err)), code
 	}
 	if p.historyFailed {
-		out.Warnings = append(out.Warnings, "the change was saved, but could not be recorded in the loop's history (keepgoing timeline)")
+		out.Warnings = append(out.Warnings, "the change was saved, but could not be recorded in the loop's history (looptender timeline)")
 	}
 	out.Outcome = "changed"
 	return out, exitOK
@@ -1151,7 +1151,7 @@ func ownListAuthority(stateDir, caller string) *routeRefusal {
 	// Another thread's loop, and ownership that cannot be read, are refused
 	// by the ownership check every change makes (fallbackAddAllowed).
 	if f, err := control.Load(stateDir); err == nil && f.Ownership == nil {
-		return refuseRoute("agent_identity", "This loop has no recorded owner, so only a person can change its list. Run this outside a BB thread, or make this thread the owner first: keepgoing start or keepgoing enable, run from it, records it as the loop's owner.")
+		return refuseRoute("agent_identity", "This loop has no recorded owner, so only a person can change its list. Run this outside a BB thread, or make this thread the owner first: looptender start or looptender enable, run from it, records it as the loop's owner.")
 	}
 	return nil
 }
@@ -1186,7 +1186,7 @@ func planOwnChange(req routeChangeRequest, cfg *config.Config) (*fallbackEdit, r
 	case "remove":
 		p, err = planFallbackRemove(cfg, req.id)
 		if err == nil && p.cleanupOnly {
-			err = fmt.Errorf("No fallback has the id %q; to clear what it left behind, use keepgoing fallbacks remove", bbLabel(req.id, 40))
+			err = fmt.Errorf("No fallback has the id %q; to clear what it left behind, use looptender fallbacks remove", bbLabel(req.id, 40))
 		}
 	case "off", "on":
 		p, err = planFallbackToggle(cfg, req.id, req.op == "off")
@@ -1244,7 +1244,7 @@ func planFallbackToggle(cfg *config.Config, id string, off bool) (*fallbackEdit,
 		return p, nil
 	}
 	if off && p.active == id {
-		return nil, fmt.Errorf("The loop is running on %q right now. Move it first with: keepgoing retarget primary", id)
+		return nil, fmt.Errorf("The loop is running on %q right now. Move it first with: looptender retarget primary", id)
 	}
 	raw, err := os.ReadFile(cfg.Loop.Fallbacks)
 	if err != nil {
