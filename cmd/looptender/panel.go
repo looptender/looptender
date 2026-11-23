@@ -1008,15 +1008,21 @@ func panelStopAt(e env, dir string) (bool, error) {
 // no registration ID, thread ID, path or note.
 type panelList struct {
 	AccountQuotas *panelQuotaList `json:"accountQuotas,omitempty"`
-	SchemaVersion int             `json:"schemaVersion"`
-	ReadAt        time.Time       `json:"readAt"`
-	Registry      string          `json:"registry"` // available or unavailable
-	Complete      bool            `json:"complete"`
-	AllClear      bool            `json:"allClear"`
-	NeedsYou      int             `json:"needsYou"`
-	Unread        int             `json:"unread"`
-	Omitted       int             `json:"omitted"`
-	Loops         []panelListLoop `json:"loops"`
+	// UsageLimitWords are the words behind the loops' usageLimit codes, once
+	// per list; absent when no loop has a limit.
+	UsageLimitWords *usageLimitWords `json:"usageLimitWords,omitempty"`
+	SchemaVersion   int              `json:"schemaVersion"`
+	ReadAt          time.Time        `json:"readAt"`
+	Registry        string           `json:"registry"` // available or unavailable
+	Complete        bool             `json:"complete"`
+	AllClear        bool             `json:"allClear"`
+	NeedsYou        int              `json:"needsYou"`
+	Unread          int              `json:"unread"`
+	Omitted         int              `json:"omitted"`
+	// Loops is every loop read, archived ones last (State "archived");
+	// Archived counts those. A list shows the others and one line for these.
+	Loops    []panelListLoop `json:"loops"`
+	Archived int             `json:"archived"`
 	// Volumes is one notice for each volume holding loops' state that is
 	// filling or nearly full (see dockReport.Volumes).
 	Volumes []dockVolume `json:"volumes,omitempty"`
@@ -1065,6 +1071,10 @@ type panelListLoop struct {
 	// read found running its checks (dockLoop.Supervisor).
 	CheckedAt  *time.Time `json:"checkedAt,omitempty"`
 	Supervisor string     `json:"supervisor"`
+	// UsageLimit is the provider usage limit on the loop's active target, with
+	// labels and placeholders only: no path, ID or real command
+	// (usageLimitStatus.public).
+	UsageLimit *usageLimitStatus `json:"usageLimit,omitempty"`
 	// NoProgress is the no-progress flag's sentence when it is raised, in
 	// the page's words; empty otherwise. It is never a need.
 	NoProgress string `json:"noProgress,omitempty"`
@@ -1076,6 +1086,12 @@ type panelListLoop struct {
 	// page offers them: pause, stop and resume. Empty when the flags could
 	// not be read. client review and client apply take them.
 	Can []string `json:"can"`
+	// Observed is set when the loop's target is observed, never woken (a
+	// sessionpipe session). Its Can never holds stop: pause and resume change
+	// only whether looptender checks it. ObservedNote is the fixed sentence
+	// that says so, for a row to show beside its reason.
+	Observed     bool   `json:"observed,omitempty"`
+	ObservedNote string `json:"observedNote,omitempty"`
 	// OverdueSince is set when the loop needs a person because its checks
 	// have stopped: the time of its last check. A new value is a new gap, so
 	// a client can tell people once per gap.
@@ -1095,6 +1111,17 @@ type panelListLoop struct {
 	Provider string       `json:"provider,omitempty"`
 	Model    string       `json:"model,omitempty"`
 	Moved    *clientMoved `json:"moved,omitempty"`
+	// Archived: as on the page's loop (when, the hold it had, the note with
+	// identifier-shaped tokens hidden). ArchiveLapsed: a record the loop no
+	// longer honours.
+	Archived      *archiveView `json:"archived,omitempty"`
+	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	// Naming is the loop's one display name and what goes with it
+	// (loop_naming.go), the same on every surface; no reader composes its
+	// own. Absent when it is the loop's name and nothing more.
+	Naming *loopNaming `json:"naming,omitempty"`
+	// Lineage: as on the page's loop.
+	Lineage *listLineage `json:"lineage,omitempty"`
 }
 
 func buildPanelList(r dockReport) panelList {
@@ -1119,7 +1146,7 @@ func buildPanelList(r dockReport) panelList {
 				out.CanAll = append(out.CanAll, a)
 			}
 		}
-		row := panelListLoop{Key: l.Key, Name: l.Name, DiskSpace: dockDiskLevel(l.DiskSpace), State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
+		row := panelListLoop{Key: l.Key, Name: l.Name, DiskSpace: dockDiskLevel(l.DiskSpace), State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, Observed: l.Observed, ObservedNote: l.ObservedNote, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
 			BuildDiffers: l.Build.Availability == "different", BuildFreshness: l.BuildFreshness.public()}
 		// Lengthened with the installed label when the two would read the same.
 		var inst string
@@ -1134,9 +1161,19 @@ func buildPanelList(r dockReport) panelList {
 			row.UsageBurn = u.Words
 		}
 		row.Reason, row.CheckedAt, row.Supervisor = l.Detail, l.LastCheck.At, l.Supervisor
+		row.UsageLimit = l.UsageLimit.compact()
+		if row.UsageLimit != nil && out.UsageLimitWords == nil {
+			out.UsageLimitWords = usageLimitGlossary()
+		}
 		if w := l.Waiting; w != nil {
 			row.Reason = w.Reason
 			row.Waiting = &panelWaiting{Kind: w.Kind, By: w.By, Since: w.Since, AtLeast: w.SinceEvidence == "control_changed"}
+		}
+		// The list carries no note (it never has): when, and the hold.
+		row.Archived, row.ArchiveLapsed = withoutNote(l.Archived), withoutNote(l.ArchiveLapsed)
+		row.Naming, row.Lineage = l.Naming, l.Lineage // already as lists carry them
+		if row.Archived != nil {
+			out.Archived++
 		}
 		out.Loops = append(out.Loops, row)
 	}
@@ -1151,8 +1188,9 @@ func panelListCommand(e env, args []string) int {
 	staleAfter := fs.Duration("stale-after", defaultStaleAfter, "age at which a check is shown as stale")
 	offline := fs.Bool("offline", false, "do not ask each loop's local daemon for its next check")
 	client := fs.String("client", "", "the calling program's NAME@VERSION (bb-plugin, macos-menu), recorded for the panel's Versions view in a panel directory that already exists")
+	archived := fs.Bool("archived", false, "text: list the archived loops instead of the others (JSON always has every loop)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *staleAfter <= 0 {
-		e.errf("panel list: invalid arguments; usage: looptender panel list [--json] [--directory private-registry] [--client NAME@VERSION]")
+		e.errf("panel list: invalid arguments; usage: looptender panel list [--json] [--archived] [--directory private-registry] [--client NAME@VERSION]")
 		return exitUsage
 	}
 	// Recorded after the answer, and never changing it.
@@ -1190,7 +1228,20 @@ func panelListCommand(e env, args []string) int {
 			fmt.Fprintln(w, "No loops are registered. Register one with looptender registry add.")
 		}
 		for _, l := range list.Loops {
-			fmt.Fprintf(w, "%s: %s\n", l.Name, l.Phrase)
+			if (l.Archived != nil) != *archived {
+				continue
+			}
+			if l.Archived != nil {
+				fmt.Fprintf(w, "%s: archived %s\n", listNameLine(l.Name, l.Naming), archiveSince(l.Archived))
+				continue
+			}
+			fmt.Fprintf(w, "%s: %s\n", listNameLine(l.Name, l.Naming), l.Phrase)
+		}
+		switch {
+		case *archived && list.Archived == 0:
+			fmt.Fprintln(w, "No loop is archived.")
+		case !*archived && list.Archived > 0:
+			fmt.Fprintf(w, "%s archived, not shown: looptender panel list --archived lists %s.\n", dockPlural(list.Archived, "loop", "loops"), plural(list.Archived, "it", "them"))
 		}
 		switch {
 		case list.NeedsYou == 1:

@@ -119,6 +119,20 @@ func WithChildErrorsRetried(m Message, n, retried int) Message {
 	return m
 }
 
+// WithLimitedLanes adds to a child-error notice how many of the errored
+// children are at a provider usage limit, which window, and until when.
+// Fixed wording, counts only: one line for all of them.
+func WithLimitedLanes(m Message, n int, until time.Time, window string) Message {
+	if n <= 0 || until.IsZero() {
+		return m
+	}
+	at := until.UTC().Format(time.RFC3339)
+	m.Text += fmt.Sprintf("[keepgoing:lanes-limited count=%d resets=%s]\n"+
+		"looptender notice: %d of them are at a provider usage limit (%s) until %s, and cannot run before it on the account they use. "+
+		"looptender has not retried, messaged or stopped them. looptender status names the account and what can be done about it.\n", n, at, n, window, at)
+	return m
+}
+
 // retriedSentence says, with counts only, which of the n errored children
 // keepgoing is recovering and which are left to the session.
 func retriedSentence(n, retried int) string {

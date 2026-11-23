@@ -42,14 +42,14 @@ loop:
 | --- | --- | --- |
 | `name` | yes | Lowercase letters, digits, and hyphens. It appears in every event and report. |
 | `state_dir` | yes | Where control, state, health, log, lock, and turn files live. Keep it outside any repository. |
-| `adapter` | yes | `bb`, `process`, `claude`, `codex`, or (v0.2.0) `cursor` or `custom` ([an agent defined in configuration](#an-agent-defined-in-configuration)), with the matching block below. |
+| `adapter` | yes | `bb`, `process`, `claude`, `codex`, or (v0.2.0) `cursor` or `custom` ([an agent defined in configuration](#an-agent-defined-in-configuration)), with the matching block below. Unreleased: `sessionpipe`, an [observed target](#sessionpipe-observed-unreleased) that is never woken. |
 | `provider`, `group` | no | `group` defaults to `provider`, then to `primary`. Set `group` so a limit on this account skips fallbacks that share it. |
 | `account` | no | The [accounts catalog](accounts.md#say-which-account-a-route-uses) ID of the account you state this route uses. Your statement only: never set or derived by looptender, and it changes nothing about how the loop runs. `validate` and `doctor` compare it with the catalog. A fallback in `fallbacks.yaml` and a route in the standard list take the same field. |
 | `prompt_goal` | `false` | Explicitly append the latest private goal specification and revision to automatic messages, including handoffs. A valid goal for this loop is required before sending. See [current goal context](goals.md#current-goal-context-in-wake-messages). |
 | `pr_backlog` | off | Unreleased. Explicit repository/WIP policy consulted only for an already-selected ordinary wake, using bounded cached GitHub reads. No extra wakes or branch-creation enforcement. See [PR backlog](pr-backlog.md). |
 | `prompt_context` | `false` | Append the loop's supervision context, as `context -c` prints it, at the end of wakes, nudges, re-prompts and handoff briefs: with every brief, and otherwise only on the first send after it is turned on, after a control save (enable, resume, a change of owner), when the context changes, or into a new headless conversation. Never to the notice-only lane-error wake. Unreleased. See [supervision context in sends](operations.md#supervision-context-in-sends). |
 | `prompt_goal_on_change` | `false` | Unreleased. With `prompt_goal`, send the goal in full only on the first send to a conversation, after a goal revision, a target change, a new conversation (such as after `session reset`), a failed full send, 12 short sends or 4 hours; otherwise send one fixed line naming the goal ID and revision as unchanged. Requires `prompt_goal: true`. Handoff and switch-back briefs always carry the goal in full. See [sending an unchanged goal once](goals.md#sending-an-unchanged-goal-once). |
-| `prompt` or `prompt_file` | one of them | The text sent on wake, nudge, and re-prompt. The file is read on every send, so you can edit it while the loop runs. |
+| `prompt` or `prompt_file` | one of them | The text sent on wake, nudge, and re-prompt. The file is read on every send, so you can edit it while the loop runs. A `sessionpipe` target is sent nothing and must have neither. |
 | `handoff_file` | no | Sent to a fallback when it takes over. When the file is missing, a brief is generated. |
 | `switch_back` | no | Returns the loop to the primary once its limit resets and an exact probe passes. Off by default. See [fallbacks.md](fallbacks.md#switching-back). |
 | `routes` | no | `standard`: follow the person's [standard route list](routes.md) instead of a `fallbacks` file. v0.2.0. Excludes `fallbacks`; for `bb`, `claude` and `codex` loops. |
@@ -134,6 +134,21 @@ A running headless turn cannot be steered or queued into. A nudge to a stalled h
 The Cursor CLI adapter is in v0.2.0, not v0.1.5. It accepts `cli` (default `agent`), required `workdir`, optional `model`, optional `env`, and optional `fresh_start_versions`: up to 16 further CLI versions, written as the CLI prints them, for which you have confirmed that it writes its first stream records before submitting a prompt. That list only widens [when a new conversation may follow a turn that failed before starting](cursor.md#turns-identity-and-controls); leave it out unless you have checked. There is no `extra_args` or automatic approval flag. Use guided `init --agent cursor` or write the YAML directly.
 
 Only standalone primary loops are accepted: no `fallbacks`, enabled `switch_back`, or Cursor fallback candidates. Failures remain unknown because the reviewed print schema lacks structured error classes/reset times. See [Cursor supervision](cursor.md) for stdin transport, exact identity, output bounds, permission behavior and unverified live acceptance.
+
+<a id="sessionpipe-observed-unreleased"></a>
+
+## sessionpipe (observed, unreleased)
+
+An observed target: one agent session that [sessionpipe](sessionpipe.md#observed-sessions-in-unreleased) reports, read from a tier-0 file sink. looptender never sends to, wakes, re-prompts or stops it.
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `session` | yes | The session as sessionpipe names it, `<harness>:<id>`, for example `claude-code:8c132906-8c3f-4814-870a-afc3d05e1d2e`. |
+| `events_file` | yes | The file given to `sessionpipe sink add file:PATH --tier 0`. A relative path resolves against the configuration file; give sessionpipe the same absolute path. |
+| `stale_after` | no | How long the session may say nothing before its state reads unknown (default `10m`, between `2m` and `168h`). Silence is never idle. |
+| `cli` | no | The `sessionpipe` command, default `sessionpipe`. Only `doctor` runs it (`--version` and `status --json`); checks never do. |
+
+The loop must have no `prompt` or `prompt_file`, no `fallbacks` or `routes`, no `switch_back` and no `timing`, and a sessionpipe target cannot be a fallback candidate.
 
 ## An agent defined in configuration
 
