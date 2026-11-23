@@ -186,6 +186,11 @@ func waitCmd(e env, cfg *config.Config, until, note string, forDur time.Duration
 		if err := control.CheckOwner(*f, os.Getenv("BB_THREAD_ID"), false); err != nil {
 			return fmt.Errorf("wait refused: %w", err)
 		}
+		if !f.Supervising() {
+			// A wait ends by itself; a hold already there does not, so a wait
+			// on top of it would promise what it cannot do.
+			return fmt.Errorf("wait refused, nothing changed: the loop is already %s, and a wait does not end a hold someone set; a person lifts it", f.Summary())
+		}
 		h.Before = *f
 		h.Thread, h.Generation = ownerOf(*f)
 		h.Caller = controlCaller(*f)
@@ -251,15 +256,24 @@ func settleWait(e env, cfg *config.Config, now time.Time) {
 			if !h.Unchanged(*f) {
 				return control.ErrSelfHoldChanged
 			}
-			f.Note = fmt.Sprintf("waited %s for %s, which did not come", state.ShortDuration(now.Sub(h.SetAt)), h.Until)
+			why := fmt.Sprintf("waited %s for %s, which did not come", state.ShortDuration(now.Sub(h.SetAt)), h.Until)
 			if h.Note != "" {
-				f.Note += " (" + h.Note + ")"
+				why += " (" + h.Note + ")"
+			}
+			// The note from before the wait is kept; the reason goes beside it.
+			f.Note = why
+			if h.Before.Note != "" {
+				f.Note = h.Before.Note + "; " + why
 			}
 			return nil
 		}, nil)
 		if err == nil || errors.Is(err, errControlHistory) {
 			_ = state.Append(dir, state.Event{Loop: cfg.Loop.Name, Event: "control", Action: "wait_expired", Reason: h.Until})
 		}
+		_ = control.RemoveSelfHold(dir, control.WaitFileName)
+	case !lastControlIs(dir, "wait"):
+		// The history does not show a wait as the last control change: the
+		// record was not made by looptender wait, so it ends nothing.
 		_ = control.RemoveSelfHold(dir, control.WaitFileName)
 	case waitMet(e.ctx, cfg, h, now):
 		_, err = updateControlAnnotated(dir, "wait_cleared", func(f *control.File) error { return h.Restore(f) }, nil)
@@ -315,17 +329,7 @@ func withdrawCmd(e env, cfg *config.Config, note string) int {
 	}
 	// The history is the source of who set it: the last control change must
 	// be this await-user, saved by the owner thread, with the hold it left.
-	j, err := incident.Load(dir)
-	if err != nil {
-		return refuse("the control history could not be read")
-	}
-	var last *incident.Record
-	for i := len(j.Records) - 1; i >= 0; i-- {
-		if j.Records[i].Kind == "control" && j.Records[i].ControlChange != nil {
-			last = &j.Records[i]
-			break
-		}
-	}
+	last := lastControlChange(dir)
 	if last == nil || last.ControlChange.Operation != "await-user" || last.ControlChange.Caller != "owner_thread" || last.ControlAfter == nil || !last.ControlAfter.AwaitingUser {
 		return refuse("the control history does not show this hold as the thread's own last change (it may be older than the history kept)")
 	}
@@ -355,4 +359,25 @@ func withdrawCmd(e env, cfg *config.Config, note string) int {
 	_ = state.Append(dir, state.Event{Loop: cfg.Loop.Name, Event: "control", Action: "await-user_withdrawn", Reason: restored.Summary()})
 	fmt.Fprintf(e.stdout, "%s: the session withdrew its own question (%s); the loop is %s. Nothing a person set changed.\n", cfg.Loop.Name, h.Withdrawn, restored.Summary())
 	return exitOK
+}
+
+// lastControlChange is the journal's last control change, or nil.
+func lastControlChange(dir string) *incident.Record {
+	j, err := incident.Load(dir)
+	if err != nil {
+		return nil
+	}
+	for i := len(j.Records) - 1; i >= 0; i-- {
+		if j.Records[i].Kind == "control" && j.Records[i].ControlChange != nil {
+			return &j.Records[i]
+		}
+	}
+	return nil
+}
+
+// lastControlIs reports whether the journal's last control change is op,
+// with the hold it set.
+func lastControlIs(dir, op string) bool {
+	r := lastControlChange(dir)
+	return r != nil && r.ControlChange.Operation == op && r.ControlAfter != nil && r.ControlAfter.AwaitingUser
 }

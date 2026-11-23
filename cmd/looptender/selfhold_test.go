@@ -91,17 +91,20 @@ func TestWaitKeepsAPersonsHoldExpiresAndYieldsToAPerson(t *testing.T) {
 			t.Fatal(errs)
 		}
 	}
+	// A wait on top of a hold someone set is refused: it could not end it.
 	pinSession(t, true)
-	if code, _, errs := f.run("wait", "--until", "host-session"); code != exitOK {
-		t.Fatal(errs)
+	if code, _, errs := f.run("wait", "--until", "host-session"); code != exitFailed || !strings.Contains(errs, "already awaiting user, and a wait does not end a hold someone set") {
+		t.Fatalf("wait over a person's hold: %d %s", code, errs)
 	}
-	f.tick()
+	if h, _ := control.LoadSelfHold(archiveFixtureDir(t, f), control.WaitFileName); h != nil {
+		t.Fatal("a refused wait was recorded")
+	}
 	if c := ctlOf(t, f); !c.AwaitingUser || c.Note != "fictional question for a person" {
-		t.Fatalf("a person's hold was lifted: %+v", c)
+		t.Fatalf("a person's hold changed: %+v", c)
 	}
 
 	g := newFixture(t)
-	if code, _, errs := g.run("enable"); code != exitOK {
+	if code, _, errs := g.run("enable", "--note", "fictional earlier note"); code != exitOK {
 		t.Fatal(errs)
 	}
 	pinSession(t, false)
@@ -113,7 +116,7 @@ func TestWaitKeepsAPersonsHoldExpiresAndYieldsToAPerson(t *testing.T) {
 		t.Fatal("cleared while the session is unavailable")
 	}
 	tickAt(t, g, time.Now().Add(2*time.Minute))
-	if c := ctlOf(t, g); !c.AwaitingUser || !strings.Contains(c.Note, "for host-session, which did not come (fictional outage)") {
+	if c := ctlOf(t, g); !c.AwaitingUser || !strings.HasPrefix(c.Note, "fictional earlier note; waited ") || !strings.HasSuffix(c.Note, " for host-session, which did not come (fictional outage)") {
 		t.Fatalf("expiry: %+v", c)
 	}
 	if h, _ := control.LoadSelfHold(archiveFixtureDir(t, g), control.WaitFileName); h != nil {
@@ -319,5 +322,52 @@ func TestWithdrawRefusals(t *testing.T) {
 	}
 	if code, _, errs := k.run("await-user", "--withdraw", "--note", "x"); code != exitFailed || !strings.Contains(errs, "archived") {
 		t.Fatalf("archived: %d %s", code, errs)
+	}
+}
+
+// A wait.json no wait made (copied from control.json, with its time
+// passed) clears nothing: the history must show the wait.
+func TestForgedWaitRecordClearsNothing(t *testing.T) {
+	f := newFixture(t)
+	for _, args := range [][]string{{"enable"}, {"await-user", "--note", "a person's fictional question"}} {
+		if code, _, errs := f.run(args...); code != exitOK {
+			t.Fatal(errs)
+		}
+	}
+	dir := archiveFixtureDir(t, f)
+	cur := ctlOf(t, f)
+	past := time.Now().Add(-time.Hour).UTC()
+	exp := time.Now().Add(time.Hour).UTC()
+	if err := control.SaveSelfHold(dir, control.WaitFileName, control.SelfHold{Caller: "terminal", SetAt: past, Until: "time", UntilTime: &past, ExpiresAt: &exp, Before: control.File{Enabled: true}, After: cur}); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+	if c := ctlOf(t, f); !c.AwaitingUser || c.Note != "a person's fictional question" {
+		t.Fatalf("a forged wait cleared a person's hold: %+v", c)
+	}
+	if h, _ := control.LoadSelfHold(dir, control.WaitFileName); h != nil {
+		t.Fatal("forged wait kept")
+	}
+}
+
+// The journal is the source of who set the hold: a later control record
+// in the history (here a person's, with the record itself unchanged) means
+// the question is no longer the thread's own last change.
+func TestWithdrawNeedsTheHistoryToShowTheThreadsQuestion(t *testing.T) {
+	f := ownedFixture(t)
+	if code, _, errs := f.run("await-user", "--note", "q"); code != exitOK {
+		t.Fatal(errs)
+	}
+	dir := archiveFixtureDir(t, f)
+	gate := &incident.Controls{Enabled: true, AwaitingUser: true}
+	if err := incident.Append(dir, incident.Record{Kind: "control", CheckStartedAt: time.Now().UTC(), Build: version, ControlBefore: gate, ControlAfter: gate,
+		ControlChange: &incident.ControlChange{Operation: "await-user", Caller: "terminal", SaveObservedAt: time.Now().UTC()}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errs := f.run("await-user", "--withdraw", "--note", "x"); code != exitFailed || !strings.Contains(errs, "control history does not show this hold") {
+		t.Fatalf("withdrew past a person's history record: %d %s", code, errs)
+	}
+	if c := ctlOf(t, f); !c.AwaitingUser {
+		t.Fatal("the hold was lifted")
 	}
 }

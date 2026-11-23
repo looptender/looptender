@@ -2100,7 +2100,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			c.ContinuedIn = &r
 			snap.Archived = &c
 		}
-		if wt := snap.Wait; wt != nil && snap.Archived == nil {
+		if wt := snap.Wait; wt != nil && snap.Archived == nil && snap.Controls != nil && !snap.Controls.Paused && !snap.Controls.Stop && !snap.Controls.Completed && snap.Controls.Enabled {
 			// A wait needs nobody: it ends by itself when its condition holds.
 			l.State, l.Phrase, l.PickerState = "waiting_on_condition", "Waiting for "+waitPhrase[wt.Until], "Waiting for "+waitPhrase[wt.Until]
 			l.Detail = "It " + wt.Text + "."
