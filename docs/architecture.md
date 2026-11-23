@@ -56,6 +56,9 @@ internal/scenario           test-only scenario suite that drives the built binar
 internal/daemoninfo         private loopback diagnostics and authenticated shutdown transport for a running daemon
 internal/netretry           retry only while the network is down
 internal/ciwait             wait for CI on an exact commit
+internal/router/route       the account router's decision, pure: which subscription serves a request of a conversation; nothing uses it yet (design/router.md)
+internal/router/front       the account router's forwarding front: one fixed upstream, a bounded wait for a decision, unchanged pass-through on any failure; standard library only, reads and writes no file; nothing starts it yet
+internal/router/standin     test-only stand-in for a provider's API that records header names and the shape of a credential, never a value
 ```
 
 ## A tick, end to end
