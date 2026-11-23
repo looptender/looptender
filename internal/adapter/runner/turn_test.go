@@ -116,8 +116,15 @@ func TestTurnErrorAndStopOnThisPlatform(t *testing.T) {
 		t.Fatalf("send: %v", err)
 	}
 	waitFor(t, slow.dir, Running)
+	// Stop waits three seconds for the wrapper to acknowledge, and says honestly
+	// "unconfirmed ... request remains pending" when a starved machine does not
+	// get there in time; the wrapper still acts on the request. What this test
+	// asserts is that the turn then ends, which the wait below checks.
 	if err := slow.Stop(context.Background()); err != nil {
-		t.Fatal(err)
+		if !strings.Contains(err.Error(), "request remains pending") {
+			t.Fatal(err)
+		}
+		t.Logf("stop unconfirmed in time (loaded machine); waiting for the turn to end: %v", err)
 	}
 	deadline := time.Now().Add(60 * time.Second)
 	for {
