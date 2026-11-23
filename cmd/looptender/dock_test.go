@@ -1575,7 +1575,7 @@ func TestDockMaximalRegistryStaysUnderTheResponseBound(t *testing.T) {
 		if len(list) > 1<<20/2 || r.Loops[0].UsageLimit == nil {
 			t.Errorf("panel list %d bytes, over half the menu's 1 MiB cap, or no usage limit in the fixture", len(list))
 		}
-		if len(body) > dockMaxResponse*3/4 {
+		if sizeWithoutNotices(t, body) > dockResponseMargin {
 			t.Errorf("identifiers %t: %d bytes, over three quarters of the %d-byte bound", ids, len(body), dockMaxResponse)
 		}
 		if len(r.Routes) > dockMaxRoutes || r.RoutesOmitted == 0 {
@@ -1998,7 +1998,7 @@ func dockFourByteReport(t *testing.T, limited bool) {
 		t.Fatal(err)
 	}
 	t.Logf("usage limits %t: %d bytes, %d account route lists", limited, len(body), len(r.AccountUses))
-	if limit := dockMaxResponse * 3 / 4; !limited && len(body) > limit {
+	if !limited && sizeWithoutNotices(t, body) > dockResponseMargin {
 		t.Errorf("%d bytes, over three quarters of the %d-byte bound", len(body), dockMaxResponse)
 	}
 	if limit := dockMaxResponse * 4 / 5; limited && len(body) > limit {

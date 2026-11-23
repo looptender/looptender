@@ -1026,6 +1026,9 @@ type panelList struct {
 	// Volumes is one notice for each volume holding loops' state that is
 	// filling or nearly full (see dockReport.Volumes).
 	Volumes []dockVolume `json:"volumes,omitempty"`
+	// Notices is the one list of events a person is told about, as the page
+	// has it (notices.go). A reader notifies once for each new ID.
+	Notices []panelNotice `json:"notices"`
 	// CanAll is which changes can be made to every loop at once
 	// (client review|apply --all): pause and stop, while any loop can be.
 	CanAll []string `json:"canAll"`
@@ -1125,6 +1128,10 @@ func buildPanelList(r dockReport) panelList {
 		NeedsYou: len(r.NeedsYou), Unread: r.Unread, Omitted: r.Registry.Omitted, Loops: []panelListLoop{}}
 	out.AccountQuotas = panelQuotaSummary(r)
 	out.Volumes = r.Volumes
+	out.Notices = r.Notices
+	if out.Notices == nil {
+		out.Notices = []panelNotice{}
+	}
 	out.InstalledBuild = shortBuildLabel(version)
 	out.BuildFreshness = r.BuildFreshness
 	needs := map[string]bool{}

@@ -80,7 +80,9 @@ type dockReport struct {
 	// filling or nearly full, said once for all the loops on it; absent
 	// when none is.
 	Volumes []dockVolume `json:"volumes,omitempty"`
-	Loops   []dockLoop   `json:"loops"`
+	// Notices is the one list of events a person is told about (notices.go).
+	Notices []panelNotice `json:"notices"`
+	Loops   []dockLoop    `json:"loops"`
 	// Archived counts the loops in Loops whose State is "archived"; they are
 	// listed last, need nobody and are left out of Worth.
 	Archived int `json:"archived"`
@@ -1411,7 +1413,7 @@ var dockStatePriority = map[string]int{
 func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time.Duration, identifiers, registryOK bool, omitted int, complete bool) dockReport {
 	r := dockReport{SchemaVersion: dockSchemaVersion, ReadOnly: true, ReadAt: now, RefreshSeconds: int(refresh / time.Second),
 		StaleAfterSeconds: int(staleAfter / time.Second), Identifiers: identifiers, NeedsYou: []dockNeed{}, Worth: []dockWorth{}, Loops: []dockLoop{},
-		Routes: []dockRoute{}, Allowances: []dockAllowance{}, Registry: dockRegistry{Availability: "unavailable"}, Complete: complete,
+		Routes: []dockRoute{}, Allowances: []dockAllowance{}, Notices: []panelNotice{}, Registry: dockRegistry{Availability: "unavailable"}, Complete: complete,
 		NeedsLine: "Needs you: unknown"}
 	r.RoutesSummary = dockRoutesLine{Picker: "No routes", Total: "No routes", InUseT: "0 running now", Problem: "none at a limit or failing its test"}
 	if !registryOK {
@@ -1535,6 +1537,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 		}
 		r.Worth = append(r.Worth, dockWorth{Key: l.Key, Loop: l.Name, State: l.State, Text: t})
 	}
+	r.Notices = reportNotices(r.Loops, r.NeedsYou, now)
 	return r
 }
 
