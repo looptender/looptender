@@ -35,8 +35,8 @@ func launchStandIns(t *testing.T, dir, record string) string {
 	script := `#!/bin/sh
 LAUNCH_RECORD=` + record + `
 echo "$(basename "$0") $*" >> "$LAUNCH_RECORD"
-case "$1" in
-submit|--user)
+case "$(basename "$0") $1" in
+"launchctl submit"|"systemd-run --user")
   [ "$LAUNCH_FAIL" = 1 ] && exit 1
   while [ "$1" != "--" ]; do shift; done
   shift
