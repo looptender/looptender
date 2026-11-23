@@ -199,6 +199,13 @@ func checkExecutable() string {
 
 // tickOnce runs one pass under the tick lock.
 func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, leases ...*ownerLease) int {
+	if _, archived := archivedNow(cfg.Loop.StateDir); archived && !stopRequested(cfg.Loop.StateDir) {
+		// Nothing to check, and nothing recorded: a scheduler that still
+		// ticks an archived loop changes nothing. A saved stop is still
+		// carried out.
+		e.errf("loop %s is archived; nothing checked", cfg.Loop.Name)
+		return exitOK
+	}
 	l, err := lock.Acquire(cfg.Loop.StateDir)
 	if errors.Is(err, lock.ErrHeld) {
 		e.errf("another tick holds the lock; skipping")
@@ -365,6 +372,15 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 			if saved, err := state.Load(cfg.Loop.StateDir); err == nil && saved.LastCheck != nil && saved.LastCheck.Outcome == "succeeded" {
 				stopDone = sig // the stop check succeeded and was saved
 			}
+		}
+		// An archived loop is checked by nobody: once no saved stop is left
+		// to carry out, the daemon exits cleanly, so a service manager that
+		// restarts only a failed daemon leaves it stopped. The same after a
+		// build switch: the new build's first pass ends here too.
+		if a, archived := archivedNow(cfg.Loop.StateDir); archived && !(stop && sig != stopDone) {
+			e.errf("loop %s is archived (since %s); this daemon checks nothing more and exits. `looptender unarchive -c %s` lists it normally again and resumes nothing.", cfg.Loop.Name, a.At.UTC().Format(time.RFC3339), shellQuote(cfgPath))
+			_ = state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "archived"})
+			return exitOK
 		}
 		var reportDeferred bool
 		configUnavailableSince, reportDeferred = updateDaemonConfigurationDeferred(pass, cfg, loaded, dryRun, lease, configUnavailableSince)
@@ -564,7 +580,17 @@ func controlSignatureWithOpen(stateDir string, open func(string) (*os.File, erro
 	if _, err := io.CopyN(h, f, info.Size()); err != nil {
 		return metadata + ":unavailable"
 	}
-	return fmt.Sprintf("%s:%x", metadata, h.Sum(nil))
+	return fmt.Sprintf("%s:%x", metadata, h.Sum(nil)) + archiveSignature(stateDir)
+}
+
+// archiveSignature adds the archive record to the control signature, so a
+// waiting daemon sees an archive at its next control poll and exits.
+func archiveSignature(stateDir string) string {
+	info, err := snapshot.LstatRecord(filepath.Join(stateDir, control.ArchiveFileName))
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf(":archive:%d:%d", info.ModTime().UnixNano(), info.Size())
 }
 
 type statusOut struct {
@@ -619,6 +645,14 @@ type statusOut struct {
 	Target       string       `json:"target"`
 	Control      control.File `json:"control"`
 	ControlState string       `json:"controlState"`
+	// Archived is set while the loop is archived: an archive record and a
+	// control record that does not let it supervise. ArchiveLapsed is a
+	// record left on a loop that supervises again (resumed by a build from
+	// before archiving): shown, not acted on.
+	Archived      *archiveView `json:"archived,omitempty"`
+	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	// Naming is what a list needs to show a readable name (loop_naming.go).
+	Naming loopNaming `json:"naming"`
 	// Unreadable lists the records status could not read. The rest of the
 	// output is what it could; the command still exits 1.
 	Unreadable      []unreadableRecord `json:"unreadable,omitempty"`
@@ -1004,6 +1038,30 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if ctl.SupersededBy != "" {
 		fmt.Fprintln(w, "superseded: successor reference is recorded in control.json; resume and takeover are refused")
 	}
+	if a := out.Archived; a != nil {
+		fmt.Fprintf(w, "archived:  %s; listed apart, needs nobody, and checked by no daemon. Resume and enable are refused until `looptender unarchive -c %s`, which resumes nothing\n", archiveSince(a), shellQuote(cfg.Path()))
+	}
+	if a := out.ArchiveLapsed; a != nil {
+		fmt.Fprintf(w, "archive:   the record %s is ignored: the loop supervises again (resumed by a build from before archiving). `looptender unarchive -c %s` removes it\n", archiveSince(a), shellQuote(cfg.Path()))
+	}
+	if n := out.Naming; n.NameSource != "slug" || n.Project != "" {
+		line := n.DisplayName
+		switch n.NameSource {
+		case state.DisplayNameSet:
+			line += " (set by a person)"
+		case state.DisplayNameThreadTitle:
+			line += " (the BB thread's title when it was first read)"
+		case state.DisplayNameInherited:
+			line += " (from the loop this one continues)"
+		}
+		if n.Project != "" {
+			line += "; project " + n.Project
+		}
+		if n.TitleDiffers {
+			line += fmt.Sprintf("; the BB thread is now titled %q", n.ThreadTitle)
+		}
+		fmt.Fprintf(w, "name:      %s\n", line)
+	}
 	if q := ctl.OpenQuestion; q != nil {
 		fmt.Fprintf(w, "question history: the wait ended when completion was declared at %s%s\n", when(q.At), noteSuffix(q.Note))
 	}
@@ -1383,6 +1441,10 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 			out.TargetConfigured = true
 		}
 	}
+	if !out.controlUnreadable {
+		out.Archived, out.ArchiveLapsed = loopArchive(l.StateDir, out.Control)
+	}
+	out.Naming = namingOf(l, out.TargetAgent.BBThread)
 	out.NewThreads = newThreadStatus{Created: st.NewThreadsCreated, Max: l.Limits.MaxNewThreads, Pending: st.NewThreadIntent != nil}
 	out.SuccessorPlans = successorPlans(cfg)
 	if s := st.ChildSuccessors; s != nil || st.ChildSuccessorsCreated > 0 {
@@ -1702,6 +1764,13 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 		newEpisode, openQuestion, settledBriefs, endedQuestion = false, false, nil, ""
 		if cmd == "resume" && f.Question != nil {
 			endedQuestion = f.Question.ID
+		}
+		if cmd == "enable" || cmd == "resume" {
+			// Before anything else the command would do: an archived loop is
+			// unarchived first, by itself.
+			if err := archivedRefusal(cfg, cmd, *f); err != nil {
+				return err
+			}
 		}
 		caller := os.Getenv("BB_THREAD_ID")
 		transfer := cmd == "enable" && caller != "" && f.Ownership != nil && f.Ownership.ThreadID != caller

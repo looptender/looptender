@@ -81,6 +81,9 @@ type dockReport struct {
 	// when none is.
 	Volumes []dockVolume `json:"volumes,omitempty"`
 	Loops   []dockLoop   `json:"loops"`
+	// Archived counts the loops in Loops whose State is "archived"; they are
+	// listed last, need nobody and are left out of Worth.
+	Archived int `json:"archived"`
 	// Routes is the same data grouped by route: a model on an account at an
 	// effort level, as configured. Each loop's chain entries name their
 	// route by key, so the views are one feed.
@@ -232,7 +235,7 @@ type dockLoop struct {
 	LoopArg string `json:"loopArg,omitempty"`
 	// State is one of supervising, waiting_for_you, waiting_on_limit,
 	// waiting_on_network, checks_failing, paused, stopped, finished, off,
-	// outside_hours, not_checked_recently or unknown. Phrase is its label,
+	// outside_hours, not_checked_recently, archived or unknown. Phrase is its label,
 	// Detail one sentence about it, PickerState the picker row's second line.
 	State       string `json:"state"`
 	Phrase      string `json:"phrase"`
@@ -324,6 +327,13 @@ type dockLoop struct {
 	// set. Empty when the flags could not be read. A page offers them only
 	// when the server that serves it allows changes.
 	Can []string `json:"can"`
+	// Archived is set while the loop is archived (State "archived"): when,
+	// the hold it had, and the note only where the report carries
+	// identifiers. ArchiveLapsed is a record the loop no longer honours.
+	// Naming is what a list needs to show a readable name.
+	Archived      *archiveView `json:"archived,omitempty"`
+	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	Naming        *loopNaming  `json:"naming,omitempty"`
 	// LanesFailed is "1 lane failed" when the last check's current lane
 	// listing has lanes in error, from their structured status only; empty
 	// otherwise. A failed lane does not hold the loop, so it is never a need,
@@ -1371,7 +1381,7 @@ func secondsSince(now, t time.Time) *int64 {
 
 var dockStatePriority = map[string]int{
 	"waiting_for_you": 0, "unknown": 1, "checks_failing": 2, "not_checked_recently": 3, "waiting_on_limit": 4, "waiting_on_network": 4,
-	"supervising": 5, "outside_hours": 6, "paused": 7, "off": 8, "stopped": 9, "finished": 10,
+	"supervising": 5, "outside_hours": 6, "paused": 7, "off": 8, "stopped": 9, "finished": 10, "archived": 11,
 }
 
 // buildDockReport sorts loops so the ones that want attention come first.
@@ -1405,6 +1415,11 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 			if need.Kind == "unreadable" {
 				r.Unread++
 			}
+		}
+	}
+	for _, l := range r.Loops {
+		if l.Archived != nil {
+			r.Archived++
 		}
 	}
 	r.AllClear = complete && omitted == 0 && len(r.NeedsYou) == 0
@@ -1442,6 +1457,9 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 	r.usage = buildDockUsagePage(usage, now, complete)
 	quiet := map[string]bool{"supervising": true, "paused": true, "off": true, "stopped": true, "finished": true, "waiting_for_you": true, "unknown": true}
 	for _, l := range r.Loops {
+		if l.Archived != nil {
+			continue // put out of the way: nothing about it is worth a line
+		}
 		flagged := l.NoProgress != nil && l.NoProgress.Availability == "flagged"
 		daemonBuild := l.Versions.Daemon != "" && dockBuildOf(l.Versions.Daemon, version).Availability == "different"
 		otherFile := l.Versions.Service == "different_file"
@@ -1514,9 +1532,12 @@ func dockLede(r dockReport) string {
 			sup++
 		}
 	}
-	s := dockPlural(len(r.Loops), "loop", "loops")
+	s := dockPlural(len(r.Loops)-r.Archived, "loop", "loops")
 	if sup > 0 {
 		s += fmt.Sprintf(", %d supervising", sup)
+	}
+	if r.Archived > 0 {
+		s += fmt.Sprintf(", and %d archived", r.Archived)
 	}
 	if r.Unread > 0 {
 		s += fmt.Sprintf(", %d could not be read", r.Unread)
@@ -1984,6 +2005,38 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 					}
 				}
 			}
+		}
+	}
+	if snap != nil {
+		l.ArchiveLapsed = snap.ArchiveLapsed
+		l.Naming = listNaming(l.Name, snap.Naming, false)
+		// The note and the thread title from the full status, as hold notes
+		// are: identifier-shaped tokens hidden unless identifiers are shown.
+		mask := func(s string) string {
+			if masked, _ := dockMaskNote(s); !identifiers {
+				return clip(masked, dockMaxNote)
+			}
+			return clip(s, dockMaxNote)
+		}
+		if st != nil && identifiers && st.Naming.DisplayName != "" {
+			// The unmasked title too, as notes are whole here.
+			l.Naming = listNaming(l.Name, &st.Naming, true)
+		}
+		if st != nil && st.Archived != nil && snap.Archived != nil {
+			a := *snap.Archived
+			a.Note = mask(st.Archived.Note)
+			snap.Archived = &a
+		}
+		if a := snap.Archived; a != nil {
+			// Archived: listed apart, needing nobody, with no control offered
+			// (resume is refused until it is unarchived, and a group pause or
+			// stop leaves it as it is). Its hold is still shown in Hold.
+			l.Archived = a
+			l.State, l.Phrase, l.PickerState = "archived", "Archived", "Archived"
+			l.Detail = "Archived " + archiveSince(a) + ". It needs nobody and no daemon checks it; looptender unarchive lists it normally again and resumes nothing."
+			// Nothing it waits on is shown: it waits on nobody.
+			l.Can, l.AlsoWaiting, l.Waiting = []string{}, "", nil
+			need = nil
 		}
 	}
 	return l, need

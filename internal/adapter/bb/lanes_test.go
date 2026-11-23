@@ -287,7 +287,11 @@ func TestDecodedFieldsAreAnAllowlist(t *testing.T) {
 	// from the bb thread show reply in children.go and kept in the loop's
 	// private lane-titles.json for the panel's identifier view. No decision,
 	// record, report or other file carries it.
-	displayOnly := map[string]string{"title": "children.go"}
+	// title has two display-only uses: a child's title for the panel's lane
+	// list (children.go), and the supervised thread's own title for the
+	// loop's display name (bb.go, state.ThreadTitleName). No decision reads
+	// either.
+	displayOnly := map[string][]string{"title": {"bb.go", "children.go"}}
 	allowed := strings.Fields(`
 		archivedAt attempt category code complete count createdAt cursor data decision deletedAt delivery
 		diagnostic error errorInfo hashRefs httpStatusCode id initiator interaction item itemId kind lastEventAt lastSeq
@@ -355,9 +359,11 @@ func TestDecodedFieldsAreAnAllowlist(t *testing.T) {
 			t.Errorf("the BB adapter decodes %q", text)
 		}
 	}
-	for tag, file := range displayOnly {
-		if len(sites[tag]) != 1 || sites[tag][0] != file {
-			t.Errorf("%q is decoded in %v; its one display-only use is in %s", tag, sites[tag], file)
+	for tag, files := range displayOnly {
+		got := append([]string{}, sites[tag]...)
+		sort.Strings(got)
+		if !reflect.DeepEqual(got, files) {
+			t.Errorf("%q is decoded in %v; its display-only uses are in %v", tag, got, files)
 		}
 	}
 }
