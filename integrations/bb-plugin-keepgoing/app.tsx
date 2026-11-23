@@ -1,7 +1,7 @@
 // Shows keepgoing's state beside each supervised thread: a row in the thread
 // context card when bb shows the card, and a segment in the context banner
 // above the composer when it shows the banner. On the New thread screen it
-// adds the Keep going switch and its banner to the composer.
+// adds the Add to Looptender switch and its banner to the composer.
 import {
   definePluginApp,
   experimental_THREAD_INFO_ROW_GROUPS as ROW_GROUPS,
@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
 import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable } from "./status-details";
 import { SetupPanel } from "./setup-panel";
+import { SetupStyles } from "./setup-style";
 import { AttachPanel } from "./attach-panel";
 import { TransferPanel } from "./transfer-panel";
 import { KeepGoingBanner, KeepGoingSwitch, turnOn } from "./new-thread-control";
@@ -189,16 +190,20 @@ function ThreadSetup({ threadId, onChanged, hideStart = false }: { threadId: str
     if (result.moved) setGeneration(n => n + 1);
     return result;
   }, [rpc]);
-  return <><AttachPanel key={`attach-${threadId}`} threadId={threadId} call={attach} onChanged={onChanged} />
-    <SetupPanel key={`${threadId}-${generation}`} threadId={threadId} call={call} onChanged={onChanged} hideStart={hideStart} />
-    <TransferPanel key={`move-${threadId}`} threadId={threadId} call={transfer} onChanged={onChanged} /></>;
+  // One primary flow first. Attaching and moving are for a loop that already
+  // exists, so they sit behind a collapsed section of their own.
+  return <><SetupPanel key={`${threadId}-${generation}`} threadId={threadId} call={call} onChanged={onChanged} hideStart={hideStart} />
+    <details className="kgs-more"><SetupStyles /><summary>Already have a loop?</summary>
+      <AttachPanel key={`attach-${threadId}`} threadId={threadId} call={attach} onChanged={onChanged} />
+      <TransferPanel key={`move-${threadId}`} threadId={threadId} call={transfer} onChanged={onChanged} />
+    </details></>;
 }
 
 function StatusWarning({ refresh }: { refresh(): void }) {
   return <div role="alert">Status could not be verified for every registered loop. Controls and setup are hidden until refreshed. <button type="button" style={buttonStyle} onClick={refresh}>Refresh status</button></div>;
 }
 
-// What a thread created with Keep going on shows about that request.
+// What a thread created with Add to Looptender on shows about that request.
 function useThreadOutcome(threadId: string, loops: LoopView[]) {
   const rpc = useRpc<typeof rpcContract>();
   const call = useCallback((input: Parameters<typeof rpc.call<"newThread">>[1]) => rpc.call("newThread", input), [rpc]);
@@ -315,7 +320,9 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
 }
 
 function ComposerSwitch() {
-  return <KeepGoingSwitch composer={useComposer()} />;
+  const rpc = useRpc<typeof rpcContract>();
+  const call = useCallback((input: Parameters<typeof rpc.call<"newThread">>[1]) => rpc.call("newThread", input), [rpc]);
+  return <KeepGoingSwitch composer={useComposer()} call={call} />;
 }
 
 function ComposerBanner() {
@@ -336,9 +343,9 @@ export default definePluginApp((app) => {
     // same switch from the menu beside Send.
     sendMenu: [{
       id: "keep-going",
-      label: "Keep going…",
+      label: "Add to Looptender…",
       icon: "Repeat",
-      description: "Supervise the thread this message creates",
+      description: "Turn on looptender for the thread this message creates; nothing is sent until you choose Send and create setup, or Send and start supervising",
       run: ({ composer }) => { if (composer.scope.kind === "new-thread") turnOn(composer.key); },
     }],
   });

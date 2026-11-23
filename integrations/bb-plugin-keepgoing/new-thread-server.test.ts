@@ -282,7 +282,7 @@ test("without BB's dispatch hook only the New thread control is lost: status and
     try {
       for (const input of [{ action: "check" }, { action: "arm", draftKey: "d", projectId: "proj_example", bounds: DEFAULT_BOUNDS, shownMode: "automatic" }]) {
         const r = await w.rpc(input);
-        assert.equal(r.ok, false, hook); assert.match(r.message, /does not offer the hook Keep going needs/); assert.equal(r.intent, undefined);
+        assert.equal(r.ok, false, hook); assert.match(r.message, /does not offer the hook Add to Looptender needs/); assert.equal(r.intent, undefined);
       }
       // The rest of the plugin registered and answers.
       const loops = await w.harness.behavior.callRpc("forThread", { threadId: "thr_new" }) as { loops: unknown[]; errors: unknown[] };

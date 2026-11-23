@@ -82,7 +82,7 @@ export function createSetupController(d: SetupDependencies) {
     const records = await d.records();
     const existing = records.find(r => r.threadId === input.threadId);
     if (input.action === "inspect" || input.action === "start") {
-      if (!existing) return { ok: true, message: "Enter a task and preview a new loop for this thread." };
+      if (!existing) return { ok: true, message: "No loop is set up for this thread yet." };
       let result: SetupResult;
       try { result = await inspect(bin, existing); }
       catch { return { ok: false, record: existing, canStart: false, message: "The saved target could not be verified. Refresh diagnostics after checking the host and configuration; no transfer was performed." }; }

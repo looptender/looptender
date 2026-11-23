@@ -128,6 +128,21 @@ test("a held loop that was moved reads differently from an ordinary awaiting-use
   try { assert.ok(await b.findByText("looptender: awaiting user")); assert.equal(b.queryByText(/moved, resume/), null); } finally { b.lifecycle.unmount(); cleanup(); }
 });
 
+test("thread setup puts the add flow first and the attach and move forms in a collapsed 'Already have a loop?' section",async()=>{
+  const ui=renderSlot(app.threadContextCardRows[0]!,{threadId:"thr_layout",projectId:"proj_example",environment:null},{rpc:{
+    forThread:()=>({loops:[],errors:[]}),setup:()=>({ok:true,message:"No saved setup"}),transfer:()=>({ok:true,message:"No moves",choices:[]}),attachment:()=>({ok:true,candidates:[],message:"Registry read"}),
+  }});
+  try{
+    fireEvent.click(await ui.findByRole("button",{name:"Add to Looptender"}));
+    await ui.findByText("No saved setup");
+    const more=ui.container.querySelector("details.kgs-more") as HTMLDetailsElement;
+    assert.ok(more); assert.equal(more.open,false); assert.equal(more.querySelector("summary")?.textContent,"Already have a loop?");
+    const add=ui.container.querySelector('section[aria-label="Set up thread supervision"]')!;
+    assert.ok(add.compareDocumentPosition(more)&4,"the add flow comes before the secondary section");
+    assert.ok(more.querySelector('section[aria-label="Attach an existing loop"]')); assert.ok(more.querySelector('section[aria-label="Move supervision here"]'));
+    assert.ok(!add.contains(more));
+  }finally{ui.lifecycle.unmount();cleanup();}
+});
 
 test("Preview setup reaches the plugin through BB's RPC layer, which refuses undefined values in an input",async()=>{
   const seen:{action:string;ticket?:unknown}[]=[];
@@ -140,7 +155,7 @@ test("Preview setup reaches the plugin through BB's RPC layer, which refuses und
     fireEvent.click(await ui.findByRole("button",{name:"Add to Looptender"}));
     await ui.findByText("Nothing set up yet");
     fireEvent.click(ui.getByRole("button",{name:"Preview setup"}));
-    await ui.findByRole("button",{name:"Create disabled setup"});
+    await ui.findByRole("button",{name:"Create setup"});
     assert.equal(ui.container.querySelector("[role=alert]"),null,"the request was not refused before it left the browser");
     assert.deepEqual(seen.map(s=>s.action),["inspect","preview"]);
     assert.ok(!("ticket" in seen[1]!),"no ticket key on the first preview");

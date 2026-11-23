@@ -179,8 +179,8 @@ export default async function plugin(bb: BbPluginApi) {
     },
     newThreadStart: {
       type: "select",
-      label: "Keep going from the New thread screen",
-      description: "What happens after a thread is created with Send and keep going. Start automatically: supervision starts once the thread exists; if anything about the start is uncertain, the setup is left switched off with the reason. Review first: a switched-off setup is created and you start it from the thread. Both create the loop with a loop-wide limit.",
+      label: "Add to Looptender from the New thread screen",
+      description: "What happens after a thread is created with the New thread screen's Add to Looptender switch on. Start automatically: supervision starts once the thread exists; if anything about the start is uncertain, the setup is left switched off with the reason. Review first: a switched-off setup is created and you start it from the thread. Both create the loop with a loop-wide limit.",
       options: ["automatic", "manual"],
       experimental_optionLabels: { automatic: "Start automatically", manual: "Review first; I start it" },
       default: "automatic",
@@ -418,7 +418,7 @@ export default async function plugin(bb: BbPluginApi) {
       catch { return "manual"; }
     },
     unavailable: async () => {
-      if (!hookAvailable) return "This version of BB does not offer the hook Keep going needs to learn which thread a message created, so it is unavailable here. Add to Looptender still works on an existing thread.";
+      if (!hookAvailable) return "This version of BB does not offer the hook Add to Looptender needs on the New thread screen to learn which thread a message created, so it is unavailable here. Add to Looptender still works on an existing thread.";
       const { bin } = await configured();
       const result = await run(bin, ["version"]);
       return result.code === 0 ? null : "The looptender program (installed as keepgoing up to v0.2.0) was not found or did not run. Install it, or set its path in this plugin's settings, then check again.";

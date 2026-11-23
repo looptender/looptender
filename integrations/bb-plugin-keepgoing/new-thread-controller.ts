@@ -1,4 +1,4 @@
-// Carries "keep going" from the New thread screen to the thread it creates.
+// Carries "Add to Looptender" from the New thread screen to the thread it creates.
 //
 // The link between the request and the thread is exact or absent. The browser
 // asks for a single-use request when the person presses the button, then
@@ -61,10 +61,10 @@ interface Job {
 }
 
 const NOT_READY = "This thread's first turn did not start in time, so looptender set nothing up. Use Add to Looptender to set it up here.";
-const NOT_MATCHED = "looptender could not confirm that this thread is the one Send and keep going was pressed for, so nothing was created or started. Use Add to Looptender to set it up here.";
+const NOT_MATCHED = "looptender could not confirm that this thread is the one Add to Looptender was turned on for, so nothing was created or started. Use Add to Looptender to set it up here.";
 const NOT_SENT = "The message may not have been sent, so looptender set nothing up and started nothing.";
 const LIMITS = "Setup did not report the loop-wide limits that were asked for, so looptender did not create it. Nothing was created or started.";
-const FULL = (c: { used: number; max: number }) => `This plugin already holds ${c.used} of ${c.max} setups, which is the most it can hold, and it has no way to remove one yet. Keep going cannot create another.`;
+const FULL = (c: { used: number; max: number }) => `This plugin already holds ${c.used} of ${c.max} setups, which is the most it can hold, and it has no way to remove one yet. Add to Looptender cannot create another.`;
 
 export function createNewThreadController(d: NewThreadDependencies) {
   const intents = new Map<string, Intent>();
@@ -189,7 +189,7 @@ export function createNewThreadController(d: NewThreadDependencies) {
         // does not start.
         else job.withdrawn = NOT_SENT;
       }
-      return { ok: true, message: "Keep going is off." };
+      return { ok: true, message: "Add to Looptender is off." };
     }
     const reason = await d.unavailable();
     if (reason) return { ok: false, message: reason };
@@ -202,7 +202,7 @@ export function createNewThreadController(d: NewThreadDependencies) {
     const mode = stricter(input.shownMode, current);
     // One live request per draft: pressing again replaces it.
     for (const [key, i] of intents) if (i.draftKey === input.draftKey && !i.threadId) intents.delete(key);
-    if (intents.size >= MAX_INTENTS) return { ok: false, message: "Too many Keep going requests are waiting. Wait two minutes and try again." };
+    if (intents.size >= MAX_INTENTS) return { ok: false, message: "Too many Add to Looptender requests are waiting. Wait two minutes and try again." };
     const now = d.now();
     const intent: Intent = { id: d.id(), draftKey: input.draftKey, projectId: input.projectId, bounds: input.bounds, mode, createdAt: now, expires: now + INTENT_TTL_MS };
     intents.set(intent.id, intent);
@@ -212,7 +212,7 @@ export function createNewThreadController(d: NewThreadDependencies) {
   return {
     call: (raw: NewThreadInput): Promise<NewThreadResult> => serialize(async () => {
       try { return await handle(newThreadInput.parse(raw)); }
-      catch { return { ok: false, message: "Keep going could not be checked. Nothing was created or started." }; }
+      catch { return { ok: false, message: "Add to Looptender could not be checked. Nothing was created or started." }; }
     }),
     /**
      * Called from the dispatch hook for every message BB dispatches. It is

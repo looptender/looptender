@@ -17,7 +17,7 @@ test("the plugin adds its control to the New thread composer only", () => {
   assert.deepEqual(c.scopes, ["new-thread"]);
   assert.deepEqual(c.actions?.map(a => a.id), ["keep-going"]);
   assert.deepEqual(c.banners?.map(b => [b.id, b.chrome]), [["keep-going", "bare"]]);
-  assert.deepEqual(c.sendMenu?.map(m => m.label), ["Keep going…"]);
+  assert.deepEqual(c.sendMenu?.map(m => m.label), ["Add to Looptender…"]);
   assert.equal(c.plusMenu, undefined);
 });
 
@@ -31,9 +31,9 @@ test("in BB's composer the switch opens the banner and its send carries the requ
     assert.equal(banner.container.textContent, "", "nothing is drawn while the switch is off");
     // The menu row beside Send reaches the same switch, including in the compact layout.
     await act(async () => { await c.sendMenu![0]!.run({ composer: { scope: banner.inspection.composer.scope, key: banner.inspection.composer.key } as never }); });
-    await banner.findByText("looptender will supervise the thread this message creates, starting once the thread exists.");
+    await banner.findByText("Sends your message, creates a looptender setup for the new thread and starts supervising it.");
     assert.ok(banner.getByText(boundsPhrase(DEFAULT_BOUNDS)));
-    fireEvent.click(banner.getByRole("button", { name: "Send and keep going" }));
+    fireEvent.click(banner.getByRole("button", { name: /^Send and (create setup|start supervising)$/ }));
     await waitFor(() => assert.equal(banner.inspection.composer.submits.length, 1));
     assert.deepEqual(banner.inspection.composer.submits[0], { experimental_data: { v: 1, intent: "intent-example" } });
     assert.deepEqual(calls.map(x => x.action), ["check", "arm"]);
@@ -41,7 +41,7 @@ test("in BB's composer the switch opens the banner and its send carries the requ
   } finally { banner.lifecycle.unmount(); cleanup(); resetDrafts(); }
   const action = renderSlot({ component: c.actions![0]!.component }, {}, { rpc, composer });
   try {
-    const toggle = action.getByRole("switch", { name: "Keep going" });
+    const toggle = action.getByRole("switch", { name: "Add to Looptender" });
     fireEvent.click(toggle); assert.equal(toggle.getAttribute("aria-checked"), "true");
     fireEvent.click(toggle); assert.equal(toggle.getAttribute("aria-checked"), "false");
   } finally { action.lifecycle.unmount(); cleanup(); resetDrafts(); }
@@ -63,9 +63,9 @@ test("the created thread's card shows the bounded, switched-off loop and one but
     // Opening the setup panel adds diagnostics, not a second way to start.
     fireEvent.click(ui.getByRole("button", { name: "Setup" }));
     await ui.findByRole("button", { name: "Refresh diagnostics" });
-    assert.equal(ui.queryByRole("button", { name: "Start background supervision" }), null);
+    // One Start in the card, not two: the setup panel leaves starting to the outcome's button.
     assert.equal(ui.getAllByRole("button", { name: /^Start/ }).length, 1);
-    fireEvent.click(ui.getByRole("button", { name: "Start keeping this going" }));
+    fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
     await waitFor(() => assert.deepEqual(starts.filter(s => (s as { action: string }).action === "start"), [{ action: "start", threadId: "thr_created" }]));
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
@@ -81,7 +81,7 @@ test("a started thread says it is running, with one Pause and one Stop that go t
   } });
   try {
     await waitFor(() => assert.equal(ui.getAllByText("looptender: keeping this going").length, 1), { timeout: 3000 });
-    assert.ok(ui.getByText(/Started when this thread was created\./)); assert.ok(ui.getByText(boundsPhrase(DEFAULT_BOUNDS)));
+    assert.ok(ui.getByText(/Yes: started when this thread was created\./)); assert.ok(ui.getByText(boundsPhrase(DEFAULT_BOUNDS)));
     assert.equal(ui.getAllByRole("button", { name: "Pause" }).length, 1); assert.equal(ui.getAllByRole("button", { name: "Stop" }).length, 1);
     assert.equal(ui.queryByRole("button", { name: /^Start/ }), null);
     fireEvent.click(ui.getByRole("button", { name: "Stop" }));
