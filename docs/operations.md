@@ -926,6 +926,16 @@ keepgoing ci-wait --repo example-org/example-app --sha <40-char sha> --branch cb
 
 This waits until the newest run of every workflow on the exact commit has finished. It looks at the 50 most recent runs on the branch, and it pins the pull request's head commit when it starts. A failed run makes it exit 1. When a run is replaced, for example cancelled by a pull request edit, the newer run of the same workflow is followed. Then it prints each run's jobs. It uses the `gh` CLI, so authentication stays with `gh`. Every `gh` call goes through the network retry below.
 
+## This computer's login session and load
+
+A supervisor keeps running when the login session it was started from ends: a logout, or the window server restarting after it stopped responding. It then cannot reach the login keychain, and may not resolve names, so a provider's command-line tool says it is not logged in and a tool's token reads as invalid, although nothing was signed out.
+
+**What a check does then.** When a session is in error with a sign-in failure, the check reads whether this computer's login session is available to background processes: the user's keychain can be listed, and someone is logged in at the console (macOS; elsewhere there is no such session to lose). If it is not, the check sends nothing, hands off nothing and raises no hold for a person, and says why: "this computer's login session or network is unavailable to background processes (credentials were not read; nothing was signed out); waiting for it, nothing sent" (`hostSession: "unavailable"` in the check's record). It never advises signing in again. On the first check that finds the session back, the error is taken as the outage's and re-prompted within the usual limits (`hostSession: "restored"`); a sign-in failure after that is a real one and is held for a person as before. Wakes of a healthy session are not checked this way: a wake sent during such an outage fails, and the check after it waits as above.
+
+**Where it shows.** `doctor` reports `host.session` (each part: keychain, name service, console user, each read within two seconds) and `host.load`; `status` adds a `host:` line while the session is unavailable and a `load:` line while the computer is busy, and `status --json`, the dock report and `panel list --json` carry `host`. The notices list has a `host` notice for each.
+
+**Load.** `host.load` compares the one-minute load average with the number of cores: busy (`high`) from 2 per core, or under 10% free memory; `overloaded` from 4 per core. While a session that is waiting on its children is idle and the computer is overloaded, it is woken once in that overload with a count only: "[looptender:host-load lanes=N] … the host is overloaded: N lanes running; consider pausing new heavy work". looptender itself never pauses, stops or messages a lane for it. The overload ends when the load falls below that level; the next one is told again.
+
 ## Network outages
 
 Released in v0.2.0; **fixture-tested only**. A re-prompt, a handoff brief or a fallback probe sent while the network is down fails and still spends its allowance. In one observed outage two of three allowed re-prompts went into a dead network; a third failure would have ended in a hold with the network back minutes later. looptender now checks connectivity first.
