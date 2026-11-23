@@ -276,6 +276,12 @@ type tick struct {
 	// retry and has not given up on, after this check's lane work. The
 	// notice to the session says so.
 	lanesRetried int
+	// lanesAtLimit counts the lanes lane recovery inspected in this check
+	// that are at a provider usage limit, with the latest reset and its
+	// window (noteLaneLimit).
+	lanesAtLimit     int
+	lanesLimitUntil  time.Time
+	lanesLimitWindow decide.LimitWindow
 	// laneRecoveryOn: the observed target has bb.children.retry_errored set.
 	laneRecoveryOn bool
 	// lanesInRecovery are the errored lanes keepgoing is recovering or will
@@ -1978,8 +1984,8 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 		}
 		if childErrors > 0 {
 			// One line for lanes stopped by a usage limit, not one error each.
-			if n, until, w := t.limitedLanes(a, t.decisionInput.Obs.ErroredChildren); n > 0 {
-				text = prompt.WithLimitedLanes(text, n, until, w.Words())
+			if n := t.lanesAtLimit; n > 0 {
+				text = prompt.WithLimitedLanes(text, n, t.lanesLimitUntil, t.lanesLimitWindow.Words())
 				t.res.LanesLimited = n
 			}
 		}

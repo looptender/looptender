@@ -1,7 +1,6 @@
 package supervise
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -36,25 +35,23 @@ func TestCheckRecordsTheUsageLimitWindow(t *testing.T) {
 	}
 }
 
-// The lanes a child-error notice is about are read, and those at a usage
-// limit with a reset ahead are counted with the latest reset and its window.
-// Lanes in error for another reason, or whose reset has passed, are not.
-func TestLimitedLanesCountsOnlyLanesAtALimit(t *testing.T) {
-	weekly := decide.CleanLimitWindow("seven_day", "", "")
+// Lanes lane recovery inspected are counted for the child-error notice when
+// they are at a usage limit with a reset ahead, with the latest reset and its
+// window. Lanes in error for another reason, or whose reset has passed, are
+// not.
+func TestLaneLimitsAreCountedFromLaneRecovery(t *testing.T) {
 	at := func(h int) time.Time { return t0.Add(time.Duration(h) * time.Hour) }
-	la := &laneAdapter{fakeAdapter: &fakeAdapter{}, facts: map[string]decide.LaneFacts{
-		"thr_lane1": {Verified: true, Errored: true, ClassKnown: true, Class: decide.ErrRateLimit, ResetsAt: at(10), Window: decide.CleanLimitWindow("five_hour", "", "")},
-		"thr_lane2": {Verified: true, Errored: true, ClassKnown: true, Class: decide.ErrRateLimit, ResetsAt: at(90), Window: weekly},
-		"thr_lane3": {Verified: true, Errored: true, ClassKnown: true, Class: decide.ErrNetwork},
-		"thr_lane4": {Verified: true, Errored: true, ClassKnown: true, Class: decide.ErrRateLimit, ResetsAt: at(-1)},
-	}}
-	tk := &tick{ctx: context.Background(), now: t0, opts: Options{Clock: func() time.Time { return t0 }}, deadline: t0.Add(time.Hour)}
-	n, until, w := tk.limitedLanes(la, []string{"thr_lane1", "thr_lane2", "thr_lane3", "thr_lane4"})
-	if n != 2 || !until.Equal(at(90)) || w.Kind() != "weekly" {
-		t.Fatalf("%d %v %+v", n, until, w)
+	tk := &tick{now: t0}
+	for _, f := range []decide.LaneFacts{
+		{Verified: true, Errored: true, ClassKnown: true, Class: decide.ErrRateLimit, ResetsAt: at(10), Window: decide.CleanLimitWindow("five_hour", "", "")},
+		{Verified: true, Errored: true, ClassKnown: true, Class: decide.ErrRateLimit, ResetsAt: at(90), Window: decide.CleanLimitWindow("seven_day", "", "")},
+		{Verified: true, Errored: true, ClassKnown: true, Class: decide.ErrNetwork},
+		{Verified: true, Errored: true, ClassKnown: true, Class: decide.ErrRateLimit, ResetsAt: at(-1)},
+		{Errored: true, ClassKnown: true, Class: decide.ErrRateLimit, ResetsAt: at(5)},
+	} {
+		tk.noteLaneLimit(f)
 	}
-	// An adapter that cannot read lanes counts none.
-	if n, _, _ := tk.limitedLanes(&fakeAdapter{}, []string{"thr_lane1"}); n != 0 {
-		t.Fatalf("%d", n)
+	if tk.lanesAtLimit != 2 || !tk.lanesLimitUntil.Equal(at(90)) || tk.lanesLimitWindow.Kind() != "weekly" {
+		t.Fatalf("%d %v %+v", tk.lanesAtLimit, tk.lanesLimitUntil, tk.lanesLimitWindow)
 	}
 }

@@ -1,12 +1,9 @@
 package supervise
 
 import (
-	"context"
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/looptender/looptender/internal/adapter"
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/decide"
 	"github.com/looptender/looptender/internal/state"
@@ -32,32 +29,17 @@ func (t *tick) noteUsageLimit(target string, agent config.Agent, obs decide.Obse
 	t.st.UsageLimit = u
 }
 
-// maxLimitedLanesRead bounds the lanes one notice reads.
-const maxLimitedLanesRead = 16
-
-// limitedLanes reads the errored lanes a child-error notice is about and
-// counts those at a provider usage limit with a reset still ahead, with the
-// latest reset and its window. It reads each lane's status and the typed
-// fields of its error events, as lane recovery does, never message text;
-// it acts on no lane. Zero when the adapter cannot read lanes.
-func (t *tick) limitedLanes(a adapter.Adapter, errored []string) (n int, until time.Time, w decide.LimitWindow) {
-	lr, ok := a.(adapter.LaneRecoverer)
-	if !ok || t.opts.DryRun {
-		return 0, time.Time{}, decide.LimitWindow{}
+// noteLaneLimit counts a lane lane recovery inspected that is at a provider
+// usage limit with its reset still ahead, keeping the latest reset and its
+// window, for the child-error notice. Nothing else reads a lane for it: a
+// lane lane recovery does not inspect (it is off, or the lane was never seen
+// working) is not counted.
+func (t *tick) noteLaneLimit(f decide.LaneFacts) {
+	if !f.Verified || !f.Errored || !f.ClassKnown || f.Class != decide.ErrRateLimit || !f.ResetsAt.After(t.now) {
+		return
 	}
-	for i, id := range errored {
-		if i >= maxLimitedLanesRead || t.left() < 30*time.Second {
-			break
-		}
-		ctx, cancel := context.WithTimeout(t.ctx, 10*time.Second)
-		f := lr.InspectLane(ctx, id)
-		cancel()
-		if f.Verified && f.Errored && f.ClassKnown && f.Class == decide.ErrRateLimit && f.ResetsAt.After(t.now) {
-			n++
-			if f.ResetsAt.After(until) {
-				until, w = f.ResetsAt, f.Window
-			}
-		}
+	t.lanesAtLimit++
+	if f.ResetsAt.After(t.lanesLimitUntil) {
+		t.lanesLimitUntil, t.lanesLimitWindow = f.ResetsAt, f.Window
 	}
-	return n, until, w
 }

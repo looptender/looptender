@@ -849,7 +849,7 @@ Unreleased. When a check finds the loop's active target at a provider usage limi
   - `status` (with real paths) and `status --json` (`usageLimit`).
   - Client status and the panel (`usageLimit` on each loop): the loop reads "Waiting for a limit to reset" with the window and reset, and the coordinator's row adds how many of its lanes are in error.
   - `panel list --json` (`usageLimit`, with labels and placeholders only: no path, ID or real command).
-- **Lanes.** When a coordinator's wake announces lanes newly in error, looptender reads those lanes (their status and the typed fields of their error events, at most 16, as lane recovery does) and adds one line: `[keepgoing:lanes-limited count=N resets=…]`, with how many are at a usage limit, which window, and until when. It does not retry, message or stop them.
+- **Lanes.** With [lane recovery](#lane-recovery) on, the lanes it inspects in a check are also counted when they are at a usage limit. A child-error wake then adds one line: `[keepgoing:lanes-limited count=N resets=…]`, with how many are at a usage limit, which window, and the latest reset. Nothing reads a lane for it: with lane recovery off, or for a lane lane recovery does not inspect, a lane's log is never read and no such line is added. No lane is retried, messaged or stopped for it.
 
 ### A long limit wait with no way out
 
