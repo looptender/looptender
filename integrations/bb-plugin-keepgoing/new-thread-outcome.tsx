@@ -1,9 +1,12 @@
-// What a thread shows after it was created with Keep going on: that setup is
-// under way, why it could not go ahead, or the one button that starts it.
+// What a thread shows after it was created with Add to Looptender on: that
+// setup is under way, why it could not go ahead, or what exists, whether it is
+// running, and the one next action. It uses the same finished card as the
+// setup panel, so both entry points read the same.
 import { useCallback, useEffect, useState } from "react";
 import { boundsPhrase, type NewThreadResult, type Outcome } from "./new-thread-contract.ts";
 import type { NewThreadCall } from "./new-thread-control.tsx";
 import type { SetupResult } from "./setup-contract.ts";
+import { SetupStyles } from "./setup-style.tsx";
 
 export type StartCall = (input: { action: "start"; threadId: string }) => Promise<SetupResult>;
 const NONE: Outcome = { state: "none", message: "" };
@@ -25,7 +28,7 @@ export function useOutcome(threadId: string, call: NewThreadCall, refreshKey: un
   return { outcome, read };
 }
 
-/** A short label for the collapsed banner; null when this thread was not created with Keep going on. */
+/** A short label for the collapsed banner; null when this thread was not created with Add to Looptender on. */
 export function outcomeLabel(outcome: Outcome, controlState: string | undefined, supervising: boolean | undefined): string | null {
   if (outcome.state === "waiting") return "looptender: setting up";
   if (outcome.state === "failed") return controlState ? null : "looptender: not set up";
@@ -44,12 +47,12 @@ export function NewThreadOutcome({ threadId, outcome, controlState, supervising,
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string }>();
   if (outcome.state === "none") return null;
-  const box = { display: "grid", gap: 6, padding: "6px 12px", fontSize: 12 } as const;
-  if (outcome.state === "waiting") return <section aria-label="Keep going for this thread" aria-live="polite" style={box}><strong>looptender: setting up</strong><span role="status">{outcome.message}</span></section>;
+  const box = { padding: 0 } as const;
+  if (outcome.state === "waiting") return <section className="kgs" aria-label="Add to Looptender for this thread" aria-live="polite"><SetupStyles /><div className="card"><h4>looptender: setting up</h4><p role="status">{outcome.message}</p></div></section>;
   // Once a loop exists for the thread, the ordinary status row speaks for it.
-  if (outcome.state === "failed") return controlState ? null : <section aria-label="Keep going for this thread" style={box}>
-    <strong>looptender could not set this thread up</strong><span role="alert">{outcome.message}</span>
-    {outcome.configPath && <span>Configuration: {outcome.configPath}</span>}
+  if (outcome.state === "failed") return controlState ? null : <section className="kgs" aria-label="Add to Looptender for this thread" style={box}><SetupStyles />
+    <div className="card"><h4>looptender could not set this thread up</h4><p className="msg" role="alert">{outcome.message}</p>
+    {outcome.configPath && <dl><dt>Configuration</dt><dd>{outcome.configPath}</dd></dl>}</div>
   </section>;
   const label = outcomeLabel(outcome, controlState, supervising);
   if (!label) return null;
@@ -69,16 +72,26 @@ export function NewThreadOutcome({ threadId, outcome, controlState, supervising,
       .finally(() => { setBusy(false); onChanged(); });
   };
   const started = controlState === "enabled";
-  return <section aria-label="Keep going for this thread" style={box}>
-    {showLabel && <strong>{label}</strong>}
-    <span>Loop {outcome.loop}. {started ? (outcome.startedAutomatically ? "Started when this thread was created." : "Started from this thread.") : outcome.message}</span>
-    {outcome.bounds && <span>{boundsPhrase(outcome.bounds)}</span>}
-    {!started && <span><button type="button" disabled={busy} onClick={act} style={button}>Start keeping this going</button></span>}
-    {started && control && <span style={{ display: "flex", gap: 8 }}>
-      <button type="button" disabled={busy} onClick={() => hold("pause")} style={{ ...button, fontWeight: 400 }}>Pause</button>
-      <button type="button" disabled={busy} onClick={() => hold("stop")} style={{ ...button, fontWeight: 400 }}>Stop</button>
-    </span>}
-    {outcome.cadence && <details><summary>Details</summary><div style={{ paddingTop: 6 }}>{outcome.cadence} Starting launches a background supervisor on this thread's host; it may prompt the agent when a check finds the thread idle. Other timers are not detected or changed.</div></details>}
-    {result && <span role={result.ok ? "status" : "alert"}>{result.message}</span>}
+  return <section className="kgs" aria-label="Add to Looptender for this thread" style={box}>
+    <SetupStyles />
+    <div className="card done">
+      <h4>{started ? "Supervision started" : "Setup created, switched off"}</h4>
+      <dl>
+        <dt>Loop</dt><dd>{outcome.loop}</dd>
+        <dt>Running</dt><dd>{started ? (outcome.startedAutomatically ? "Yes: started when this thread was created." : "Yes: started from this thread.") : "No. The loop is saved switched off and sends nothing until it is started."}</dd>
+        {outcome.bounds && <><dt>Limits</dt><dd>{boundsPhrase(outcome.bounds)}</dd></>}
+      </dl>
+      {!started && <p className="help">{outcome.message}</p>}
+      {started && <p className="help">Next: nothing to do. looptender now checks on its own; use Pause or Stop here to hold it.</p>}
+      {!started && <div className="actions">
+        <p className="help">Starting enables the loop and launches a background supervisor on this thread’s host. It may prompt the agent when eligible. Other timers are not detected or changed.</p>
+        <div className="row"><button type="button" className="btn primary" disabled={busy} onClick={act}>Start background supervision</button></div></div>}
+      {started && control && <div className="actions"><div className="row">
+        <button type="button" className="btn" disabled={busy} onClick={() => hold("pause")}>Pause</button>
+        <button type="button" className="btn" disabled={busy} onClick={() => hold("stop")}>Stop</button>
+      </div></div>}
+      {outcome.cadence && <details><summary>Details</summary><p className="help" style={{ paddingTop: 6 }}>{outcome.cadence} Starting launches a background supervisor on this thread’s host; it may prompt the agent when a check finds the thread idle. Other timers are not detected or changed.</p></details>}
+      {result && <p className="msg" role={result.ok ? "status" : "alert"}>{result.message}</p>}
+    </div>
   </section>;
 }

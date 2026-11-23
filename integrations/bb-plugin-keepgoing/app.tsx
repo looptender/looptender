@@ -1,7 +1,7 @@
 // Shows keepgoing's state beside each supervised thread: a row in the thread
 // context card when bb shows the card, and a segment in the context banner
 // above the composer when it shows the banner. On the New thread screen it
-// adds the Keep going switch and its banner to the composer.
+// adds the Add to Looptender switch and its banner to the composer.
 import {
   definePluginApp,
   experimental_THREAD_INFO_ROW_GROUPS as ROW_GROUPS,
@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
 import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable } from "./status-details";
 import { SetupPanel } from "./setup-panel";
+import { SetupStyles } from "./setup-style";
 import { AttachPanel } from "./attach-panel";
 import { TransferPanel } from "./transfer-panel";
 import { KeepGoingBanner, KeepGoingSwitch, turnOn } from "./new-thread-control";
@@ -171,8 +172,8 @@ function ResumeNote({ loop, compact }: { loop: LoopView; compact: boolean }) {
     return <span>Resume is refused for a superseded loop; its successor continues the work{successor ? ` (${successor})` : ""}.</span>;
   }
   // With several held loops the sentence is said once for the card; each loop keeps only its command.
-  if (compact) return <details><summary>Command to resume (run in a terminal)</summary><code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code></details>;
-  return <span>A person resumes this from an ordinary terminal: <code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code>, or the looptender panel started there.</span>;
+  if (compact) return <details><summary>Command to resume (run in a terminal)</summary><code>looptender resume -c {JSON.stringify(loop.configPath)}</code></details>;
+  return <span>A person resumes this from an ordinary terminal: <code>looptender resume -c {JSON.stringify(loop.configPath)}</code>, or the looptender panel started there.</span>;
 }
 
 function ThreadSetup({ threadId, onChanged, hideStart = false }: { threadId: string; onChanged(): void; hideStart?: boolean }) {
@@ -189,16 +190,20 @@ function ThreadSetup({ threadId, onChanged, hideStart = false }: { threadId: str
     if (result.moved) setGeneration(n => n + 1);
     return result;
   }, [rpc]);
-  return <><AttachPanel key={`attach-${threadId}`} threadId={threadId} call={attach} onChanged={onChanged} />
-    <SetupPanel key={`${threadId}-${generation}`} threadId={threadId} call={call} onChanged={onChanged} hideStart={hideStart} />
-    <TransferPanel key={`move-${threadId}`} threadId={threadId} call={transfer} onChanged={onChanged} /></>;
+  // One primary flow first. Attaching and moving are for a loop that already
+  // exists, so they sit behind a collapsed section of their own.
+  return <><SetupPanel key={`${threadId}-${generation}`} threadId={threadId} call={call} onChanged={onChanged} hideStart={hideStart} />
+    <details className="kgs-more"><SetupStyles /><summary>Already have a loop?</summary>
+      <AttachPanel key={`attach-${threadId}`} threadId={threadId} call={attach} onChanged={onChanged} />
+      <TransferPanel key={`move-${threadId}`} threadId={threadId} call={transfer} onChanged={onChanged} />
+    </details></>;
 }
 
 function StatusWarning({ refresh }: { refresh(): void }) {
   return <div role="alert">Status could not be verified for every registered loop. Controls and setup are hidden until refreshed. <button type="button" style={buttonStyle} onClick={refresh}>Refresh status</button></div>;
 }
 
-// What a thread created with Keep going on shows about that request.
+// What a thread created with Add to Looptender on shows about that request.
 function useThreadOutcome(threadId: string, loops: LoopView[]) {
   const rpc = useRpc<typeof rpcContract>();
   const call = useCallback((input: Parameters<typeof rpc.call<"newThread">>[1]) => rpc.call("newThread", input), [rpc]);
@@ -254,11 +259,12 @@ function CardRow({ threadId }: { threadId: string }) {
   const [open, setOpen] = useState(false);
   const sharedResume = !failed && loops.filter(needsResume).length > 1;
   return <div>
+    <SetupStyles />
     {failed && <StatusWarning refresh={refresh} />}
     {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} showLabel={false} />}
     {sharedResume && <div style={{ padding: "0 12px", fontSize: 12 }}>{RESUME_SHARED}</div>}
-    {!loaded ? <ContextRow icon="Repeat" label="looptender: checking status" /> : !loops.length ? <ContextRow icon="Repeat" label="looptender" action={!failed && <button type="button" style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>Add to Looptender</button>} /> : loops.map(l => <CardLoop key={loopKey(l)} loop={l} name={referenceName(l, loops, references)} threadId={threadId} refresh={refresh} failed={failed} created={l === loop ? created : null} showName={loops.length > 1} compactResume={sharedResume} />)}
-    {!failed && loops.some(l => l.managedId) && <button type="button" style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>{loops.length > 1 ? "Thread setup" : "Setup"}</button>}
+    {!loaded ? <ContextRow icon="Repeat" label="looptender: checking status" /> : !loops.length ? <ContextRow icon="Repeat" label="looptender" action={!failed && <button type="button" className="kgs-chip" style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>Add to Looptender</button>} /> : loops.map(l => <CardLoop key={loopKey(l)} loop={l} name={referenceName(l, loops, references)} threadId={threadId} refresh={refresh} failed={failed} created={l === loop ? created : null} showName={loops.length > 1} compactResume={sharedResume} />)}
+    {!failed && loops.some(l => l.managedId) && <button type="button" className="kgs-chip" style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>{loops.length > 1 ? "Thread setup" : "Setup"}</button>}
     {open && <div hidden={failed}><ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={created === READY_NOT_STARTED} /></div>}
   </div>;
 }
@@ -315,7 +321,9 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
 }
 
 function ComposerSwitch() {
-  return <KeepGoingSwitch composer={useComposer()} />;
+  const rpc = useRpc<typeof rpcContract>();
+  const call = useCallback((input: Parameters<typeof rpc.call<"newThread">>[1]) => rpc.call("newThread", input), [rpc]);
+  return <KeepGoingSwitch composer={useComposer()} call={call} />;
 }
 
 function ComposerBanner() {
@@ -336,9 +344,9 @@ export default definePluginApp((app) => {
     // same switch from the menu beside Send.
     sendMenu: [{
       id: "keep-going",
-      label: "Keep going…",
+      label: "Add to Looptender…",
       icon: "Repeat",
-      description: "Supervise the thread this message creates",
+      description: "Turns on Add to Looptender for this new thread without sending. A plain Send still sends with no looptender; the banner's send button then sends your message and adds the thread to looptender, as your setting says.",
       run: ({ composer }) => { if (composer.scope.kind === "new-thread") turnOn(composer.key); },
     }],
   });

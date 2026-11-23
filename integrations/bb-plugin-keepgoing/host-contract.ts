@@ -1,7 +1,7 @@
 import { publicationSchema } from "./registry-contract.ts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { targetSchema, recordSchema, planSchema, refusalSchema } from "./setup-contract.ts";
+import { targetSchema, recordSchema, planSchema, refusalSchema, failureSchema } from "./setup-contract.ts";
 import { transferHostInput } from "./transfer-contract.ts";
 import { attachHostInput, attachHostResult } from "./attach-contract.ts";
 import { boundsSchema } from "./new-thread-contract.ts";
@@ -16,7 +16,7 @@ export const hostContract = defineRpcContract({
       // Provider and model labels from init's own offer, or none to decline.
       takeover: z.union([z.literal("none"), z.literal("detect"), z.object({ provider: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/), model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/) })]).optional() }),
     // A plan, or keepgoing's own structured refusal.
-    output: z.union([z.object({ plan: planSchema, registration: publicationSchema.optional() }), z.object({ refused: refusalSchema }), z.object({ noRoutes: z.literal(true) })]),
+    output: z.union([z.object({ plan: planSchema, registration: publicationSchema.optional() }), z.object({ refused: refusalSchema }), z.object({ noRoutes: z.literal(true) }), z.object({ failed: failureSchema })]),
   },
   // Whether the host's looptender has a standard route list with routes.
   standardRoutes: {

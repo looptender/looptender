@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { DEFAULT_PROGRAM, alternateProgram, configuredProgram, execProgram } from "./executable.ts";
 import plugin from "./server.ts";
+import { execute } from "./setup-host.ts";
 
 // The earlier name, built so this file does not spell it.
 const earlier = ["keep", "going"].join("");
@@ -49,6 +50,24 @@ test("a bare name that is not found is tried once under the other name", async (
     const u = await execProgram(join(dir, "absent"), [], { env });
     assert.equal(u.error?.code, "ENOENT");
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("setup's commands are retried under the other program name, with their exit status and error output kept", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "lt-setup-"));
+  const path = process.env.PATH;
+  try {
+    // Only the earlier program is installed; it echoes its stdin as JSON, or fails.
+    await writeFile(join(dir, earlier), "#!/bin/sh\nread line\nif [ \"$1\" = fail ]; then echo \"warning: fictional\" >&2; echo \"init: fictional failure\" >&2; exit 3; fi\necho \"{\\\"got\\\": \\\"$line $BB_THREAD_ID\\\"}\"\n");
+    await chmod(join(dir, earlier), 0o755);
+    process.env.PATH = dir;
+    const ok = await execute("looptender", ["init"], "task\n", "thr_example");
+    assert.equal(ok.code, 0); assert.deepEqual(ok.data, { got: "task thr_example" });
+    const bad = await execute("looptender", ["fail"], "task\n", "thr_example");
+    assert.equal(bad.code, 3); assert.match(String(bad.stderr), /init: fictional failure/);
+  } finally {
+    process.env.PATH = path;
     await rm(dir, { recursive: true, force: true });
   }
 });

@@ -53,6 +53,15 @@ func inspectDaemon(ctx context.Context, dir, current string, offline bool) daemo
 		return d
 	}
 	s, err := daemoninfo.Query(ctx, dir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) && ctx.Err() == nil {
+		// One miss can be a loaded machine or a build handover: a daemon is
+		// said not to answer only when it misses twice.
+		select {
+		case <-ctx.Done():
+		case <-time.After(250 * time.Millisecond):
+			s, err = daemoninfo.Query(ctx, dir)
+		}
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		d.State, d.Message = "not_recorded", "No daemon endpoint is recorded. This does not rule out an external scheduler or an older daemon."
 		return d

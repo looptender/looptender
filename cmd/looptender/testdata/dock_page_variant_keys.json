@@ -40,5 +40,11 @@
  "limitWait.note.t",
  "nextCheck.text.t",
  "wakePolicy.t",
- "limits.text.t"
+ "limits.text.t",
+ "buildFreshness",
+ "buildFreshness.state",
+ "buildFreshness.text",
+ "buildFreshness.detail",
+ "buildFreshness.command",
+ "buildFreshness.action"
 ]
