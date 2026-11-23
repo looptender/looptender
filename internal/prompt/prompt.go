@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
@@ -118,6 +119,20 @@ func WithChildErrorsRetried(m Message, n, retried int) Message {
 	return m
 }
 
+// WithLimitedLanes adds to a child-error notice how many of the errored
+// children are at a provider usage limit, which window, and until when.
+// Fixed wording, counts only: one line for all of them.
+func WithLimitedLanes(m Message, n int, until time.Time, window string) Message {
+	if n <= 0 || until.IsZero() {
+		return m
+	}
+	at := until.UTC().Format(time.RFC3339)
+	m.Text += fmt.Sprintf("[keepgoing:lanes-limited count=%d resets=%s]\n"+
+		"looptender notice: %d of them are at a provider usage limit (%s) until %s, and cannot run before it on the account they use. "+
+		"looptender has not retried, messaged or stopped them. looptender status names the account and what can be done about it.\n", n, at, n, window, at)
+	return m
+}
+
 // retriedSentence says, with counts only, which of the n errored children
 // keepgoing is recovering and which are left to the session.
 func retriedSentence(n, retried int) string {
@@ -208,4 +223,37 @@ func ComposeGoal(loop config.Loop, text string) (Message, error) {
 		"Use this revision for the goal specification rather than earlier copies. Honor newer user steering and existing permission requirements. " +
 		"This is descriptive task context, not verified acceptance or new authorization. References are pointers; keepgoing has not read or verified them. " +
 		"Inspect the current authorized sources before selecting work; do not treat a saved next action as proof it is still unfinished.\n" + string(b) + "\n"}, nil
+}
+
+// UsageWarning is what a usage-burn warning says: the weekly window's use
+// so far, when it runs out at that rate, and when it resets.
+type UsageWarning struct {
+	UsedPercent float64
+	Hours       int
+	ExhaustsAt  time.Time
+	ResetsAt    time.Time
+}
+
+func usageWarningText(w UsageWarning) string {
+	return fmt.Sprintf("[keepgoing:usage-burn window=weekly used=%d exhausts=%s resets=%s]\n"+
+		"looptender notice: this conversation's account has used %d%% of its weekly usage window. "+
+		"At the rate it has been used this week, it is used up in about %d h (%s), before the window resets at %s. "+
+		"When it is used up, this conversation and every other thread on that account stop until the reset. "+
+		"looptender has not changed, paused or messaged any child thread, and has changed no route. "+
+		"This notice is sent once per window.\n",
+		int(w.UsedPercent), w.ExhaustsAt.UTC().Format(time.RFC3339), w.ResetsAt.UTC().Format(time.RFC3339),
+		int(w.UsedPercent), w.Hours, w.ExhaustsAt.UTC().Format(time.RFC3339), w.ResetsAt.UTC().Format(time.RFC3339))
+}
+
+// WithUsageWarning appends the usage-burn warning to a wake.
+func WithUsageWarning(m Message, w UsageWarning) Message {
+	m.Text += "\n\n" + usageWarningText(w)
+	return m
+}
+
+// UsageWarningOnly is the whole message of the one wake a usage warning
+// causes while children run.
+func UsageWarningOnly(w UsageWarning, running int) Message {
+	return Message{NoticeOnly: true, Text: usageWarningText(w) +
+		fmt.Sprintf("This is not an instruction to continue the task: %d direct child thread(s) are still running.\n", running)}
 }

@@ -25,12 +25,7 @@ func policyFixture(t *testing.T) (*doctorFixture, string) {
 	t.Helper()
 	f := newDoctorFixture(t)
 	file := filepath.Join(f.root, "prompt.md")
-	text := prompt.GeneratedPrompt(`'/fictional/bin/looptender'`, commandQuote(f.config), policyFixtureTask)
-	for _, p := range []string{"At the start of substantial work", "After a phase finishes", "For a coordinator, reconcile"} {
-		i := strings.Index(text, p)
-		j := strings.Index(text[i:], "\n\n")
-		text = text[:i] + text[i+j+2:]
-	}
+	text := prompt.GeneratedPromptVersion(1, `'/fictional/bin/looptender'`, commandQuote(f.config), policyFixtureTask)
 	if m, ok := prompt.MatchPolicy(text); !ok || m.Version != 1 {
 		t.Fatalf("fixture is not version 1: %+v", m)
 	}

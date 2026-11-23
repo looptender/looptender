@@ -80,7 +80,12 @@ type dockReport struct {
 	// filling or nearly full, said once for all the loops on it; absent
 	// when none is.
 	Volumes []dockVolume `json:"volumes,omitempty"`
-	Loops   []dockLoop   `json:"loops"`
+	// Notices is the one list of events a person is told about (notices.go).
+	Notices []panelNotice `json:"notices"`
+	Loops   []dockLoop    `json:"loops"`
+	// Archived counts the loops in Loops whose State is "archived"; they are
+	// listed last, need nobody and are left out of Worth.
+	Archived int `json:"archived"`
 	// Routes is the same data grouped by route: a model on an account at an
 	// effort level, as configured. Each loop's chain entries name their
 	// route by key, so the views are one feed.
@@ -232,7 +237,7 @@ type dockLoop struct {
 	LoopArg string `json:"loopArg,omitempty"`
 	// State is one of supervising, waiting_for_you, waiting_on_limit,
 	// waiting_on_network, checks_failing, paused, stopped, finished, off,
-	// outside_hours, not_checked_recently or unknown. Phrase is its label,
+	// outside_hours, not_checked_recently, archived or unknown. Phrase is its label,
 	// Detail one sentence about it, PickerState the picker row's second line.
 	State       string `json:"state"`
 	Phrase      string `json:"phrase"`
@@ -261,23 +266,31 @@ type dockLoop struct {
 	// Decision is the last recorded check's action and fixed cause; Hold the
 	// hold in force; Device this computer; Lanes each lane of the last
 	// verified listing; Events the newest retained history entries.
-	Decision    dockDecision     `json:"decision"`
-	Hold        dockHoldState    `json:"hold"`
-	Device      dockDevice       `json:"device"`
-	Lanes       dockLanes        `json:"lanes"`
-	Events      dockEvents       `json:"events"`
-	Children    dockChildren     `json:"children"`
-	LastCheck   dockCheck        `json:"lastCheck"`
-	NextCheck   dockNext         `json:"nextCheck"`
-	Fallbacks   dockFallbacks    `json:"fallbacks"`
-	Chain       dockChain        `json:"chain"`
-	Limits      []dockLimit      `json:"limits"`
-	LimitWait   *dockLimitWait   `json:"limitWait,omitempty"`
-	Issues      []string         `json:"issues"`
-	Identifiers *dockIdentifiers `json:"identifiers,omitempty"`
+	Decision  dockDecision   `json:"decision"`
+	Hold      dockHoldState  `json:"hold"`
+	Device    dockDevice     `json:"device"`
+	Lanes     dockLanes      `json:"lanes"`
+	Events    dockEvents     `json:"events"`
+	Children  dockChildren   `json:"children"`
+	LastCheck dockCheck      `json:"lastCheck"`
+	NextCheck dockNext       `json:"nextCheck"`
+	Fallbacks dockFallbacks  `json:"fallbacks"`
+	Chain     dockChain      `json:"chain"`
+	Limits    []dockLimit    `json:"limits"`
+	LimitWait *dockLimitWait `json:"limitWait,omitempty"`
+	// UsageLimit is the provider usage limit on the active target, from
+	// client status, in compact form. The page says it in the row's detail
+	// and waiting reason; only panel list carries the record, so the
+	// report's size does not grow per loop at a limit.
+	UsageLimit  *usageLimitStatus `json:"-"`
+	Issues      []string          `json:"issues"`
+	Identifiers *dockIdentifiers  `json:"identifiers,omitempty"`
 	// NoProgress is the no-progress flag, the same value status shows; nil
 	// when the loop's status could not be read. It is never a need.
 	NoProgress *noProgressView `json:"noProgress,omitempty"`
+	// UsageBurn is the usage watch's projection, the same value status
+	// shows; nil when it has none.
+	UsageBurn *usageBurnView `json:"usageBurn,omitempty"`
 	// MigrationReview describes historical declarations, never execution,
 	// current lane activity, permission or a reason to change supervision.
 	MigrationReview dockMigrationReview `json:"migrationReview"`
@@ -322,8 +335,25 @@ type dockLoop struct {
 	// Can is which changes fit the loop's control flags as read: pause when
 	// not paused, stop when no stop is requested, resume when any hold is
 	// set. Empty when the flags could not be read. A page offers them only
-	// when the server that serves it allows changes.
+	// when the server that serves it allows changes. For an observed target
+	// (Observed) it never holds stop: pause and resume change only whether
+	// looptender checks the session, and nothing stops the session itself.
 	Can []string `json:"can"`
+	// Observed is set when the loop's target is observed, never woken (a
+	// sessionpipe session): looptender never sends to, wakes, re-prompts or
+	// stops it. ObservedNote says so in a sentence for the page.
+	Observed     bool   `json:"observed,omitempty"`
+	ObservedNote string `json:"observedNote,omitempty"`
+	// Archived is set while the loop is archived (State "archived"): when,
+	// the hold it had, and the note only where the report carries
+	// identifiers. ArchiveLapsed is a record the loop no longer honours.
+	// Naming is what a list needs to show a readable name.
+	Archived      *archiveView `json:"archived,omitempty"`
+	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	Naming        *loopNaming  `json:"naming,omitempty"`
+	// Lineage: the count of earlier loops and the key of the one it
+	// continues; absent for a loop that continues none.
+	Lineage *listLineage `json:"lineage,omitempty"`
 	// LanesFailed is "1 lane failed" when the last check's current lane
 	// listing has lanes in error, from their structured status only; empty
 	// otherwise. A failed lane does not hold the loop, so it is never a need,
@@ -1309,6 +1339,12 @@ func dockWaitingOf(l dockLoop, need *dockNeed, st *statusOut, tl *timelineReport
 		}
 	case "waiting_on_limit":
 		w.Kind, w.By, w.Reason, w.Since, w.SinceEvidence = "limit", "check", "A provider usage limit, with no other route able to take over.", nil, ""
+		if u := l.UsageLimit; u != nil {
+			// Fixed words: the window's phrase and the reset time.
+			w.Reason = "The " + u.Words + ", until " + u.ResetsAt.UTC().Format(time.RFC3339) + "."
+			at := u.ObservedAt
+			w.Since, w.SinceEvidence = &at, "limit_observed"
+		}
 		if st != nil && st.LimitWait.DetectedAt != nil {
 			w.Since, w.SinceEvidence = st.LimitWait.DetectedAt, "limit_detected"
 		}
@@ -1371,7 +1407,7 @@ func secondsSince(now, t time.Time) *int64 {
 
 var dockStatePriority = map[string]int{
 	"waiting_for_you": 0, "unknown": 1, "checks_failing": 2, "not_checked_recently": 3, "waiting_on_limit": 4, "waiting_on_network": 4,
-	"supervising": 5, "outside_hours": 6, "paused": 7, "off": 8, "stopped": 9, "finished": 10,
+	"supervising": 5, "outside_hours": 6, "paused": 7, "off": 8, "stopped": 9, "finished": 10, "archived": 11,
 }
 
 // buildDockReport sorts loops so the ones that want attention come first.
@@ -1380,7 +1416,7 @@ var dockStatePriority = map[string]int{
 func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time.Duration, identifiers, registryOK bool, omitted int, complete bool) dockReport {
 	r := dockReport{SchemaVersion: dockSchemaVersion, ReadOnly: true, ReadAt: now, RefreshSeconds: int(refresh / time.Second),
 		StaleAfterSeconds: int(staleAfter / time.Second), Identifiers: identifiers, NeedsYou: []dockNeed{}, Worth: []dockWorth{}, Loops: []dockLoop{},
-		Routes: []dockRoute{}, Allowances: []dockAllowance{}, Registry: dockRegistry{Availability: "unavailable"}, Complete: complete,
+		Routes: []dockRoute{}, Allowances: []dockAllowance{}, Notices: []panelNotice{}, Registry: dockRegistry{Availability: "unavailable"}, Complete: complete,
 		NeedsLine: "Needs you: unknown"}
 	r.RoutesSummary = dockRoutesLine{Picker: "No routes", Total: "No routes", InUseT: "0 running now", Problem: "none at a limit or failing its test"}
 	if !registryOK {
@@ -1405,6 +1441,11 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 			if need.Kind == "unreadable" {
 				r.Unread++
 			}
+		}
+	}
+	for _, l := range r.Loops {
+		if l.Archived != nil {
+			r.Archived++
 		}
 	}
 	r.AllClear = complete && omitted == 0 && len(r.NeedsYou) == 0
@@ -1442,6 +1483,9 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 	r.usage = buildDockUsagePage(usage, now, complete)
 	quiet := map[string]bool{"supervising": true, "paused": true, "off": true, "stopped": true, "finished": true, "waiting_for_you": true, "unknown": true}
 	for _, l := range r.Loops {
+		if l.Archived != nil {
+			continue // put out of the way: nothing about it is worth a line
+		}
 		flagged := l.NoProgress != nil && l.NoProgress.Availability == "flagged"
 		daemonBuild := l.Versions.Daemon != "" && dockBuildOf(l.Versions.Daemon, version).Availability == "different"
 		otherFile := l.Versions.Service == "different_file"
@@ -1449,7 +1493,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 		// A loop held for a person, or paused and still waiting for one, is
 		// under "Needs you" already.
 		lanesFailed := l.LanesFailed != "" && l.State != "waiting_for_you" && l.AlsoWaiting == ""
-		if quiet[l.State] && l.Away == nil && !flagged && !otherBuild && !lanesFailed {
+		if quiet[l.State] && l.Away == nil && !flagged && !otherBuild && !lanesFailed && l.UsageBurn == nil {
 			continue
 		}
 		t := txt()
@@ -1476,6 +1520,12 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 			}
 			t = txt(t, l.NoProgress.Text)
 		}
+		if l.UsageBurn != nil {
+			if len(t) > 0 {
+				t = txt(t, " ")
+			}
+			t = txt(t, l.UsageBurn.Words)
+		}
 		if l.Build.Availability == "different" {
 			if len(t) > 0 {
 				t = txt(t, " ")
@@ -1496,6 +1546,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 		}
 		r.Worth = append(r.Worth, dockWorth{Key: l.Key, Loop: l.Name, State: l.State, Text: t})
 	}
+	r.Notices = reportNotices(r.Loops, r.NeedsYou, now)
 	return r
 }
 
@@ -1514,9 +1565,12 @@ func dockLede(r dockReport) string {
 			sup++
 		}
 	}
-	s := dockPlural(len(r.Loops), "loop", "loops")
+	s := dockPlural(len(r.Loops)-r.Archived, "loop", "loops")
 	if sup > 0 {
 		s += fmt.Sprintf(", %d supervising", sup)
+	}
+	if r.Archived > 0 {
+		s += fmt.Sprintf(", and %d archived", r.Archived)
 	}
 	if r.Unread > 0 {
 		s += fmt.Sprintf(", %d could not be read", r.Unread)
@@ -1660,6 +1714,12 @@ func dockLoopArg(name string) string {
 	return ""
 }
 
+// dockObserved reports whether the loop's current target is observed, never
+// woken, as its status says.
+func dockObserved(in dockInput) bool {
+	return in.Status != nil && in.Status.TargetConfigured && in.Status.TargetAgent.Observed
+}
+
 func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, identifiers bool) (dockLoop, *dockNeed) {
 	l := dockLoop{Key: dockKey(in.Entry.ID), Name: clip(in.Entry.Loop, dockMaxText), Evidence: in.Client.Outcome,
 		Limits: []dockLimit{}, Issues: []string{}, Can: []string{}, LoopArg: dockLoopArg(in.Entry.Loop)}
@@ -1668,7 +1728,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		if !c.Paused {
 			l.Can = append(l.Can, "pause")
 		}
-		if !c.Stop {
+		if !c.Stop && !dockObserved(in) {
 			l.Can = append(l.Can, "stop")
 		}
 		if snap.ControlState != "superseded" && (c.Paused || c.Stop || c.AwaitingUser || c.Completed) {
@@ -1697,6 +1757,9 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		a := st.TargetAgent
 		l.CurrentRoute = dockTarget{Availability: "known", Role: dockRole(st.Target), Tool: dockTool(a.Adapter),
 			Provider: clip(a.Provider, dockMaxText), Model: clip(a.Model, dockMaxText)}
+		if a.Observed {
+			l.Observed, l.ObservedNote = true, sessionpipeObservedNotice
+		}
 		if identifiers {
 			l.CurrentRoute.Name = clip(st.Target, dockMaxText)
 			if a.BBThread != "" && transferThreadID.MatchString(a.BBThread) {
@@ -1725,6 +1788,9 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			l.Provider, l.Model = snap.Target.Provider, snap.Target.Model
 		}
 		l.Moved = snap.Moved
+	}
+	if snap != nil {
+		l.UsageLimit = snap.UsageLimit.compact()
 	}
 	l.LastCheck = dockLastCheck(st, now, staleAfter)
 	l.NextCheck = dockNextCheck(snap, st, now)
@@ -1846,6 +1912,17 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			case "report_failed":
 				l.Detail += " Its limit_wait report failed; delivery is not confirmed."
 			}
+		case l.UsageLimit != nil && !l.UsageLimit.ResetPassed:
+			// A limit with a reset still ahead and no long-wait record: said
+			// as what it is, not as supervising.
+			u := l.UsageLimit
+			l.State, l.Phrase = "waiting_on_limit", "Waiting for a limit to reset"
+			// The reset's time is in the waiting reason; this stays short, as
+			// it is said on the row and again in "worth a look".
+			l.Detail = "Its " + u.Words + " was reached; it resets in " + dockSpan(u.ResetsAt.Sub(now)) + ". The loop is not held."
+			if l.Children.Failed > 0 {
+				l.Detail += " " + dockPlural(l.Children.Failed, "of its lanes is", "of its lanes are") + " in error as well; lanes on the same account wait for the same reset."
+			}
 		case l.LastCheck.FailedInRow > 0:
 			l.State, l.Phrase, l.Detail = "checks_failing", "Checks are failing", "Checks are running but could not observe or act."
 		case in.Daemon.State == "unavailable" && l.LastCheck.At != nil:
@@ -1961,6 +2038,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		// the hold, not current.
 		np.Text = noProgressText(np, loopHeld(st.Control, st.controlUnreadable))
 		l.NoProgress = &np
+		l.UsageBurn = st.UsageBurn
 		if r := st.Refusals; r.Total > 0 || r.Question != "" {
 			l.Refusals = &r
 		}
@@ -1984,6 +2062,46 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 					}
 				}
 			}
+		}
+	}
+	if snap != nil {
+		l.ArchiveLapsed = snap.ArchiveLapsed
+		l.Naming = listNaming(l.Name, snap.Naming, false)
+		l.Lineage = snap.Lineage
+		// The note and the thread title from the full status, as hold notes
+		// are: identifier-shaped tokens hidden unless identifiers are shown.
+		mask := func(s string) string {
+			if masked, _ := dockMaskNote(s); !identifiers {
+				return clip(masked, dockMaxNote)
+			}
+			return clip(s, dockMaxNote)
+		}
+		if st != nil && identifiers && st.Naming.DisplayName != "" {
+			// The unmasked title too, as notes are whole here.
+			l.Naming = listNaming(l.Name, &st.Naming, true)
+		}
+		if st != nil && st.Archived != nil && snap.Archived != nil {
+			a := *snap.Archived
+			a.Note = mask(st.Archived.Note)
+			snap.Archived = &a
+		}
+		if a := snap.Archived; a != nil && a.ContinuedIn != nil && !identifiers {
+			// The successor's thread is an identifier.
+			c, r := *a, *a.ContinuedIn
+			r.Thread = ""
+			c.ContinuedIn = &r
+			snap.Archived = &c
+		}
+		if a := snap.Archived; a != nil {
+			// Archived: listed apart, needing nobody, with no control offered
+			// (resume is refused until it is unarchived, and a group pause or
+			// stop leaves it as it is). Its hold is still shown in Hold.
+			l.Archived = a
+			l.State, l.Phrase, l.PickerState = "archived", "Archived", "Archived"
+			l.Detail = "Archived " + archiveSince(a) + ". It needs nobody and no daemon checks it; looptender unarchive lists it normally again and resumes nothing."
+			// Nothing it waits on is shown: it waits on nobody.
+			l.Can, l.AlsoWaiting, l.Waiting = []string{}, "", nil
+			need = nil
 		}
 	}
 	return l, need
@@ -2077,6 +2195,8 @@ func dockTool(adapter string) string {
 		return "Cursor"
 	case "antigravity":
 		return "Antigravity"
+	case "sessionpipe":
+		return "Sessionpipe (observed)"
 	case "process":
 		return "Custom command"
 	case "":

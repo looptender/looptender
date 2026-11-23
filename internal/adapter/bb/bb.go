@@ -90,6 +90,7 @@ type envelope struct {
 type showResponse struct {
 	Thread *struct {
 		Status         string `json:"status"`
+		Title          string `json:"title"`
 		Queued         int    `json:"queuedMessageCount"`
 		BackgroundJobs int    `json:"activeBackgroundAgentCount"`
 		ArchivedAt     any    `json:"archivedAt"`
@@ -123,6 +124,7 @@ func (a *Adapter) Observe(ctx context.Context) (decide.Observation, error) {
 		Queued:     t.Queued,
 		Background: t.BackgroundJobs,
 		Gone:       t.ArchivedAt != nil || t.DeletedAt != nil,
+		Title:      t.Title,
 	}
 	if obs.Gone {
 		return obs, nil
@@ -204,7 +206,7 @@ func (a *Adapter) Observe(ctx context.Context) (decide.Observation, error) {
 		}
 	}
 	if obs.ErrorClass == decide.ErrRateLimit && sig.resetsAt.After(a.now()) {
-		obs.ResetsAt = sig.resetsAt
+		obs.ResetsAt, obs.LimitWindow = sig.resetsAt, sig.window
 	}
 	return obs, nil
 }
@@ -262,6 +264,7 @@ type signals struct {
 	retryUnknown bool
 	blocked      bool
 	resetsAt     time.Time
+	window       decide.LimitWindow
 	pending      bool
 	ok           bool
 	// turnStartedMs is BB's time of the latest turn start, or 0 when unknown.
@@ -279,7 +282,7 @@ type signals struct {
 // started count, so a stale error from an earlier turn is ignored.
 func (a *Adapter) signals(ctx context.Context) signals {
 	c, ok := a.scan(ctx)
-	s := signals{class: decide.ErrUnknown, ok: ok, blocked: c.Blocked, resetsAt: c.ResetsAt, pending: len(c.Pending) > 0, lastEventAt: c.LastEventAt, turnStartedMs: c.TurnStartedMs,
+	s := signals{class: decide.ErrUnknown, ok: ok, blocked: c.Blocked, resetsAt: c.ResetsAt, window: c.Window, pending: len(c.Pending) > 0, lastEventAt: c.LastEventAt, turnStartedMs: c.TurnStartedMs,
 		turnStartSeq: c.TurnStartSeq, toolsRunning: c.ToolsUncertain || len(c.OpenTools) > 0, fallbackSeq: c.FallbackSeq, childOutcome: c.ChildOutcomeSeq,
 		turnRequests: c.TurnRequests, turnStarts: c.TurnStarts}
 	if c.Error != nil {
@@ -295,28 +298,38 @@ func (a *Adapter) signals(ctx context.Context) signals {
 	return s
 }
 
-func rateLimits(raw json.RawMessage) (bool, time.Time) {
+// rateLimits reads a provider/rateLimits/updated event: whether the account
+// is blocked, when the latest blocked window resets, and which window that
+// is, with the provider's reason for reaching it.
+func rateLimits(raw json.RawMessage) (bool, time.Time, decide.LimitWindow) {
 	var d struct {
 		RateLimits struct {
-			Status  string `json:"status"`
-			Windows []struct {
-				Status     string `json:"status"`
-				ResetsAtMs int64  `json:"resetsAtMs"`
+			Status        string  `json:"status"`
+			ReachedReason *string `json:"reachedReason"`
+			Windows       []struct {
+				Status      string `json:"status"`
+				ResetsAtMs  int64  `json:"resetsAtMs"`
+				ProviderKey string `json:"providerKey"`
+				Label       string `json:"label"`
 			} `json:"windows"`
 		} `json:"rateLimits"`
 	}
 	if json.Unmarshal(raw, &d) != nil || d.RateLimits.Status != "blocked" {
-		return false, time.Time{}
+		return false, time.Time{}, decide.LimitWindow{}
 	}
 	var latest time.Time
+	key, label, reason := "", "", ""
+	if d.RateLimits.ReachedReason != nil {
+		reason = *d.RateLimits.ReachedReason
+	}
 	for _, w := range d.RateLimits.Windows {
 		if w.Status == "blocked" && w.ResetsAtMs > 0 {
 			if t := time.UnixMilli(w.ResetsAtMs); t.After(latest) {
-				latest = t
+				latest, key, label = t, w.ProviderKey, w.Label
 			}
 		}
 	}
-	return true, latest
+	return true, latest, decide.CleanLimitWindow(key, label, reason)
 }
 
 func httpCode(p *int) string {
@@ -562,3 +575,7 @@ func (a *Adapter) SignalExits() int { return a.signalExits }
 // errStopped marks a bb command that was killed at its time limit or because
 // the check was cancelled.
 var errStopped = errors.New("bb command stopped before it finished")
+
+// ObservedThread is the thread Observe reads, for the display-only title
+// record (state.NoteThreadTitle).
+func (a *Adapter) ObservedThread() string { return a.cfg.Thread }

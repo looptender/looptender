@@ -102,12 +102,12 @@ export function buildSummary(runtime: Runtime | undefined): { running?: string; 
 }
 
 /**
- * The line `bb keepgoing status` adds when the CLI's registry lists loops this
+ * The line `bb looptender status` adds when the CLI's registry lists loops this
  * plugin does not show: how many, which, and how to show them. Empty when
  * every registered loop is shown. Names only; loops are matched by name.
  */
 /**
- * The line `bb keepgoing status` ends with about the plugin's own build, so a
+ * The line `bb looptender status` ends with about the plugin's own build, so a
  * plugin BB kept serving after an install is obvious. built is the looptender
  * build the plugin was stamped with (null for a source build) and running is
  * what the looptender it runs reports (null when it could not be read).
@@ -137,7 +137,7 @@ export function notShownLine(registered: readonly string[], shown: readonly stri
   return `${missing.length} registered loop${missing.length === 1 ? " is" : "s are"} not shown here (${names}). To show ${missing.length === 1 ? "it" : "one"}, add its configuration path to this plugin's configs setting, one path per line; a loop created from the CLI is not added there for you, and its thread's card needs the same entry. looptender registry list names every registered loop.`;
 }
 
-/** What `bb keepgoing status` prints after `last=`: a moved loop has history
+/** What `bb looptender status` prints after `last=`: a moved loop has history
  * but nothing checked on its new target, which is not "never". */
 export function lastLabel(lastState: string | null | undefined, details: { moved?: unknown } | null | undefined): string {
   return details?.moved ? "none yet (new target, not yet checked)" : lastState || "never";

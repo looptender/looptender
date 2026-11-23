@@ -109,6 +109,9 @@ type Observation struct {
 	RetryUnverified bool
 	// ResetsAt, when known, is when the current usage limit lifts.
 	ResetsAt time.Time
+	// LimitWindow, when known, is which usage window is blocked: the one
+	// that lifts at ResetsAt (LimitWindow).
+	LimitWindow LimitWindow
 	// AwaitingInput means the session is blocked on a person: a pending
 	// permission prompt, question, or form, reported by the provider.
 	AwaitingInput bool
@@ -139,6 +142,9 @@ type Observation struct {
 	// ChildTitles are the titles BB reported for verified direct children, by
 	// ID. They are for display only: no decision reads them.
 	ChildTitles map[string]string
+	// Title is the title BB reported for the observed thread itself, for
+	// display only: no decision reads it (state.ThreadTitleName).
+	Title string
 	// HealthyChildren contains verified direct child IDs with a known status
 	// other than error. Decide never reads it; the owner report uses it to
 	// tell a child that recovered from one an incomplete listing did not show.
@@ -156,7 +162,17 @@ type Control struct {
 
 // Input is everything Decide needs.
 type Input struct {
-	AssignmentReady   int // exact current typed readiness, evaluated by the supervisor
+	AssignmentReady int // exact current typed readiness, evaluated by the supervisor
+	// UsageWarning: the loop's usage watch has a warning its agent has not
+	// been sent (the weekly window runs out before it resets at the rate so
+	// far). It rides on an ordinary wake, or wakes an idle session that
+	// waits on its children once.
+	UsageWarning bool
+	// ObservedOnly: the target is observed, never woken (a sessionpipe
+	// target). No rule may send to it, re-prompt it, stop it or move it; the
+	// state is recorded, a gone target is held for a person, and nothing else
+	// is done.
+	ObservedOnly      bool
 	Obs               Observation
 	Control           Control
 	InWindow          bool
@@ -359,7 +375,10 @@ type Decision struct {
 	// caller never matches on Reason text. The parent is idle on purpose while
 	// other children run: it gets the notice alone, not the task prompt.
 	ChildErrorWake bool
-	AssignmentWake bool
+	// UsageWarningWake is set only when the usage warning caused this wake
+	// by itself, while children run: the session gets the notice alone.
+	UsageWarningWake bool
+	AssignmentWake   bool
 	// DeferredInteraction is set only when the deferred-interaction rule itself
 	// produced an AwaitUser, so a caller never matches on Reason text.
 	DeferredInteraction bool
@@ -405,6 +424,32 @@ const (
 	HeldNudgesClause = " held back, not sent, because the turn looked hung"
 )
 
+// ObservedStopReason is recorded when a stop is asked for on an observed
+// target: looptender stops checking it and never stops the session itself.
+const ObservedStopReason = "stop requested; an observed session is never stopped by looptender, only no longer checked"
+
+// ObservedReasonSuffix ends every reason recorded for an observed target.
+const ObservedReasonSuffix = "; observed only: looptender never sends to, wakes or stops this session"
+
+func observedReason(o Observation) string {
+	var s string
+	switch {
+	case o.AwaitingInput:
+		s = "waiting on a person"
+	case o.State == Error:
+		s = "its last turn ended in error"
+	case o.State == Active:
+		s = "working"
+	case o.State == Idle && o.Background > 0:
+		s = "between turns, with background work running"
+	case o.State == Idle:
+		s = "between turns"
+	default:
+		s = "status unknown"
+	}
+	return s + ObservedReasonSuffix
+}
+
 // NetworkDownReason is recorded when recovery waits for connectivity.
 const NetworkDownReason = "network down; waiting for connectivity"
 
@@ -415,6 +460,9 @@ const HandoffDeferredReason = "handoff deferred: no fallback could be confirmed 
 func Decide(in Input) Decision {
 	c := in.Control
 	o := in.Obs
+	if c.Stop && in.ObservedOnly {
+		return none(ObservedStopReason)
+	}
 	if c.Stop {
 		if o.State == Active || o.State == Pending {
 			return Decision{Action: Stop, Reason: "stop requested"}
@@ -448,6 +496,9 @@ func Decide(in Input) Decision {
 	if o.SessionLost {
 		return Decision{Action: AwaitUser, Reason: SessionLostReason}
 	}
+	if in.ObservedOnly {
+		return none(observedReason(o))
+	}
 	if len(o.AwaitingChildren) > 0 {
 		return Decision{Action: AwaitUser, Reason: "children waiting on a person (pending interaction): " + strings.Join(o.AwaitingChildren, ", ")}
 	}
@@ -469,6 +520,9 @@ func Decide(in Input) Decision {
 		if o.ActiveChildren > 0 {
 			if childErrorWake(in) {
 				return Decision{Action: Wake, Reason: ChildErrorWakeReason, ChildErrorWake: true}
+			}
+			if usageWarningWake(in) {
+				return Decision{Action: Wake, Reason: UsageWarningWakeReason, UsageWarningWake: true}
 			}
 			if in.AssignmentReady <= 0 || o.State != Idle || o.ChildrenUnverified {
 				return none("child work running")
@@ -850,6 +904,20 @@ func Attempted(a Action, c Counters, at time.Time) Counters {
 		c.LastRepromptAt = at
 	}
 	return c
+}
+
+// UsageWarningWakeReason is the reason of the one wake a usage warning
+// causes by itself, while children run.
+const UsageWarningWakeReason = "usage window running out while children run"
+
+// usageWarningWake: the same conditions as the child-error wake's, for a
+// pending usage warning.
+func usageWarningWake(in Input) bool {
+	o := in.Obs
+	return in.UsageWarning &&
+		o.State == Idle && in.InWindow && !o.ChildrenUnverified &&
+		!o.RetryUnverified && !o.Retrying && o.Queued == 0 && o.Background == 0 &&
+		in.SinceWake >= in.MinWakeInterval
 }
 
 // ChildErrorWakeReason is the reason of the one wake that errored children

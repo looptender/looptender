@@ -261,6 +261,9 @@ func clientResume(ctx context.Context, directory, id, operation, ticket string, 
 			if err != nil {
 				return fail("resume_evidence_unavailable")
 			}
+			if a, aerr := control.LoadArchive(entry.StateDir); (a != nil || aerr != nil) && !checked.Supervising() {
+				return fail("archived")
+			}
 			// A reviewed resume (expect) is refused before its ticket would
 			// replace one another client prepared.
 			if expect != "" && !expectDigestMatches(controlDigest(checked), expect) {
@@ -334,6 +337,9 @@ func clientResume(ctx context.Context, directory, id, operation, ticket string, 
 			// Before the holds are cleared: if the counts cannot be reset the
 			// resume fails with the holds intact, like any failure after the
 			// ticket was consumed.
+			if a, aerr := control.LoadArchive(entry.StateDir); (a != nil || aerr != nil) && !f.Supervising() {
+				return fail("archived")
+			}
 			if resumeEpisode(entry.StateDir, f.EpisodeHold, at, cfg.Loop.Errors.MaxReprompts, f.BriefHold...) != nil {
 				return fail("new_episode_unconfirmed")
 			}

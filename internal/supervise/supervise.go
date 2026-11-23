@@ -75,11 +75,14 @@ type Options struct {
 	Now          time.Time
 	DryRun       bool            // decide and record; send nothing and run no probes
 	BacklogQuery prbacklog.Query // nil uses fixed read-only gh query when opted in
-	Fingerprint  func([]string) (string, error)
-	NewAdapter   factory.Func
-	Probe        ProbeFunc
-	Reporter     report.Reporter
-	Busy         func(ctx context.Context, y config.Yield) (bool, error)
+	// UsageRead reads an account's quota for the loop's usage watch; nil
+	// reads nothing, so the watch never warns.
+	UsageRead   UsageReadFunc
+	Fingerprint func([]string) (string, error)
+	NewAdapter  factory.Func
+	Probe       ProbeFunc
+	Reporter    report.Reporter
+	Busy        func(ctx context.Context, y config.Yield) (bool, error)
 	// Online reports connectivity once. Nil uses the loop's network settings;
 	// a loop with the check off is never checked.
 	Online func(ctx context.Context) bool
@@ -178,12 +181,15 @@ type Result struct {
 	// rejected sends.
 	// LaneStop is what a stop that covers the lanes did on this check, by
 	// count (keepgoing stop --lanes).
-	LaneStop                *state.LaneStop `json:"laneStop,omitempty"`
-	ErroredChildren         int             `json:"erroredChildren,omitempty"`
-	ErroredChildrenPartial  bool            `json:"erroredChildrenPartial,omitempty"`
-	ChildErrorNote          bool            `json:"childErrorNote,omitempty"`
-	ChildErrorNoticeStopped bool            `json:"childErrorNoticeStopped,omitempty"`
-	Handoff                 *HandoffNote    `json:"handoff,omitempty"`
+	LaneStop               *state.LaneStop `json:"laneStop,omitempty"`
+	ErroredChildren        int             `json:"erroredChildren,omitempty"`
+	ErroredChildrenPartial bool            `json:"erroredChildrenPartial,omitempty"`
+	ChildErrorNote         bool            `json:"childErrorNote,omitempty"`
+	// LanesLimited is how many of the errored lanes this check's notice
+	// counted at a provider usage limit.
+	LanesLimited            int          `json:"lanesLimited,omitempty"`
+	ChildErrorNoticeStopped bool         `json:"childErrorNoticeStopped,omitempty"`
+	Handoff                 *HandoffNote `json:"handoff,omitempty"`
 	// OwnerMovedTo is the BB thread loop ownership moved to with a move the
 	// supervisor made in this check.
 	OwnerMovedTo string `json:"ownerMovedTo,omitempty"`
@@ -200,6 +206,8 @@ type Result struct {
 	Yielded    bool            `json:"yielded,omitempty"`
 	DryRun     bool            `json:"dryRun,omitempty"`
 	Warnings   []string        `json:"warnings,omitempty"`
+	// UsageWarned: this check sent the usage watch's warning.
+	UsageWarned bool `json:"usageWarned,omitempty"`
 	// Outcome is the recorded result of the check: succeeded, failed or
 	// dry_run. It is empty when the check could not be recorded at all.
 	Outcome string `json:"outcome,omitempty"`
@@ -217,6 +225,8 @@ type Result struct {
 }
 
 type tick struct {
+	usageWarn  *usageWarning
+	usageView  *state.UsageWatch
 	assignment *assignmentDelivery
 	// ctl is the control record as this check loaded it.
 	ctl control.File
@@ -273,6 +283,12 @@ type tick struct {
 	// retry and has not given up on, after this check's lane work. The
 	// notice to the session says so.
 	lanesRetried int
+	// lanesAtLimit counts the lanes lane recovery inspected in this check
+	// that are at a provider usage limit, with the latest reset and its
+	// window (noteLaneLimit).
+	lanesAtLimit     int
+	lanesLimitUntil  time.Time
+	lanesLimitWindow decide.LimitWindow
 	// laneRecoveryOn: the observed target has bb.children.retry_errored set.
 	laneRecoveryOn bool
 	// lanesInRecovery are the errored lanes keepgoing is recovering or will
@@ -918,6 +934,7 @@ func (t *tick) run() error {
 		r := obs.ResetsAt.UTC()
 		res.ResetsAt = &r
 	}
+	t.noteUsageLimit(target, agent, obs)
 	inWindow, why, err := window.Inside(loop.Window, t.now)
 	if err != nil {
 		return err
@@ -1052,8 +1069,13 @@ func (t *tick) run() error {
 		Reprompts: t.st.Reprompts, MaxReprompts: loop.Errors.MaxReprompts,
 		SinceLastReprompt: sinceReprompt, Backoff: loop.Errors.Backoff.Duration,
 		SwitchBackReady: t.switchBackReady(target),
+		// Set here, once, so every decision taken from this input (lane
+		// recovery, the hung-turn rule, the check's own) treats an observed
+		// target as never woken, not only the ones made through t.decide.
+		ObservedOnly: t.observedOnly(),
 	}
 	in.AssignmentReady = t.assignmentObservation(a, obs)
+	in.UsageWarning = t.usageWatchObservation()
 	in.IdleSpacing = t.idleSpacingInput(obs, ctl)
 	// A loop held for a restricted turn runs no check until a person resumes
 	// it. Reaching this point with that same turn still showing therefore
@@ -1972,6 +1994,14 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 		} else {
 			text = prompt.WithChildErrorsRetried(text, childErrors, t.lanesRetried)
 		}
+		if childErrors > 0 {
+			// One line for lanes stopped by a usage limit, not one error each.
+			if n := t.lanesAtLimit; n > 0 {
+				text = prompt.WithLimitedLanes(text, n, t.lanesLimitUntil, t.lanesLimitWindow.Words())
+				t.res.LanesLimited = n
+			}
+		}
+		text, usageCarried := t.usageWarningText(d, text)
 		var backlogNotice *backlogDelivery
 		if d.Action == decide.Wake && !d.AssignmentWake && !text.NoticeOnly && loop.PRBacklog != nil {
 			var allowed bool
@@ -2010,6 +2040,7 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 			return t.startRefused(refused.Reason)
 		}
 		t.childNoticeSent(childErrors, err)
+		t.usageWarningSent(usageCarried, err)
 		// The adapter was called: count the attempt whatever it returned, so a
 		// failing or unsupported send cannot repeat on every check outside the
 		// per-episode caps and spacing.
@@ -3001,6 +3032,11 @@ func (t *tick) observe(a adapter.Adapter) (decide.Observation, error) {
 	}
 	if err == nil && ctx.Err() != nil {
 		err = fmt.Errorf("observation exceeded %s", limit)
+	}
+	// The thread's title, for display only, from the read just made; a
+	// failed write changes nothing.
+	if th, ok := a.(interface{ ObservedThread() string }); ok && err == nil && obs.Title != "" && !t.opts.DryRun {
+		_ = state.NoteThreadTitle(t.loop.StateDir, th.ObservedThread(), obs.Title, t.cfg.RouteLabels(), t.now)
 	}
 	if c, ok := a.(adapter.CLIPather); ok && !t.opts.DryRun && !t.opts.StopOnly {
 		// Where the system found the configured executable for this check,
