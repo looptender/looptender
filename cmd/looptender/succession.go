@@ -27,6 +27,17 @@ import (
 // lineageMax bounds how many predecessors are followed.
 const lineageMax = 16
 
+// successionPendingMax is how long a declared succession waits for the
+// successor's first completed check before it is cancelled.
+const successionPendingMax = 14 * 24 * time.Hour
+
+var (
+	errSuccessionOwner     = errors.New("the predecessor's owner changed since the succession was declared")
+	errSuccessionAuthority = errors.New("the succession was not declared by the predecessor's owner or a person")
+	errSuccessionChanged   = errors.New("the predecessor's control record changed after the succession was declared: it was resumed or held again")
+	errSuccessionUnmarked  = errors.New("the predecessor carries no matching mark of this succession (succeeded-by.json), so the record was not made by a declaration")
+)
+
 // lineageStep is one earlier loop of a line of work, oldest first.
 type lineageStep struct {
 	Loop       string     `json:"loop"`
@@ -38,9 +49,11 @@ type lineageStep struct {
 // continuedFromView is the successor's record as status shows it.
 type continuedFromView struct {
 	lineageStep
-	Source     string    `json:"source"`
-	DeclaredAt time.Time `json:"declaredAt"`
-	Waiting    string    `json:"waiting,omitempty"`
+	Source      string     `json:"source"`
+	DeclaredAt  time.Time  `json:"declaredAt"`
+	Waiting     string     `json:"waiting,omitempty"`
+	CancelledAt *time.Time `json:"cancelledAt,omitempty"`
+	Cancelled   string     `json:"cancelled,omitempty"`
 }
 
 // continuedRef is the loop that continues an archived one.
@@ -134,15 +147,34 @@ func declareSuccession(pred, succ *config.Config, source string, now time.Time) 
 	}
 	if old, err := control.LoadSuccession(succ.Loop.StateDir); err != nil {
 		return control.Succession{}, err
-	} else if old != nil && old.ArchivedAt == nil && !samePath(old.From.StateDir, pred.Loop.StateDir) {
+	} else if old != nil && old.ArchivedAt == nil && old.CancelledAt == nil && !samePath(old.From.StateDir, pred.Loop.StateDir) {
 		return control.Succession{}, fmt.Errorf("loop %s already continues loop %s, whose archive is still to come", succ.Loop.Name, old.From.Loop)
+	}
+	// No cycle: the new loop is not already among the old loop's own
+	// predecessors.
+	for _, dir := range lineageDirs(pred.Loop.StateDir) {
+		if samePath(dir, succ.Loop.StateDir) {
+			return control.Succession{}, fmt.Errorf("loop %s is already an earlier loop of %s's line of work", succ.Loop.Name, pred.Loop.Name)
+		}
+	}
+	// One successor per loop.
+	if a, _ := control.LoadArchive(pred.Loop.StateDir); a != nil && a.ContinuedIn != nil && !samePath(a.ContinuedIn.StateDir, succ.Loop.StateDir) {
+		return control.Succession{}, fmt.Errorf("loop %s is already continued in loop %s", pred.Loop.Name, a.ContinuedIn.Loop)
 	}
 	by := "person"
 	if caller != "" {
 		by = caller
 	}
 	s := control.Succession{From: control.LoopRef{Loop: pred.Loop.Name, Config: pred.Path(), StateDir: pred.Loop.StateDir, Thread: bbThreadOf(pred),
-		RegistryID: registryIDOf(pred.Loop.StateDir), At: now.UTC()}, Source: source, By: by, DeclaredAt: now.UTC()}
+		RegistryID: registryIDOf(pred.Loop.StateDir), At: now.UTC()}, Source: source, By: by, DeclaredAt: now.UTC(),
+		FromHeld: !ctl.Supervising(), FromControlAt: ctl.UpdatedAt}
+	if o := ctl.Ownership; o != nil {
+		s.FromOwner, s.FromGeneration = o.ThreadID, o.Generation
+	}
+	// The predecessor's own mark first: without it no record archives it.
+	if err := control.SaveSucceededBy(pred.Loop.StateDir, control.SucceededBy{StateDir: succ.Loop.StateDir, Loop: succ.Loop.Name, DeclaredAt: s.DeclaredAt}); err != nil {
+		return s, fmt.Errorf("the predecessor's mark could not be written: %w", err)
+	}
 	if err := control.SaveSuccession(succ.Loop.StateDir, s); err != nil {
 		return s, err
 	}
@@ -159,7 +191,19 @@ func declareSuccession(pred, succ *config.Config, source string, now time.Time) 
 // is recorded as why it waits, and tried again at the next check.
 func completeSuccession(e env, cfg *config.Config, now time.Time) {
 	s, err := control.LoadSuccession(cfg.Loop.StateDir)
-	if err != nil || s == nil || s.ArchivedAt != nil {
+	if err != nil || s == nil || s.ArchivedAt != nil || s.CancelledAt != nil {
+		return
+	}
+	cancel := func(why string) {
+		at := now.UTC()
+		s.CancelledAt, s.Cancelled, s.Waiting = &at, why+"; nothing was archived, and a new declaration is needed to archive it", ""
+		_ = state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "control", Action: "succession_cancelled", Reason: s.From.Loop})
+		if err := control.SaveSuccession(cfg.Loop.StateDir, *s); err != nil {
+			e.errf("warning: the succession record could not be updated: %v", err)
+		}
+	}
+	if now.Sub(s.DeclaredAt) > successionPendingMax {
+		cancel(fmt.Sprintf("no check of this loop archived it within %s of the declaration", state.ShortDuration(successionPendingMax)))
 		return
 	}
 	st, err := state.Load(cfg.Loop.StateDir)
@@ -172,10 +216,33 @@ func completeSuccession(e env, cfg *config.Config, now time.Time) {
 		note += " (" + me.Thread + ")"
 	}
 	note += ", whose first check completed " + st.LastCheck.At.UTC().Format(time.RFC3339)
-	_, _, err = control.ArchiveLoopFor(s.From.StateDir, note, now, nil, me)
+	// Judged under the predecessor's control lock, on its record as it is
+	// now: the authority the declaration had must still hold.
+	check := func(f control.File) error {
+		owner, generation := "", uint64(0)
+		if o := f.Ownership; o != nil {
+			owner, generation = o.ThreadID, o.Generation
+		}
+		m := control.LoadSucceededBy(s.From.StateDir)
+		switch {
+		case m == nil || !samePath(m.StateDir, cfg.Loop.StateDir) || !m.DeclaredAt.Equal(s.DeclaredAt):
+			return errSuccessionUnmarked
+		case owner != s.FromOwner || generation != s.FromGeneration:
+			return errSuccessionOwner
+		case s.By != "person" && s.By != s.FromOwner:
+			return errSuccessionAuthority
+		case s.FromHeld && !f.UpdatedAt.Equal(s.FromControlAt):
+			return errSuccessionChanged
+		}
+		return nil
+	}
+	_, _, err = control.ArchiveLoopFor(s.From.StateDir, note, now, check, me)
 	switch {
 	case errors.Is(err, control.ErrArchiveSupervising):
 		s.Waiting = "the predecessor is still supervising; pause or stop it, and the next completed check archives it"
+	case errors.Is(err, errSuccessionUnmarked), errors.Is(err, errSuccessionOwner), errors.Is(err, errSuccessionAuthority), errors.Is(err, errSuccessionChanged), errors.Is(err, control.ErrContinuedElsewhere):
+		cancel(err.Error())
+		return
 	case err != nil:
 		s.Waiting = "the predecessor could not be archived: " + err.Error()
 	default:
@@ -203,7 +270,10 @@ func lineageOf(stateDir string) ([]lineageStep, *continuedFromView) {
 		}
 		step := lineageStep{Loop: s.From.Loop, Thread: s.From.Thread, Key: refKey(s.From.RegistryID), ArchivedAt: s.ArchivedAt}
 		if first == nil {
-			first = &continuedFromView{lineageStep: step, Source: s.Source, DeclaredAt: s.DeclaredAt, Waiting: s.Waiting}
+			first = &continuedFromView{lineageStep: step, Source: s.Source, DeclaredAt: s.DeclaredAt, Waiting: s.Waiting, CancelledAt: s.CancelledAt, Cancelled: s.Cancelled}
+		}
+		if s.CancelledAt != nil {
+			break // a cancelled succession is no part of the line of work
 		}
 		steps = append([]lineageStep{step}, steps...)
 		seen[filepath.Clean(s.From.StateDir)] = true
@@ -271,4 +341,22 @@ func supersedeSuccession(e env, pred *config.Config, successorThread string, now
 	default:
 		fmt.Fprintln(e.stdout, "Several registered loops supervise the successor thread, so none was recorded as continuing this one; `looptender archive -c CONFIG --succeeded-by ITS_CONFIG` names it.")
 	}
+}
+
+// lineageDirs are the state directories of the loops the loop in stateDir
+// continues, through records that were not cancelled, nearest first.
+func lineageDirs(stateDir string) []string {
+	var out []string
+	seen := map[string]bool{filepath.Clean(stateDir): true}
+	dir := stateDir
+	for len(out) < lineageMax {
+		s, err := control.LoadSuccession(dir)
+		if err != nil || s == nil || s.CancelledAt != nil || seen[filepath.Clean(s.From.StateDir)] {
+			break
+		}
+		out = append(out, s.From.StateDir)
+		seen[filepath.Clean(s.From.StateDir)] = true
+		dir = s.From.StateDir
+	}
+	return out
 }

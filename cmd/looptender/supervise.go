@@ -1052,6 +1052,8 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 			line += " (" + c.Thread + ")"
 		}
 		switch {
+		case c.CancelledAt != nil:
+			line += ", cancelled " + when(*c.CancelledAt) + ": " + c.Cancelled
 		case c.ArchivedAt != nil:
 			line += ", archived " + when(*c.ArchivedAt) + " after this loop's first completed check"
 		case c.Waiting != "":

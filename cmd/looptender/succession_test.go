@@ -155,3 +155,129 @@ func TestListsCarryOnlyTheLineageCountAndKey(t *testing.T) {
 		t.Fatalf("%s", b)
 	}
 }
+
+func successionOf(t *testing.T, cfg *config.Config) *control.Succession {
+	t.Helper()
+	s, err := control.LoadSuccession(cfg.Loop.StateDir)
+	if err != nil || s == nil {
+		t.Fatalf("record: %+v %v", s, err)
+	}
+	return s
+}
+
+func notArchived(t *testing.T, c *config.Config) {
+	t.Helper()
+	if a, _ := control.LoadArchive(c.Loop.StateDir); a != nil {
+		t.Fatalf("archived: %+v", a)
+	}
+}
+
+// A record the predecessor never agreed to (no mark in its own directory)
+// archives nothing, and is cancelled.
+func TestForgedSuccessionRecordArchivesNothing(t *testing.T) {
+	f, _, oldCfg, newCfg := successionWorld(t)
+	if err := control.SaveSuccession(newCfg.Loop.StateDir, control.Succession{From: control.LoopRef{Loop: "example-old", StateDir: oldCfg.Loop.StateDir, At: time.Now()},
+		Source: "declared", By: "person", DeclaredAt: time.Now().Add(-time.Minute), FromHeld: true}); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+	notArchived(t, oldCfg)
+	if s := successionOf(t, newCfg); s.CancelledAt == nil || !strings.Contains(s.Cancelled, "no matching mark") {
+		t.Fatalf("%+v", s)
+	}
+}
+
+// The predecessor's owner changing after the declaration cancels it.
+func TestSuccessionIsCancelledWhenThePredecessorsOwnerChanges(t *testing.T) {
+	f, old, oldCfg, newCfg := successionWorld(t)
+	if code, _, errs := runWith("archive", "-c", old, "--succeeded-by", f.cfg); code != exitOK {
+		t.Fatal(errs)
+	}
+	t.Setenv("BB_THREAD_ID", "thr_examplenewowner")
+	if code, _, errs := runWith("enable", "-c", old, "--take-over", "--allow-second-loop"); code != exitOK {
+		t.Fatal(errs)
+	}
+	t.Setenv("BB_THREAD_ID", "")
+	f.tick()
+	notArchived(t, oldCfg)
+	if s := successionOf(t, newCfg); s.CancelledAt == nil || !strings.Contains(s.Cancelled, "owner changed") {
+		t.Fatalf("%+v", s)
+	}
+}
+
+// A person who resumes the predecessor after declaring has decided not to
+// switch: holding it again later archives nothing; the succession is
+// cancelled and status says so.
+func TestSuccessionIsCancelledWhenThePredecessorIsResumed(t *testing.T) {
+	f, old, oldCfg, newCfg := successionWorld(t)
+	if code, _, errs := runWith("archive", "-c", old, "--succeeded-by", f.cfg); code != exitOK {
+		t.Fatal(errs)
+	}
+	for _, c := range []string{"resume", "pause"} {
+		if code, _, errs := runWith(c, "-c", old); code != exitOK {
+			t.Fatal(errs)
+		}
+	}
+	f.tick()
+	notArchived(t, oldCfg)
+	if s := successionOf(t, newCfg); s.CancelledAt == nil || !strings.Contains(s.Cancelled, "resumed or held again") {
+		t.Fatalf("%+v", s)
+	}
+	if _, text, _ := f.run("status"); !strings.Contains(text, "continues: loop example-old") || !strings.Contains(text, ", cancelled ") {
+		t.Fatalf("status: %s", text)
+	}
+	_, js, _ := f.run("status", "--json")
+	if strings.Contains(js, `"lineage"`) {
+		t.Fatalf("a cancelled succession is in the lineage: %s", js)
+	}
+}
+
+// A succession that waits longer than its bound is cancelled.
+func TestPendingSuccessionExpires(t *testing.T) {
+	f, old, oldCfg, newCfg := successionWorld(t)
+	if code, _, errs := runWith("resume", "-c", old); code != exitOK {
+		t.Fatal(errs)
+	}
+	if code, _, errs := runWith("archive", "-c", old, "--succeeded-by", f.cfg); code != exitOK {
+		t.Fatal(errs)
+	}
+	s := successionOf(t, newCfg)
+	s.DeclaredAt = s.DeclaredAt.Add(-successionPendingMax - time.Hour)
+	if err := control.SaveSuccession(newCfg.Loop.StateDir, *s); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+	notArchived(t, oldCfg)
+	if s := successionOf(t, newCfg); s.CancelledAt == nil || !strings.Contains(s.Cancelled, "within") {
+		t.Fatalf("%+v", s)
+	}
+}
+
+// No cycle, and one successor per loop.
+func TestSuccessionRefusesACycleAndASecondSuccessor(t *testing.T) {
+	f, old, oldCfg, _ := successionWorld(t)
+	if code, _, errs := runWith("archive", "-c", old, "--succeeded-by", f.cfg); code != exitOK {
+		t.Fatal(errs)
+	}
+	if code, _, errs := f.run("pause"); code != exitOK {
+		t.Fatal(errs)
+	}
+	if code, _, errs := runWith("archive", "-c", f.cfg, "--succeeded-by", old); code != exitFailed || !strings.Contains(errs, "already an earlier loop") {
+		t.Fatalf("cycle: %d %s", code, errs)
+	}
+	if code, _, errs := f.run("resume"); code != exitOK {
+		t.Fatal(errs)
+	}
+	f.tick()
+	if a, _ := control.LoadArchive(oldCfg.Loop.StateDir); a == nil || a.ContinuedIn == nil {
+		t.Fatal("not archived")
+	}
+	third := secondLoop(t, f, "example-third", nil)
+	if code, _, errs := runWith("archive", "-c", old, "--succeeded-by", third); code != exitFailed || !strings.Contains(errs, "already continued in loop example-loop") {
+		t.Fatalf("second successor: %d %s", code, errs)
+	}
+	// And the archive itself refuses another successor.
+	if _, _, err := control.ArchiveLoopFor(oldCfg.Loop.StateDir, "", time.Now(), nil, &control.LoopRef{Loop: "example-third", StateDir: "/fictional/other"}); err != control.ErrContinuedElsewhere {
+		t.Fatalf("re-archive for another successor: %v", err)
+	}
+}

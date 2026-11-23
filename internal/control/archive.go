@@ -50,6 +50,10 @@ type Archive struct {
 // supervising: resuming or enabling it needs unarchiving first.
 var ErrArchived = errors.New("the loop is archived: unarchive it first (looptender unarchive -c CONFIG), then resume it; unarchiving resumes nothing")
 
+// ErrContinuedElsewhere refuses a succession's archive of a loop already
+// archived as continued in another loop.
+var ErrContinuedElsewhere = errors.New("the loop is already continued in another loop")
+
 // ErrArchiveSupervising refuses to archive a loop that is supervising.
 var ErrArchiveSupervising = errors.New("the loop is supervising: pause or stop it first, then archive it; archiving changes no hold")
 
@@ -143,6 +147,16 @@ func ArchiveLoopFor(stateDir, note string, now time.Time, check func(File) error
 	a := Archive{Version: 1, At: now.UTC(), Note: note, Hold: f.Summary(), ContinuedIn: continuedIn}
 	if old, err := LoadArchive(stateDir); err == nil && old != nil {
 		a.At = old.At
+		if old.ContinuedIn != nil {
+			// A loop continued in one successor is never claimed by another,
+			// and archiving it again by hand keeps its successor.
+			if continuedIn != nil && filepath.Clean(old.ContinuedIn.StateDir) != filepath.Clean(continuedIn.StateDir) {
+				return Archive{}, f, ErrContinuedElsewhere
+			}
+			if continuedIn == nil {
+				a.ContinuedIn = old.ContinuedIn
+			}
+		}
 	}
 	b, err := json.MarshalIndent(a, "", "  ")
 	if err != nil {
