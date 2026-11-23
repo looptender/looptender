@@ -13,7 +13,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
-import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, archivedLine, shortNote } from "./status-details";
+import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, archivedLine } from "./status-details";
 import { SetupPanel } from "./setup-panel";
 import { SetupStyles } from "./setup-style";
 import { AttachPanel } from "./attach-panel";
@@ -167,6 +167,8 @@ function ToggleButton({ loop, threadId, onDone, compactResume = false }: { loop:
   // to its primary, so pausing it is allowed, but only after it is said which
   // loop and which thread are meant.
   const watching = !paused && !loop.supervising;
+  // A full-width 44 px Pause is one stray tap away, and only a person at a terminal undoes it: on a phone, ask first, as for another thread's loop.
+  const askFirst = watching || isPhone();
   const act = () => {
     setBusy(true);
     setError("");
@@ -186,15 +188,15 @@ function ToggleButton({ loop, threadId, onDone, compactResume = false }: { loop:
         cannot tell a click from the supervised session. */}
     {paused
       ? <ResumeNote loop={loop} compact={compactResume} />
-      : watching && confirming
+      : askFirst && confirming
         ? <span role="group" aria-label={`Confirm pausing ${loop.loop}`} style={{ display: "grid", gap: 8 }}>
-            <span>Pause loop {loop.loop}? {loop.details?.targetThread ? `It supervises ${loop.details.targetThread}, not this thread.` : `Its current target is ${loop.details?.targetAdapter ?? loop.target}, not this thread.`}</span>
+            <span>Pause loop {loop.loop}? {!watching ? "A person resumes it from a terminal." : loop.details?.targetThread ? `It supervises ${loop.details.targetThread}, not this thread.` : `Its current target is ${loop.details?.targetAdapter ?? loop.target}, not this thread.`}</span>
             <span className="kg-actions" style={actionsStyle}>
               <button type="button" {...kg} disabled={busy} onClick={act} style={buttonStyle}>Pause loop {loop.loop}</button>
               <button type="button" {...kg} disabled={busy} onClick={() => setConfirming(false)} style={buttonStyle}>Cancel</button>
             </span>
           </span>
-        : <button type="button" {...kg} aria-label={`${watching ? "Pause…" : "Pause"} ${loop.loop}`} disabled={busy} onClick={watching ? () => setConfirming(true) : act} style={buttonStyle}>{watching ? "Pause…" : "Pause"}</button>}
+        : <button type="button" {...kg} aria-label={`${askFirst ? "Pause…" : "Pause"} ${loop.loop}`} disabled={busy} onClick={askFirst ? () => setConfirming(true) : act} style={buttonStyle}>{askFirst ? "Pause…" : "Pause"}</button>}
     {error && <span role="alert">{error}</span>}
   </>;
 }
@@ -312,7 +314,7 @@ function CardLoop({ loop, name, threadId, refresh, failed, created, showName, co
     {showName && <strong style={{ fontSize: 12 }}>{name}</strong>}
     <ReferenceDetails loop={loop} name={name} />
     <ContextRow icon="Repeat" label={failed ? "looptender: status unavailable (previous snapshot)" : created ?? label(loop)}
-      title={boundedTitle(describe(loop).join("\n"), 800)} trailing={loop.handoffs > 0 ? `${loop.handoffs} handoffs` : undefined}
+      title={boundedTitle(describe(loop).filter(line => !line.startsWith("Note: ")).join("\n"), 800)} trailing={loop.handoffs > 0 ? `${loop.handoffs} handoffs` : undefined}
       action={<>{!failed && created !== KEEPING_GOING && <ToggleButton loop={loop} threadId={threadId} onDone={refresh} compactResume={compactResume} />}</>} />
     {!failed && <BuildFreshness loop={loop} />}
     {!failed && <Reasons loop={loop} />}
@@ -343,7 +345,8 @@ function CardRow({ threadId }: { threadId: string }) {
 // length a person reads. Everything in it is also in the expanded details, so
 // nothing is reachable only by hover.
 function summaryTitle(loops: LoopView[]): string {
-  return boundedTitle(loops.map(l => [label(l), ...reasonLines(l.controlState, l.note, l.details)].join("\n")).join("\n\n"), 600);
+  // Never the raw note: it is an agent's free text. The expanded details carry it.
+  return boundedTitle(loops.map(l => [label(l), ...reasonLines(l.controlState, null, l.details)].join("\n")).join("\n\n"), 600);
 }
 
 // The one reason worth a few words beside the state on a collapsed phone chip:
@@ -356,7 +359,8 @@ function shortReason(loop: LoopView): string {
   const wait = d?.limitWait;
   if (wait && wait.state !== "none" && !wait.resetPassed) return "waiting on a usage limit";
   if (d?.disk) return "disk low";
-  if (loop.controlState === "awaiting user" && loop.note) return shortNote(loop.note, 36);
+  // A fixed phrase: the note is an agent's free text and may carry paths, ids or names; the expanded details hold it.
+  if (loop.controlState === "awaiting user") return "waiting for a person";
   return "";
 }
 

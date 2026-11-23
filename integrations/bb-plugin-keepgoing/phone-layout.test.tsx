@@ -25,7 +25,7 @@ const done = (...uis: { lifecycle: { unmount(): void } }[]) => { for (const u of
 test("the collapsed chip says the state and, when a person is needed, the reason, in words and not only in a tooltip", async () => {
   const cases: [object, string][] = [
     [loop({}, { disk: { level: "low", message: "the volume is filling" } }), "looptender: enabled · disk low"],
-    [loop({ controlState: "awaiting user", note: "Needs a decision on scope." }), "looptender: awaiting user · Needs a decision on scope."],
+    [loop({ controlState: "awaiting user", note: "Needs a decision in /private/example/path." }), "looptender: awaiting user · waiting for a person"],
     [loop({ controlState: "awaiting user", note: "x" }, { deadline: { at: "2026-01-01T00:00:00Z", reached: true } }), "looptender: awaiting user · deadline passed"],
     [loop({}, { sends: { max: 40, used: 40, remaining: 0, reached: true } }), "looptender: enabled · send limit reached"],
     [loop({}, { limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false } }), "looptender: enabled · waiting on a usage limit"],
@@ -45,14 +45,19 @@ test("the collapsed chip says the state and, when a person is needed, the reason
 test("a differing build says so in two words on the chip; a long note is cut", async () => {
   const ui = mount([loop({ controlState: "paused" }, { runtime: { ...base.runtime, recordedBuild: "v0.2.0-dev.1111111", binaryComparison: "different" } })]);
   try { await ui.summary.findByRole("button", { name: "looptender: paused · build differs" }); } finally { done(ui.summary, ui.details); }
-  const long = mount([loop({ controlState: "awaiting user", note: "A very long reason that goes on and on about the release scope and more. " .repeat(4) })]);
-  try { const chip = await long.summary.findByRole("button", { name: /^looptender: awaiting user · A very long reason/ }); assert.ok((chip.textContent ?? "").length < 80); } finally { done(long.summary, long.details); }
+  const long = mount([loop({ controlState: "awaiting user", note: "SECRET-PATH /private/example " .repeat(8) })]);
+  try {
+    const chip = await long.summary.findByRole("button", { name: "looptender: awaiting user · waiting for a person" });
+    assert.equal(/SECRET-PATH/.test(chip.title), false, "the raw note is not in the chip's title");
+    assert.equal(/SECRET-PATH/.test(long.summary.container.textContent ?? ""), false);
+    assert.ok(await long.details.findByText(/SECRET-PATH/), "the expanded details carry the note");
+  } finally { done(long.summary, long.details); }
 });
 
 test("phone rules: 44 px targets and readable text under a coarse pointer or narrow screen, applied to every plugin control", async () => {
   const ui = mount([loop()]);
   try {
-    const pause = await ui.details.findByRole("button", { name: "Pause example-loop" });
+    const pause = await ui.details.findByRole("button", { name: "Pause… example-loop" });
     const css = ui.details.container.querySelector("style")?.textContent ?? "";
     assert.match(css, /@media \(max-width: 640px\), \(pointer: coarse\)/);
     assert.match(css, /button\[data-kg\]:not\(\.kgs-chip\) \{ min-height: 44px !important/);
@@ -74,7 +79,7 @@ test("expanded banner: reason and Pause first, full-width under the text; the re
     assert.deepEqual(order, ["Why", "kg-actions", "details"]);
     // Pause is not beside the text in a flex row.
     assert.equal((section as HTMLElement).style.display, "grid");
-    assert.ok(section.querySelector(".kg-actions button")?.textContent === "Pause");
+    assert.ok(section.querySelector(".kg-actions button")?.textContent === "Pause…");
   } finally { done(narrow.summary, narrow.details); }
   phone = false;
   const wide = mount([l]);
@@ -105,4 +110,21 @@ test("two Pause buttons of a confirm group are separated, and each is a target",
     assert.equal(row.style.gap, "8px");
     assert.deepEqual([...row.querySelectorAll("button")].map(b => b.textContent), ["Pause loop example-loop", "Cancel"]);
   } finally { done(ui.summary, ui.details); }
+});
+
+test("on a phone Pause is two steps even for this thread's own loop; on a wide screen it is one", async () => {
+  phone = true;
+  const ui = mount([loop()]);
+  const calls: unknown[] = [];
+  try {
+    const first = await ui.details.findByRole("button", { name: "Pause… example-loop" });
+    first.click();
+    const group = await ui.details.findByRole("group", { name: "Confirm pausing example-loop" });
+    assert.deepEqual([...group.querySelectorAll("button")].map(b => b.textContent), ["Pause loop example-loop", "Cancel"]);
+    assert.match(group.textContent ?? "", /resumes it from a terminal/);
+  } finally { done(ui.summary, ui.details); }
+  phone = false;
+  const wide = mount([loop()]);
+  try { assert.ok(await wide.details.findByRole("button", { name: "Pause example-loop" })); } finally { done(wide.summary, wide.details); phone = true; }
+  void calls;
 });
