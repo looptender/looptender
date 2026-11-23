@@ -39,8 +39,10 @@ anything to that session.
    looptender init --agent sessionpipe --session claude-code:<id>
    ```
 
-   The loop is named after the session (`observed-claude-code-` and the id's
-   first eight letters or digits) unless you pass `--name`. It writes a
+   The loop is named after the session unless you pass `--name`:
+   `observed-claude-code-` and eight hex digits of a SHA-256 of the session id,
+   for example `observed-claude-code-b3bc2e23`, so sessions started together
+   still get different names. It writes a
    private setup directory and prints three commands. The events
    file defaults to `sessionpipe-events.jsonl` inside that directory, which
    only you can read. Pass `--events-file PATH` to choose another, and

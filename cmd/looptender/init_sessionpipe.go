@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,31 +24,22 @@ func sessionpipeSinkLine(eventsFile string) string {
 }
 
 // sessionpipeLoopName is the default loop name for a session: "observed-",
-// its harness and the first eight letters or digits of its id, so two
-// sessions of one harness get different names. It is a valid loop name for
-// any session config.SplitSessionpipeRef accepts.
+// its harness and the first eight hex digits of the SHA-256 of its id. A
+// digest, not the id's start: time-ordered ids (UUIDv7, as Codex uses) share
+// their first characters for sessions started close together, as a batch of
+// lanes is. The name is stable per session and carries none of the id. It is
+// a valid loop name for any session config.SplitSessionpipeRef accepts.
 func sessionpipeLoopName(session string) string {
 	harness, id, ok := config.SplitSessionpipeRef(session)
 	if !ok {
 		return "observed-session"
 	}
-	var short []byte
-	for _, c := range []byte(strings.ToLower(id)) {
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
-			short = append(short, c)
-			if len(short) == 8 {
-				break
-			}
-		}
-	}
+	sum := sha256.Sum256([]byte(id))
 	name := "observed-" + harness
 	if len(name) > 55 {
 		name = strings.TrimRight(name[:55], "-")
 	}
-	if len(short) > 0 {
-		name += "-" + string(short)
-	}
-	return name
+	return name + "-" + hex.EncodeToString(sum[:4])
 }
 
 // initSessionpipeReport is init --json for an observed sessionpipe target.

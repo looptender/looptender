@@ -76,7 +76,7 @@ func TestInitSessionpipeInteractive(t *testing.T) {
 		t.Fatalf("exit %d: %s\n%s", code, errOut.String(), out.String())
 	}
 	cfg, err := config.Load(filepath.Join(dir, config.FileName))
-	if err != nil || cfg.Loop.Name != "observed-claude-code-8c132906" || cfg.Loop.Agent.Sessionpipe.Session != spSession {
+	if err != nil || cfg.Loop.Name != "observed-claude-code-b3bc2e23" || cfg.Loop.Agent.Sessionpipe.Session != spSession {
 		t.Fatalf("%v %+v", err, cfg)
 	}
 }
@@ -156,15 +156,15 @@ func TestInitSessionpipeNamesTheLoopAfterTheSession(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	var r initSessionpipeReport
-	if err := json.Unmarshal(out.Bytes(), &r); err != nil || r.Loop != "observed-example-demo" {
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil || r.Loop != "observed-example-2a97516c" {
 		t.Fatalf("%+v %v", r, err)
 	}
 	for session, want := range map[string]string{
-		spSession:                        "observed-claude-code-8c132906",
-		"codex:01A10860-a43f":            "observed-codex-01a10860",
-		"gemini-cli:...":                 "observed-gemini-cli",
+		spSession:                        "observed-claude-code-b3bc2e23",
+		"codex:01A10860-a43f":            "observed-codex-f623c93a",
+		"gemini-cli:...":                 "observed-gemini-cli-ab5df625",
 		"not a session":                  "observed-session",
-		strings.Repeat("h", 64) + ":abc": "observed-" + strings.Repeat("h", 46) + "-abc",
+		strings.Repeat("h", 64) + ":abc": "observed-" + strings.Repeat("h", 46) + "-ba7816bf",
 	} {
 		got := sessionpipeLoopName(session)
 		if got != want {
@@ -173,5 +173,11 @@ func TestInitSessionpipeNamesTheLoopAfterTheSession(t *testing.T) {
 		if len(got) > 64 || strings.Trim(got, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
 			t.Errorf("%q: %q is not a valid loop name", session, got)
 		}
+	}
+	// Time-ordered ids of sessions started together share their first
+	// characters; their names must still differ, and carry none of the id.
+	a, b := "codex:01a10860-a43f-7ce2-b12f-a7911ae8a880", "codex:01a10860-a43f-7ce2-b12f-a7911ae8a881"
+	if na, nb := sessionpipeLoopName(a), sessionpipeLoopName(b); na == nb || strings.Contains(na, "01a10860") || na != "observed-codex-57737761" || nb != "observed-codex-3572b0c2" {
+		t.Errorf("two sessions sharing their id's start: %q and %q", na, nb)
 	}
 }
