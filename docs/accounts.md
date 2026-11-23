@@ -220,6 +220,20 @@ card has more than one ("opus-example: Five-hour allowance was out when read
 newest reading, or that no reading is recorded.
 Being out is information, not a warning.
 
+### Which login: a fingerprint, never the identity
+
+Unreleased.
+- **What is kept.** For a Claude entry, `accounts check` also keeps a fingerprint of the login that `claude auth status --json` reports: the account's email address and organisation, keyed with the catalog's own salt (HMAC-SHA256, 128 bits). The identity is never stored, printed or sent. The fingerprint means nothing outside this catalog. It is kept in `account-logins.json` beside the catalog, a record older builds never read, with the check that saw it and the different fingerprint before it, if the login changed.
+- **What it says.** Each account card (`accounts list --json`, the panel's Accounts) gains `login`:
+  - `same_as`: "Same login as <other label>." when another entry of that provider has the same fingerprint, so two entries are one subscription;
+  - `changed`: "A different login than when checked on <date>." when the entry's directory was logged in to another account since its previous check, so its label may name the old login;
+  - `checked` otherwise.
+- **When it is checked.**
+  - Each `accounts check`.
+  - Automatically when a check finds the loop's active target at a usage limit and its route states the entry (`account`). That runs the same cheap check (the CLI's `--version` and `auth status`, with no model request), at most once an hour per entry, and never on a dry run.
+  - A route that states no account is not checked, because which login it uses is not known.
+- **Codex** reports no identity in `login status`, so its entries have no fingerprint.
+
 ### Routes with unknown accounts
 
 Only catalog entries count as selected accounts in the Accounts page and

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/looptender/looptender/internal/accounts"
@@ -237,6 +238,7 @@ func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, n
 		return accounts.ErrChanged
 	}
 	effective := os.Environ()
+	fingerprint := ""
 	o := accounts.Observation{Revision: selected.Revision, Context: selected.Context, At: now, Auth: "unavailable", Caller: caller}
 	bound, accepted := accounts.Bound(f, selected, effective)
 	if !accountContextExists(selected) || !accepted {
@@ -271,6 +273,9 @@ func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, n
 			o.Version = v
 			if selected.Provider == "claude-code" {
 				raw, callErr = call("auth", "status", "--json")
+				if callErr == nil {
+					fingerprint = accounts.LoginFingerprint(f, selected.Provider, claudeLoginIdentity(raw))
+				}
 			} else {
 				raw, callErr = call("login", "status")
 			}
@@ -289,7 +294,7 @@ func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, n
 			}
 		}
 	}
-	return accounts.Update(dir, func(latest *accounts.File) error {
+	err = accounts.Update(dir, func(latest *accounts.File) error {
 		e := accounts.Find(latest, id)
 		if e == nil || e.Revision != selected.Revision || e.Context != selected.Context {
 			return accounts.ErrChanged
@@ -315,6 +320,37 @@ func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, n
 		}
 		return nil
 	})
+	if err == nil && fingerprint != "" && o.Auth == "reported_present" {
+		// Best effort: the check itself is recorded either way.
+		_ = accounts.RecordLogin(dir, id, fingerprint, now)
+	}
+	return err
+}
+
+// claudeLoginIdentity is the account identity in claude auth status
+// --json, for a fingerprint only: it is never stored, printed or compared
+// outside accounts.LoginFingerprint. "" when it is not logged in or names
+// no account.
+func claudeLoginIdentity(raw []byte) string {
+	var s struct {
+		LoggedIn *bool `json:"loggedIn"`
+		Email    any   `json:"email"`
+		OrgID    any   `json:"orgId"`
+		OrgUUID  any   `json:"orgUuid"`
+	}
+	if json.Unmarshal(raw, &s) != nil || s.LoggedIn == nil || !*s.LoggedIn {
+		return ""
+	}
+	email, _ := s.Email.(string)
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return ""
+	}
+	org, _ := s.OrgID.(string)
+	if org == "" {
+		org, _ = s.OrgUUID.(string)
+	}
+	return email + "\n" + strings.TrimSpace(org)
 }
 func accountLogin(e accounts.Entry, o accounts.Observation, raw []byte, err error) accounts.Observation {
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -398,3 +434,33 @@ func accountContextExists(e accounts.Entry) bool {
 	}
 	return true
 }
+
+// limitAccountCheckSpacing is how long a login fingerprint stays current
+// for the check at a usage limit.
+const limitAccountCheckSpacing = time.Hour
+
+// tickAccountCheck is a check's login check of the account its route
+// states, at a usage limit: the same check as accounts check, at most once
+// an hour per account. Its result is only the catalog's own record.
+func tickAccountCheck(ctx context.Context, id string) {
+	dir, err := accountsDirectory(limitAccountsDir)
+	if err != nil {
+		return
+	}
+	f, err := accounts.Load(dir)
+	if err != nil {
+		return
+	}
+	e := accounts.Find(&f, id)
+	if e == nil || e.Provider != "claude-code" || (e.Attempt != nil && time.Since(e.Attempt.At) < limitAccountCheckSpacing) {
+		return
+	}
+	_ = accountCheck(ctx, dir, id, "", limitAccountRun, time.Now().UTC())
+}
+
+// limitAccountsDir and limitAccountRun are the catalog and the command
+// runner of the check at a limit; tests replace them.
+var (
+	limitAccountsDir string
+	limitAccountRun  accountRun = accountExec
+)

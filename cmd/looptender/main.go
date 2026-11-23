@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -138,10 +139,38 @@ func main() {
 	// Headless turns run through a copy of this binary on every platform;
 	// this returns immediately for ordinary CLI invocations.
 	runner.MaybeRunTurn()
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(context.Background())
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		s := <-signals
+		receivedSignal.Store(signalName(s))
+		cancel()
+	}()
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	cancel()
 	os.Exit(code)
+}
+
+// receivedSignal is the signal that ended this process's command, if one
+// did; the daemon's stopped record says it.
+var receivedSignal atomic.Value
+
+func stopSignal() string {
+	s, _ := receivedSignal.Load().(string)
+	return s
+}
+
+func signalName(s os.Signal) string {
+	switch s {
+	case os.Interrupt:
+		return "SIGINT"
+	case syscall.SIGTERM:
+		return "SIGTERM"
+	case syscall.SIGHUP:
+		return "SIGHUP"
+	}
+	return "other"
 }
 
 type env struct {

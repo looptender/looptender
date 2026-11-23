@@ -210,6 +210,9 @@ func doctor(e env, args []string, run doctorRun) int {
 		}
 		r.ControlState = ctl.Summary()
 		r.add("control", "ok", "Control state: "+r.ControlState+".", "")
+		if j := readLaunchJob(cfg.Loop.StateDir); j != nil {
+			r.add("daemon.launch_job", "ok", "The daemon runs as the "+j.Kind+" job "+j.Label+", outside BB, so it keeps running when BB quits.", "End it with "+launchStopCommand(j.Kind, j.Label)+" or by terminating its PID.")
+		}
 		r.Archived, r.ArchiveLapsed = loopArchive(cfg.Loop.StateDir, ctl)
 		if a := r.Archived; a != nil {
 			r.add("loop.archived", "ok", "The loop is archived "+archiveSince(a)+": it is listed apart, needs nobody and is checked by no daemon; warnings about its routes are not given.", "")

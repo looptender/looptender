@@ -75,6 +75,11 @@ type Options struct {
 	Now          time.Time
 	DryRun       bool            // decide and record; send nothing and run no probes
 	BacklogQuery prbacklog.Query // nil uses fixed read-only gh query when opted in
+	// AccountCheck runs the accounts catalog's own login check (the CLI's
+	// version and auth status: no model request) of an entry, so its login
+	// fingerprint is current. Called when the active target is at a usage
+	// limit and its route states the entry; nil checks nothing.
+	AccountCheck func(ctx context.Context, account string)
 	Fingerprint  func([]string) (string, error)
 	NewAdapter   factory.Func
 	Probe        ProbeFunc
@@ -918,6 +923,7 @@ func (t *tick) run() error {
 		r := obs.ResetsAt.UTC()
 		res.ResetsAt = &r
 	}
+	t.limitAccountCheck(agent, obs)
 	inWindow, why, err := window.Inside(loop.Window, t.now)
 	if err != nil {
 		return err
