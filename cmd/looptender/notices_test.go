@@ -178,3 +178,132 @@ func TestNoticesAreBounded(t *testing.T) {
 		t.Errorf("%d bytes", len(b))
 	}
 }
+
+// sizeWithoutNotices is a reply's size less its notices, which are held to
+// their own bound here; the rest is what the response-size tests compare with
+// dockResponseMargin.
+func sizeWithoutNotices(t *testing.T, body []byte) int {
+	t.Helper()
+	var v struct {
+		Notices json.RawMessage `json:"notices"`
+	}
+	_ = json.Unmarshal(body, &v)
+	if len(v.Notices) > maxNoticesBytes {
+		t.Errorf("notices are %d bytes, over their %d", len(v.Notices), maxNoticesBytes)
+	}
+	return len(body) - len(v.Notices)
+}
+
+// allKindsLoops is one loop for each kind of notice, built with the given
+// last-check time, so a test can move the check without moving the condition.
+func allKindsLoops(check time.Time) []dockLoop {
+	since := noticeNow.Add(-3 * time.Hour)
+	reset := time.Date(2026, 11, 28, 4, 0, 0, 0, time.UTC)
+	mk := func(key string) dockLoop {
+		l := noticeLoop(key, "example-"+key)
+		l.LastCheck.At = &check
+		return l
+	}
+	asked := mk("l1")
+	asked.Waiting = &dockWaiting{Kind: "asked", Since: &since}
+	limit := mk("l2")
+	limit.State = "waiting_on_limit"
+	limit.LimitWait = &dockLimitWait{ResetsAt: &reset}
+	gone := mk("l3")
+	gone.Supervisor = "not_answering"
+	lane := mk("l4")
+	lane.LanesFailed = "1 lane failed"
+	held := mk("l5")
+	held.Hold = dockHoldState{State: "held", Since: &since}
+	refused := mk("l6")
+	refused.BuildFreshness = &buildFreshness{State: freshRefused}
+	adopted := mk("l7")
+	adopted.BuildFreshness = &buildFreshness{State: freshUpdated, SwitchedAt: &since}
+	disk := mk("l8")
+	disk.DiskSpace = &dockDiskSpace{Level: "low"}
+	bound := mk("l9")
+	bound.Limits = []dockLimit{{Label: "Messages sent", Reached: true}}
+	return []dockLoop{asked, limit, gone, lane, held, refused, adopted, disk, bound}
+}
+
+func noticeIDSet(loops []dockLoop, now time.Time) map[string]string {
+	out := map[string]string{}
+	for _, n := range reportNotices(loops, []dockNeed{{Key: "l1"}}, now) {
+		out[n.Kind+"/"+n.Loop] = n.ID
+	}
+	return out
+}
+
+func TestEveryKindHasAnIDThatHoldsAcrossChecks(t *testing.T) {
+	first := noticeIDSet(allKindsLoops(noticeNow.Add(-20*time.Minute)), noticeNow)
+	if len(first) < 9 {
+		t.Fatalf("every kind should be present: %v", first)
+	}
+	// Checks keep running while a condition lasts: ten minutes, an hour, a day later.
+	for _, later := range []time.Duration{10 * time.Minute, time.Hour, 24 * time.Hour} {
+		again := noticeIDSet(allKindsLoops(noticeNow.Add(-20*time.Minute+later)), noticeNow.Add(later))
+		for k, id := range first {
+			if again[k] != id {
+				t.Errorf("%s: id moved with the check, %q then %q (after %v)", k, id, again[k], later)
+			}
+		}
+	}
+}
+
+func TestAConditionThatEndsAndComesBackReadsAsTheSameIDForAReaderThatForgets(t *testing.T) {
+	// A reader diffs each read against the last one, not against every id it
+	// has ever seen (docs/dock.md): so an id that is gone and back is new to
+	// it. That needs the id to be the same for the same condition.
+	a := noticeIDSet(allKindsLoops(noticeNow), noticeNow)
+	gone := reportNotices(nil, nil, noticeNow.Add(time.Hour))
+	if len(gone) != 0 {
+		t.Fatal("nothing when no loop has a condition")
+	}
+	b := noticeIDSet(allKindsLoops(noticeNow.Add(2*time.Hour)), noticeNow.Add(2*time.Hour))
+	for k, id := range a {
+		if b[k] != id {
+			t.Errorf("%s: the same condition has two ids: %q %q", k, id, b[k])
+		}
+	}
+}
+
+func TestANewConditionOfAKindWithATimeIsANewID(t *testing.T) {
+	a := noticeIDSet(allKindsLoops(noticeNow), noticeNow)
+	loops := allKindsLoops(noticeNow)
+	newer := noticeNow.Add(-time.Minute)
+	reset := time.Date(2026, 12, 5, 4, 0, 0, 0, time.UTC)
+	loops[0].Waiting = &dockWaiting{Kind: "asked", Since: &newer}
+	loops[1].LimitWait = &dockLimitWait{ResetsAt: &reset}
+	loops[4].Hold.Since = &newer
+	loops[6].BuildFreshness = &buildFreshness{State: freshUpdated, SwitchedAt: &newer}
+	b := noticeIDSet(loops, noticeNow)
+	for _, k := range []string{"needs_you/l1", "limit/l2", "hold/l5", "install/l7"} {
+		if a[k] == "" || a[k] == b[k] {
+			t.Errorf("%s: a new condition kept its id: %q %q", k, a[k], b[k])
+		}
+	}
+}
+
+func TestNoticesNeverCarryAThreadIDInDisguise(t *testing.T) {
+	l := noticeLoop("l1", "bb-thr-ab12cd34ef")
+	l.Supervisor = "not_answering"
+	l.DiskSpace = &dockDiskSpace{Level: "low"}
+	l.LanesFailed = "1 lane failed"
+	ns := reportNotices([]dockLoop{l}, nil, noticeNow)
+	if len(ns) != 3 {
+		t.Fatalf("%v", ns)
+	}
+	b, _ := json.Marshal(ns)
+	for _, bad := range []string{"bb-thr-", "thr_", "ab12cd34ef"} {
+		if strings.Contains(string(b), bad) {
+			t.Errorf("carries %q: %s", bad, b)
+		}
+	}
+	got := map[string]string{}
+	for _, n := range ns {
+		got[n.Kind] = n.Text
+	}
+	if got[noticeLane] != "A loop has a failed lane." || got[noticeSupervisor] != "Nothing is supervising a loop." || got[noticeDisk] != "The disk holding a loop's state is filling." {
+		t.Errorf("%v", got)
+	}
+}

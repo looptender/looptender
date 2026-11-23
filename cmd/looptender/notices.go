@@ -79,17 +79,44 @@ func noticeID(kind, key string, since time.Time, what string) string {
 
 func noticeTime(t time.Time) string { return t.Format("Mon 15:04") }
 
+// noticeName is the name a notice uses: the loop's display name, or "a loop"
+// when all there is is a slug that carries a thread ID in disguise
+// (`bb-thr-…` or `thr_…`), which must not reach a banner.
+func noticeName(name string) string {
+	low := strings.ToLower(name)
+	if strings.Contains(low, "bb-thr-") || strings.Contains(low, "thr_") || strings.Contains(low, "thr-") {
+		return "A loop"
+	}
+	return name
+}
+
+// noticeMid is the name inside a sentence: "a loop" for the generic one.
+func noticeMid(name string) string {
+	if name == "A loop" {
+		return "a loop"
+	}
+	return name
+}
+
+// archivedLoop says whether the loop is archived (dockLoop.Archived, once the
+// archive exists); a stub until then.
+func archivedLoop(l dockLoop) bool { return false }
+
 // noticesOf is the notices for one loop. needs says it is under Needs you.
 func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 	var out []panelNotice
+	name := noticeName(l.Name)
+	mid := noticeMid(name)
 	add := func(n panelNotice) {
-		n.Loop, n.Name = l.Key, l.Name
+		n.Loop, n.Name = l.Key, name
 		if n.Since.IsZero() {
 			n.Since = now
 		}
 		out = append(out, n)
 	}
-	name := l.Name
+	if archivedLoop(l) {
+		return nil // an archived loop is out of the way: nothing about it is news
+	}
 	checked := time.Time{}
 	if l.LastCheck.At != nil {
 		checked = *l.LastCheck.At
@@ -123,16 +150,22 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 			text = name + " reached a usage limit and moved to its next route."
 			cause = "usage limit, moved on"
 		}
-		since := checked
-		add(panelNotice{Kind: noticeLimit, Severity: sevHigh, Since: since, ID: noticeID(noticeLimit, l.Key, since, ""),
+		// Keyed on the window the limit is in (when it resets), which holds for
+		// as long as the limit does; never on the last check, which moves.
+		window := time.Time{}
+		if lw := l.LimitWait; lw != nil && lw.ResetsAt != nil {
+			window = *lw.ResetsAt
+		}
+		add(panelNotice{Kind: noticeLimit, Severity: sevHigh, Since: checked, ID: noticeID(noticeLimit, l.Key, window, map[bool]string{true: "moved", false: ""}[l.Away != nil]),
 			Text: text, Group: noticeLimit + "." + cause, GroupText: "{n} loops stopped: " + cause + "."})
 	}
 	if l.Supervisor == "not_answering" && l.State != "stopped" && l.State != "finished" && l.State != "off" && l.State != "paused" {
-		add(panelNotice{Kind: noticeSupervisor, Severity: sevHigh, Since: checked, ID: noticeID(noticeSupervisor, l.Key, checked, ""),
-			Text: "Nothing is supervising " + name + ".", Group: noticeSupervisor, GroupText: "{n} loops have no supervisor."})
+		add(panelNotice{Kind: noticeSupervisor, Severity: sevHigh, Since: checked, ID: noticeID(noticeSupervisor, l.Key, time.Time{}, ""),
+			Text: "Nothing is supervising " + mid + ".", Group: noticeSupervisor, GroupText: "{n} loops have no supervisor."})
 	}
 	if l.LanesFailed != "" {
-		add(panelNotice{Kind: noticeLane, Severity: sevNormal, Since: checked, ID: noticeID(noticeLane, l.Key, checked, ""),
+		// Not keyed on the check that found it: that moves at every check.
+		add(panelNotice{Kind: noticeLane, Severity: sevNormal, Since: checked, ID: noticeID(noticeLane, l.Key, time.Time{}, ""),
 			Text: name + " has a failed lane.", Group: noticeLane, GroupText: "{n} loops have a failed lane."})
 	}
 	if h := l.Hold; h.State == "held" && !needs && h.Since != nil {
@@ -143,7 +176,7 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 		switch {
 		case f.State == freshRefused:
 			add(panelNotice{Kind: noticeInstall, Severity: sevNormal, ID: noticeID(noticeInstall, l.Key, time.Time{}, "refused"),
-				Text: "The installed build was not adopted by " + name + ".", Group: noticeInstall + ".refused", GroupText: "{n} supervisors did not adopt the installed build."})
+				Text: "The installed build was not adopted by " + mid + ".", Group: noticeInstall + ".refused", GroupText: "{n} supervisors did not adopt the installed build."})
 		case f.State == freshUpdated && f.SwitchedAt != nil:
 			add(panelNotice{Kind: noticeInstall, Severity: sevInfo, Since: *f.SwitchedAt, ID: noticeID(noticeInstall, l.Key, *f.SwitchedAt, "adopted"),
 				Text: name + " switched to the installed build.", Group: noticeInstall + ".adopted", GroupText: "{n} supervisors switched to the installed build."})
@@ -155,7 +188,7 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 			sev = sevHigh
 		}
 		add(panelNotice{Kind: noticeDisk, Severity: sev, ID: noticeID(noticeDisk, l.Key, time.Time{}, d.Level),
-			Text: "The disk holding " + name + "'s state is " + map[bool]string{true: "nearly full", false: "filling"}[d.Level == "critical"] + ".", Group: noticeDisk + "." + d.Level,
+			Text: "The disk holding " + mid + "'s state is " + map[bool]string{true: "nearly full", false: "filling"}[d.Level == "critical"] + ".", Group: noticeDisk + "." + d.Level,
 			GroupText: "{n} loops are on a disk that is " + map[bool]string{true: "nearly full", false: "filling"}[d.Level == "critical"] + "."})
 	}
 	for _, lim := range l.Limits {
@@ -208,6 +241,7 @@ func noticeGroupSentence(groupText string, n int) string {
 	return strings.ReplaceAll(groupText, "{n}", fmt.Sprint(n))
 }
 
-// dockResponseMargin is the size the page's reply may reach before it is
-// near its bound: three quarters of it, and the notices' own allowance.
-const dockResponseMargin = dockMaxResponse*3/4 + maxNoticesBytes
+// dockResponseMargin is the size the page's reply may reach, not counting
+// notices, before it is near its bound: three quarters of it. The notices
+// have their own bound (maxNoticesBytes), so other fields cannot grow into it.
+const dockResponseMargin = dockMaxResponse * 3 / 4
