@@ -1065,6 +1065,10 @@ type panelListLoop struct {
 	// read found running its checks (dockLoop.Supervisor).
 	CheckedAt  *time.Time `json:"checkedAt,omitempty"`
 	Supervisor string     `json:"supervisor"`
+	// UsageLimit is the provider usage limit on the loop's active target, with
+	// labels and placeholders only: no path, ID or real command
+	// (usageLimitStatus.public).
+	UsageLimit *usageLimitStatus `json:"usageLimit,omitempty"`
 	// NoProgress is the no-progress flag's sentence when it is raised, in
 	// the page's words; empty otherwise. It is never a need.
 	NoProgress string `json:"noProgress,omitempty"`
@@ -1127,6 +1131,7 @@ func buildPanelList(r dockReport) panelList {
 			row.NoProgress = np.Text
 		}
 		row.Reason, row.CheckedAt, row.Supervisor = l.Detail, l.LastCheck.At, l.Supervisor
+		row.UsageLimit = l.UsageLimit.public()
 		if w := l.Waiting; w != nil {
 			row.Reason = w.Reason
 			row.Waiting = &panelWaiting{Kind: w.Kind, By: w.By, Since: w.Since, AtLeast: w.SinceEvidence == "control_changed"}

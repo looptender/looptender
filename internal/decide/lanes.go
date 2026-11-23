@@ -32,6 +32,8 @@ type LaneFacts struct {
 	Retrying bool
 	// ResetsAt is when the provider says its limit resets, when it says.
 	ResetsAt time.Time
+	// Window is the usage window that resets at ResetsAt, when known.
+	Window LimitWindow
 }
 
 // LaneVerdict is what the facts allow.

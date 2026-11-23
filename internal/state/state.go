@@ -221,6 +221,10 @@ type File struct {
 	// check waited on, when it waited on one with a reset still ahead; zero
 	// otherwise. A daemon checks again at it.
 	LimitResetsAt time.Time `json:"limitResetsAt,omitempty"`
+	// UsageLimit is the provider usage limit the last check that observed the
+	// active target found on it, with its window; nil when that check found
+	// none. A held check observes nothing and leaves it as it was.
+	UsageLimit *UsageLimit `json:"usageLimit,omitempty"`
 	// LastTurnRetry is the last recovery made by retrying a failed turn.
 	LastTurnRetry *TurnRetry `json:"lastTurnRetry,omitempty"`
 	// Lanes is the record of lane recovery (bb.children.retry_errored). It
@@ -1380,4 +1384,19 @@ func (g RefusalGauge) InLastDay(now time.Time) (refused, recovered int) {
 type DaemonConfigUnavailable struct {
 	Since           time.Time `json:"since"`
 	ReportAttempted bool      `json:"reportAttempted"`
+}
+
+// UsageLimit is a provider usage limit observed on a target.
+type UsageLimit struct {
+	Target   string             `json:"target"`
+	Provider string             `json:"provider,omitempty"`
+	Window   decide.LimitWindow `json:"window,omitempty"`
+	ResetsAt time.Time          `json:"resetsAt"`
+	// ObservedAt is the check that found it.
+	ObservedAt time.Time `json:"observedAt"`
+	// ConfigDir is the CLAUDE_CONFIG_DIR the check ran under, when it was
+	// set: for a supervisor started from a BB thread, the directory BB runs
+	// its Claude threads with, so the login that reached the limit. Empty
+	// when unknown.
+	ConfigDir string `json:"configDir,omitempty"`
 }

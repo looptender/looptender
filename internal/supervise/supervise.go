@@ -178,12 +178,15 @@ type Result struct {
 	// rejected sends.
 	// LaneStop is what a stop that covers the lanes did on this check, by
 	// count (keepgoing stop --lanes).
-	LaneStop                *state.LaneStop `json:"laneStop,omitempty"`
-	ErroredChildren         int             `json:"erroredChildren,omitempty"`
-	ErroredChildrenPartial  bool            `json:"erroredChildrenPartial,omitempty"`
-	ChildErrorNote          bool            `json:"childErrorNote,omitempty"`
-	ChildErrorNoticeStopped bool            `json:"childErrorNoticeStopped,omitempty"`
-	Handoff                 *HandoffNote    `json:"handoff,omitempty"`
+	LaneStop               *state.LaneStop `json:"laneStop,omitempty"`
+	ErroredChildren        int             `json:"erroredChildren,omitempty"`
+	ErroredChildrenPartial bool            `json:"erroredChildrenPartial,omitempty"`
+	ChildErrorNote         bool            `json:"childErrorNote,omitempty"`
+	// LanesLimited is how many of the errored lanes this check's notice
+	// counted at a provider usage limit.
+	LanesLimited            int          `json:"lanesLimited,omitempty"`
+	ChildErrorNoticeStopped bool         `json:"childErrorNoticeStopped,omitempty"`
+	Handoff                 *HandoffNote `json:"handoff,omitempty"`
 	// OwnerMovedTo is the BB thread loop ownership moved to with a move the
 	// supervisor made in this check.
 	OwnerMovedTo string `json:"ownerMovedTo,omitempty"`
@@ -918,6 +921,7 @@ func (t *tick) run() error {
 		r := obs.ResetsAt.UTC()
 		res.ResetsAt = &r
 	}
+	t.noteUsageLimit(target, agent, obs)
 	inWindow, why, err := window.Inside(loop.Window, t.now)
 	if err != nil {
 		return err
@@ -1971,6 +1975,13 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 			text = prompt.ChildErrorsOnlyRetried(childErrors, t.decisionInput.Obs.ActiveChildren, t.lanesRetried)
 		} else {
 			text = prompt.WithChildErrorsRetried(text, childErrors, t.lanesRetried)
+		}
+		if childErrors > 0 {
+			// One line for lanes stopped by a usage limit, not one error each.
+			if n, until, w := t.limitedLanes(a, t.decisionInput.Obs.ErroredChildren); n > 0 {
+				text = prompt.WithLimitedLanes(text, n, until, w.Words())
+				t.res.LanesLimited = n
+			}
 		}
 		var backlogNotice *backlogDelivery
 		if d.Action == decide.Wake && !d.AssignmentWake && !text.NoticeOnly && loop.PRBacklog != nil {

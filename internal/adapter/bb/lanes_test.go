@@ -287,7 +287,13 @@ func TestDecodedFieldsAreAnAllowlist(t *testing.T) {
 	// from the bb thread show reply in children.go and kept in the loop's
 	// private lane-titles.json for the panel's identifier view. No decision,
 	// record, report or other file carries it.
-	displayOnly := map[string]string{"title": "children.go"}
+	//
+	// One use, display only: "label" is the provider's label for a blocked
+	// rate-limit window ("Weekly limit"), read from provider/rateLimits/updated
+	// in bb.go, kept only when it fits a short plain vocabulary
+	// (decide.CleanLimitWindow), and used only in the words status and the
+	// panel say about the limit. No decision reads it.
+	displayOnly := map[string]string{"title": "children.go", "label": "bb.go"}
 	allowed := strings.Fields(`
 		archivedAt attempt category code complete count createdAt cursor data decision deletedAt delivery
 		diagnostic error errorInfo hashRefs httpStatusCode id initiator interaction item itemId kind lastEventAt lastSeq
@@ -295,7 +301,7 @@ func TestDecodedFieldsAreAnAllowlist(t *testing.T) {
 		rateLimits resetsAt resetsAtMs retries retryOfRequestId retrySchema scannedAt seq status systemMessageKind
 		systemMessageSubject thread threadId turnSeq turnStartedMs type willRetry windows childOutcomeSeq blocked key lanes answeringRequest
 		evidence at class retryKnown activeBackgroundAgentCount turnStartSeq openTools toolsUncertain fallbackSeq turnRequests turnStarts
-		title`)
+		title label providerKey reachedReason window`)
 	want := map[string]bool{}
 	for _, tag := range allowed {
 		want[tag] = true

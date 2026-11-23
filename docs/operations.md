@@ -826,6 +826,31 @@ A question is the loop's record that it needs a person's decision. It is saved i
 
 `status` prints a `question:` line while one is open. The incident journal records `question_raised` and `question_withdrawn` control records, by ID only; `question_answered` is kept for the answer commands. A new question replaces an open one, which is recorded as withdrawn. A question whose situation has cleared, because the loop is running again, is withdrawn. Answering from the panel or with `client review|apply answer` is not built yet. Until it is, `keepgoing resume` withdraws the question and goes on: for `refused` the streak starts over and continuing starts again at 1 minute, and for `restricted` it is the one more try above.
 
+### Which limit, which account, and what you can do
+
+Unreleased. When a check finds the loop's active target at a provider usage limit, it records which window the provider says is blocked and when it resets (`usageLimit` in `state.json`), and `status` says it:
+
+    usage limit: weekly limit (all models) on primary (claude-code), resets 2026-11-28T04:00:00Z; seen at the check of …
+      account at the limit: Example A (the catalog entry for the Claude directory its check ran under)
+      other account: Example B (claude-code): <its last saved quota reading> (read 2 h ago)
+      other account: Example Codex (codex): …
+      you can: Log BB's Claude directory in to another Claude account that has quota, then quit and reopen BB …
+        CLAUDE_CONFIG_DIR=/private/example/claude-a claude auth login
+      you can: An armed takeover would move this work, with its lanes, to a new conversation on codex …
+        looptender fallbacks arm -c CONFIG
+
+- **The window** comes from BB's own rate-limit event: the provider's key for it (`five_hour`, `seven_day`, or one model's weekly window such as `seven_day_opus`), its label, and the reason the limit was reached. It is shown as "5-hour limit", "weekly limit (all models)" or "weekly limit for <model>". Values outside a short plain vocabulary are dropped. A model-specific window means other models of that account may still have quota.
+- **The account** is the [accounts catalog](accounts.md) entry the route states (`account`), or else the entry whose directory is the `CLAUDE_CONFIG_DIR` the check ran under. For a supervisor started from a BB thread, that is the directory BB starts its Claude threads with. Without either, the account is unknown and said to be.
+- **The other accounts** are the catalog's other entries of a supported provider, the same provider first, each with its last saved quota reading and that reading's age. Nothing is read from a provider for this; [read a quota](accounts.md#read-selected-context-subscription-quota) to refresh one.
+- **What you can do** is said in fixed words. looptender itself never logs in, switches an account or arms a takeover.
+  - For a BB Claude thread: the one command that logs BB's Claude directory in to another account. It moves every Claude thread BB runs, not only this loop's, and needs BB restarted, which stops supervisors started from BB threads, so run those as a service first.
+  - For a loop with no armed takeover, when the catalog has an account on another provider: that an armed takeover would move the work there, with `looptender fallbacks arm -c CONFIG`.
+- **Where it shows.**
+  - `status` (with real paths) and `status --json` (`usageLimit`).
+  - Client status and the panel (`usageLimit` on each loop): the loop reads "Waiting for a limit to reset" with the window and reset, and the coordinator's row adds how many of its lanes are in error.
+  - `panel list --json` (`usageLimit`, with labels and placeholders only: no path, ID or real command).
+- **Lanes.** When a coordinator's wake announces lanes newly in error, looptender reads those lanes (their status and the typed fields of their error events, at most 16, as lane recovery does) and adds one line: `[keepgoing:lanes-limited count=N resets=…]`, with how many are at a usage limit, which window, and until when. It does not retry, message or stop them.
+
 ### A long limit wait with no way out
 
 Released in v0.2.0; **offline fixtures only**. A provider limit with a reported reset is waited out without prompts when no handoff can happen: failover is off for that error class, or no fallback is confirmed. That wait can last days. When the reported reset is further away than `errors.report_wait_after` (default `6h`), looptender sends one `limit_wait` report for that wait, saying which target is waiting, when the limit resets and why no handoff is possible.

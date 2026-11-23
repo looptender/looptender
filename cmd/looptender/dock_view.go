@@ -261,20 +261,24 @@ type dockLoop struct {
 	// Decision is the last recorded check's action and fixed cause; Hold the
 	// hold in force; Device this computer; Lanes each lane of the last
 	// verified listing; Events the newest retained history entries.
-	Decision    dockDecision     `json:"decision"`
-	Hold        dockHoldState    `json:"hold"`
-	Device      dockDevice       `json:"device"`
-	Lanes       dockLanes        `json:"lanes"`
-	Events      dockEvents       `json:"events"`
-	Children    dockChildren     `json:"children"`
-	LastCheck   dockCheck        `json:"lastCheck"`
-	NextCheck   dockNext         `json:"nextCheck"`
-	Fallbacks   dockFallbacks    `json:"fallbacks"`
-	Chain       dockChain        `json:"chain"`
-	Limits      []dockLimit      `json:"limits"`
-	LimitWait   *dockLimitWait   `json:"limitWait,omitempty"`
-	Issues      []string         `json:"issues"`
-	Identifiers *dockIdentifiers `json:"identifiers,omitempty"`
+	Decision  dockDecision   `json:"decision"`
+	Hold      dockHoldState  `json:"hold"`
+	Device    dockDevice     `json:"device"`
+	Lanes     dockLanes      `json:"lanes"`
+	Events    dockEvents     `json:"events"`
+	Children  dockChildren   `json:"children"`
+	LastCheck dockCheck      `json:"lastCheck"`
+	NextCheck dockNext       `json:"nextCheck"`
+	Fallbacks dockFallbacks  `json:"fallbacks"`
+	Chain     dockChain      `json:"chain"`
+	Limits    []dockLimit    `json:"limits"`
+	LimitWait *dockLimitWait `json:"limitWait,omitempty"`
+	// UsageLimit is the provider usage limit on the active target, from
+	// client status: which window, until when, which account, the other
+	// configured accounts, and what a person can do.
+	UsageLimit  *usageLimitStatus `json:"usageLimit,omitempty"`
+	Issues      []string          `json:"issues"`
+	Identifiers *dockIdentifiers  `json:"identifiers,omitempty"`
 	// NoProgress is the no-progress flag, the same value status shows; nil
 	// when the loop's status could not be read. It is never a need.
 	NoProgress *noProgressView `json:"noProgress,omitempty"`
@@ -1309,6 +1313,12 @@ func dockWaitingOf(l dockLoop, need *dockNeed, st *statusOut, tl *timelineReport
 		}
 	case "waiting_on_limit":
 		w.Kind, w.By, w.Reason, w.Since, w.SinceEvidence = "limit", "check", "A provider usage limit, with no other route able to take over.", nil, ""
+		if u := l.UsageLimit; u != nil {
+			// Fixed words: the window's phrase and the reset time.
+			w.Reason = "A provider usage limit (" + u.Words + "), until " + u.ResetsAt.UTC().Format(time.RFC3339) + "."
+			at := u.ObservedAt
+			w.Since, w.SinceEvidence = &at, "limit_observed"
+		}
 		if st != nil && st.LimitWait.DetectedAt != nil {
 			w.Since, w.SinceEvidence = st.LimitWait.DetectedAt, "limit_detected"
 		}
@@ -1726,6 +1736,9 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		}
 		l.Moved = snap.Moved
 	}
+	if snap != nil {
+		l.UsageLimit = snap.UsageLimit
+	}
 	l.LastCheck = dockLastCheck(st, now, staleAfter)
 	l.NextCheck = dockNextCheck(snap, st, now)
 	l.Fallbacks = dockFallbackReadiness(st, in.Chain)
@@ -1845,6 +1858,15 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 				l.Detail += " Nobody was told: limit_wait was not among the reported events."
 			case "report_failed":
 				l.Detail += " Its limit_wait report failed; delivery is not confirmed."
+			}
+		case l.UsageLimit != nil && !l.UsageLimit.ResetPassed:
+			// A limit with a reset still ahead and no long-wait record: said
+			// as what it is, not as supervising.
+			u := l.UsageLimit
+			l.State, l.Phrase = "waiting_on_limit", "Waiting for a limit to reset"
+			l.Detail = "Its " + u.Words + " on " + u.Provider + " was reached; it resets in " + dockSpan(u.ResetsAt.Sub(now)) + ", at " + u.ResetsAt.UTC().Format(time.RFC3339) + ". The loop is not held and keeps checking."
+			if l.Children.Failed > 0 {
+				l.Detail += " " + dockPlural(l.Children.Failed, "of its lanes is", "of its lanes are") + " in error as well; lanes on the same account wait for the same reset."
 			}
 		case l.LastCheck.FailedInRow > 0:
 			l.State, l.Phrase, l.Detail = "checks_failing", "Checks are failing", "Checks are running but could not observe or act."
