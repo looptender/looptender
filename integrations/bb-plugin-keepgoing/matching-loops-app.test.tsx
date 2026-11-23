@@ -29,21 +29,21 @@ test("card retains retired, active and completed matches; pending controls follo
     assert.ok(region(retired.loop).getByText(/looptender resume -c "\/example\/retired-example\/looptender.yaml"/)); assert.equal(ui.queryAllByText(/A person resumes this/).length, 0);
     assert.ok(region(completed.loop).getByText("looptender: completed"));
     assert.equal(ui.queryByRole("button", { name: "Resume" }), null);
-    fireEvent.click(region(active.loop).getByRole("button", { name: "Pause" }));
+    fireEvent.click(region(active.loop).getByRole("button", { name: /^Pause / }));
     assert.deepEqual(calls, [{ configPath: active.configPath, action: "pause", managedId: active.managedId, expectedThreadId: "thr_example_matches" }]);
     loops = [completed, retired, active]; await ui.behavior.emitRealtime("changed", {});
-    assert.equal((region(active.loop).getByRole("button", { name: "Pause" }) as HTMLButtonElement).disabled, true);
+    assert.equal((region(active.loop).getByRole("button", { name: /^Pause / }) as HTMLButtonElement).disabled, true);
     loops = [completed, active]; await ui.behavior.emitRealtime("changed", {});
     assert.equal(ui.queryByRole("region", { name: `Loop ${retired.loop}` }), null);
-    assert.equal((region(active.loop).getByRole("button", { name: "Pause" }) as HTMLButtonElement).disabled, true);
+    assert.equal((region(active.loop).getByRole("button", { name: /^Pause / }) as HTMLButtonElement).disabled, true);
     resolve({ ok: true, message: "Paused" });
-    await waitFor(() => assert.equal((region(active.loop).getByRole("button", { name: "Pause" }) as HTMLButtonElement).disabled, false));
+    await waitFor(() => assert.equal((region(active.loop).getByRole("button", { name: /^Pause / }) as HTMLButtonElement).disabled, false));
     loops = [completed]; await ui.behavior.emitRealtime("changed", {});
-    assert.equal(ui.queryByRole("button", { name: "Pause" }), null);
+    assert.equal(ui.queryByRole("button", { name: /^Pause / }), null);
     loops = [active, retired]; await ui.behavior.emitRealtime("changed", {});
-    await ui.findByRole("button", { name: "Pause" });
+    await ui.findByRole("button", { name: /^Pause / });
     failed = true; await ui.behavior.emitRealtime("changed", {});
-    await ui.findByRole("alert"); assert.equal(ui.queryByRole("button", { name: "Pause" }), null);
+    await ui.findByRole("alert"); assert.equal(ui.queryByRole("button", { name: /^Pause / }), null);
     assert.ok(!ui.container.textContent?.includes("PRIVATE")); assert.equal(calls.length, 1);
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
@@ -59,7 +59,7 @@ test("banner counts all matches and expanded controls use each loop's configurat
     await summary.findByRole("button", { name: "looptender: 4 matching loops" });
     await details.findByRole("region", { name: `Loop ${second.loop}` });
     assert.equal(details.getAllByRole("region", { name: /^Loop / }).length, 4);
-    fireEvent.click(within(details.getByRole("region", { name: `Loop ${second.loop}` })).getByRole("button", { name: "Pause" }));
+    fireEvent.click(within(details.getByRole("region", { name: `Loop ${second.loop}` })).getByRole("button", { name: /^Pause / }));
     await waitFor(() => assert.equal(calls.length, 1));
     assert.deepEqual(calls[0], { configPath: second.configPath, action: "pause", managedId: second.managedId, expectedThreadId: props.threadId });
   } finally { summary.lifecycle.unmount(); details.lifecycle.unmount(); cleanup(); }
@@ -91,7 +91,7 @@ test("ambiguous saved setups do not gain new-thread Start or Stop through array 
   } });
   try {
     await ui.findByRole("region", { name: `Loop ${active.loop}` });
-    assert.equal(ui.getAllByRole("button", { name: "Pause" }).length, 2);
+    assert.equal(ui.getAllByRole("button", { name: /^Pause / }).length, 2);
     assert.equal(ui.queryByRole("button", { name: "Stop" }), null);
     assert.equal(ui.queryByRole("button", { name: "Start keeping this going" }), null);
   } finally { ui.lifecycle.unmount(); cleanup(); }
@@ -123,7 +123,7 @@ test("duplicate names have stable visible references and explicit path disclosur
       assert.ok(!ui.container.textContent?.includes(second.managedId));
       loops = [second, first]; await ui.behavior.emitRealtime("changed", {});
       assert.equal(region().getByText("Configuration reference").closest("details")!.open, true);
-      fireEvent.click(region().getByRole("button", { name: "Pause" }));
+      fireEvent.click(region().getByRole("button", { name: /^Pause / }));
       await waitFor(() => assert.equal(calls.length, 1));
       assert.deepEqual(calls[0], { configPath: second.configPath, action: "pause", managedId: second.managedId, expectedThreadId: threadId });
       // Removing a different match must not recycle reference 1 onto this record.

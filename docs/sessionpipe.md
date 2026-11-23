@@ -21,7 +21,48 @@ hooks (Claude Code, Codex, Gemini CLI, Antigravity, Devin and the others its
 README lists), including an interactive session looptender did not start and
 cannot reach. It reads one file and runs nothing during a check.
 
-### Set up an observed session
+### Try it in five minutes
+
+You need sessionpipe 0.18.0 or later with its hooks installed
+(`sessionpipe --version`; `sessionpipe install` if it was never run) and one
+Claude Code session of your own that you can type into. Nothing below sends
+anything to that session.
+
+1. **Find the session's id.** In that Claude Code session, type
+   `! echo $CLAUDE_CODE_SESSION_ID`. The session is `claude-code:` followed by
+   the id it prints. For another agent, take `session.id` from
+   `sessionpipe tail --tier 0 --json` while the session runs (the text form of
+   `tail` shows only the id's first characters).
+2. **Set up the loop.** At a terminal:
+
+   ```sh
+   looptender init --agent sessionpipe --name try-sessionpipe --session claude-code:<id>
+   ```
+
+   It writes a private setup directory and prints three commands. The events
+   file defaults to `sessionpipe-events.jsonl` inside that directory, which
+   only you can read. Pass `--events-file PATH` to choose another, and
+   `--non-interactive` (with `--json` for a script) to be asked nothing.
+3. **Add the sink.** Run the `sessionpipe sink add file:… --tier 0 --name looptender`
+   line that init printed, exactly as printed, once, at the computer's own
+   terminal. looptender never runs it: it changes sessionpipe's configuration,
+   which is yours. sessionpipe may first write what its outbox already holds;
+   looptender reads a backlog over several checks.
+4. **Check it.** Run the `doctor -c …` command init printed. Its checks go in
+   setup order (the sessionpipe command, its version, its hooks, the sink, the
+   events file) and its last line, `next`, names the first step that needs
+   you and what to do. Before the session's first event after the sink was
+   added, it says to send the session one message.
+5. **Start it.** Run the `start --foreground -c …` command init printed, then
+   use the session as usual: `looptender status -c …` in another terminal says
+   whether it is working, between turns or waiting on you, and that it is
+   observed, never woken. Stop with Ctrl-C, or `looptender stop -c …`, which
+   ends the checks and leaves the session alone.
+
+To undo it, remove the sink with `sessionpipe sink remove looptender` and
+delete the setup directory.
+
+### Set up an observed session by hand
 
 Requires sessionpipe 0.18.0 or later with its hooks installed for the agent
 (`sessionpipe install`). Add a tier-0 file sink once, at the computer's own
@@ -50,6 +91,8 @@ loop:
 
 There is no `prompt`: nothing is ever sent. `doctor -c looptender.yaml` checks
 the setup (below); `tick` and `daemon` then supervise it like any loop.
+`looptender init --agent sessionpipe` writes the same configuration for you
+and prints the sink line with your path.
 
 ### What it reads
 
@@ -118,16 +161,20 @@ alone.
 ### Doctor
 
 `doctor` runs only `sessionpipe --version` and `sessionpipe status --json`, and
-prints neither output, the events file's path, nor anything in it:
+prints neither output, the events file's path, nor anything in it. The checks
+run in setup order, and the last, `next`, names the first one that failed
+(an error before a warning) with its next step, or says every check passed:
 
 | Check | Fails when |
 | --- | --- |
 | `agent.<id>.observed` | never: it says the target is observed, never woken |
-| `agent.<id>.events_file` | the file is missing or not a regular file, or other users can write it (warning when they can read it). Windows reports the DACL check instead of mode bits |
+| `agent.<id>.cli` | the `sessionpipe` command is not found (warning: the file is still checked) |
 | `agent.<id>.version` | sessionpipe is older than 0.18.0 |
 | `agent.<id>.hooks` | sessionpipe has no current hooks for the session's harness |
 | `agent.<id>.sink` | no file sink writes the events file, or it sends above tier 0 (warning when it is paused) |
+| `agent.<id>.events_file` | the file is missing (a warning when the sink is set up and only no event was written yet) or not a regular file, or other users can write it (warning when they can read it). Windows reports the DACL check instead of mode bits |
 | `agent.<id>.limits` | never: it says usage and error classes are not read |
+| `agent.<id>.next` | some step above needs attention: it repeats that step's fix |
 
 Without the `sessionpipe` command, doctor warns and still checks the file.
 `--offline` runs nothing.

@@ -3,7 +3,7 @@
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
 import { BUILD_LABEL } from "./build-label.ts";
-import { isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
+import { recordsUnreadable, isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract } from "./host-contract.ts";
@@ -52,6 +52,7 @@ const statusSchema = z.object({
   targetAgent: agentRef.optional(),
   // Fields status adds later. Each is checked on its own in `lenient`: one that is
   // malformed is named in details.unparsed, never taken for "nothing to say".
+  archived: z.unknown().optional(), buildFreshness: z.unknown().optional(), noProgress: z.unknown().optional(),
   deadline: z.unknown().optional(), deadlineReached: z.unknown().optional(), sendAllowance: z.unknown().optional(), sendRecord: z.unknown().optional(), diskSpace: z.unknown().optional(), unreadable: z.unknown().optional(),
 });
 
@@ -73,11 +74,16 @@ const loopSchema = z.object({
   checkedAt: z.string().nullable(),
   handoffs: z.number(),
   fallbacks: z.string().nullable(),
+  // The looptender build this plugin was built from: the card's own code, apart from each supervisor's build.
+  pluginBuild: z.string().max(64).optional(),
 });
 export type LoopView = z.infer<typeof loopSchema>;
 
 const sendAllowanceShape = z.object({ max: z.number(), used: z.number().optional(), remaining: z.number().optional(), reached: z.boolean(), error: z.string().optional() });
 const unreadableShape = z.object({ file: z.string(), problem: z.string(), offset: z.number().optional(), remedy: z.string() });
+const noProgressShape = z.object({ availability: z.string(), text: z.string() });
+const archivedShape = z.object({ at: z.string(), note: z.string().optional(), hold: z.string().optional(), unreadable: z.boolean().optional() });
+const freshnessShape = z.object({ state: z.string(), text: z.string(), detail: z.string().optional(), command: z.string().optional(), action: z.string().optional() });
 const diskShape = z.object({ level: z.string(), message: z.string().optional() });
 
 /**
@@ -85,7 +91,7 @@ const diskShape = z.object({ level: z.string(), message: z.string().optional() }
  * and named in `unparsed`, so the card says it could not be read; it is never
  * dropped as though there were nothing to say, and never costs the loop.
  */
-function lenient(s: { control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown }) {
+function lenient(s: { archived?: unknown; buildFreshness?: unknown; noProgress?: unknown; control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown }) {
   const unparsed: string[] = [];
   const pick = <T>(name: string, schema: z.ZodType<T>, raw: unknown): T | undefined => {
     if (raw === undefined) return undefined;
@@ -94,6 +100,9 @@ function lenient(s: { control?: { supersededBy?: unknown }; deadline?: unknown; 
     unparsed.push(name);
     return undefined;
   };
+  const archived = pick("archived", archivedShape, s.archived);
+  const freshness = pick("buildFreshness", freshnessShape, s.buildFreshness);
+  const noProgress = pick("noProgress", noProgressShape, s.noProgress);
   const supersededBy = pick("supersededBy", z.string(), s.control?.supersededBy);
   const deadline = pick("deadline", z.string(), s.deadline);
   const deadlineReached = pick("deadlineReached", z.boolean(), s.deadlineReached);
@@ -110,7 +119,7 @@ function lenient(s: { control?: { supersededBy?: unknown }; deadline?: unknown; 
       if (unreadable.length !== s.unreadable.length) unparsed.push("unreadable");
     }
   }
-  return { supersededBy, deadline, deadlineReached, sends, sendRecord, disk, unreadable, unparsed };
+  return { archived, freshness, noProgress, supersededBy, deadline, deadlineReached, sends, sendRecord, disk, unreadable, unparsed };
 }
 
 const actionSchema = z.enum(["pause", "resume", "stop"]);
@@ -271,7 +280,11 @@ export default async function plugin(bb: BbPluginApi) {
       ...((f.disk?.level === "low" || f.disk?.level === "critical") && f.disk.message ? { disk: { level: f.disk.level, message: f.disk.message.slice(0, 400) } } : {}),
       ...(f.unreadable.length ? { unreadable: f.unreadable.slice(0, 8).map(u => ({ file: u.file.slice(0, 64), problem: u.problem.slice(0, 40), ...(u.offset !== undefined ? { offset: u.offset } : {}), remedy: u.remedy.slice(0, 1200) })) } : {}),
       ...(f.unparsed.length ? { unparsed: f.unparsed.slice(0, 8) } : {}),
+      ...(f.noProgress?.availability === "flagged" ? { noProgress: { text: f.noProgress.text.slice(0, 400) } } : {}),
+      ...(f.archived ? { archived: { at: f.archived.at.slice(0, 40), ...(f.archived.note ? { note: f.archived.note.slice(0, 300) } : {}), ...(f.archived.hold ? { hold: f.archived.hold.slice(0, 40) } : {}), ...(f.archived.unreadable ? { unreadable: true } : {}) } } : {}),
+      ...(f.freshness ? { buildFreshness: { state: f.freshness.state.slice(0, 24), text: f.freshness.text.slice(0, 200), ...(f.freshness.detail ? { detail: f.freshness.detail.slice(0, 600) } : {}), ...(f.freshness.command ? { command: f.freshness.command.slice(0, 400) } : {}), ...(f.freshness.action ? { action: f.freshness.action.slice(0, 300) } : {}) } } : {}),
     },
+    ...(BUILD_LABEL && isBuildLabel(BUILD_LABEL) ? { pluginBuild: BUILD_LABEL } : {}),
     loop: s.loop,
     configPath,
     controlState: s.controlState,
@@ -513,7 +526,7 @@ export default async function plugin(bb: BbPluginApi) {
       const [command, name, ...rest] = argv;
       if (command === "status" && name === undefined) {
         const { loops, errors } = await allLoops(null);
-        const lines = loops.map((l) => `${l.loop}\t${l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.details?.disk ? `\tdisk=${l.details.disk.level}` : ""}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
+        const lines = loops.map((l) => `${l.loop}\t${recordsUnreadable(l.details) ? "records unreadable" : l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.details?.disk ? `\tdisk=${l.details.disk.level}` : ""}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
         // Registered loops this plugin was not told about: said, with how to add one.
         let notShown = "";
         try {
