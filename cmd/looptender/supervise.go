@@ -855,6 +855,11 @@ type agentRef struct {
 	BBThread string `json:"bbThread,omitempty"`
 	Workdir  string `json:"workdir,omitempty"`
 	Model    string `json:"model,omitempty"`
+	// Session is a sessionpipe target's <harness>:<id>; Observed says the
+	// target is observed, never woken: looptender never sends to, wakes or
+	// stops it.
+	Session  string `json:"session,omitempty"`
+	Observed bool   `json:"observed,omitempty"`
 	// Account is the accounts-catalog entry the route names, as stated by
 	// a person, or the derived account context of one that names none. Only
 	// status sets it.
@@ -872,7 +877,10 @@ func refOf(a config.Agent) agentRef {
 		r.Workdir = a.Claude.Workdir
 	case a.Codex != nil:
 		r.Workdir = a.Codex.Workdir
+	case a.Sessionpipe != nil:
+		r.Session = a.Sessionpipe.Session
 	}
+	r.Observed = config.ObservedOnly(a.Adapter)
 	return r
 }
 
@@ -1005,13 +1013,20 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if out.TaskFile != "" {
 		fmt.Fprintf(w, " (%s)", out.TaskFile)
 	}
-	fmt.Fprintln(w, "; task text withheld")
+	if out.TaskSource == "none" {
+		fmt.Fprintln(w, "; an observed target is sent nothing")
+	} else {
+		fmt.Fprintln(w, "; task text withheld")
+	}
 	fmt.Fprintf(w, "primary:   %s\n", out.Primary)
 	fmt.Fprintf(w, "target:    %s", out.Target)
 	if st.Handoffs > 0 {
 		fmt.Fprintf(w, " (%d handoffs, last %s)", st.Handoffs, when(st.LastHandoffAt))
 	}
 	fmt.Fprintln(w)
+	if out.TargetAgent.Observed {
+		fmt.Fprintln(w, "observed:  "+sessionpipeObservedNotice)
+	}
 	if s := out.TargetSession; s != nil {
 		fmt.Fprintf(w, "session:   %s", s.State)
 		if s.ID != "" {
@@ -1500,6 +1515,9 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		out.NewThreads.Active = &created
 	}
 	out.TaskSource = "inline"
+	if config.ObservedOnly(l.Adapter) {
+		out.TaskSource = "none"
+	}
 	if l.PromptFile != "" {
 		out.TaskSource, out.TaskFile = "file", l.PromptFile
 	}
