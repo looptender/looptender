@@ -9,9 +9,6 @@ import (
 	"github.com/looptender/looptender/internal/hostcheck"
 )
 
-// hostReaders reads this computer's session and load; tests replace it.
-var hostReaders = hostcheck.System
-
 // hostStatus is what status, doctor and the panel say about the computer
 // the supervisor runs on.
 type hostStatus struct {
@@ -25,7 +22,7 @@ func readHost(ctx context.Context) hostStatus {
 	hostCache.Lock()
 	defer hostCache.Unlock()
 	if hostCache.at.IsZero() || time.Since(hostCache.at) > hostCacheFor {
-		hostCache.h = hostStatus{Session: hostReaders.ReadSession(ctx), Load: hostReaders.ReadLoad()}
+		hostCache.h = hostStatus{Session: hostcheck.System.ReadSession(ctx), Load: hostcheck.System.ReadLoad()}
 		hostCache.at = time.Now()
 	}
 	return hostCache.h

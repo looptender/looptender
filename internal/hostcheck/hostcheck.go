@@ -12,7 +12,9 @@ package hostcheck
 
 import (
 	"context"
+	"os"
 	"runtime"
+	"testing"
 	"time"
 )
 
@@ -63,8 +65,46 @@ type Readers struct {
 	MemoryFreePercent func() int
 }
 
-// System is the readers of this computer.
+// System is the readers of this computer, read at each use. Tests pin it
+// (PinForTests); a program started by tests with FixedEnv set to 1 reads
+// Fixed instead, so a loaded test machine changes nothing it decides.
 var System = systemReaders()
+
+// FixedEnv, set to 1 in the environment of a program that tests start,
+// makes it read Fixed. It is for test harnesses only: it hides this
+// computer's real load and session.
+const FixedEnv = "LOOPTENDER_TEST_FIXED_HOST"
+
+func init() { System = fromEnv(os.Getenv, System) }
+
+// fromEnv is Fixed when FixedEnv is 1, else sys.
+func fromEnv(get func(string) string, sys Readers) Readers {
+	if get(FixedEnv) == "1" {
+		return Fixed()
+	}
+	return sys
+}
+
+// Fixed is a computer with its session available and a light load.
+func Fixed() Readers {
+	return Readers{
+		Keychain:          func(context.Context) error { return nil },
+		Resolve:           func(context.Context) error { return nil },
+		Console:           func() (bool, bool) { return true, true },
+		LoadAverage:       func() (float64, error) { return 1, nil },
+		Cores:             func() int { return 8 },
+		MemoryFreePercent: func() int { return 50 },
+	}
+}
+
+// PinForTests makes System r, for the rest of a test binary or until pinned
+// again. It panics outside a test binary.
+func PinForTests(r Readers) {
+	if !testing.Testing() {
+		panic("hostcheck: PinForTests called outside a test binary")
+	}
+	System = r
+}
 
 // ReadSession reads the session, each part within Bound.
 func (r Readers) ReadSession(ctx context.Context) Session {

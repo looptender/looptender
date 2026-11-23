@@ -89,3 +89,18 @@ func TestSystemReadersAnswer(t *testing.T) {
 		t.Fatal("the session reading was not bounded")
 	}
 }
+
+// A program started by tests with FixedEnv=1 reads the fixed computer, and
+// no other value or an unset variable changes what it reads.
+func TestTheFixedEnvironmentPinsAProgramsReadings(t *testing.T) {
+	sys := Readers{LoadAverage: func() (float64, error) { return 999, nil }, Cores: func() int { return 1 }}
+	for v, overloaded := range map[string]bool{"1": false, "": true, "0": true, "yes": true} {
+		r := fromEnv(func(string) string { return v }, sys)
+		if got := r.ReadLoad().Level == LoadOverloaded; got != overloaded {
+			t.Errorf("%s=%q: overloaded %v", FixedEnv, v, got)
+		}
+	}
+	if s := Fixed().ReadSession(context.Background()); !s.Available || Fixed().ReadLoad().Level != LoadOK {
+		t.Fatal("the fixed computer is not available and light")
+	}
+}

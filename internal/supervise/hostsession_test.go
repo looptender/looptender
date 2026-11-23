@@ -20,8 +20,8 @@ func setHost(t *testing.T, sessionOK bool, load float64) {
 // someone is at the console, and the load. It forgets any console user seen.
 func setHostConsole(t *testing.T, keychainOK, console bool, load float64) {
 	t.Helper()
-	old := hostReaders
-	t.Cleanup(func() { hostReaders = old; consoleSeen.seen = false })
+	old := hostcheck.System
+	t.Cleanup(func() { hostcheck.PinForTests(old); consoleSeen.seen = false })
 	consoleSeen.seen = false
 	sessionOK := keychainOK
 	r := old
@@ -34,7 +34,7 @@ func setHostConsole(t *testing.T, keychainOK, console bool, load float64) {
 	}
 	r.LoadAverage = func() (float64, error) { return load, nil }
 	r.Cores = func() int { return 8 }
-	hostReaders = r
+	hostcheck.PinForTests(r)
 }
 
 // "Not logged in" while this computer's login session is gone for
@@ -111,9 +111,9 @@ func TestAConsoleUserWhoLeavesIsAnOutage(t *testing.T) {
 	setHostConsole(t, true, true, 1)
 	runTick(t, w, t0)
 	sent := len(p.sent)
-	r := hostReaders
+	r := hostcheck.System
 	r.Console = func() (bool, bool) { return false, true }
-	hostReaders = r
+	hostcheck.PinForTests(r)
 	p.obs = decide.Observation{State: decide.Error, ErrorClass: decide.ErrAuth}
 	if res := runTick(t, w, t0.Add(time.Hour)); res.Action != "none" || res.HostSession != "unavailable" || len(p.sent) != sent {
 		t.Fatalf("%+v", res)
