@@ -56,9 +56,22 @@ func itoa(n int) string {
 	return s
 }
 
+// patientStart lets a loaded machine take its time starting a wrapper. Start
+// abandons a turn whose wrapper has not taken the turn lock within
+// wrapperStartTimeout (ten seconds), and the turn then reads as crashed, which
+// is the behaviour handshake_test.go proves with a short limit. These tests
+// are about what a turn that does start does, not about that limit: on a
+// loaded Windows runner a start took 24 s and the turn read "crashed".
+func patientStart(t *testing.T) {
+	t.Helper()
+	previous := wrapperStartTimeout
+	wrapperStartTimeout = 90 * time.Second
+	t.Cleanup(func() { wrapperStartTimeout = previous })
+}
+
 func waitFor(t *testing.T, d Dir, want Phase) {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		if st, _ := d.Status(); st.Phase == want {
 			return
@@ -71,6 +84,7 @@ func waitFor(t *testing.T, d Dir, want Phase) {
 
 // These run on every platform, so the Windows wrapper path is covered.
 func TestTurnLifecycleOnThisPlatform(t *testing.T) {
+	patientStart(t)
 	dir := t.TempDir()
 	out := `{"type":"result","subtype":"success","is_error":false,"session_id":"00000000-0000-4000-8000-0000000000aa","result":"done"}`
 	c := NewClaude(config.Claude{CLI: helperCLI(t, out, 0, 0), Workdir: dir}, filepath.Join(dir, "target"))
@@ -85,22 +99,27 @@ func TestTurnLifecycleOnThisPlatform(t *testing.T) {
 }
 
 func TestTurnErrorAndStopOnThisPlatform(t *testing.T) {
+	patientStart(t)
 	dir := t.TempDir()
 	limited := `{"type":"result","subtype":"error_during_execution","is_error":true,"api_error_status":429}`
 	c := NewClaude(config.Claude{CLI: helperCLI(t, limited, 1, 0), Workdir: dir}, filepath.Join(dir, "target"))
-	c.Send(context.Background(), "go", adapter.ModeAuto)
+	if err := c.Send(context.Background(), "go", adapter.ModeAuto); err != nil {
+		t.Fatalf("send: %v", err)
+	}
 	waitFor(t, c.dir, Finished)
 	if obs, _ := c.Observe(context.Background()); obs.ErrorClass != decide.ErrRateLimit {
 		t.Errorf("%+v", obs)
 	}
 	dir2 := t.TempDir()
 	slow := NewClaude(config.Claude{CLI: helperCLI(t, "{}", 0, 30*time.Second), Workdir: dir2}, filepath.Join(dir2, "target"))
-	slow.Send(context.Background(), "go", adapter.ModeAuto)
+	if err := slow.Send(context.Background(), "go", adapter.ModeAuto); err != nil {
+		t.Fatalf("send: %v", err)
+	}
 	waitFor(t, slow.dir, Running)
 	if err := slow.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for {
 		st, _ := slow.dir.Status()
 		if st.Phase != Running {
