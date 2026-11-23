@@ -2,6 +2,7 @@ import { publishReference } from "./registry-host.ts";
 import type { Publication } from "./registry-contract.ts";
 import { execFile } from "node:child_process";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { homedir } from "node:os";
 import { realpath } from "node:fs/promises";
 import { z } from "zod";
 import { refusesFlag, withClientFlag } from "./client-flag.ts";
@@ -15,8 +16,10 @@ import { durationMs, type Bounds } from "./new-thread-contract.ts";
 // plugin reads one line of it, for a failure, and never logs it.
 export type Execute = (bin: string, args: string[], input: string, threadId: string, signal?: AbortSignal) => Promise<{ code: number; data: unknown; emptyStdout?: boolean; timedOut?: boolean; stderr?: string }>;
 export const EXECUTE_TIMEOUT_MS = 20_000;
-// Bounded output and duration; task text travels only through stdin. Neither
-// command output nor child-process errors are logged or included in errors.
+// Bounded output and duration; task text travels only through stdin. Command
+// output is never logged. A failed setup command returns exactly one line of its
+// error output (see firstErrorLine: not a warning, home directory masked, bounded)
+// and its exit status; child-process errors are never included.
 export const execute: Execute = (bin, args, input, threadId, signal) => new Promise((resolve) => {
   const child = execFile(bin, args, { timeout: EXECUTE_TIMEOUT_MS, maxBuffer: 1 << 20, signal, env: { ...process.env, BB_THREAD_ID: threadId } }, (error, stdout, stderr) => {
     let data: unknown = null;
@@ -35,15 +38,23 @@ export const execute: Execute = (bin, args, input, threadId, signal) => new Prom
  */
 export function firstErrorLine(stderr: string | undefined): string {
   for (const raw of (stderr ?? "").split("\n")) {
-    const line = raw.replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]/g, " ").trim();
-    if (line && !/^warning:/i.test(line)) return line.length > 200 ? `${line.slice(0, 197)}...` : line;
+    let line = raw.replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]/g, " ").trim();
+    if (!line || /^warning:/i.test(line)) continue;
+    // The person's home directory is not shown: paths read from it as "~".
+    const home = homedir();
+    if (home.length > 1) line = line.split(home).join("~");
+    return line.length > 200 ? `${line.slice(0, 197)}...` : line;
   }
   return "";
 }
 function failureOf(result: { code: number; timedOut?: boolean; stderr?: string }, parsedOk: boolean): SetupFailure {
   const line = firstErrorLine(result.stderr);
   if (result.timedOut) return { kind: "timeout", seconds: Math.round(EXECUTE_TIMEOUT_MS / 1000) };
-  if (/already exists?/i.test(line)) return { kind: "exists", ...(line ? { line } : {}) };
+  // A directory that is already there fails with "mkdir ...: file exists" before
+  // anything is written. "setup files may already exist" is the opposite: init
+  // could not report after writing, so this attempt may have written files.
+  if (/may already exist/i.test(line)) return { kind: "written", ...(line ? { line } : {}) };
+  if (/file exists|already exists/i.test(line)) return { kind: "exists", ...(line ? { line } : {}) };
   if (result.code !== 0) return { kind: "exit", code: Math.min(255, Math.max(0, result.code)), ...(line ? { line } : {}) };
   return { kind: "output", ...(parsedOk ? {} : line ? { line } : {}) };
 }

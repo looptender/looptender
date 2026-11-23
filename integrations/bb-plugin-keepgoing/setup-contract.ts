@@ -104,7 +104,7 @@ export function refusalMessage(r: Refusal, command: "init" | "start"): string {
  * these fields cross back from the host, never the command's other output.
  */
 export const failureSchema = z.object({
-  kind: z.enum(["timeout", "exit", "output", "exists"]),
+  kind: z.enum(["timeout", "exit", "output", "exists", "written"]),
   seconds: z.number().int().positive().max(3600).optional(),
   code: z.number().int().min(0).max(255).optional(),
   line: z.string().max(240).optional(),
@@ -125,6 +125,10 @@ export function failureMessage(f: SetupFailure, creating: boolean, name?: string
         : `The preview timed out: the looptender command was still running after ${f.seconds ?? 20} s and was stopped. Nothing was created. The machine may be busy; try again, and if it keeps timing out check \`looptender doctor\`.`;
     case "exists":
       return `A setup${name ? ` named ${name}` : ""} already exists on this host${f.line ? ` (looptender said: ${f.line})` : ""}. Review or remove it, or choose another loop name. Nothing was created by this ${creating ? "attempt" : "preview"}.`;
+    case "written":
+      // init says it may have written files before it failed: only a creation can have.
+      if (!creating) return failureMessage({ ...f, kind: "exit", code: f.code ?? 1 }, false, name);
+      return `The looptender command failed after it may have written files${f.line ? ` (looptender said: ${f.line})` : ""}. A switched-off setup${name ? ` named ${name}` : ""} may have been written: refresh status and review or remove it before trying again. The plugin saved nothing.`;
     case "exit":
       return `${what} failed: the looptender command exited with status ${f.code ?? 1}${f.line ? ` and said: ${f.line}` : " and printed nothing to explain it"}. ${creating ? "The plugin saved nothing." : "Nothing was created."}`;
     default:

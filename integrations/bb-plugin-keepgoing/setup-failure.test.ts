@@ -44,3 +44,13 @@ test("a host call that ran out of time says so; any other unexpected error says 
   r = await controller(async () => { throw Object.assign(new Error("PRIVATE"), { name: "WeirdError" }); }).call(preview);
   assert.match(r.message, /failed unexpectedly \(WeirdError\)/); assert.ok(!r.message.includes("PRIVATE")); assert.ok(!/may (already )?exist/.test(r.message));
 });
+
+test("a possible write is said as one on a creation and as a plain failure on a preview", () => {
+  const f = { kind: "written", line: "init: could not write JSON result; setup files may already exist" } as const;
+  const create = failureMessage(f, true, "example-loop");
+  assert.match(create, /may have written files/); assert.match(create, /switched-off setup named example-loop may have been written: refresh status and review or remove it/);
+  assert.ok(!/Nothing was created/.test(create));
+  const preview = failureMessage(f, false, "example-loop");
+  assert.match(preview, /exited with status 1/); assert.ok(!/may have been written/.test(preview));
+  assert.match(failureMessage({ kind: "exists", line: "init: mkdir /p/x: file exists" }, true, "example-loop"), /already exists on this host/);
+});
