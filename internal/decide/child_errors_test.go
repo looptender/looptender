@@ -162,3 +162,25 @@ func TestChildHashes(t *testing.T) {
 		t.Fatalf("empty: %v", got)
 	}
 }
+
+// A pending usage warning wakes a parent idle on purpose while its children
+// run, once the wake spacing allows, and never one that is busy.
+func TestUsageWarningWakesAnIdleParentWithChildrenRunning(t *testing.T) {
+	in := Input{Obs: Observation{State: Idle, ActiveChildren: 2}, Control: Control{Enabled: true}, InWindow: true, UsageWarning: true,
+		SinceWake: 2 * time.Hour, MinWakeInterval: time.Hour}
+	if d := Decide(in); d.Action != Wake || !d.UsageWarningWake || d.Reason != UsageWarningWakeReason {
+		t.Fatalf("%+v", d)
+	}
+	for name, change := range map[string]func(*Input){
+		"spaced":     func(i *Input) { i.SinceWake = time.Minute },
+		"queued":     func(i *Input) { i.Obs.Queued = 1 },
+		"active":     func(i *Input) { i.Obs.State = Active },
+		"no warning": func(i *Input) { i.UsageWarning = false },
+	} {
+		c := in
+		change(&c)
+		if d := Decide(c); d.UsageWarningWake {
+			t.Fatalf("%s: %+v", name, d)
+		}
+	}
+}

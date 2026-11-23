@@ -98,6 +98,9 @@ public struct PanelList: Decodable, Equatable {
     /// The installed CLI's build, shortened by the CLI; absent when it has no
     /// version or from a CLI that predates it.
     public var installedBuild: String? = nil
+    /// Events to tell the person about, the same list the panel page reads.
+    /// Absent from a CLI that predates it.
+    public var notices: [PanelNotice]? = nil
     /// "Build X installed … · N supervisors on it · M older"; absent from a
     /// CLI that predates it.
     public var buildFreshness: PanelFreshnessSummary? = nil
@@ -183,6 +186,8 @@ public enum MenuCommand: Equatable {
     case openPanelWithChanges
     /// Runs `keepgoing panel stop`. Supervision is not affected.
     case stopPanel
+    /// Turns one kind of notification on or off. Runs no CLI command.
+    case toggleNoticeKind(String)
     /// Relaunches the menu from the installed build. Runs no CLI command.
     case relaunchMenu
     /// Turns "Update the menu automatically" on or off. Runs no CLI command.
@@ -207,6 +212,16 @@ public enum MenuCommand: Equatable {
     case quit
 }
 
+/// Semantic tint for a row's symbol. Shape and text still carry the meaning
+/// without colour; `.needsYou` is reserved for states that wait on a person.
+public enum Tone: Equatable {
+    case supervising
+    case needsYou
+    case limit
+    case failing
+    case quiet
+}
+
 public struct MenuRow: Equatable {
     public enum Kind: Equatable { case action, loop, status, separator }
     public let kind: Kind
@@ -225,6 +240,8 @@ public struct MenuRow: Equatable {
     public let command: MenuCommand?
     /// A loop's choices, shown as its submenu.
     public var submenu: [MenuRow] = []
+    /// Semantic tint for `symbol`; `.quiet` stays a system-coloured template.
+    public var tone: Tone = .quiet
     public var isEnabled: Bool { command != nil || !submenu.isEmpty }
 }
 
@@ -246,6 +263,13 @@ public enum MenuReading: Equatable {
     case unsupported
     /// The CLI could not be run, timed out or answered something unreadable.
     case unavailable
+}
+
+/// What the menu shows of its notifications.
+public struct NoticeView: Equatable {
+    public let recent: [RecentNotice]
+    public let on: [String: Bool]
+    public init(recent: [RecentNotice], on: [String: Bool]) { self.recent = recent; self.on = on }
 }
 
 /// What the menu says about its own update.
@@ -283,6 +307,15 @@ public enum MenuBuilder {
         "outside_hours": "moon", "paused": "pause.circle", "off": "circle", "stopped": "stop.circle", "finished": "checkmark.circle",
     ]
 
+    /// Semantic tint per state, matching every key in `symbols`. Only
+    /// `waiting_for_you` maps to `.needsYou`; routine quiet states stay in the
+    /// system colour.
+    public static let tones: [String: Tone] = [
+        "waiting_for_you": .needsYou, "unknown": .quiet, "checks_failing": .failing,
+        "not_checked_recently": .quiet, "waiting_on_limit": .limit, "supervising": .supervising,
+        "outside_hours": .quiet, "paused": .quiet, "off": .quiet, "stopped": .quiet, "finished": .quiet,
+    ]
+
     /// Shortened in the middle: loop names often share a beginning, so the
     /// end is what tells them apart.
     static func shortened(_ text: String, to limit: Int) -> String {
@@ -312,13 +345,35 @@ public enum MenuBuilder {
         return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
-    static func action(_ title: String, _ command: MenuCommand, symbol: String, help: String, detail: String = "") -> MenuRow {
+    static func action(_ title: String, _ command: MenuCommand, symbol: String, help: String, detail: String = "", tone: Tone = .quiet) -> MenuRow {
         MenuRow(kind: .action, title: title, detail: detail, symbol: symbol, accessibilityLabel: detail.isEmpty ? title : title + ", " + detail,
-                accessibilityHelp: help, toolTip: "", command: command)
+                accessibilityHelp: help, toolTip: "", command: command, tone: tone)
     }
     static let separator = MenuRow(kind: .separator, title: "", detail: "", symbol: "", accessibilityLabel: "", accessibilityHelp: "", toolTip: "", command: nil)
     static func status(_ text: String) -> MenuRow {
         MenuRow(kind: .status, title: text, detail: "", symbol: "", accessibilityLabel: text, accessibilityHelp: "", toolTip: "", command: nil)
+    }
+
+    /// The Recent section (the last ten events, pushed or not, with their age)
+    /// and the per-kind settings.
+    static func noticeRows(_ view: NoticeView, now: Date) -> [MenuRow] {
+        var rows: [MenuRow] = []
+        if !view.recent.isEmpty {
+            rows.append(separator)
+            rows.append(status("Recent"))
+            for r in view.recent.prefix(NoticeTracker.maxRecent) {
+                rows.append(status(r.text + " · " + age(now.timeIntervalSince(r.at)).replacingOccurrences(of: "Read ", with: "")))
+            }
+        }
+        let toggles = NoticeKinds.all.map { entry -> MenuRow in
+            let on = view.on[entry.kind] ?? false
+            return action(entry.label, .toggleNoticeKind(entry.kind), symbol: on ? "checkmark.circle" : "circle",
+                          help: "Turns the notification for this on or off. It is still listed under Recent.", detail: on ? "on" : "off")
+        }
+        let parent = MenuRow(kind: .action, title: "Notify me when…", detail: "", symbol: "bell", accessibilityLabel: "Notify me when",
+                             accessibilityHelp: "Chooses which events are pushed as notifications.", toolTip: "", command: nil, submenu: toggles)
+        rows.append(parent)
+        return rows
     }
 
     /// The menu's own update: the offer when the installed build differs (and
@@ -351,7 +406,7 @@ public enum MenuBuilder {
     /// in place and the status line says a read is under way. `panel` is the
     /// panel server's status when it was read; the row that stops it is there
     /// only while it is running.
-    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil) -> MenuModel {
+    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil, notices: NoticeView? = nil) -> MenuModel {
         // The first row is always there and always tries, whatever was read.
         var rows = [action("Open looptender Panel", .openPanel, symbol: "macwindow", help: "Opens the looptender panel in your browser.")]
         var badge = ""
@@ -375,7 +430,7 @@ public enum MenuBuilder {
             if let needs = needsLine(held: held, unread: list.unread) {
                 // The symbol says which it is: a person is needed, or only
                 // that something could not be read.
-                rows.append(action(needs, .openPanel, symbol: held > 0 ? "exclamationmark.circle.fill" : "questionmark.circle", help: "Opens the panel on what needs you."))
+                rows.append(action(needs, .openPanel, symbol: held > 0 ? "exclamationmark.circle.fill" : "questionmark.circle", help: "Opens the panel on what needs you.", tone: held > 0 ? .needsYou : .quiet))
                 badge = list.needsYou > 99 ? "99+" : String(list.needsYou)
                 iconLabel = "looptender, " + needs
             } else if !list.allClear {
@@ -404,10 +459,11 @@ public enum MenuBuilder {
                 let target = targetText(loop)
                 let fresh = freshnessMark(loop)
                 let shown = [phrase, target, build, fresh].filter { !$0.isEmpty }.joined(separator: " · ")
-                rows.append(MenuRow(kind: .loop, title: short, detail: shown, symbol: symbols[loop.needsYou && loop.state == "paused" ? "waiting_for_you" : loop.state] ?? "questionmark.circle",
+                let stateKey = loop.needsYou && loop.state == "paused" ? "waiting_for_you" : loop.state
+                rows.append(MenuRow(kind: .loop, title: short, detail: shown, symbol: symbols[stateKey] ?? "questionmark.circle",
                                     accessibilityLabel: flag.isEmpty ? "\(name), \(shown)" : "\(name), \(Contract.text(loop.phrase)). \(flag)" + (target.isEmpty ? "" : ". Configured target: " + target) + (build.isEmpty ? "" : ". " + build),
                                     accessibilityHelp: choices.count > 1 ? "Shows what you can do with this loop." : "Opens this loop in the panel.",
-                                    toolTip: [short == name ? "" : name, target.isEmpty ? "" : "Configured target: " + target].filter { !$0.isEmpty }.joined(separator: "\n"), command: choices.count > 1 ? nil : .openLoop(key: loop.key), submenu: choices.count > 1 ? choices : []))
+                                    toolTip: [short == name ? "" : name, target.isEmpty ? "" : "Configured target: " + target].filter { !$0.isEmpty }.joined(separator: "\n"), command: choices.count > 1 ? nil : .openLoop(key: loop.key), submenu: choices.count > 1 ? choices : [], tone: tones[stateKey] ?? .quiet))
             }
             if list.canAll?.contains("pause") == true {
                 rows.append(action("Pause All Loops…", .reviewAll(.pause), symbol: "pause.circle",
@@ -447,6 +503,7 @@ public enum MenuBuilder {
             // stopping a loop; what happens to the loops is in the help.
             rows.append(action("Stop the Panel Page", .stopPanel, symbol: "xmark.circle", help: "Stops the panel's background process. Your loops keep running.", detail: stopsIn(panel.idleRemainingSeconds)))
         }
+        if let notices { rows.append(contentsOf: noticeRows(notices, now: now)) }
         if let update { rows.append(contentsOf: updateRows(update)) }
         rows.append(action("Quit looptender Menu", .quit, symbol: "power", help: "Quits this menu. Supervision keeps running."))
         rows.append(separator)
@@ -538,7 +595,7 @@ public enum MenuBuilder {
             for e in expects { arguments += ["--expect", e.key + "=" + e.expect] }
             if lanes { arguments.append("--lanes") }
             return arguments + ["--json"]
-        case .quit, .relaunchMenu, .toggleAutoUpdate: return nil
+        case .quit, .relaunchMenu, .toggleAutoUpdate, .toggleNoticeKind: return nil
         }
     }
 

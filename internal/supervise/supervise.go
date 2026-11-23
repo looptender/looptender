@@ -75,6 +75,9 @@ type Options struct {
 	Now          time.Time
 	DryRun       bool            // decide and record; send nothing and run no probes
 	BacklogQuery prbacklog.Query // nil uses fixed read-only gh query when opted in
+	// UsageRead reads an account's quota for the loop's usage watch; nil
+	// reads nothing, so the watch never warns.
+	UsageRead UsageReadFunc
 	// AccountCheck runs the accounts catalog's own login check (the CLI's
 	// version and auth status: no model request) of an entry, so its login
 	// fingerprint is current. Called when the active target is at a usage
@@ -208,6 +211,8 @@ type Result struct {
 	Yielded    bool            `json:"yielded,omitempty"`
 	DryRun     bool            `json:"dryRun,omitempty"`
 	Warnings   []string        `json:"warnings,omitempty"`
+	// UsageWarned: this check sent the usage watch's warning.
+	UsageWarned bool `json:"usageWarned,omitempty"`
 	// Outcome is the recorded result of the check: succeeded, failed or
 	// dry_run. It is empty when the check could not be recorded at all.
 	Outcome string `json:"outcome,omitempty"`
@@ -225,6 +230,8 @@ type Result struct {
 }
 
 type tick struct {
+	usageWarn  *usageWarning
+	usageView  *state.UsageWatch
 	assignment *assignmentDelivery
 	// ctl is the control record as this check loaded it.
 	ctl control.File
@@ -1074,6 +1081,7 @@ func (t *tick) run() error {
 		ObservedOnly: t.observedOnly(),
 	}
 	in.AssignmentReady = t.assignmentObservation(a, obs)
+	in.UsageWarning = t.usageWatchObservation()
 	in.IdleSpacing = t.idleSpacingInput(obs, ctl)
 	// A loop held for a restricted turn runs no check until a person resumes
 	// it. Reaching this point with that same turn still showing therefore
@@ -1999,6 +2007,7 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 				t.res.LanesLimited = n
 			}
 		}
+		text, usageCarried := t.usageWarningText(d, text)
 		var backlogNotice *backlogDelivery
 		if d.Action == decide.Wake && !d.AssignmentWake && !text.NoticeOnly && loop.PRBacklog != nil {
 			var allowed bool
@@ -2037,6 +2046,7 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 			return t.startRefused(refused.Reason)
 		}
 		t.childNoticeSent(childErrors, err)
+		t.usageWarningSent(usageCarried, err)
 		// The adapter was called: count the attempt whatever it returned, so a
 		// failing or unsupported send cannot repeat on every check outside the
 		// per-episode caps and spacing.

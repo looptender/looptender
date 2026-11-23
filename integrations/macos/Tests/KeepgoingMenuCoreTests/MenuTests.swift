@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import KeepgoingMenuCore
 
@@ -432,6 +433,39 @@ final class MenuTests: XCTestCase {
         let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
         let rows = MenuBuilder.build(.read(decoded, at: now), now: now).rows.filter { $0.kind == .loop }
         XCTAssertEqual(rows[0].symbol, "exclamationmark.circle.fill")
+        XCTAssertEqual(rows[0].tone, .needsYou)
         XCTAssertEqual(rows[1].symbol, "pause.circle")
+        XCTAssertEqual(rows[1].tone, .quiet)
+    }
+
+    func testEveryStateHasAToneAndOnlyWaitingForYouIsNeedsYou() {
+        XCTAssertEqual(Set(MenuBuilder.tones.keys), Set(MenuBuilder.symbols.keys))
+        for state in MenuBuilder.symbols.keys {
+            XCTAssertNotNil(MenuBuilder.tones[state], state)
+        }
+        XCTAssertEqual(MenuBuilder.tones.filter { $0.value == .needsYou }.map(\.key), ["waiting_for_you"])
+        XCTAssertEqual(MenuBuilder.tones["supervising"], .supervising)
+        XCTAssertEqual(MenuBuilder.tones["waiting_on_limit"], .limit)
+        XCTAssertEqual(MenuBuilder.tones["checks_failing"], .failing)
+        for quiet in ["unknown", "not_checked_recently", "outside_hours", "paused", "off", "stopped", "finished"] {
+            XCTAssertEqual(MenuBuilder.tones[quiet], .quiet, quiet)
+        }
+        let model = MenuBuilder.build(.read(three, at: now), now: now)
+        XCTAssertEqual(model.rows[0].tone, .quiet)
+        XCTAssertEqual(model.rows[1].tone, .needsYou)
+        let loops = model.rows.filter { $0.kind == .loop }
+        XCTAssertEqual(loops.map(\.tone), [.needsYou, .supervising, .quiet])
+        // A needs line for unread loops only is not amber.
+        let unreadOnly = MenuBuilder.build(.read(list([], needsYou: 1, unread: 1), at: now), now: now)
+        XCTAssertEqual(unreadOnly.rows[1].tone, .quiet)
+    }
+
+    func testBrandMarkIsATemplateImageAtTheRequestedSize() {
+        let standard = BrandMark.image(size: 18)
+        XCTAssertTrue(standard.isTemplate)
+        XCTAssertEqual(standard.size, NSSize(width: 18, height: 18))
+        let larger = BrandMark.image(size: 24)
+        XCTAssertTrue(larger.isTemplate)
+        XCTAssertEqual(larger.size, NSSize(width: 24, height: 24))
     }
 }
