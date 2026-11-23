@@ -611,11 +611,13 @@
   function saveNotify(body) {
     var form = state.server && state.server.notifyForm;
     if (!form) return Promise.resolve(null);
-    return fetch("api/v1/notify", { method: "POST", cache: "no-store", credentials: "same-origin",
+    var ctl = new AbortController(), timer = setTimeout(function () { ctl.abort(); }, 15000);
+    return fetch("api/v1/notify", { method: "POST", cache: "no-store", credentials: "same-origin", signal: ctl.signal,
       headers: { "Content-Type": "application/json", Accept: "application/json", "X-Keepgoing-Form": form }, body: JSON.stringify(body) })
       .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
       .then(function (shared) { if (state.data) state.data.notify = shared; return shared; })
-      .catch(function () { notice("notify", "That choice could not be saved. It stays as it was.", false); return null; });
+      .catch(function () { notice("notify", "That choice could not be saved. It stays as it was.", false); return null; })
+      .finally(function () { clearTimeout(timer); });
   }
   function noticeEntry(text, at) {
     state.notices.log.unshift({ text: String(text), at: at, unread: true });
