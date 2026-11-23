@@ -7,6 +7,7 @@ import {
   experimental_THREAD_INFO_ROW_GROUPS as ROW_GROUPS,
   experimental_ThreadContextCardRow as ContextRow,
   experimental_useThreadContextKind as useContextKind,
+  useBbNavigate,
   useComposer,
   useRealtime,
   useRpc,
@@ -49,6 +50,21 @@ function fetchLoops(rpc: Rpc, threadId: string, force = false) {
     })
     .catch(() => cache.set(threadId, { loops: entry?.loops ?? [], at: Date.now(), inflight: false, failed: true, references: entry?.references ?? new Map() }))
     .finally(notify);
+}
+
+// Whether a thread is a child, and which ancestor's loop covers it. Asked once
+// per thread; a failure reads as "not a child", so setup is offered as before.
+const lineageCache = new Map<string, { child: boolean; coveredBy?: { threadId: string; loop: string } } | "pending">();
+function useLineage(threadId: string) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (lineageCache.has(threadId)) return;
+    lineageCache.set(threadId, "pending");
+    rpc.call("lineage", { threadId }).then(r => lineageCache.set(threadId, r)).catch(() => lineageCache.set(threadId, { child: false })).finally(() => bump(n => n + 1));
+  }, [rpc, threadId]);
+  const v = lineageCache.get(threadId);
+  return v && v !== "pending" ? v : { child: false };
 }
 
 function useLoops(threadId: string) {
@@ -258,6 +274,18 @@ function CardRow({ threadId }: { threadId: string }) {
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
   const [open, setOpen] = useState(false);
   const sharedResume = !failed && loops.filter(needsResume).length > 1;
+  const lineage = useLineage(threadId);
+  const nav = useBbNavigate();
+  // A lane is covered through its parent's loop, and a session has one loop: no
+  // entry button, one quiet line, and setup kept in a collapsed "more" below.
+  const quiet = loaded && !failed && !loops.length && lineage.child;
+  if (quiet) return <div>
+    <SetupStyles />
+    {lineage.coveredBy && <ContextRow icon="Repeat" label={<>Covered by <a href={`#thread-${lineage.coveredBy.threadId}`} onClick={e => { e.preventDefault(); nav.toThread(lineage.coveredBy!.threadId); }}>{lineage.coveredBy.loop}</a></>} title="This thread is covered through its parent thread's loop" />}
+    <details className="kgs-more"><summary>Set up a loop for this thread anyway</summary>
+      <ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={false} />
+    </details>
+  </div>;
   return <div>
     <SetupStyles />
     {failed && <StatusWarning refresh={refresh} />}

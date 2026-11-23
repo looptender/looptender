@@ -140,6 +140,11 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId: z.string().min(1).max(200) }),
     output: z.object({ loops: z.array(loopSchema), errors: z.array(z.string()) }),
   },
+  // Whether the thread is a child, and the nearest ancestor with a loop this plugin can see.
+  lineage: {
+    input: z.object({ threadId: z.string().min(1).max(200) }),
+    output: z.object({ child: z.boolean(), coveredBy: z.object({ threadId: z.string(), loop: z.string() }).optional() }),
+  },
   control: {
     input: z.object({ configPath: z.string().min(1).max(1000), action: actionSchema, managedId: z.string().optional(), expectedThreadId: z.string().min(1).max(200).optional() }),
     output: z.object({ ok: z.boolean(), message: z.string() }),
@@ -481,6 +486,18 @@ export default async function plugin(bb: BbPluginApi) {
     setup: input => setupCall(input),
     newThread: input => newThread.call(input),
     forThread: ({ threadId }) => allLoops(threadId),
+    // Thread metadata only (ids), never another thread's content. At most four ancestors are asked about.
+    lineage: async ({ threadId }) => {
+      try {
+        const r = await bb.sdk.threads.experimental_listAncestors({ threadIds: [threadId], signal: AbortSignal.timeout(10_000) });
+        const ids = r.threads.find(t => t.threadId === threadId)?.ancestorIds ?? [];
+        for (const id of ids.slice(0, 4)) {
+          const first = (await allLoops(id)).loops[0];
+          if (first) return { child: true, coveredBy: { threadId: id, loop: first.loop } };
+        }
+        return { child: ids.length > 0 };
+      } catch { return { child: false }; }
+    },
     control: ({ configPath, action, managedId, expectedThreadId }) => action === "resume" ? serialize(() => control(configPath, action, managedId, expectedThreadId)) : control(configPath, action, managedId, expectedThreadId),
   });
 
