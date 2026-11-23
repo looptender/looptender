@@ -388,7 +388,7 @@ func TestPanelListTextTellsTwoLoopsWithOneNameApart(t *testing.T) {
 	list := buildPanelList(buildDockReport([]dockInput{a, b, c}, dockNow, 15*time.Second, 30*time.Minute, false, true, 0, true))
 	var lines []string
 	for _, l := range list.Loops {
-		lines = append(lines, l.Naming.withSlug(l.Name).nameLine())
+		lines = append(lines, listNameLine(l.Name, l.Naming))
 	}
 	got := strings.Join(lines, "\n")
 	for _, want := range []string{"Coordinator (loop example-loop)", "Coordinator (loop example-loop-b)", "example-plain"} {
@@ -427,5 +427,23 @@ func TestArchiveIsTheOwnersOrAPersons(t *testing.T) {
 	code, out, errs := f.run("unarchive")
 	if code != exitOK || !strings.Contains(out, "Supervision is not running: its daemon exited when the loop was archived.") {
 		t.Fatalf("unarchive by a person: %d %s %s", code, out, errs)
+	}
+}
+
+// An archived loop waits on nobody: a paused or awaiting one carries no
+// waiting record and no reason from it, in the dock or the list.
+func TestArchivedLoopCarriesNoWaiting(t *testing.T) {
+	at := dockNow.Add(-time.Hour)
+	for _, c := range []*clientControls{{Enabled: true, Paused: true}, {Enabled: true, AwaitingUser: true}} {
+		in := dockEvidence{controls: c}.input()
+		in.Client.Snapshot.Archived = &archiveView{At: at, Hold: "paused"}
+		r := buildDockReport([]dockInput{in}, dockNow, 15*time.Second, 30*time.Minute, false, true, 0, true)
+		if l := r.Loops[0]; l.State != "archived" || l.Waiting != nil || len(r.NeedsYou) != 0 {
+			t.Fatalf("%+v: dock %+v %+v", c, l.Waiting, r.NeedsYou)
+		}
+		row := buildPanelList(r).Loops[0]
+		if row.Waiting != nil || row.NeedsYou || !strings.HasPrefix(row.Reason, "Archived since ") {
+			t.Fatalf("%+v: list %+v %q", c, row.Waiting, row.Reason)
+		}
 	}
 }

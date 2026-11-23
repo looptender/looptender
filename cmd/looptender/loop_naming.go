@@ -128,17 +128,39 @@ func namingFallback(slug string) loopNaming {
 	return n
 }
 
-// inList is the naming as the dock report and panel list carry it: no
-// unmasked title, and no slug, which their loops carry as name.
-func (n loopNaming) inList() loopNaming {
-	n = n.withoutPrivate()
-	n.Slug = ""
-	return n
-}
-
 // withSlug is n with its slug: the list surfaces leave it out, since their
 // loops carry it as name, and text needs it to tell two loops apart.
 func (n loopNaming) withSlug(slug string) loopNaming {
 	n.Slug = slug
 	return n
+}
+
+// listNaming is the naming as the dock report and panel list carry it: no
+// unmasked title unless private text is shown, no slug (their loops carry it
+// as name), and nothing at all when the display name is the loop's name and
+// there is nothing more to say: a reader then shows name. Every list has up
+// to dockMaxLoops loops, so a field that repeats what name says is left out
+// to keep the response inside its bound.
+func listNaming(name string, n *loopNaming, private bool) *loopNaming {
+	if n == nil || n.DisplayName == "" {
+		return nil
+	}
+	c := *n
+	if !private {
+		c = c.withoutPrivate()
+	}
+	c.Slug = ""
+	if c.DisplayName == name && (c.NameSource == "slug" || c.NameSource == "") && c.Project == "" && c.ShortName == "" && !c.TitleDiffers && c.ThreadTitle == "" {
+		return nil
+	}
+	return &c
+}
+
+// listNameLine is how list text names a loop: the display name, and the
+// slug when they differ, so two loops shown by one name stay apart.
+func listNameLine(name string, n *loopNaming) string {
+	if n == nil {
+		return name
+	}
+	return n.withSlug(name).nameLine()
 }

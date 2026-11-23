@@ -2009,10 +2009,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	}
 	if snap != nil {
 		l.ArchiveLapsed = snap.ArchiveLapsed
-		if snap.Naming != nil {
-			n := snap.Naming.inList()
-			l.Naming = &n
-		}
+		l.Naming = listNaming(l.Name, snap.Naming, false)
 		// The note and the thread title from the full status, as hold notes
 		// are: identifier-shaped tokens hidden unless identifiers are shown.
 		mask := func(s string) string {
@@ -2021,10 +2018,9 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			}
 			return clip(s, dockMaxNote)
 		}
-		if st != nil && identifiers {
-			n := st.Naming // the unmasked title too, as notes are whole here
-			n.Slug = ""
-			l.Naming = &n
+		if st != nil && identifiers && st.Naming.DisplayName != "" {
+			// The unmasked title too, as notes are whole here.
+			l.Naming = listNaming(l.Name, &st.Naming, true)
 		}
 		if st != nil && st.Archived != nil && snap.Archived != nil {
 			a := *snap.Archived
@@ -2038,7 +2034,8 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			l.Archived = a
 			l.State, l.Phrase, l.PickerState = "archived", "Archived", "Archived"
 			l.Detail = "Archived " + archiveSince(a) + ". It needs nobody and no daemon checks it; looptender unarchive lists it normally again and resumes nothing."
-			l.Can, l.AlsoWaiting = []string{}, ""
+			// Nothing it waits on is shown: it waits on nobody.
+			l.Can, l.AlsoWaiting, l.Waiting = []string{}, "", nil
 			need = nil
 		}
 	}

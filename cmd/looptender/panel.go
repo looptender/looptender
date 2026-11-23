@@ -1100,8 +1100,9 @@ type panelListLoop struct {
 	Archived      *archiveView `json:"archived,omitempty"`
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
 	// Naming is the loop's one display name and what goes with it
+	// (loop_naming.go); absent when it is the loop's name and nothing more.
 	// (loop_naming.go): the same on every surface; no reader composes its own.
-	Naming loopNaming `json:"naming"`
+	Naming *loopNaming `json:"naming,omitempty"`
 }
 
 func buildPanelList(r dockReport) panelList {
@@ -1144,10 +1145,7 @@ func buildPanelList(r dockReport) panelList {
 		}
 		// The list carries no note (it never has): when, and the hold.
 		row.Archived, row.ArchiveLapsed = withoutNote(l.Archived), withoutNote(l.ArchiveLapsed)
-		row.Naming = namingFallback(l.Name).inList()
-		if n := l.Naming; n != nil {
-			row.Naming = n.inList()
-		}
+		row.Naming = l.Naming // already as lists carry it (listNaming)
 		if row.Archived != nil {
 			out.Archived++
 		}
@@ -1208,10 +1206,10 @@ func panelListCommand(e env, args []string) int {
 				continue
 			}
 			if l.Archived != nil {
-				fmt.Fprintf(w, "%s: archived %s\n", l.Naming.withSlug(l.Name).nameLine(), archiveSince(l.Archived))
+				fmt.Fprintf(w, "%s: archived %s\n", listNameLine(l.Name, l.Naming), archiveSince(l.Archived))
 				continue
 			}
-			fmt.Fprintf(w, "%s: %s\n", l.Naming.withSlug(l.Name).nameLine(), l.Phrase)
+			fmt.Fprintf(w, "%s: %s\n", listNameLine(l.Name, l.Naming), l.Phrase)
 		}
 		switch {
 		case *archived && list.Archived == 0:
