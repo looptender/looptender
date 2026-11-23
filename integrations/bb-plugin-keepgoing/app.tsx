@@ -131,7 +131,7 @@ function describe(loop: LoopView): string[] {
     ...diagnosticLines(loop.details, loop.target, loop.supervising).map(l => l.startsWith("Build: ") && freshnessToShow(loop.details)?.detail ? `${l} · ${freshnessToShow(loop.details)!.detail}` : l),
     // Which build is which: the supervisor's (above) and the plugin's own code.
     ...(loop.pluginBuild && loop.details?.runtime?.installedBuild && !sameBuild(loop.pluginBuild, loop.details.runtime.installedBuild) ? [`Plugin build: ${loop.pluginBuild} (the code drawing this card); the builds above are each supervisor's, read from looptender status`] : []),
-    // The word bb keepgoing status prints as last=, beside the recorded action it does not mean.
+    // The word bb looptender status prints as last=, beside the recorded action it does not mean.
     `Last check state: ${lastLabel(loop.lastState, loop.details)} (the listing's last= field)`,
     loop.note ? `Note: ${loop.note}` : null,
     loop.details?.schedule?.overdue ? `Needs you: ${loop.details.schedule.message ?? "no check has run for longer than usual"}` : null,
