@@ -165,7 +165,16 @@ func TestNoticesAreBounded(t *testing.T) {
 		l.LanesFailed = "1 lane failed"
 		loops = append(loops, l)
 	}
-	if n := len(reportNotices(loops, nil, noticeNow)); n != maxNotices {
-		t.Errorf("%d", n)
+	ns := reportNotices(loops, nil, noticeNow)
+	if len(ns) != maxNotices {
+		t.Errorf("%d", len(ns))
+	}
+	// Worst case: four-byte names, which JSON escapes at twelve bytes a rune.
+	for i := range loops {
+		loops[i].Name = strings.Repeat("\U0001F600", 28)
+	}
+	b, _ := json.Marshal(reportNotices(loops, nil, noticeNow))
+	if len(b) > maxNoticesBytes {
+		t.Errorf("%d bytes", len(b))
 	}
 }
