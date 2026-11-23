@@ -564,12 +564,12 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 	}
 	var probe adoptProbe
 	if err != nil || code != 0 || json.Unmarshal(out, &probe) != nil || probe.Protocol != adoptProtocol {
-		refuse("the installed build cannot take over a running daemon; restart supervision to use it")
+		refuse(adoptTakeOverReason)
 		return
 	}
 	to.Label = dockBuildLabel(probe.Version)
 	if probe.StateFormat < adoptStateFormat {
-		refuse("the installed build is older than this loop's state format; going back needs the documented stop, restore and start")
+		refuse(adoptStateFormatReason)
 		return
 	}
 	vctx, cancel := context.WithTimeout(ctx, adoptCheckLimit)
@@ -579,7 +579,7 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 		return
 	}
 	if err != nil || code != 0 {
-		refuse("the installed build does not validate this loop's configuration")
+		refuse(adoptValidateReason)
 		return
 	}
 	// No check of this loop may be running in another process: hold the
@@ -603,10 +603,13 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 		thread, generation = lease.thread, lease.generation
 	}
 	payload := adoptPayload{Config: a.cfgPath, Loop: a.loop, StateDir: a.stateDir, Mode: a.mode, LockFD: uint64(fd), From: a.from, FromSHA: from.SHA256, FromLabel: from.Label,
-		ExpectSHA: c.sha, OwnerThread: thread, OwnerGeneration: generation, ExpectedStateDir: a.expectedStateDir, ConfigArg: true, DiskEpisode: a.disk.episode()}
-	payload.DaemonStartedAt, payload.DaemonLastPassStartedAt, payload.DaemonLastPassAt = optionalTime(a.monitor.StartedAt()), optionalTime(a.monitor.LastPassStartedAt()), optionalTime(a.monitor.LastPassAt())
+		ExpectSHA: c.sha, OwnerThread: thread, OwnerGeneration: generation, ExpectedStateDir: a.expectedStateDir, ConfigArg: adoptConfigArg()}
+	if adoptConfigArg() {
+		payload.DaemonStartedAt, payload.DaemonLastPassStartedAt, payload.DaemonLastPassAt = optionalTime(a.monitor.StartedAt()), optionalTime(a.monitor.LastPassStartedAt()), optionalTime(a.monitor.LastPassAt())
+		payload.DiskEpisode = a.disk.episode()
+	}
 	a.note(adoptRecord{Outcome: adoptSwitching, Mode: a.mode, From: from, To: to})
-	err = handover(payload, a.launch, probe.ConfigArg, func(argv []string, keep []*os.File) error {
+	err = handover(payload, a.launch, probe.ConfigArg && adoptConfigArg(), func(argv []string, keep []*os.File) error {
 		if a.lastMoment != nil {
 			a.lastMoment()
 		}
@@ -619,12 +622,23 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 	if errors.Is(err, errAdoptChanged) {
 		// Another file arrived at the last moment: nothing ran; look at
 		// it after the next check.
-		a.note(adoptRecord{Outcome: adoptRefused, Mode: a.mode, From: from, To: to, Reason: "the installed build changed just before the switch; it is checked again after the next check"})
+		a.note(adoptRecord{Outcome: adoptRefused, Mode: a.mode, From: from, To: to, Reason: adoptChangedReason})
 		return
 	}
 	a.skip[c.sha] = true
-	a.note(adoptRecord{Outcome: adoptRefused, Mode: a.mode, From: from, To: to, Reason: "the installed build could not be started; this daemon carries on with its build"})
+	a.note(adoptRecord{Outcome: adoptRefused, Mode: a.mode, From: from, To: to, Reason: adoptStartReason})
 }
+
+// The reasons a switch is refused that a reader tells apart; see
+// adoptRefusalCauses in build_freshness.go, which says what each means for a
+// person.
+const (
+	adoptTakeOverReason    = "the installed build cannot take over a running daemon; restart supervision to use it"
+	adoptStateFormatReason = "the installed build is older than this loop's state format; going back needs the documented stop, restore and start"
+	adoptValidateReason    = "the installed build does not validate this loop's configuration"
+	adoptChangedReason     = "the installed build changed just before the switch; it is checked again after the next check"
+	adoptStartReason       = "the installed build could not be started; this daemon carries on with its build"
+)
 
 const adoptDiskReason = "waiting for room: the volume that holds the state directory is nearly full (below 100 MiB free); the switch is tried again after each check"
 
@@ -655,12 +669,12 @@ func noteAdoption(dir, loop string, r adoptRecord) {
 // build it came from, once.
 func adoptBuildCommand(e env, args []string) int {
 	if len(args) == 1 && args[0] == "--probe" {
-		_ = json.NewEncoder(e.stdout).Encode(adoptProbe{Protocol: adoptProtocol, StateFormat: adoptStateFormat, Version: version, ConfigArg: true})
+		_ = json.NewEncoder(e.stdout).Encode(adoptProbe{Protocol: adoptProtocol, StateFormat: adoptStateFormat, Version: version, ConfigArg: adoptConfigArg()})
 		return exitOK
 	}
 	// The configuration path after the descriptor is there for the process
 	// list only: what the build runs is the payload's.
-	if !(len(args) == 2 || len(args) == 4 && args[2] == "-c" && filepath.IsAbs(args[3])) || args[0] != "--handover-fd" {
+	if !(len(args) == 2 || adoptConfigArg() && len(args) == 4 && args[2] == "-c" && filepath.IsAbs(args[3])) || args[0] != "--handover-fd" {
 		return exitUsage
 	}
 	n, err := strconv.ParseUint(args[1], 10, 31)
@@ -754,11 +768,15 @@ func (p adoptPayload) run(e env) int {
 		defer monitor.Close()
 		// The same process goes on: its start and last pass are the
 		// earlier build's, not this switch.
-		monitor.Continue(timeOrZero(p.DaemonStartedAt), timeOrZero(p.DaemonLastPassStartedAt), timeOrZero(p.DaemonLastPassAt))
+		if adoptConfigArg() {
+			monitor.Continue(timeOrZero(p.DaemonStartedAt), timeOrZero(p.DaemonLastPassStartedAt), timeOrZero(p.DaemonLastPassAt))
+		}
 	}
 	defer daemonLock.Release()
 	a := newBuildAdopter(p.Config, p.StateDir, p.Mode, p.ExpectedStateDir, daemonLock)
-	a.diskSeed = p.DiskEpisode.watch()
+	if adoptConfigArg() { // the earlier form never read it
+		a.diskSeed = p.DiskEpisode.watch()
+	}
 	return daemonLoop(e, cfg, p.Config, false, lease, monitor, a)
 }
 
@@ -800,8 +818,8 @@ func (p adoptPayload) back(e env, reason string) int {
 		argv0 = os.Args[0] // the launch path, kept for the next install
 	}
 	r := p
-	r.From, r.FromSHA, r.FromLabel, r.ExpectSHA, r.Returning, r.ConfigArg = self, p.ExpectSHA, version, p.FromSHA, reason, true
-	_ = handover(r, argv0, p.ConfigArg, func(argv []string, keep []*os.File) error {
+	r.From, r.FromSHA, r.FromLabel, r.ExpectSHA, r.Returning, r.ConfigArg = self, p.ExpectSHA, version, p.FromSHA, reason, adoptConfigArg()
+	_ = handover(r, argv0, p.ConfigArg && adoptConfigArg(), func(argv []string, keep []*os.File) error {
 		return execAdoptCandidate(earlier, argv, os.Environ(), keep)
 	})
 	return p.giveUp(e, reason+"; returning to the earlier build failed")
@@ -914,3 +932,13 @@ func (a *buildAdopter) watch(m *daemoninfo.Server) {
 		a.monitor = m
 	}
 }
+
+// adoptEarlierForm, set at link time (-X main.adoptEarlierForm=1) and only
+// by the tests, makes this build speak the handover as builds from before
+// the configuration argument did: its probe answer has no configArg, it
+// accepts exactly `--handover-fd N`, hands only that on, and neither sends
+// nor reads the daemon's start, last pass and low-disk episode. It stands in
+// for a released earlier build in a switch in either direction.
+var adoptEarlierForm string
+
+func adoptConfigArg() bool { return adoptEarlierForm == "" }
