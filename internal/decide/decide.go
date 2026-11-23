@@ -163,6 +163,11 @@ type Control struct {
 // Input is everything Decide needs.
 type Input struct {
 	AssignmentReady int // exact current typed readiness, evaluated by the supervisor
+	// UsageWarning: the loop's usage watch has a warning its agent has not
+	// been sent (the weekly window runs out before it resets at the rate so
+	// far). It rides on an ordinary wake, or wakes an idle session that
+	// waits on its children once.
+	UsageWarning bool
 	// ObservedOnly: the target is observed, never woken (a sessionpipe
 	// target). No rule may send to it, re-prompt it, stop it or move it; the
 	// state is recorded, a gone target is held for a person, and nothing else
@@ -370,7 +375,10 @@ type Decision struct {
 	// caller never matches on Reason text. The parent is idle on purpose while
 	// other children run: it gets the notice alone, not the task prompt.
 	ChildErrorWake bool
-	AssignmentWake bool
+	// UsageWarningWake is set only when the usage warning caused this wake
+	// by itself, while children run: the session gets the notice alone.
+	UsageWarningWake bool
+	AssignmentWake   bool
 	// DeferredInteraction is set only when the deferred-interaction rule itself
 	// produced an AwaitUser, so a caller never matches on Reason text.
 	DeferredInteraction bool
@@ -512,6 +520,9 @@ func Decide(in Input) Decision {
 		if o.ActiveChildren > 0 {
 			if childErrorWake(in) {
 				return Decision{Action: Wake, Reason: ChildErrorWakeReason, ChildErrorWake: true}
+			}
+			if usageWarningWake(in) {
+				return Decision{Action: Wake, Reason: UsageWarningWakeReason, UsageWarningWake: true}
 			}
 			if in.AssignmentReady <= 0 || o.State != Idle || o.ChildrenUnverified {
 				return none("child work running")
@@ -893,6 +904,20 @@ func Attempted(a Action, c Counters, at time.Time) Counters {
 		c.LastRepromptAt = at
 	}
 	return c
+}
+
+// UsageWarningWakeReason is the reason of the one wake a usage warning
+// causes by itself, while children run.
+const UsageWarningWakeReason = "usage window running out while children run"
+
+// usageWarningWake: the same conditions as the child-error wake's, for a
+// pending usage warning.
+func usageWarningWake(in Input) bool {
+	o := in.Obs
+	return in.UsageWarning &&
+		o.State == Idle && in.InWindow && !o.ChildrenUnverified &&
+		!o.RetryUnverified && !o.Retrying && o.Queued == 0 && o.Background == 0 &&
+		in.SinceWake >= in.MinWakeInterval
 }
 
 // ChildErrorWakeReason is the reason of the one wake that errored children

@@ -184,7 +184,7 @@ func daemonOf(ctx context.Context) supervise.DaemonInfo {
 func tickOptions(e env, cfg *config.Config, dryRun bool) supervise.Options {
 	return supervise.Options{Version: version, DryRun: dryRun, Reporter: reporter(e, cfg), Routine: suppliedRoutine(e.ctx),
 		RoutineIgnored: e.ctx.Value(routineIgnoredKey{}) != nil, Daemon: daemonOf(e.ctx), Executable: checkExecutable(), ExecutableImage: processExecutableImage,
-		CommandPrefix: initCommandPrefix()}
+		CommandPrefix: initCommandPrefix(), UsageRead: tickUsageRead}
 }
 
 // Capture once during process initialization, before a command or check starts.
@@ -600,6 +600,12 @@ type statusOut struct {
 	MigrationReviewError string                    `json:"migrationReviewError,omitempty"`
 	// NoProgress is the no-progress flag, the same value the panel shows.
 	NoProgress noProgressView `json:"noProgress"`
+	// UsageBurn is the usage watch's projection while the weekly window
+	// runs out before it resets at its rate so far; nil otherwise.
+	UsageBurn *usageBurnView `json:"usageBurn,omitempty"`
+	// UsageWatch is the usage watch's setting (looptender usage-watch);
+	// nil while it is off.
+	UsageWatch *usageWatchView `json:"usageWatch,omitempty"`
 	// SharedWith lists, in words, other enabled loops that share this loop's
 	// session, a fallback's session, its working directory or a repository.
 	SharedWith []string `json:"sharedWith,omitempty"`
@@ -994,6 +1000,8 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 		printIdleSpacing(w, out.IdleSpacing, now)
 	}
 	fmt.Fprintf(w, "progress flag: %s\n", noProgressText(out.NoProgress, loopHeld(out.Control, out.controlUnreadable)))
+	printUsageWatch(w, out.UsageWatch)
+	printUsageBurn(w, out.UsageBurn)
 	if !out.stateUnreadable {
 		printTurnRetry(w, out.TurnRetry)
 		printContext(w, out.ContextWindow)
@@ -1390,6 +1398,8 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		flagState = latest
 	}
 	out.NoProgress = noProgressOf(cfg, flagState, ctl, journal, graph, now)
+	out.UsageBurn = describeUsageBurn(l.StateDir, now)
+	out.UsageWatch = describeUsageWatch(l.StateDir)
 	if file := unreadableFile(out); file != "" {
 		// The flag needs both records; computed from an empty one it would
 		// say the loop is off, or that no check has run.
