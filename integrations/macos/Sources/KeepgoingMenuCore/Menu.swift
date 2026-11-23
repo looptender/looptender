@@ -33,8 +33,13 @@ public struct PanelLoop: Decodable, Equatable {
     /// that predates them.
     public var provider: String? = nil
     public var model: String? = nil
+    /// The loop's supervisor build against the installed one, in the CLI's
+    /// words (the panel shows the same). Absent from a CLI that predates it
+    /// and when nothing can be said; the menu then says nothing.
+    public var buildFreshness: PanelFreshness? = nil
 
-    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil) {
+    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil) {
+        self.buildFreshness = buildFreshness
         self.key = key
         self.name = name
         self.state = state
@@ -48,6 +53,33 @@ public struct PanelLoop: Decodable, Equatable {
         self.provider = provider
         self.model = model
     }
+}
+
+/// How fresh one supervisor's build is. The words are the CLI's; the menu
+/// writes none of them. A state it has not heard of is shown as given.
+public struct PanelFreshness: Decodable, Equatable {
+    public let state: String
+    public let text: String
+    public var detail: String? = nil
+    /// What a person does, in words, when no command fits that supervisor.
+    public var action: String? = nil
+    /// What a person would run, only where the CLI says it is true for that
+    /// supervisor. Shown, never run.
+    public var command: String? = nil
+
+    public init(state: String, text: String, detail: String? = nil, action: String? = nil, command: String? = nil) {
+        self.state = state
+        self.text = text
+        self.detail = detail
+        self.action = action
+        self.command = command
+    }
+}
+
+/// The one line about how many supervisors run the installed build.
+public struct PanelFreshnessSummary: Decodable, Equatable {
+    public let text: String
+    public init(text: String) { self.text = text }
 }
 
 public struct PanelList: Decodable, Equatable {
@@ -66,6 +98,9 @@ public struct PanelList: Decodable, Equatable {
     /// The installed CLI's build, shortened by the CLI; absent when it has no
     /// version or from a CLI that predates it.
     public var installedBuild: String? = nil
+    /// "Build X installed … · N supervisors on it · M older"; absent from a
+    /// CLI that predates it.
+    public var buildFreshness: PanelFreshnessSummary? = nil
 }
 
 /// What `keepgoing panel status --json` says about the panel's background
@@ -148,6 +183,10 @@ public enum MenuCommand: Equatable {
     case openPanelWithChanges
     /// Runs `keepgoing panel stop`. Supervision is not affected.
     case stopPanel
+    /// Relaunches the menu from the installed build. Runs no CLI command.
+    case relaunchMenu
+    /// Turns "Update the menu automatically" on or off. Runs no CLI command.
+    case toggleAutoUpdate
     /// Runs `keepgoing client review <action> --loop <key> --json`, which
     /// reads and changes nothing; its review is then shown for confirmation.
     case review(LoopAction, key: String)
@@ -209,6 +248,24 @@ public enum MenuReading: Equatable {
     case unavailable
 }
 
+/// What the menu says about its own update.
+public struct UpdateOffer: Equatable {
+    /// The installed build's name when it differs from the one running.
+    public let availableLabel: String?
+    public let automatic: Bool
+    /// Why the last relaunch did not happen, when it did not.
+    public let failure: String?
+    /// Set when the installed build ships no menu app: said in the menu
+    /// rather than nothing.
+    public let noMenuLabel: String?
+    public init(availableLabel: String?, automatic: Bool, failure: String? = nil, noMenuLabel: String? = nil) {
+        self.availableLabel = availableLabel
+        self.automatic = automatic
+        self.failure = failure
+        self.noMenuLabel = noMenuLabel
+    }
+}
+
 public enum MenuBuilder {
     // Long enough for a real loop name, short enough that the state column
     // stays close to the short names beside it.
@@ -264,6 +321,23 @@ public enum MenuBuilder {
         MenuRow(kind: .status, title: text, detail: "", symbol: "", accessibilityLabel: text, accessibilityHelp: "", toolTip: "", command: nil)
     }
 
+    /// The menu's own update: the offer when the installed build differs (and
+    /// why the last attempt failed, if it did), then the setting.
+    static func updateRows(_ update: UpdateOffer) -> [MenuRow] {
+        var rows: [MenuRow] = []
+        if let label = update.availableLabel.map(Contract.text) {
+            rows.append(action("Update available: relaunch to use \(label)", .relaunchMenu, symbol: "arrow.down.circle",
+                               help: "Starts the installed build of this menu and quits this one. Your loops and Open at Login are not affected."))
+            if let why = update.failure.map(Contract.text), !why.isEmpty { rows.append(status("The last automatic relaunch did not happen: " + why + ".")) }
+        }
+        if let label = update.noMenuLabel.map(Contract.text), !label.isEmpty, update.availableLabel == nil {
+            rows.append(status("The installed build (" + label + ") has no menu app, so this menu cannot update to it."))
+        }
+        rows.append(action("Update the menu automatically", .toggleAutoUpdate, symbol: update.automatic ? "checkmark.circle" : "circle",
+                           help: "When on, the menu relaunches itself from the installed build while it is closed and no change is being made. Turning it on does not relaunch under an open menu; it happens once the menu is closed.", detail: update.automatic ? "on" : "off"))
+        return rows
+    }
+
     /// "stops by itself in 23 min", from the seconds the panel reports.
     static func stopsIn(_ seconds: Int?) -> String {
         guard let seconds else { return "running" }
@@ -277,7 +351,7 @@ public enum MenuBuilder {
     /// in place and the status line says a read is under way. `panel` is the
     /// panel server's status when it was read; the row that stops it is there
     /// only while it is running.
-    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil) -> MenuModel {
+    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil) -> MenuModel {
         // The first row is always there and always tries, whatever was read.
         var rows = [action("Open looptender Panel", .openPanel, symbol: "macwindow", help: "Opens the looptender panel in your browser.")]
         var badge = ""
@@ -316,18 +390,20 @@ public enum MenuBuilder {
                 rows.append(contentsOf: quotaRows(quota))
             }
             if !list.loops.isEmpty { rows.append(separator) }
+            if let summary = list.buildFreshness.map({ Contract.text($0.text) }), !summary.isEmpty, !list.loops.isEmpty { rows.append(status(summary)) }
             for loop in list.loops.prefix(maxLoops) {
                 let name = Contract.text(loop.name), short = shortened(name, to: maxName)
                 let flag = loop.noProgress.map(Contract.text) ?? ""
                 // The panel's own words: its phrase, and "no progress" as the
                 // panel's picker row says it when that flag is raised.
                 let phrase = shortened(Contract.text(loop.phrase) + (flag.isEmpty ? "" : " · no progress"), to: maxPhrase)
-                let choices = loopChoices(loop)
+                let choices = loopChoices(loop) + freshnessRows(loop)
                 // The build after the state, outside the cut-down phrase, so
                 // a long phrase never hides which build it is.
                 let build = buildText(loop, installed: list.installedBuild)
                 let target = targetText(loop)
-                let shown = [phrase, target, build].filter { !$0.isEmpty }.joined(separator: " · ")
+                let fresh = freshnessMark(loop)
+                let shown = [phrase, target, build, fresh].filter { !$0.isEmpty }.joined(separator: " · ")
                 rows.append(MenuRow(kind: .loop, title: short, detail: shown, symbol: symbols[loop.needsYou && loop.state == "paused" ? "waiting_for_you" : loop.state] ?? "questionmark.circle",
                                     accessibilityLabel: flag.isEmpty ? "\(name), \(shown)" : "\(name), \(Contract.text(loop.phrase)). \(flag)" + (target.isEmpty ? "" : ". Configured target: " + target) + (build.isEmpty ? "" : ". " + build),
                                     accessibilityHelp: choices.count > 1 ? "Shows what you can do with this loop." : "Opens this loop in the panel.",
@@ -371,6 +447,7 @@ public enum MenuBuilder {
             // stopping a loop; what happens to the loops is in the help.
             rows.append(action("Stop the Panel Page", .stopPanel, symbol: "xmark.circle", help: "Stops the panel's background process. Your loops keep running.", detail: stopsIn(panel.idleRemainingSeconds)))
         }
+        if let update { rows.append(contentsOf: updateRows(update)) }
         rows.append(action("Quit looptender Menu", .quit, symbol: "power", help: "Quits this menu. Supervision keeps running."))
         rows.append(separator)
         rows.append(status(notice ?? (refreshing ? "Reading…" : line)))
@@ -392,6 +469,26 @@ public enum MenuBuilder {
             return "last check ran \(running) · installed \(installed)"
         }
         return running
+    }
+
+    /// The mark on a loop's row when its supervisor is not simply on the
+    /// installed build: the CLI's own words. Nothing for "current" (the build
+    /// text already says the version) and nothing when none was sent.
+    static func freshnessMark(_ loop: PanelLoop) -> String {
+        guard let f = loop.buildFreshness, f.state != "current" else { return "" }
+        return Contract.text(f.text)
+    }
+
+    /// The detail and the command for a supervisor that is not on the
+    /// installed build, as text in the loop's submenu. Nothing here runs: no
+    /// row restarts, resumes or re-enables a supervisor.
+    static func freshnessRows(_ loop: PanelLoop) -> [MenuRow] {
+        guard let f = loop.buildFreshness, f.state != "current" else { return [] }
+        var rows: [MenuRow] = []
+        if let detail = f.detail.map(Contract.text), !detail.isEmpty { rows.append(status(detail)) }
+        if let action = f.action.map(Contract.text), !action.isEmpty { rows.append(status(action)) }
+        if let command = f.command.map(Contract.text), !command.isEmpty { rows.append(status("Run: " + command)) }
+        return rows.isEmpty ? [] : [separator] + rows
     }
 
     /// A loop's submenu: open it in the panel and, when the CLI says which
@@ -441,7 +538,7 @@ public enum MenuBuilder {
             for e in expects { arguments += ["--expect", e.key + "=" + e.expect] }
             if lanes { arguments.append("--lanes") }
             return arguments + ["--json"]
-        case .quit: return nil
+        case .quit, .relaunchMenu, .toggleAutoUpdate: return nil
         }
     }
 

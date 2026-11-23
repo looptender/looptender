@@ -14,34 +14,41 @@ const loop = (over: object = {}, d: object = {}) => ({ loop: "example-loop", con
 let n = 0;
 const card = (loops: object[]) => renderSlot(app.threadContextCardRows[0]!, { threadId: `thr_build_${++n}`, projectId: "proj_example", environment: null }, { rpc: { forThread: () => ({ loops, errors: [] }) } });
 
-test("an update shows as a chip for 24 hours, with the detail in the expanded card; never as a tooltip alone or a new badge", async () => {
-  const at = new Date(Date.now() - 2 * 3600_000).toISOString();
-  const ui = card([loop({}, { buildAdoption: { outcome: "adopted", at, from: "v0.2.0-dev.1111111", to: "v0.2.0-dev.aaaaaaa" } })]);
+const fresh = (over: object) => ({ state: "updated", text: "Updated 2 h ago", detail: "Installed 23 Nov 09:00 · was v0.2.0-dev.1111111 · now v0.2.0-dev.aaaaaaa", ...over });
+
+test("looptender's freshness words are visible on the card as sent, the detail in the expanded card; no button, no new badge", async () => {
+  const ui = card([loop({}, { buildFreshness: fresh({}) })]);
   try {
     assert.ok(await ui.findByText("Updated 2 h ago"));
-    const details = within(ui.getByRole("list", { name: "Details" }));
-    assert.ok(details.getByText(/^Build: Installed .+ · was v0\.2\.0-dev\.1111111 · now v0\.2\.0-dev\.aaaaaaa$/));
+    assert.ok(within(ui.getByRole("list", { name: "Details" })).getByText("Build: Installed 23 Nov 09:00 · was v0.2.0-dev.1111111 · now v0.2.0-dev.aaaaaaa"));
     assert.equal(ui.queryByText(/\bnew\b/i), null); assert.equal(ui.queryByRole("button", { name: /restart|update|resume/i }), null);
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
 
-test("a pending update and an older build say so in text, the older one with the exact command and no button", async () => {
-  const pending = card([loop({}, { followsInstalls: "yes" })].map(l => ({ ...l, details: dets({ followsInstalls: "yes" }, "different", "v0.2.0-dev.1111111", "v0.2.0-dev.aaaaaaa") })));
+test("a command is shown only when looptender sent one, otherwise its words; neither is ever a button", async () => {
+  const pending = card([loop({}, { buildFreshness: { state: "pending", text: "Update pending · switches at next check" } })]);
   try { assert.ok(await pending.findByText("Update pending · switches at next check")); assert.equal(pending.container.querySelector("code"), null); } finally { pending.lifecycle.unmount(); cleanup(); }
-  const older = card([loop({}, {})].map(l => ({ ...l, details: dets({ followsInstalls: "no" }, "different", "v0.2.0-dev.1111111", "v0.2.0-dev.aaaaaaa") })));
+  const withCommand = card([loop({}, { buildFreshness: { state: "older", text: "Older build · restart the supervisor to update", command: "looptender daemon-shutdown -c CONFIG" } })]);
   try {
-    assert.ok(await older.findByText("Older build · restart the supervisor to update"));
-    assert.equal(older.container.querySelector("[aria-label=Build] code")?.textContent, 'keepgoing daemon-shutdown -c "/private/example/looptender.yaml"');
-    assert.equal(older.queryByRole("button", { name: /restart|update|resume|shutdown/i }), null);
-    assert.ok(within(older.getByRole("list", { name: "Details" })).getByText(/It does not follow installs\./));
-  } finally { older.lifecycle.unmount(); cleanup(); }
+    assert.ok(await withCommand.findByText("Older build · restart the supervisor to update"));
+    assert.equal(withCommand.container.querySelector("[aria-label=Build] code")?.textContent, "looptender daemon-shutdown -c CONFIG");
+    assert.equal(withCommand.queryByRole("button", { name: /restart|update|resume|shutdown/i }), null);
+  } finally { withCommand.lifecycle.unmount(); cleanup(); }
+  const withAction = card([loop({}, { buildFreshness: { state: "different", text: "Different build from the installed one", action: "Restart supervision the way it was started." } })]);
+  try {
+    assert.ok(await withAction.findByText("Different build from the installed one")); assert.ok(withAction.getByText(/Restart supervision the way it was started\./));
+    assert.equal(withAction.container.querySelector("code"), null);
+  } finally { withAction.lifecycle.unmount(); cleanup(); }
 });
 
-test("an up to date loop shows only its version; the chip stays short when builds differ", async () => {
-  const cur = card([loop()]);
+test("a current build shows only its version; a looptender that sends no freshness shows nothing; the chip stays short", async () => {
+  const cur = card([loop({}, { buildFreshness: { state: "current", text: "v0.2.0-dev.aaaaaaa" } })]);
   try { await cur.findByText("looptender: enabled v0.2.0-dev.aaaaaaa"); assert.equal(cur.container.querySelector("[aria-label=Build]"), null); } finally { cur.lifecycle.unmount(); cleanup(); }
-  const diff = card([loop({}, {})].map(l => ({ ...l, details: dets({ followsInstalls: "yes" }, "different", "v0.2.0-dev.1111111", "v0.2.0-dev.aaaaaaa") })));
-  try { const chip = await diff.findByText(/^looptender: enabled v0\.2\.0-dev\.1111111 · build differs$/); assert.ok((chip.textContent ?? "").length < 60); } finally { diff.lifecycle.unmount(); cleanup(); }
+  const none = card([loop({}, {})].map(l => ({ ...l, details: dets({}, "different", "v0.2.0-dev.1111111", "v0.2.0-dev.aaaaaaa") })));
+  try {
+    const chip = await none.findByText(/^looptender: enabled v0\.2\.0-dev\.1111111 · build differs$/);
+    assert.ok((chip.textContent ?? "").length < 60); assert.equal(none.container.querySelector("[aria-label=Build]"), null, "nothing is derived from other fields");
+  } finally { none.lifecycle.unmount(); cleanup(); }
 });
 
 test("the plugin's own build is named apart from the supervisor's when they differ", async () => {

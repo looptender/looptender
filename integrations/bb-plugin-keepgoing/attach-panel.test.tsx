@@ -38,3 +38,24 @@ test("empty registry gives a recovery instruction without suggesting automatic s
   const ui=render(<AttachPanel threadId="thr_successor" call={async()=>({ok:true,candidates:[],message:"Read registry"})} onChanged={()=>{}}/>);
   try{fireEvent.click(ui.getByRole("button",{name:"Find registered loops"}));await ui.findByText(/Register the existing loop with the CLI first/);assert.equal(ui.queryByRole("button",{name:"Attach existing loop"}),null);}finally{cleanup();}
 });
+
+test("no request carries an undefined value, which BB's RPC layer refuses before sending",async()=>{
+  const seen:Record<string,unknown>[]=[];
+  const call=async(input:Record<string,unknown>):Promise<AttachResult>=>{
+    seen.push(input);
+    if(input.action==="list")return {ok:true,message:"Choose",candidates:[{registryId:id,loop:"example-loop"}]};
+    if(input.action==="preview")return {ok:true,message:"Preview existing loop",ticket:"example-ticket"};
+    return {ok:true,message:"done"};
+  };
+  const ui=render(<AttachPanel threadId="thr_example" call={call as never} onChanged={()=>{}}/>);
+  try{
+    fireEvent.click(ui.getByRole("button",{name:"Find registered loops"}));await ui.findByLabelText("Registered loop");
+    fireEvent.change(ui.getByLabelText("Registered loop"),{target:{value:id}});
+    fireEvent.click(ui.getByRole("button",{name:"Check attachment status"}));await ui.findByText("done");
+    fireEvent.click(ui.getByRole("button",{name:"Preview attachment"}));await ui.findByText("Preview existing loop");
+    fireEvent.click(ui.getByRole("button",{name:"Attach existing loop"}));await ui.findByText("done");
+    assert.deepEqual(seen.map(s=>s.action),["list","inspect","preview","attach"]);
+    for(const s of seen)assert.deepEqual(JSON.parse(JSON.stringify(s)),s,"JSON round trip changes nothing, so there is no undefined");
+    assert.ok(!("ticket" in seen[1]!)); assert.equal(seen[3]!.ticket,"example-ticket");
+  }finally{cleanup();}
+});

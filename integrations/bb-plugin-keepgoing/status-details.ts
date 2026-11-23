@@ -73,17 +73,17 @@ export const detailsSchema = z.object({
   // status --json deadline/deadlineReached, sendAllowance, sendRecord, diskSpace
   // and unreadable. Each is present only when there is something to say.
   deadline: z.object({ at: z.string().max(64), reached: z.boolean().optional() }).optional(),
-  // Names of the fields above that status sent in a form this plugin could not read.
-  unparsed: z.array(z.string().max(32)).max(8).optional(),
-  // The no-progress flag, only while status says it is raised ("flagged"): status's own sentence.
-  noProgress: z.object({ text: z.string().max(400) }).optional(),
-  // status --json followsInstalls (yes, no, unknown, ticks) and buildAdoption: the daemon's last switch to an installed build.
-  followsInstalls: z.string().max(16).optional(),
-  buildAdoption: z.object({ outcome: z.string().max(24), at: z.string().max(40).optional(), from: z.string().max(80).optional(), to: z.string().max(80).optional() }).optional(),
   sends: z.object({ max: z.number().int().nonnegative(), used: z.number().int().nonnegative().optional(), remaining: z.number().int().nonnegative().optional(), reached: z.boolean(), unavailable: z.boolean().optional() }).optional(),
   sendRecord: z.string().max(600).optional(),
   disk: z.object({ level: z.enum(["low", "critical"]), message: z.string().max(400) }).optional(),
   unreadable: z.array(z.object({ file: z.string().max(64), problem: z.string().max(40), offset: z.number().int().nonnegative().optional(), remedy: z.string().max(1200) })).max(8).optional(),
+  // Names of the fields above that status sent in a form this plugin could not read.
+  unparsed: z.array(z.string().max(32)).max(8).optional(),
+  // The no-progress flag, only while status says it is raised ("flagged"): status's own sentence.
+  noProgress: z.object({ text: z.string().max(400) }).optional(),
+  // status --json buildFreshness (looptender's own words, shared with the dock and the menu): how this
+  // loop's supervisor build compares with the installed one. Absent from a looptender that does not send it.
+  buildFreshness: z.object({ state: z.string().max(24), text: z.string().max(200), detail: z.string().max(600).optional(), command: z.string().max(400).optional(), action: z.string().max(300).optional() }).optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
 
@@ -185,37 +185,10 @@ export function noProgressLine(controlState: string, d: StatusDetails | undefine
   return held ? `${d.noProgress.text} (recorded before the hold; the loop is held (${held}), so this is not current)` : d.noProgress.text;
 }
 
-// ---- Build freshness: how a loop's supervisor build compares with the installed one ----
-// The words are the ones the dock and the menu use (cmd/looptender/build_freshness.go, #468).
-const FRESH_RECENT_MS = 24 * 3600_000;
-export const olderCommand = (configPath: string) => `keepgoing daemon-shutdown -c ${JSON.stringify(configPath)}`;
-export type Freshness = { state: "current" | "updated" | "pending" | "older"; text?: string; detail?: string; command?: string };
-/** "1 min ago", "23 h ago": the unit a person would say. */
-export function agoLabel(now: Date, at: Date): string {
-  const s = Math.max(0, Math.floor((now.getTime() - at.getTime()) / 1000));
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  return `${Math.floor(s / 3600)} h ago`;
-}
-export function buildFreshness(d: StatusDetails | undefined, configPath: string, now = new Date()): Freshness | undefined {
-  const running = d?.runtime?.recordedBuild, installed = d?.runtime?.installedBuild, comparison = d?.daemon?.binaryComparison;
-  // Nothing is said when no daemon answered or a build is not reported; a missing field never makes a state.
-  if (d?.daemon?.state !== "responsive" || !running || !installed || (comparison !== "match" && comparison !== "different")) return undefined;
-  if (comparison === "different") {
-    if (d.followsInstalls === "yes") return { state: "pending", text: "Update pending · switches at next check", detail: `Runs ${running}; installed ${installed}.` };
-    const command = olderCommand(configPath);
-    return { state: "older", text: "Older build · restart the supervisor to update", command,
-      detail: `Runs ${running}; installed ${installed}. ${d.followsInstalls === "no" ? "It does not follow installs." : "It does not report following installs."} A person runs ${command}, then starts supervision again; holds and controls are kept.` };
-  }
-  const b = d.buildAdoption, at = b?.at ? new Date(b.at) : undefined;
-  if (b?.outcome === "adopted" && at && !Number.isNaN(at.getTime())) {
-    const age = now.getTime() - at.getTime();
-    if (age >= 0 && age < FRESH_RECENT_MS) {
-      const when = at.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-      return { state: "updated", text: `Updated ${agoLabel(now, at)}`, detail: `Installed ${when} · was ${b.from ?? "unknown build"} · now ${b.to ?? installed}` };
-    }
-  }
-  return { state: "current" };
+/** The loop's build freshness as looptender worded it; nothing when it sent none or the build is current. */
+export function freshnessToShow(d: StatusDetails | undefined): NonNullable<StatusDetails["buildFreshness"]> | undefined {
+  const f = d?.buildFreshness;
+  return f && f.state !== "current" ? f : undefined;
 }
 
 /** status reported unreadable records, whether or not their details could be read. */

@@ -54,8 +54,8 @@ test("phone rules: 44 px targets and readable text under a coarse pointer or nar
   try {
     const pause = await ui.details.findByRole("button", { name: "Pause example-loop" });
     const css = ui.details.container.querySelector("style")?.textContent ?? "";
-    assert.match(css, /@media \(pointer: coarse\), \(max-width: 520px\)/);
-    assert.match(css, /button\[data-kg\] \{ min-height: 44px !important/);
+    assert.match(css, /@media \(max-width: 640px\), \(pointer: coarse\)/);
+    assert.match(css, /button\[data-kg\]:not\(\.kgs-chip\) \{ min-height: 44px !important/);
     assert.match(css, /summary\[data-kg\] \{[^}]*min-height: 44px/);
     for (const el of [pause, ui.details.container.querySelector("summary"), await ui.summary.findByRole("button", { name: /^looptender:/ })]) assert.ok(el?.hasAttribute("data-kg"), "styled by the phone rules");
     assert.ok(ui.summary.container.querySelector("style")?.textContent?.includes("min-height: 44px"), "the collapsed chip carries the rules too");
@@ -90,7 +90,7 @@ test("long names, versions and paths wrap: every text container allows a break a
     const section = await ui.details.findByRole("region", { name: /Loop a-very-long/ });
     assert.equal((section as HTMLElement).style.overflowWrap, "anywhere");
     const resume = section.querySelector(".kg-actions span") as HTMLElement;
-    assert.match(resume.textContent ?? "", /keepgoing resume -c/);
+    assert.match(resume.textContent ?? "", /looptender resume -c/);
     assert.equal(resume.style.overflowWrap, "anywhere"); assert.equal(resume.style.minWidth, "0px");
   } finally { done(ui.summary, ui.details); }
 });

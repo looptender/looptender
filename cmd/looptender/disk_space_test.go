@@ -97,3 +97,16 @@ func TestPauseOnAFullDiskFailsAndSaysSo(t *testing.T) {
 		}
 	}
 }
+
+// The hint under a filling volume says what to do now, and what happens at
+// 100 MiB, as two statements: it does not read as if free space were
+// already below 100 MiB.
+func TestDoctorLowDiskHintIsTwoStatements(t *testing.T) {
+	volume(t, 5<<30, 500<<30)
+	var r doctorReport
+	doctorDiskSpace(&r, t.TempDir())
+	c := doctorFinding(r, "state.disk_space")
+	if c == nil || c.Status != "warning" || !strings.HasPrefix(c.Fix, "Free space on the volume now. ") || !strings.Contains(c.Fix, "If free space falls below 100 MiB, records may fail to save") {
+		t.Fatalf("%+v", c)
+	}
+}

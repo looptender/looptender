@@ -2,7 +2,7 @@ import { publicationMessage, type Publication } from "./registry-contract.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { goalDetails } from "./status-details.ts";
-import { conversationTask, checkSchema, refusalMessage, refusedReportSchema, setupInput, targetOf, statusFollowsStandard, type Refusal, type SetupTarget, type SetupPlan, type SetupRecord, type SetupResult } from "./setup-contract.ts";
+import { conversationTask, checkSchema, failureMessage, refusalMessage, refusedReportSchema, setupInput, targetOf, statusFollowsStandard, type Refusal, type SetupFailure, type SetupTarget, type SetupPlan, type SetupRecord, type SetupResult } from "./setup-contract.ts";
 import { planBounds, sameBounds, type Bounds } from "./new-thread-contract.ts";
 import type { TakeoverChoice } from "./setup-host.ts";
 
@@ -12,7 +12,7 @@ export interface SetupDependencies {
   records(): Promise<SetupRecord[]>;
   save(records: SetupRecord[]): Promise<void>;
   guard(threadId: string): Promise<void>;
-  init(bin: string, target: SetupTarget, name: string, task: string, dryRun: boolean, withGoal: boolean, bounds?: Bounds, followStandard?: boolean, takeover?: TakeoverChoice): Promise<{ plan: SetupPlan; registration?: Publication } | { refused: Refusal } | { noRoutes: true }>;
+  init(bin: string, target: SetupTarget, name: string, task: string, dryRun: boolean, withGoal: boolean, bounds?: Bounds, followStandard?: boolean, takeover?: TakeoverChoice): Promise<{ plan: SetupPlan; registration?: Publication } | { refused: Refusal } | { noRoutes: true } | { failed: SetupFailure }>;
   // Whether the host's looptender has a standard route list with routes.
   standardRoutes(bin: string, target: SetupTarget): Promise<boolean>;
   command(bin: string, record: SetupRecord, operation: "status" | "doctor" | "start", json?: true): Promise<{ code: number; data: unknown; registration?: Publication }>;
@@ -82,7 +82,7 @@ export function createSetupController(d: SetupDependencies) {
     const records = await d.records();
     const existing = records.find(r => r.threadId === input.threadId);
     if (input.action === "inspect" || input.action === "start") {
-      if (!existing) return { ok: true, message: "Enter a task and preview a new loop for this thread." };
+      if (!existing) return { ok: true, message: "No loop is set up for this thread yet." };
       let result: SetupResult;
       try { result = await inspect(bin, existing); }
       catch { return { ok: false, record: existing, canStart: false, message: "The saved target could not be verified. Refresh diagnostics after checking the host and configuration; no transfer was performed." }; }
@@ -130,12 +130,14 @@ export function createSetupController(d: SetupDependencies) {
       // previewed for real when on, or declined explicitly when off.
       let choice: TakeoverChoice | undefined;
       let previewed = await d.init(bin, target, input.name, task, true, withGoal, bounds, followStandard, followStandard ? undefined : "detect");
+      if ("failed" in previewed) return { ok: false, message: failureMessage(previewed.failed, false, input.name) };
       if ("noRoutes" in previewed) return { ok: false, message: "None of your standard route list's routes applies to this thread, so this setup cannot follow it. Clear the choice to set it up without other routes." };
       if ("refused" in previewed) return { ok: false, refused: previewed.refused, message: refusalMessage(previewed.refused, "init") };
       const offer = previewed.plan.takeoverOffer;
       if (offer) {
         choice = takeover === "on" ? { provider: offer.provider, model: offer.model } : "none";
         previewed = await d.init(bin, target, input.name, task, true, withGoal, bounds, followStandard, choice);
+        if ("failed" in previewed) return { ok: false, message: failureMessage(previewed.failed, false, input.name) };
         if ("noRoutes" in previewed || "refused" in previewed) throw new SetupPolicyError("The resolved setup changed. Preview again before creating it.");
       }
       const plan: SetupPlan = { ...previewed.plan, ...(offer ? { takeoverOffer: offer } : {}) };
@@ -156,6 +158,7 @@ export function createSetupController(d: SetupDependencies) {
     if (!preview || preview.expires < Date.now() || preview.bin !== bin || preview.withGoal !== withGoal || preview.followStandard !== followStandard || preview.takeover !== takeover || !equal(preview.bounds, bounds) || preview.taskHash !== digest(task) || !equal(preview.target, target)) throw new SetupPolicyError("The preview expired or its task, goal choice, route choice, target, or binary changed. Preview again.");
     if (records.length >= MAX_SETUPS) throw new SetupPolicyError(`The plugin already has ${MAX_SETUPS} saved setups; manage existing loops before adding another.`);
     const fresh = await d.init(bin, target, preview.name, task, true, withGoal, bounds, followStandard, preview.choice);
+    if ("failed" in fresh) return { ok: false, message: failureMessage(fresh.failed, false, preview.name) };
     if ("noRoutes" in fresh) throw new SetupPolicyError("The resolved setup changed. Preview again before creating it.");
     if ("refused" in fresh) return { ok: false, refused: fresh.refused, message: refusalMessage(fresh.refused, "init") };
     const { takeoverOffer: _o, ...previewedPlan } = preview.plan;
@@ -163,6 +166,7 @@ export function createSetupController(d: SetupDependencies) {
     const same = (p: SetupPlan) => { const { takeoverOffer: _x, ...rest } = p; void _x; return equal(rest, previewedPlan); };
     if (!same(fresh.plan)) throw new SetupPolicyError("The resolved setup changed. Preview again before creating it.");
     const created = await d.init(bin, target, preview.name, task, false, withGoal, bounds, followStandard, preview.choice);
+    if ("failed" in created) return { ok: false, message: failureMessage(created.failed, true, preview.name) };
     if ("noRoutes" in created) throw new SetupPolicyError("Setup result changed. A disabled configuration may exist; inspect the destination before retrying.");
     // Refused at creation, after a preview that passed: keepgoing checks
     // before it writes anything, so nothing was created.
@@ -186,8 +190,10 @@ export function createSetupController(d: SetupDependencies) {
         try { return await handle(input, bounds); }
         catch (error) {
           // Dependency/SDK errors can contain paths, command arguments, or task
-          // input. Only our fixed policy messages are returned by safe wrappers.
-          return { ok: false, message: error instanceof SetupPolicyError ? error.message : "Setup could not complete. Refresh diagnostics or preview again; check the host and looptender version." + (input.withGoal ? " Goal creation needs init --with-goal support (after v0.1.4); update it or turn off that choice and preview again." : "") + " No automatic retry or transfer was performed." };
+          // input, so only the error's name is used (see unexpectedMessage). A
+          // failed looptender command is not an error here: it comes back as a
+          // `failed` result carrying its status and one masked line of its output.
+          return { ok: false, message: error instanceof SetupPolicyError ? error.message : unexpectedMessage(error, input.action) };
         }
       });
       // A thread with no setup yet: ask whether the standard route list can
@@ -213,3 +219,20 @@ export function createSetupController(d: SetupDependencies) {
 }
 
 class SetupPolicyError extends Error {}
+
+/**
+ * For an error nothing above anticipated. Only the error's name is used, never
+ * its text, which can carry paths or task input. A call to the host that ran
+ * out of time says so; anything else says it was unexpected and, for a preview,
+ * that nothing was created.
+ */
+function unexpectedMessage(error: unknown, action: z.infer<typeof setupInput>["action"]): string {
+  const name = error instanceof Error ? error.name : "";
+  const timedOut = name === "TimeoutError" || name === "AbortError" || name === "HostOnlineRpcTimeoutError";
+  const creating = action === "create";
+  const effect = creating ? "The plugin saved nothing, but a switched-off setup may exist on the host: refresh status before trying again." : action === "preview" ? "Nothing was created." : "Nothing was changed.";
+  const what = action === "preview" ? "The preview" : creating ? "Creating the setup" : action === "start" ? "Starting" : "Checking the setup";
+  return timedOut
+    ? `${what} did not finish: the host did not answer within the plugin's time limit (30 s). The machine may be busy or looptender may be unresponsive. ${effect}`
+    : `${what} failed unexpectedly${name && name !== "Error" ? ` (${name})` : ""}. ${effect} Refresh status and try again; if it keeps failing, run \`looptender doctor\` on the host.`;
+}

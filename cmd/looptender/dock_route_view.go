@@ -330,9 +330,20 @@ func dockHoldFromTimeline(tl *timelineReport) *dockHold {
 	}
 	h := &dockHold{At: dockRecordTime(r), Cause: r.Cause}
 	if c := r.ControlChange; c != nil {
-		h.Cause, h.Marked = "", c.Operation == "await-user"
+		h.Cause, h.Marked, h.Caller = "", c.Operation == "await-user", c.Caller
 	}
 	return h
+}
+
+// dockHeldBy is who set the hold flag in force, from the retained history:
+// agent, person, other_thread, or unknown when the history does not show it
+// starting or the save did not record its caller.
+func dockHeldBy(tl *timelineReport, flag func(*incident.Controls) bool) string {
+	r, ok := dockFlagSince(tl, flag)
+	if !ok || r.ControlChange == nil {
+		return "unknown"
+	}
+	return dockBy(r.ControlChange.Caller)
 }
 
 // dockDeviceOf describes this computer for one loop. The role is stated only

@@ -40,7 +40,14 @@ type clientSnapshot struct {
 	Goal               *control.GoalSummary `json:"goal,omitempty"`
 	PrivateGoal        *clientGoalDisplay   `json:"privateGoal,omitempty"`
 	Daemon             daemonStatus         `json:"daemon"`
-	ExternalScheduler  string               `json:"externalScheduler"`
+	// Freshness is the daemon's build against the installed one, in the
+	// words the dock and the menu use; absent when it does not answer or
+	// reports no build. In every mode: labels only, no path.
+	BuildFreshness *buildFreshness `json:"buildFreshness,omitempty"`
+	// DiskSpace is set when the volume that holds the loop's state is
+	// filling or nearly full.
+	DiskSpace         *dockDiskSpace `json:"diskSpace,omitempty"`
+	ExternalScheduler string         `json:"externalScheduler"`
 }
 type clientControls struct {
 	Enabled      bool `json:"enabled"`
@@ -344,6 +351,13 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 	// scheduler queries, task files, output logs or provider session files.
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second)
 	s.Daemon = query(queryCtx, entry.StateDir, version, offline)
+	{
+		rec, _ := loadAdoptRecord(entry.StateDir)
+		s.BuildFreshness = deriveBuildFreshness(s.Daemon, rec, version, now, freshContextOfSnapshot(s, freshServiceOf(entry.StateDir))).public()
+	}
+	if d := describeDiskSpace(entry.StateDir); d.lowDisk() {
+		s.DiskSpace = &dockDiskSpace{Level: d.Level, Message: d.Message, AvailableBytes: d.AvailableBytes, TotalBytes: d.TotalBytes}
+	}
 	// After the daemon is asked: one that ran the last check and is still
 	// running means the computer slept.
 	if scheduleOf != nil && s.Runtime != nil {

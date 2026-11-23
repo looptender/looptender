@@ -49,3 +49,28 @@ func TestOfReadsThisVolumeOrSaysUnknown(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+// Whenever the volume is low, the free figure reads below the threshold.
+func TestFreeReadsBelowTheThreshold(t *testing.T) {
+	const gib = uint64(1) << 30
+	// The live case: 18.50 GiB free against a threshold of 18.53 GiB.
+	r := Reading{Available: gib * 185 / 10, Total: 926 * gib, Known: true}
+	if r.Level() != Low || !strings.Contains(r.Sentence(), "(18.50 GiB free of 926 GiB, below 18.52 GiB)") {
+		t.Fatalf("%s: %s", Size(r.LowAt()), r.Sentence())
+	}
+	for _, c := range [][2]uint64{
+		{gib * 185 / 10, gib * 1853 / 100},
+		{1000 << 20, 1001 << 20},
+		{99<<20 + 900<<10, 100 << 20},
+		{5 << 30, 6 << 30},
+		{100<<20 - 1, 100 << 20},
+	} {
+		a, b := SizesApart(c[0], c[1])
+		if a == b {
+			t.Errorf("%d and %d both read %q", c[0], c[1], a)
+		}
+	}
+	if a, b := SizesApart(5<<30, 6<<30); a != "5.0 GiB" || b != "6.0 GiB" {
+		t.Errorf("plain sizes changed: %s %s", a, b)
+	}
+}

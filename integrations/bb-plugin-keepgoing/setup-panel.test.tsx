@@ -19,22 +19,22 @@ test("UI requires preview, create, and start clicks; task edits invalidate previ
     if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket" };
     if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [] };
     if (input.action === "start") return { ok: true, message: "Background supervision started", record, canStart: false };
-    return { ok: true, message: "Enter a task" };
+    return { ok: true, message: "No loop is set up for this thread yet." };
   };
   const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => changed++} />);
   try {
-    await ui.findByText("Enter a task");
+    await ui.findByText("No loop is set up for this thread yet.");
     fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
     fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task" } });
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByText("Preview only");
-    assert.ok(ui.getByText(`Configuration: ${plan.configPath}`));
+    assert.ok(ui.getByText(plan.configPath));
     fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Revised fictional task" } });
-    assert.equal(ui.queryByRole("button", { name: "Create disabled setup" }), null);
+    assert.equal(ui.queryByRole("button", { name: "Create setup" }), null);
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
-    await ui.findByRole("button", { name: "Create disabled setup" });
+    await ui.findByRole("button", { name: "Create setup" });
     assert.ok(!calls.includes("create"));
-    fireEvent.click(ui.getByRole("button", { name: "Create disabled setup" }));
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
     await ui.findByText("Saved disabled");
     assert.ok(!calls.includes("start")); assert.equal(ui.queryByLabelText("Task and completion criteria"), null);
     fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
@@ -66,19 +66,19 @@ test("lost creation response retains the destination without a replay button", a
   const call = async (input: { action: string }): Promise<SetupResult> => {
     if (input.action === "preview") return { ok: true, plan, ticket: "example-ticket", message: "Preview only" };
     if (input.action === "create") throw new Error("lost response");
-    return { ok: true, message: "Enter a task" };
+    return { ok: true, message: "No loop is set up for this thread yet." };
   };
   const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
   try {
-    await ui.findByText("Enter a task");
+    await ui.findByText("No loop is set up for this thread yet.");
     fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
     fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task" } });
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
-    await ui.findByRole("button", { name: "Create disabled setup" });
-    fireEvent.click(ui.getByRole("button", { name: "Create disabled setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
     await ui.findByRole("alert");
-    assert.ok(ui.getByText(`Configuration: ${plan.configPath}`));
-    assert.equal(ui.queryByRole("button", { name: "Create disabled setup" }), null);
+    assert.ok(ui.getByText(plan.configPath));
+    assert.equal(ui.queryByRole("button", { name: "Create setup" }), null);
     assert.equal(ui.queryByRole("button", { name: "Start background supervision" }), null);
   } finally { cleanup(); }
 });
@@ -89,27 +89,27 @@ test("goal choice is explicit, invalidates preview on change, and shows recorded
     calls.push(input);
     if (input.action === "preview") return { ok: true, message: "Preview only", plan: { ...plan, ...(input.withGoal ? { withGoal: true } : {}) }, ticket: "ticket" };
     if (input.action === "create") return { ok: true, record, canStart: true, message: "Saved disabled", goalState: "recorded", goal: { id: "goal_0123456789abcdef0123456789abcdef", revision: 1, state: "recorded" } };
-    return { ok: true, message: "Enter a task" };
+    return { ok: true, message: "No loop is set up for this thread yet." };
   };
   const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
   try {
-    await ui.findByText("Enter a task");
+    await ui.findByText("No loop is set up for this thread yet.");
     const choice = ui.getByRole("checkbox", { name: "Record a goal for this task" }) as HTMLInputElement;
     assert.equal(choice.checked, true);
     fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
     fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task and acceptance" } });
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
-    await ui.findByText(/Goal: record revision 1/);
+    await ui.findByText(/Recorded as goal revision 1/);
     assert.ok(ui.getByText(/Idle threads can wake on a check/));
     fireEvent.click(choice);
-    assert.equal(ui.queryByRole("button", { name: "Create disabled setup" }), null);
+    assert.equal(ui.queryByRole("button", { name: "Create setup" }), null);
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
-    await ui.findByText(/Task: copied into wake instructions/);
+    await ui.findByText(/Copied into the wake instructions; no goal record/);
     assert.equal(calls.at(-1)?.withGoal, false);
     fireEvent.click(choice);
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
-    await ui.findByRole("button", { name: "Create disabled setup" });
-    fireEvent.click(ui.getByRole("button", { name: "Create disabled setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
     await ui.findByText(/Goal: goal_0123456789abcdef0123456789abcdef.*revision 1/);
     assert.equal(calls.at(-1)?.withGoal, true);
     assert.ok(!calls.some(c => c.action === "start"));
@@ -120,10 +120,10 @@ test("keepgoing's refusal is shown in its words and the panel offers no way arou
   const message = "looptender refused to set up this loop: loop other-loop already supervises this thread's session, and two loops on one session would both prompt it. Nothing was created. To have this thread supervised here instead, pause or disable other-loop first.";
   const call = async (input: { action: string }): Promise<SetupResult> => input.action === "preview"
     ? { ok: false, refused: { code: "second_loop_on_session", otherLoop: "other-loop" }, message }
-    : { ok: true, message: "Enter a task" };
+    : { ok: true, message: "No loop is set up for this thread yet." };
   const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
   try {
-    await ui.findByText("Enter a task");
+    await ui.findByText("No loop is set up for this thread yet.");
     fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
     fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task" } });
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
@@ -139,16 +139,16 @@ test("the standard list is a choice only when offered, off by default, and its r
   const call = (offered: boolean) => async (input: Record<string, unknown>): Promise<SetupResult> => {
     inputs.push(input);
     if (input.action === "preview") return { ok: true, message: "Preview only", plan: input.followStandard ? { ...plan, routes } : plan, ticket: "example-ticket" };
-    return { ok: true, message: "Enter a task", ...(offered ? { standardRoutes: true as const } : {}) };
+    return { ok: true, message: "No loop is set up for this thread yet.", ...(offered ? { standardRoutes: true as const } : {}) };
   };
   let ui = render(<SetupPanel threadId="thr_example" call={call(false)} onChanged={() => {}} />);
   try {
-    await ui.findByText("Enter a task");
+    await ui.findByText("No loop is set up for this thread yet.");
     assert.equal(ui.queryByLabelText("Follow my standard route list for handoffs"), null);
   } finally { cleanup(); }
   ui = render(<SetupPanel threadId="thr_example" call={call(true)} onChanged={() => {}} />);
   try {
-    await ui.findByText("Enter a task");
+    await ui.findByText("No loop is set up for this thread yet.");
     const box = ui.getByLabelText("Follow my standard route list for handoffs") as HTMLInputElement;
     assert.equal(box.checked, false);
     fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
@@ -161,7 +161,7 @@ test("the standard list is a choice only when offered, off by default, and its r
     await ui.findByText(/Handoff on a rate limit is turned on/);
     assert.equal(inputs.at(-1)?.followStandard, true);
     assert.ok(ui.getByText("codex-large: example-large, usage limit codex-large"));
-    assert.ok(ui.getByRole("button", { name: "Create disabled setup" }));
+    assert.ok(ui.getByRole("button", { name: "Create setup" }));
   } finally { cleanup(); }
 });
 
@@ -170,11 +170,11 @@ test("Keep this conversation going is the default, needs no typing, and the prev
   const call = async (input: Record<string, unknown>): Promise<SetupResult> => {
     seen.push(input);
     if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket", task: "Built-in fictional task text" };
-    return { ok: true, message: "Enter a task", conversation: "unknown" };
+    return { ok: true, message: "No loop is set up for this thread yet.", conversation: "unknown" };
   };
   const ui = render(<SetupPanel threadId="thr_example" call={call as never} onChanged={() => {}} />);
   try {
-    await ui.findByText("Enter a task");
+    await ui.findByText("No loop is set up for this thread yet.");
     assert.equal((ui.getByRole("radio", { name: "Keep this conversation going" }) as HTMLInputElement).checked, true);
     assert.equal(ui.queryByLabelText("Task and completion criteria"), null);
     fireEvent.change(ui.getByLabelText("Anything to add?"), { target: { value: "Skip the docs" } });
@@ -185,7 +185,7 @@ test("Keep this conversation going is the default, needs no typing, and the prev
     assert.equal(sent.mode, "conversation"); assert.equal(sent.note, "Skip the docs"); assert.equal("task" in sent, false);
     // Changing the note invalidates the preview, as editing the task does.
     fireEvent.change(ui.getByLabelText("Anything to add?"), { target: { value: "Other" } });
-    assert.equal(ui.queryByRole("button", { name: "Create disabled setup" }), null);
+    assert.equal(ui.queryByRole("button", { name: "Create setup" }), null);
     // The second choice is the typed task, as before.
     fireEvent.click(ui.getByRole("radio", { name: "Write my own task" }));
     assert.ok(ui.getByLabelText("Task and completion criteria"));
@@ -194,10 +194,10 @@ test("Keep this conversation going is the default, needs no typing, and the prev
 });
 
 test("a thread with no turn yet starts on the typed task and says why; a choice made by hand is kept", async () => {
-  const call = async (): Promise<SetupResult> => ({ ok: true, message: "Enter a task", conversation: "none" });
+  const call = async (): Promise<SetupResult> => ({ ok: true, message: "No loop is set up for this thread yet.", conversation: "none" });
   const ui = render(<SetupPanel threadId="thr_example" call={call as never} onChanged={() => {}} />);
   try {
-    await ui.findByText("Enter a task");
+    await ui.findByText("No loop is set up for this thread yet.");
     assert.equal((ui.getByRole("radio", { name: "Write my own task" }) as HTMLInputElement).checked, true);
     assert.ok(ui.getByText("This thread may not have started yet, so there may be nothing to continue. Write a task."));
     assert.ok(ui.getByLabelText("Task and completion criteria"));
@@ -214,17 +214,17 @@ test("on a thread with no turn yet, the typed task stays the default through pre
     // Preview and create results carry no `conversation` field.
     if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket" };
     if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [] };
-    return { ok: true, message: "Enter a task", conversation: "none" };
+    return { ok: true, message: "No loop is set up for this thread yet.", conversation: "none" };
   };
   const ui = render(<SetupPanel threadId="thr_example" call={call as never} onChanged={() => {}} />);
   try {
-    await ui.findByText("Enter a task");
+    await ui.findByText("No loop is set up for this thread yet.");
     fireEvent.change(ui.getByLabelText("Task and completion criteria"), { target: { value: "Fictional task" } });
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByText("Preview only");
     assert.equal((ui.getByRole("radio", { name: "Write my own task" }) as HTMLInputElement).checked, true);
     assert.ok(ui.getByLabelText("Task and completion criteria"));
-    fireEvent.click(ui.getByRole("button", { name: "Create disabled setup" }));
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
     await ui.findByText("Saved disabled");
     const create = seen.find(i => i.action === "create")!;
     assert.equal(create.mode, "own"); assert.equal(create.task, "Fictional task"); assert.equal("note" in create, false);
@@ -235,24 +235,134 @@ test("the preview shows the takeover, and the person can turn it off and preview
   const sent: Array<string | undefined> = [];
   const offer = { provider: "claude-code", model: "example-claude-model" };
   const call = async (input: { action: string; takeover?: "on" | "off" }): Promise<SetupResult> => {
-    if (input.action !== "preview") return { ok: true, message: "Enter a task" };
+    if (input.action !== "preview") return { ok: true, message: "No loop is set up for this thread yet." };
     sent.push(input.takeover);
     const takeover = input.takeover !== "off" ? { takeover: { ...offer, permission: "accept-edits", text: "On a usage limit on codex: a new conversation on claude-code takes over." } } : {};
     return { ok: true, message: input.takeover === "off" ? "Preview without takeover" : "Preview with takeover", plan: { ...plan, ...takeover, takeoverOffer: offer }, ticket: "example-ticket" };
   };
   const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
   try {
-    await ui.findByText("Enter a task");
+    await ui.findByText("No loop is set up for this thread yet.");
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByText("Preview with takeover");
     assert.ok(ui.getByText("On a usage limit on codex: a new conversation on claude-code takes over."));
     const box = ui.getByRole("checkbox", { name: "Take over on a usage limit" }) as HTMLInputElement;
     assert.equal(box.checked, true);
     fireEvent.click(box);
-    assert.equal(ui.queryByRole("button", { name: "Create disabled setup" }), null, "turning it off invalidates the preview");
+    assert.equal(ui.queryByRole("button", { name: "Create setup" }), null, "turning it off invalidates the preview");
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByText("Preview without takeover");
     assert.ok(ui.getByText("No fallbacks; automatic handoff is off."));
     assert.deepEqual(sent, ["on", "off"]);
   } finally { cleanup(); }
+});
+
+const primaries = (ui: { container: HTMLElement }) => [...ui.container.querySelectorAll("button.primary")].map(b => b.textContent);
+
+test("each step has exactly one prominent button, and the choices are form controls, not buttons", async () => {
+  const call = async (input: { action: string }): Promise<SetupResult> => {
+    if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket" };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [] };
+    if (input.action === "start") return { ok: true, message: "Background supervision started", record, canStart: false, started: true };
+    return { ok: true, message: "Nothing set up yet" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Nothing set up yet");
+    assert.deepEqual(primaries(ui), ["Preview setup"]);
+    // Selection is by radio and checkbox, grouped under headings; the only buttons are actions.
+    assert.deepEqual([...ui.container.querySelectorAll("fieldset > legend")].map(l => l.textContent), ["What should the loop keep going?", "Options"]);
+    assert.equal(ui.container.querySelectorAll("input[type=radio]").length, 2); assert.equal(ui.container.querySelectorAll("input[type=checkbox]").length, 1);
+    assert.deepEqual([...ui.container.querySelectorAll("button")].map(b => b.textContent), ["Preview setup"]);
+    assert.ok(ui.container.querySelector("label[for]"), "labelled fields");
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    assert.deepEqual(primaries(ui), ["Create setup"]);
+    assert.ok(ui.getByText(/Create setup saves the configuration and leaves supervision switched off/));
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await ui.findByText("Setup created, switched off");
+    assert.ok(ui.getByText(/No\. The loop is saved switched off and sends nothing until it is started\./));
+    assert.deepEqual(primaries(ui), ["Start background supervision"]);
+    fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
+    await ui.findByText("Supervision started");
+    assert.ok(ui.getByText(/Yes: a background supervisor was launched/)); assert.deepEqual(primaries(ui), []);
+  } finally { cleanup(); }
+});
+
+test("when another control starts the loop, the finished state points to it and offers no second Start", async () => {
+  const ui = render(<SetupPanel threadId="thr_example" hideStart call={async (input: { action: string }): Promise<SetupResult> => input.action === "inspect" ? { ok: true, record, canStart: true, message: "Review the diagnostics" } : { ok: true, message: "x" }} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Setup saved for this thread");
+    assert.equal(ui.queryByRole("button", { name: "Start background supervision" }), null);
+    assert.ok(ui.getByText(/start it with the looptender control at the top of this thread/));
+  } finally { cleanup(); }
+});
+
+test("a lost request says which step, how long, and that a preview created nothing; only a lost creation says a setup may exist", async () => {
+  let phase: "preview" | "create" = "preview";
+  const call = async (input: { action: string }): Promise<SetupResult> => {
+    if (input.action === "preview") { if (phase === "preview") throw Object.assign(new Error("PRIVATE text"), { name: "TimeoutError" }); return { ok: true, message: "Preview only", plan, ticket: "example-ticket" }; }
+    if (input.action === "create") throw new Error("PRIVATE text");
+    return { ok: true, message: "Nothing set up yet" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Nothing set up yet");
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    const lost = await ui.findByRole("alert");
+    assert.match(lost.textContent ?? "", /The preview did not finish: the request timed out after \d+ s\. Nothing was created; a preview never writes anything\./);
+    assert.ok(!/may already exist/.test(ui.container.textContent ?? "")); assert.ok(!(ui.container.textContent ?? "").includes("PRIVATE"));
+    phase = "create";
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await waitFor(() => assert.match(ui.getByRole("alert").textContent ?? "", /Creating the setup did not finish: the request to the plugin failed after \d+ s\. A switched-off setup named bb-thr-example may have been written/));
+  } finally { cleanup(); }
+});
+
+test("an invalid loop name is said next to the field and cannot be previewed", async () => {
+  const ui = render(<SetupPanel threadId="thr_example" call={async () => ({ ok: true, message: "Nothing set up yet" })} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Nothing set up yet");
+    fireEvent.change(ui.getByLabelText("Loop name"), { target: { value: "Bad Name" } });
+    assert.ok(ui.getByText(/Use lowercase letters, digits and hyphens, starting with a letter or digit/));
+    assert.equal((ui.getByRole("button", { name: "Preview setup" }) as HTMLButtonElement).disabled, true);
+    assert.equal(ui.getByLabelText("Loop name").getAttribute("aria-invalid"), "true");
+  } finally { cleanup(); }
+});
+
+
+test("the finished card carries its own message and a next action, and choices are described by their helper text", async () => {
+  const call = async (input: { action: string }): Promise<SetupResult> => {
+    if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket" };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [] };
+    if (input.action === "start") return { ok: true, message: "Background supervision started", record, canStart: false, started: true, checks: [] };
+    return { ok: true, message: "Nothing set up yet" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Nothing set up yet");
+    for (const name of ["Keep this conversation going", "Write my own task", "Record a goal for this task"]) {
+      const input = ui.getByRole(name === "Record a goal for this task" ? "checkbox" : "radio", { name });
+      const ids = (input.getAttribute("aria-describedby") ?? "").split(" ");
+      assert.ok(ids[0] && document.getElementById(ids[0]!)?.textContent, `${name} is described by its helper text`);
+    }
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" })); await ui.findByRole("button", { name: "Create setup" });
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" })); await ui.findByText("Saved disabled");
+    assert.ok(ui.getByText("Saved disabled").closest(".card.done"), "the message is inside the finished card, not below the diagnostics");
+    fireEvent.click(ui.getByRole("button", { name: "Start background supervision" })); await ui.findByText("Supervision started");
+    assert.ok(ui.getByText(/Next: nothing to do\. looptender now checks on its own; use Pause or Stop/));
+  } finally { cleanup(); }
+});
+
+test("focus rings and error text meet the contrast the form needs in both themes", async () => {
+  const { SetupStyles } = await import("./setup-style.tsx");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const css = renderToStaticMarkup(<SetupStyles />);
+  const lum = (hex: string) => { const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4); return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]!; };
+  const ratio = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x! + 0.05) / (y! + 0.05); };
+  const ring = /outline:2px solid (#[0-9a-f]{6})/.exec(css)?.[1]; assert.ok(ring, "an explicit ring colour");
+  assert.ok(ratio(ring!, "#ffffff") >= 3, "light"); assert.ok(ratio(ring!, "#1b1b1d") >= 3, "dark");
+  assert.ok(!/outline:2px solid Highlight/.test(css));
+  assert.match(css, /\.kgs-chip\{min-height:44px !important/);
 });

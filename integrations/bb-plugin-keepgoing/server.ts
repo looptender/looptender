@@ -3,7 +3,7 @@
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
 import { BUILD_LABEL } from "./build-label.ts";
-import { isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
+import { recordsUnreadable, isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
 import { execFile } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -51,7 +51,7 @@ const statusSchema = z.object({
   targetAgent: agentRef.optional(),
   // Fields status adds later. Each is checked on its own in `lenient`: one that is
   // malformed is named in details.unparsed, never taken for "nothing to say".
-  followsInstalls: z.unknown().optional(), buildAdoption: z.unknown().optional(), noProgress: z.unknown().optional(),
+  buildFreshness: z.unknown().optional(), noProgress: z.unknown().optional(),
   deadline: z.unknown().optional(), deadlineReached: z.unknown().optional(), sendAllowance: z.unknown().optional(), sendRecord: z.unknown().optional(), diskSpace: z.unknown().optional(), unreadable: z.unknown().optional(),
 });
 
@@ -81,13 +81,7 @@ export type LoopView = z.infer<typeof loopSchema>;
 const sendAllowanceShape = z.object({ max: z.number(), used: z.number().optional(), remaining: z.number().optional(), reached: z.boolean(), error: z.string().optional() });
 const unreadableShape = z.object({ file: z.string(), problem: z.string(), offset: z.number().optional(), remedy: z.string() });
 const noProgressShape = z.object({ availability: z.string(), text: z.string() });
-const adoptionShape = z.object({ outcome: z.string(), at: z.string().optional(), fromSha256: z.string().optional(), toSha256: z.string().optional(), message: z.string().optional() });
-// The labels of the two builds in status's own sentence: "switched from X (sha) to the installed Y (sha)"; the digests when it says otherwise.
-const switchLabels = (b: z.infer<typeof adoptionShape>) => {
-  const m = /switched from (\S+) \([0-9a-f]+\) to the installed (\S+) \([0-9a-f]+\)/.exec(b.message ?? "");
-  const label = (found: string | undefined, digest: string | undefined) => found && isBuildLabel(found) ? found : digest;
-  return { from: label(m?.[1], b.fromSha256), to: label(m?.[2], b.toSha256) };
-};
+const freshnessShape = z.object({ state: z.string(), text: z.string(), detail: z.string().optional(), command: z.string().optional(), action: z.string().optional() });
 const diskShape = z.object({ level: z.string(), message: z.string().optional() });
 
 /**
@@ -95,7 +89,7 @@ const diskShape = z.object({ level: z.string(), message: z.string().optional() }
  * and named in `unparsed`, so the card says it could not be read; it is never
  * dropped as though there were nothing to say, and never costs the loop.
  */
-function lenient(s: { followsInstalls?: unknown; buildAdoption?: unknown; noProgress?: unknown; control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown }) {
+function lenient(s: { buildFreshness?: unknown; noProgress?: unknown; control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown }) {
   const unparsed: string[] = [];
   const pick = <T>(name: string, schema: z.ZodType<T>, raw: unknown): T | undefined => {
     if (raw === undefined) return undefined;
@@ -104,8 +98,7 @@ function lenient(s: { followsInstalls?: unknown; buildAdoption?: unknown; noProg
     unparsed.push(name);
     return undefined;
   };
-  const followsInstalls = pick("followsInstalls", z.string(), s.followsInstalls);
-  const adoption = pick("buildAdoption", adoptionShape, s.buildAdoption);
+  const freshness = pick("buildFreshness", freshnessShape, s.buildFreshness);
   const noProgress = pick("noProgress", noProgressShape, s.noProgress);
   const supersededBy = pick("supersededBy", z.string(), s.control?.supersededBy);
   const deadline = pick("deadline", z.string(), s.deadline);
@@ -123,7 +116,7 @@ function lenient(s: { followsInstalls?: unknown; buildAdoption?: unknown; noProg
       if (unreadable.length !== s.unreadable.length) unparsed.push("unreadable");
     }
   }
-  return { followsInstalls, adoption, noProgress, supersededBy, deadline, deadlineReached, sends, sendRecord, disk, unreadable, unparsed };
+  return { freshness, noProgress, supersededBy, deadline, deadlineReached, sends, sendRecord, disk, unreadable, unparsed };
 }
 
 const actionSchema = z.enum(["pause", "resume", "stop"]);
@@ -143,7 +136,7 @@ export const NOT_THIS_THREAD = "This loop does not belong to this thread (it is 
 // What the plugin says instead of resuming: where a person resumes the loop.
 export const resumeByPerson = (configPath: string) =>
   "looptender does not resume a loop from this plugin, because it cannot tell a person's click from the supervised session. " +
-  `From an ordinary terminal, not one BB opened on this loop's thread, run keepgoing resume -c ${JSON.stringify(configPath)}, or start the looptender panel there with keepgoing panel --allow-changes.`;
+  `From an ordinary terminal, not one BB opened on this loop's thread, run looptender resume -c ${JSON.stringify(configPath)}, or start the looptender panel there with looptender panel --allow-changes.`;
 
 export const rpcContract = defineRpcContract({
   attachment: { input: attachInput, output: attachResult },
@@ -193,8 +186,8 @@ export default async function plugin(bb: BbPluginApi) {
     },
     newThreadStart: {
       type: "select",
-      label: "Keep going from the New thread screen",
-      description: "What happens after a thread is created with Send and keep going. Start automatically: supervision starts once the thread exists; if anything about the start is uncertain, the setup is left switched off with the reason. Review first: a switched-off setup is created and you start it from the thread. Both create the loop with a loop-wide limit.",
+      label: "Add to Looptender from the New thread screen",
+      description: "What happens after a thread is created with the New thread screen's Add to Looptender switch on. Start automatically: supervision starts once the thread exists; if anything about the start is uncertain, the setup is left switched off with the reason. Review first: a switched-off setup is created and you start it from the thread. Both create the loop with a loop-wide limit.",
       options: ["automatic", "manual"],
       experimental_optionLabels: { automatic: "Start automatically", manual: "Review first; I start it" },
       default: "automatic",
@@ -277,8 +270,7 @@ export default async function plugin(bb: BbPluginApi) {
       ...(f.unreadable.length ? { unreadable: f.unreadable.slice(0, 8).map(u => ({ file: u.file.slice(0, 64), problem: u.problem.slice(0, 40), ...(u.offset !== undefined ? { offset: u.offset } : {}), remedy: u.remedy.slice(0, 1200) })) } : {}),
       ...(f.unparsed.length ? { unparsed: f.unparsed.slice(0, 8) } : {}),
       ...(f.noProgress?.availability === "flagged" ? { noProgress: { text: f.noProgress.text.slice(0, 400) } } : {}),
-      ...(f.followsInstalls ? { followsInstalls: f.followsInstalls.slice(0, 16) } : {}),
-      ...(f.adoption ? { buildAdoption: { outcome: f.adoption.outcome.slice(0, 24), ...(f.adoption.at ? { at: f.adoption.at.slice(0, 40) } : {}), ...(() => { const l = switchLabels(f.adoption); return { ...(l.from ? { from: l.from.slice(0, 80) } : {}), ...(l.to ? { to: l.to.slice(0, 80) } : {}) }; })() } } : {}),
+      ...(f.freshness ? { buildFreshness: { state: f.freshness.state.slice(0, 24), text: f.freshness.text.slice(0, 200), ...(f.freshness.detail ? { detail: f.freshness.detail.slice(0, 600) } : {}), ...(f.freshness.command ? { command: f.freshness.command.slice(0, 400) } : {}), ...(f.freshness.action ? { action: f.freshness.action.slice(0, 300) } : {}) } } : {}),
     },
     ...(BUILD_LABEL && isBuildLabel(BUILD_LABEL) ? { pluginBuild: BUILD_LABEL } : {}),
     loop: s.loop,
@@ -436,7 +428,7 @@ export default async function plugin(bb: BbPluginApi) {
       catch { return "manual"; }
     },
     unavailable: async () => {
-      if (!hookAvailable) return "This version of BB does not offer the hook Keep going needs to learn which thread a message created, so it is unavailable here. Add to Looptender still works on an existing thread.";
+      if (!hookAvailable) return "This version of BB does not offer the hook Add to Looptender needs on the New thread screen to learn which thread a message created, so it is unavailable here. Add to Looptender still works on an existing thread.";
       const { bin } = await configured();
       const result = await run(bin, ["version"]);
       return result.code === 0 ? null : "The looptender program (installed as keepgoing up to v0.2.0) was not found or did not run. Install it, or set its path in this plugin's settings, then check again.";
@@ -515,7 +507,7 @@ export default async function plugin(bb: BbPluginApi) {
       const [command, name, ...rest] = argv;
       if (command === "status" && name === undefined) {
         const { loops, errors } = await allLoops(null);
-        const lines = loops.map((l) => `${l.loop}\t${l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.details?.disk ? `\tdisk=${l.details.disk.level}` : ""}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
+        const lines = loops.map((l) => `${l.loop}\t${recordsUnreadable(l.details) ? "records unreadable" : l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.details?.disk ? `\tdisk=${l.details.disk.level}` : ""}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
         // Registered loops this plugin was not told about: said, with how to add one.
         let notShown = "";
         try {

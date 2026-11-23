@@ -1,7 +1,7 @@
 // Shows keepgoing's state beside each supervised thread: a row in the thread
 // context card when bb shows the card, and a segment in the context banner
 // above the composer when it shows the banner. On the New thread screen it
-// adds the Keep going switch and its banner to the composer.
+// adds the Add to Looptender switch and its banner to the composer.
 import {
   definePluginApp,
   experimental_THREAD_INFO_ROW_GROUPS as ROW_GROUPS,
@@ -13,8 +13,9 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
-import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, buildFreshness, lastLabel, noteSaysRetired, shortNote } from "./status-details";
+import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, noteSaysRetired, shortNote } from "./status-details";
 import { SetupPanel } from "./setup-panel";
+import { SetupStyles } from "./setup-style";
 import { AttachPanel } from "./attach-panel";
 import { TransferPanel } from "./transfer-panel";
 import { KeepGoingBanner, KeepGoingSwitch, turnOn } from "./new-thread-control";
@@ -97,7 +98,7 @@ function describe(loop: LoopView): string[] {
     ...diagnosticLines(loop.details, loop.target, loop.supervising),
     // Which build is which: the supervisor's (above) and the plugin's own code.
     ...(loop.pluginBuild && loop.details?.runtime?.installedBuild && !sameBuild(loop.pluginBuild, loop.details.runtime.installedBuild) ? [`Plugin build: ${loop.pluginBuild} (the code drawing this card); the builds above are each supervisor's, read from looptender status`] : []),
-    ...(() => { const f = buildFreshness(loop.details, loop.configPath); return f?.detail ? [`Build: ${f.detail}`] : []; })(),
+    ...(() => { const f = freshnessToShow(loop.details); return f?.detail ? [`Build: ${f.detail}`] : []; })(),
     // The word bb keepgoing status prints as last=, beside the recorded action it does not mean.
     `Last check state: ${lastLabel(loop.lastState, loop.details)} (as in bb keepgoing status)`,
     loop.note ? `Note: ${loop.note}` : null,
@@ -134,11 +135,11 @@ const RESUME_SHARED = "A person resumes a held loop from an ordinary terminal, o
 
 /** The focus ring for this plugin's buttons, and the phone rules inline styles cannot say: a 44 px touch target
  *  and readable text wherever the pointer is a finger or the screen is narrow. */
-const PHONE = "(pointer: coarse), (max-width: 520px)";
+const PHONE = "(max-width: 640px), (pointer: coarse)";
 const STYLE = [
   "button[data-kg]:focus-visible, summary[data-kg]:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }",
   `@media ${PHONE} {`,
-  "  button[data-kg] { min-height: 44px !important; min-width: 44px; box-sizing: border-box; display: inline-flex !important; align-items: center; font-size: 14px !important; line-height: 20px !important; padding: 0 14px !important; }",
+  "  button[data-kg]:not(.kgs-chip) { min-height: 44px !important; min-width: 44px; box-sizing: border-box; display: inline-flex !important; align-items: center; font-size: 14px !important; line-height: 20px !important; padding: 0 14px !important; }",
   "  summary[data-kg] { display: list-item !important; min-height: 44px; box-sizing: border-box; padding: 12px 0; font-size: 14px !important; line-height: 20px !important; cursor: pointer; }",
   "  button[data-kg=chip] { padding: 0 !important; }",
   "  .kg-actions button[data-kg] { flex: 1 1 140px; justify-content: center; }",
@@ -207,8 +208,8 @@ function ResumeNote({ loop, compact }: { loop: LoopView; compact: boolean }) {
   }
   if (noteSaysRetired(loop)) return <span className="kg-t" style={wrap}>Its note says it is retired or not to be resumed, so no resume command is shown here. A person who decides otherwise resumes it from the looptender panel or the command line.</span>;
   // With several held loops the sentence is said once for the card; each loop keeps only its command.
-  if (compact) return <details style={wrap}><summary {...kg}>Command to resume (run in a terminal)</summary><code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code></details>;
-  return <span className="kg-t" style={wrap}>A person resumes this from an ordinary terminal: <code>keepgoing resume -c {JSON.stringify(loop.configPath)}</code>, or the looptender panel started there.</span>;
+  if (compact) return <details style={wrap}><summary {...kg}>Command to resume (run in a terminal)</summary><code>looptender resume -c {JSON.stringify(loop.configPath)}</code></details>;
+  return <span className="kg-t" style={wrap}>A person resumes this from an ordinary terminal: <code>looptender resume -c {JSON.stringify(loop.configPath)}</code>, or the looptender panel started there.</span>;
 }
 
 function ThreadSetup({ threadId, onChanged, hideStart = false }: { threadId: string; onChanged(): void; hideStart?: boolean }) {
@@ -225,16 +226,20 @@ function ThreadSetup({ threadId, onChanged, hideStart = false }: { threadId: str
     if (result.moved) setGeneration(n => n + 1);
     return result;
   }, [rpc]);
-  return <><AttachPanel key={`attach-${threadId}`} threadId={threadId} call={attach} onChanged={onChanged} />
-    <SetupPanel key={`${threadId}-${generation}`} threadId={threadId} call={call} onChanged={onChanged} hideStart={hideStart} />
-    <TransferPanel key={`move-${threadId}`} threadId={threadId} call={transfer} onChanged={onChanged} /></>;
+  // One primary flow first. Attaching and moving are for a loop that already
+  // exists, so they sit behind a collapsed section of their own.
+  return <><SetupPanel key={`${threadId}-${generation}`} threadId={threadId} call={call} onChanged={onChanged} hideStart={hideStart} />
+    <details className="kgs-more"><SetupStyles /><summary>Already have a loop?</summary>
+      <AttachPanel key={`attach-${threadId}`} threadId={threadId} call={attach} onChanged={onChanged} />
+      <TransferPanel key={`move-${threadId}`} threadId={threadId} call={transfer} onChanged={onChanged} />
+    </details></>;
 }
 
 function StatusWarning({ refresh }: { refresh(): void }) {
   return <div role="alert">Status could not be verified for every registered loop. Controls and setup are hidden until refreshed. <button type="button" {...kg} style={buttonStyle} onClick={refresh}>Refresh status</button></div>;
 }
 
-// What a thread created with Keep going on shows about that request.
+// What a thread created with Add to Looptender on shows about that request.
 function useThreadOutcome(threadId: string, loops: LoopView[]) {
   const rpc = useRpc<typeof rpcContract>();
   const call = useCallback((input: Parameters<typeof rpc.call<"newThread">>[1]) => rpc.call("newThread", input), [rpc]);
@@ -276,10 +281,11 @@ function detailLines(l: LoopView, reasons: string[]): string[] {
 
 // The build line: how this loop's supervisor compares with the installed build, visible, never a tooltip.
 function BuildFreshness({ loop }: { loop: LoopView }) {
-  const f = buildFreshness(loop.details, loop.configPath);
-  if (!f || f.state === "current" || !f.text) return null;
+  const f = freshnessToShow(loop.details);
+  if (!f) return null;
+  // looptender's own words: the chip, and either the command that is true for that supervisor or what to do in words.
   return <div aria-label="Build" className="kg-t" style={{ margin: 0, padding: "0 12px 4px 12px", fontSize: 12, overflowWrap: "anywhere" }}>
-    <span>{f.text}</span>{f.command && <> — <code>{f.command}</code></>}
+    <span>{f.text}</span>{f.command && <> — <code>{f.command}</code></>}{!f.command && f.action && <> — {f.action}</>}
   </div>;
 }
 
@@ -320,12 +326,13 @@ function CardRow({ threadId }: { threadId: string }) {
   const [open, setOpen] = useState(false);
   const sharedResume = !failed && loops.filter(needsResume).length > 1;
   return <div>
+    <SetupStyles />
     <FocusStyle />
     {failed && <StatusWarning refresh={refresh} />}
     {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} showLabel={false} />}
     {sharedResume && <div style={{ padding: "0 12px", fontSize: 12 }}>{RESUME_SHARED}</div>}
-    {!loaded ? <ContextRow icon="Repeat" label="looptender: checking status" /> : !loops.length ? <ContextRow icon="Repeat" label="looptender" action={!failed && <button type="button" {...kg} style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>Add to Looptender</button>} /> : loops.map(l => <CardLoop key={loopKey(l)} loop={l} name={referenceName(l, loops, references)} threadId={threadId} refresh={refresh} failed={failed} created={l === loop ? created : null} showName={loops.length > 1} compactResume={sharedResume} />)}
-    {!failed && loops.some(l => l.managedId) && <button type="button" {...kg} style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>{loops.length > 1 ? "Thread setup" : "Setup"}</button>}
+    {!loaded ? <ContextRow icon="Repeat" label="looptender: checking status" /> : !loops.length ? <ContextRow icon="Repeat" label="looptender" action={!failed && <button type="button" className="kgs-chip" {...kg} style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>Add to Looptender</button>} /> : loops.map(l => <CardLoop key={loopKey(l)} loop={l} name={referenceName(l, loops, references)} threadId={threadId} refresh={refresh} failed={failed} created={l === loop ? created : null} showName={loops.length > 1} compactResume={sharedResume} />)}
+    {!failed && loops.some(l => l.managedId) && <button type="button" className="kgs-chip" {...kg} style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>{loops.length > 1 ? "Thread setup" : "Setup"}</button>}
     {open && <div hidden={failed}><ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={created === READY_NOT_STARTED} /></div>}
   </div>;
 }
@@ -406,7 +413,9 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
 }
 
 function ComposerSwitch() {
-  return <KeepGoingSwitch composer={useComposer()} />;
+  const rpc = useRpc<typeof rpcContract>();
+  const call = useCallback((input: Parameters<typeof rpc.call<"newThread">>[1]) => rpc.call("newThread", input), [rpc]);
+  return <KeepGoingSwitch composer={useComposer()} call={call} />;
 }
 
 function ComposerBanner() {
@@ -427,9 +436,9 @@ export default definePluginApp((app) => {
     // same switch from the menu beside Send.
     sendMenu: [{
       id: "keep-going",
-      label: "Keep going…",
+      label: "Add to Looptender…",
       icon: "Repeat",
-      description: "Supervise the thread this message creates",
+      description: "Turns on Add to Looptender for this new thread without sending. A plain Send still sends with no looptender; the banner's send button then sends your message and adds the thread to looptender, as your setting says.",
       run: ({ composer }) => { if (composer.scope.kind === "new-thread") turnOn(composer.key); },
     }],
   });

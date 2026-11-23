@@ -1017,23 +1017,54 @@ type panelList struct {
 	Unread        int             `json:"unread"`
 	Omitted       int             `json:"omitted"`
 	Loops         []panelListLoop `json:"loops"`
+	// Volumes is one notice for each volume holding loops' state that is
+	// filling or nearly full (see dockReport.Volumes).
+	Volumes []dockVolume `json:"volumes,omitempty"`
 	// CanAll is which changes can be made to every loop at once
 	// (client review|apply --all): pause and stop, while any loop can be.
 	CanAll []string `json:"canAll"`
 	// InstalledBuild is the build answering this read, shortened for display;
 	// absent when it has no version (a dev build).
 	InstalledBuild string `json:"installedBuild,omitempty"`
+	// Freshness is the one line about how many supervisors run the installed
+	// build, as the page shows it; absent when no loop's build is known.
+	BuildFreshness *buildFreshnessSummary `json:"buildFreshness,omitempty"`
 	// EarlierBuildPanel: as in panel status.
 	EarlierBuildPanel string `json:"earlierBuildPanel,omitempty"`
 }
 
+// panelWaiting is dockWaiting without its words: Reason is on the row.
+// AtLeast: Since is the last control change, not the hold's own start, so
+// the wait is at least that long.
+type panelWaiting struct {
+	Kind    string     `json:"kind"`
+	By      string     `json:"by"`
+	Since   *time.Time `json:"since,omitempty"`
+	AtLeast bool       `json:"atLeast,omitempty"`
+}
+
 type panelListLoop struct {
 	// Key is the loop's key on the page; panel --loop accepts it.
-	Key      string `json:"key"`
-	Name     string `json:"name"`
-	State    string `json:"state"`
-	Phrase   string `json:"phrase"`
-	NeedsYou bool   `json:"needsYou"`
+	Key string `json:"key"`
+	// DiskSpace is low or critical when the volume that holds the loop's
+	// state is filling or nearly full.
+	DiskSpace string `json:"diskSpace,omitempty"`
+	Name      string `json:"name"`
+	State     string `json:"state"`
+	Phrase    string `json:"phrase"`
+	NeedsYou  bool   `json:"needsYou"`
+	// Reason is the row's one line: what it waits for, in fixed words (never
+	// the hold's note), or the state's detail when it waits on nothing.
+	Reason string `json:"reason"`
+	// Waiting is what it waits for, set while it waits (dockWaiting): kind
+	// asked, held, limit, checks or unknown; by agent, person, other_thread,
+	// check or unknown; and since when.
+	Waiting *panelWaiting `json:"waiting,omitempty"`
+	// CheckedAt is when the loop's last check ran: the row's facts are as
+	// old as that. Absent when no check is recorded. Supervisor is what this
+	// read found running its checks (dockLoop.Supervisor).
+	CheckedAt  *time.Time `json:"checkedAt,omitempty"`
+	Supervisor string     `json:"supervisor"`
 	// NoProgress is the no-progress flag's sentence when it is raised, in
 	// the page's words; empty otherwise. It is never a need.
 	NoProgress string `json:"noProgress,omitempty"`
@@ -1051,6 +1082,9 @@ type panelListLoop struct {
 	// one answering this read; it never says which is newer.
 	RecordedBuild string `json:"recordedBuild,omitempty"`
 	BuildDiffers  bool   `json:"buildDiffers,omitempty"`
+	// Freshness is the loop's supervisor build against the installed one, in
+	// build_freshness.go's words; absent when nothing can be said.
+	BuildFreshness *buildFreshness `json:"buildFreshness,omitempty"`
 	// Provider and Model are the configured labels of the loop's current
 	// target, shown beside its name; absent when not configured. Moved is set
 	// while the loop has been moved to a new thread and not yet checked there.
@@ -1063,7 +1097,9 @@ func buildPanelList(r dockReport) panelList {
 	out := panelList{SchemaVersion: 1, ReadAt: r.ReadAt, Registry: r.Registry.Availability, Complete: r.Complete, AllClear: r.AllClear,
 		NeedsYou: len(r.NeedsYou), Unread: r.Unread, Omitted: r.Registry.Omitted, Loops: []panelListLoop{}}
 	out.AccountQuotas = panelQuotaSummary(r)
+	out.Volumes = r.Volumes
 	out.InstalledBuild = shortBuildLabel(version)
+	out.BuildFreshness = r.BuildFreshness
 	needs := map[string]bool{}
 	overdue := map[string]*time.Time{}
 	for _, n := range r.NeedsYou {
@@ -1079,8 +1115,8 @@ func buildPanelList(r dockReport) panelList {
 				out.CanAll = append(out.CanAll, a)
 			}
 		}
-		row := panelListLoop{Key: l.Key, Name: l.Name, State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
-			BuildDiffers: l.Build.Availability == "different"}
+		row := panelListLoop{Key: l.Key, Name: l.Name, DiskSpace: dockDiskLevel(l.DiskSpace), State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
+			BuildDiffers: l.Build.Availability == "different", BuildFreshness: l.BuildFreshness.public()}
 		// Lengthened with the installed label when the two would read the same.
 		var inst string
 		row.RecordedBuild, inst = shortBuildPair(l.Build.Recorded, version)
@@ -1089,6 +1125,11 @@ func buildPanelList(r dockReport) panelList {
 		}
 		if np := l.NoProgress; np != nil && np.Availability == "flagged" {
 			row.NoProgress = np.Text
+		}
+		row.Reason, row.CheckedAt, row.Supervisor = l.Detail, l.LastCheck.At, l.Supervisor
+		if w := l.Waiting; w != nil {
+			row.Reason = w.Reason
+			row.Waiting = &panelWaiting{Kind: w.Kind, By: w.By, Since: w.Since, AtLeast: w.SinceEvidence == "control_changed"}
 		}
 		out.Loops = append(out.Loops, row)
 	}
@@ -1175,4 +1216,11 @@ func panelCallerKind() string {
 }
 func panelBuildReuseAllowed(rec panelRecord, caller string) bool {
 	return (caller == "person" || caller == "agent") && rec.BuildAuthority == caller
+}
+
+func dockDiskLevel(d *dockDiskSpace) string {
+	if d == nil {
+		return ""
+	}
+	return d.Level
 }

@@ -19,11 +19,19 @@ type diskSpaceStatus struct {
 	AvailableBytes uint64 `json:"availableBytes,omitempty"`
 	TotalBytes     uint64 `json:"totalBytes,omitempty"`
 	Message        string `json:"message,omitempty"`
+	// volume names the volume, for the panel to tell loops on one volume
+	// as one.
+	volume string
 }
 
 func describeDiskSpace(dir string) diskSpaceStatus {
 	r := diskspace.Of(dir)
-	return diskSpaceStatus{Level: r.Level(), AvailableBytes: r.Available, TotalBytes: r.Total, Message: r.Sentence()}
+	return diskSpaceStatus{Level: r.Level(), AvailableBytes: r.Available, TotalBytes: r.Total, Message: r.Sentence(), volume: diskspace.VolumeID(dir)}
+}
+
+// lowDisk says whether the reading is one to show: low or critical.
+func (d diskSpaceStatus) lowDisk() bool {
+	return d.Level == diskspace.Low || d.Level == diskspace.Critical
 }
 
 // doctorDiskSpace adds state.disk_space: a warning when the volume is
@@ -34,7 +42,7 @@ func doctorDiskSpace(r *doctorReport, dir string) {
 	case diskspace.OK:
 		r.add("state.disk_space", "ok", "The volume that holds the state directory has "+diskspace.Size(s.AvailableBytes)+" free of "+diskspace.Size(s.TotalBytes)+".", "")
 	case diskspace.Low:
-		r.add("state.disk_space", "warning", capitalize(s.Message)+".", "Free space on the volume: below 100 MiB, records may fail to save.")
+		r.add("state.disk_space", "warning", capitalize(s.Message)+".", "Free space on the volume now. If free space falls below 100 MiB, records may fail to save, and doctor reports this as an error.")
 	case diskspace.Critical:
 		r.add("state.disk_space", "error", capitalize(s.Message)+".", "Free space on the volume now. Nothing is sent without its record saved first, but holds, history and reports need room to be saved.")
 	default:
@@ -138,4 +146,39 @@ func (w *diskWatch) check(e env, cfg *config.Config) {
 			e.errf("disk space report attempt failed; it will not be repeated for this episode")
 		}
 	}
+}
+
+// diskEpisode is a disk watch's state, handed across a build switch.
+type diskEpisode struct {
+	Level      string    `json:"level"`
+	Told       []string  `json:"told,omitempty"`
+	LastReport time.Time `json:"lastReport,omitempty"`
+}
+
+func (w *diskWatch) episode() *diskEpisode {
+	if w == nil || w.level == "" || w.level == diskspace.OK {
+		return nil
+	}
+	e := &diskEpisode{Level: w.level, LastReport: w.lastReport}
+	for _, l := range []string{diskspace.Low, diskspace.Critical} {
+		if w.told[l] {
+			e.Told = append(e.Told, l)
+		}
+	}
+	return e
+}
+
+// watch is the disk watch that carries on the episode; nil when there is
+// none or it cannot be read.
+func (e *diskEpisode) watch() *diskWatch {
+	if e == nil || (e.Level != diskspace.Low && e.Level != diskspace.Critical) {
+		return nil
+	}
+	w := &diskWatch{level: e.Level, lastReport: e.LastReport, told: map[string]bool{}}
+	for _, l := range e.Told {
+		if l == diskspace.Low || l == diskspace.Critical {
+			w.told[l] = true
+		}
+	}
+	return w
 }
