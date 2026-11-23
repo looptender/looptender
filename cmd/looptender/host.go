@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/looptender/looptender/internal/hostcheck"
@@ -53,8 +52,10 @@ func hostLoadSentence(l hostcheck.Load) string {
 }
 
 // hostFixedByEnv: the test-only variable fixed this program's readings. A
-// test binary pins them on purpose and is not told.
-var hostFixedByEnv = func() bool { return hostcheck.FixedByEnv && !testing.Testing() }
+// test binary pins them on purpose (PinForTests clears FixedByEnv) and is
+// not told. No call into the testing package: the built binary must not
+// link it.
+var hostFixedByEnv = func() bool { return hostcheck.FixedByEnv }
 
 // doctorHost adds host.session and host.load.
 func doctorHost(r *doctorReport, h hostStatus) {
