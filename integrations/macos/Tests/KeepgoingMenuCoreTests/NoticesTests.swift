@@ -31,6 +31,21 @@ final class NoticesTests: XCTestCase {
         XCTAssertEqual(second.map(\.identifier), ["keepgoing.overdue.l000000000001.1893574800"])
     }
 
+    func testToldGapsCarryAcrossAnUpdateRelaunchAndNothingElse() {
+        var rule = OverdueNotices()
+        let gap = "2030-01-01T09:00:00Z"
+        XCTAssertEqual(rule.next(read([loop(1, "example-api", overdueSince: gap)]), format: format).count, 1)
+        // The new menu starts with what the old one had told.
+        var next = OverdueNotices()
+        next.restoreTold(rule.exportTold())
+        XCTAssertEqual(next.next(read([loop(1, "example-api", overdueSince: gap)]), format: format), [])
+        // A new gap is still told, and unreadable or foreign entries are ignored.
+        XCTAssertEqual(next.next(read([loop(1, "example-api", overdueSince: "2030-01-02T09:00:00Z")]), format: format).count, 1)
+        var junk = OverdueNotices()
+        junk.restoreTold("../../x=1;l000000000001=notanumber;l000000000001=1=2;")
+        XCTAssertEqual(junk.exportTold(), "")
+    }
+
     func testALoopLeftOutOfACutOffListKeepsWhatWasTold() {
         var rule = OverdueNotices()
         let gap = "2030-01-01T09:00:00Z"
