@@ -64,7 +64,8 @@ function useLineage(threadId: string) {
     rpc.call("lineage", { threadId }).then(r => lineageCache.set(threadId, r)).catch(() => lineageCache.set(threadId, { child: false })).finally(() => bump(n => n + 1));
   }, [rpc, threadId]);
   const v = lineageCache.get(threadId);
-  return v && v !== "pending" ? v : { child: false };
+  // While the answer is pending nothing that depends on it is drawn, so the entry button never flashes in and out.
+  return v && v !== "pending" ? { ...v, pending: false } : { child: false as boolean, coveredBy: undefined, pending: v === "pending" || v === undefined };
 }
 
 function useLoops(threadId: string) {
@@ -279,6 +280,7 @@ function CardRow({ threadId }: { threadId: string }) {
   // A lane is covered through its parent's loop, and a session has one loop: no
   // entry button, one quiet line, and setup kept in a collapsed "more" below.
   const quiet = loaded && !failed && !loops.length && lineage.child;
+  const waitingOnLineage = loaded && !failed && !loops.length && lineage.pending;
   if (quiet) return <div>
     <SetupStyles />
     {lineage.coveredBy && <ContextRow icon="Repeat" label={<>Covered by <a href={`#thread-${lineage.coveredBy.threadId}`} onClick={e => { e.preventDefault(); nav.toThread(lineage.coveredBy!.threadId); }}>{lineage.coveredBy.loop}</a></>} title="This thread is covered through its parent thread's loop" />}
@@ -286,6 +288,7 @@ function CardRow({ threadId }: { threadId: string }) {
       <ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={false} />
     </details>
   </div>;
+  if (waitingOnLineage) return <div><SetupStyles /></div>;
   return <div>
     <SetupStyles />
     {failed && <StatusWarning refresh={refresh} />}
@@ -308,9 +311,14 @@ function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; i
   const { outcome, loop } = useThreadOutcome(threadId, loops);
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
   const only = loops.length === 1 ? loops[0] : undefined;
-  return <button type="button" onClick={onToggle} aria-expanded={isExpanded} title={failed ? "Status could not be refreshed. Open details to retry." : loops.length ? summaryTitle(loops) : "Set up a loop for this thread"}
+  const lineage = useLineage(threadId);
+  const noLoop = loaded && !failed && !loops.length;
+  // Nothing while the lineage is pending; on a child, no "Add to Looptender" entry.
+  if (noLoop && lineage.pending) return null;
+  const childText = noLoop && lineage.child ? (lineage.coveredBy ? `Covered by ${lineage.coveredBy.loop}` : "looptender") : undefined;
+  return <button type="button" onClick={onToggle} aria-expanded={isExpanded} title={failed ? "Status could not be refreshed. Open details to retry." : loops.length ? summaryTitle(loops) : childText ? "This thread is a child; setup is in the details" : "Set up a loop for this thread"}
     style={{ background: "none", border: 0, padding: 0, font: "inherit", color: "inherit", cursor: "pointer" }}>
-    {failed ? "looptender: status unavailable" : !loaded ? "looptender: checking status" : loops.length > 1 ? `looptender: ${loops.length} matching loops` : created ?? (only ? label(only) : "Add to Looptender")}
+    {failed ? "looptender: status unavailable" : !loaded ? "looptender: checking status" : loops.length > 1 ? `looptender: ${loops.length} matching loops` : created ?? (only ? label(only) : childText ?? "Add to Looptender")}
   </button>;
 }
 
@@ -320,8 +328,19 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
   const { loops, references, refresh, failed, loaded } = useLoops(threadId);
   const { outcome, start, control, loop } = useThreadOutcome(threadId, loops);
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
+  const lineage = useLineage(threadId);
+  const nav = useBbNavigate();
   if (!isExpanded) return null;
   const sharedResume = !failed && loops.filter(needsResume).length > 1;
+  const childNoLoop = loaded && !failed && !loops.length && lineage.child;
+  if (loaded && !failed && !loops.length && lineage.pending) return null;
+  if (childNoLoop) return <>
+    <SetupStyles />
+    {lineage.coveredBy && <div style={{ padding: "4px 12px", fontSize: 12 }}>Covered by <a href={`#thread-${lineage.coveredBy.threadId}`} onClick={e => { e.preventDefault(); nav.toThread(lineage.coveredBy!.threadId); }}>{lineage.coveredBy.loop}</a>, a loop on a parent thread.</div>}
+    <details className="kgs-more"><summary>Set up a loop for this thread anyway</summary>
+      <ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={false} />
+    </details>
+  </>;
   return <>
     {failed && <StatusWarning refresh={refresh} />}
     {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} showLabel={false} />}
