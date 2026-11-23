@@ -72,10 +72,14 @@ class PlanTests(unittest.TestCase):
             del os.environ['CI_PLAN_FILES_JSON']
 
     def test_everything_else_runs_everything(self):
-        for event, draft in [('pull_request', 'false'), ('pull_request', ''), ('merge_group', ''), ('merge_group', 'true'),
+        for event, draft in [('pull_request', ''), ('pull_request', 'unknown'), ('merge_group', ''), ('merge_group', 'true'),
                              ('workflow_dispatch', ''), ('push', '')]:
             with self.subTest(event=event, draft=draft):
                 self.assertEqual(plan.plan(event, draft, NEVER)[:2], (plan.FULL, False))
+
+    def test_ready_pull_request_runs_other_checks_on_macos_but_not_the_race_partitions(self):
+        got = plan.plan('pull_request', 'false', NEVER)
+        self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.FULL))
 
     def test_merge_queue_never_skips_or_narrows(self):
         # Even with a draft flag or a passed run to find: the queue runs everything.
