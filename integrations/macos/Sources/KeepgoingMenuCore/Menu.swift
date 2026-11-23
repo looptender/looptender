@@ -207,6 +207,16 @@ public enum MenuCommand: Equatable {
     case quit
 }
 
+/// Semantic tint for a row's symbol. Shape and text still carry the meaning
+/// without colour; `.needsYou` is reserved for states that wait on a person.
+public enum Tone: Equatable {
+    case supervising
+    case needsYou
+    case limit
+    case failing
+    case quiet
+}
+
 public struct MenuRow: Equatable {
     public enum Kind: Equatable { case action, loop, status, separator }
     public let kind: Kind
@@ -225,6 +235,8 @@ public struct MenuRow: Equatable {
     public let command: MenuCommand?
     /// A loop's choices, shown as its submenu.
     public var submenu: [MenuRow] = []
+    /// Semantic tint for `symbol`; `.quiet` stays a system-coloured template.
+    public var tone: Tone = .quiet
     public var isEnabled: Bool { command != nil || !submenu.isEmpty }
 }
 
@@ -283,6 +295,15 @@ public enum MenuBuilder {
         "outside_hours": "moon", "paused": "pause.circle", "off": "circle", "stopped": "stop.circle", "finished": "checkmark.circle",
     ]
 
+    /// Semantic tint per state, matching every key in `symbols`. Only
+    /// `waiting_for_you` maps to `.needsYou`; routine quiet states stay in the
+    /// system colour.
+    public static let tones: [String: Tone] = [
+        "waiting_for_you": .needsYou, "unknown": .quiet, "checks_failing": .failing,
+        "not_checked_recently": .quiet, "waiting_on_limit": .limit, "supervising": .supervising,
+        "outside_hours": .quiet, "paused": .quiet, "off": .quiet, "stopped": .quiet, "finished": .quiet,
+    ]
+
     /// Shortened in the middle: loop names often share a beginning, so the
     /// end is what tells them apart.
     static func shortened(_ text: String, to limit: Int) -> String {
@@ -312,9 +333,9 @@ public enum MenuBuilder {
         return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
-    static func action(_ title: String, _ command: MenuCommand, symbol: String, help: String, detail: String = "") -> MenuRow {
+    static func action(_ title: String, _ command: MenuCommand, symbol: String, help: String, detail: String = "", tone: Tone = .quiet) -> MenuRow {
         MenuRow(kind: .action, title: title, detail: detail, symbol: symbol, accessibilityLabel: detail.isEmpty ? title : title + ", " + detail,
-                accessibilityHelp: help, toolTip: "", command: command)
+                accessibilityHelp: help, toolTip: "", command: command, tone: tone)
     }
     static let separator = MenuRow(kind: .separator, title: "", detail: "", symbol: "", accessibilityLabel: "", accessibilityHelp: "", toolTip: "", command: nil)
     static func status(_ text: String) -> MenuRow {
@@ -375,7 +396,7 @@ public enum MenuBuilder {
             if let needs = needsLine(held: held, unread: list.unread) {
                 // The symbol says which it is: a person is needed, or only
                 // that something could not be read.
-                rows.append(action(needs, .openPanel, symbol: held > 0 ? "exclamationmark.circle.fill" : "questionmark.circle", help: "Opens the panel on what needs you."))
+                rows.append(action(needs, .openPanel, symbol: held > 0 ? "exclamationmark.circle.fill" : "questionmark.circle", help: "Opens the panel on what needs you.", tone: held > 0 ? .needsYou : .quiet))
                 badge = list.needsYou > 99 ? "99+" : String(list.needsYou)
                 iconLabel = "looptender, " + needs
             } else if !list.allClear {
@@ -404,10 +425,11 @@ public enum MenuBuilder {
                 let target = targetText(loop)
                 let fresh = freshnessMark(loop)
                 let shown = [phrase, target, build, fresh].filter { !$0.isEmpty }.joined(separator: " · ")
-                rows.append(MenuRow(kind: .loop, title: short, detail: shown, symbol: symbols[loop.needsYou && loop.state == "paused" ? "waiting_for_you" : loop.state] ?? "questionmark.circle",
+                let stateKey = loop.needsYou && loop.state == "paused" ? "waiting_for_you" : loop.state
+                rows.append(MenuRow(kind: .loop, title: short, detail: shown, symbol: symbols[stateKey] ?? "questionmark.circle",
                                     accessibilityLabel: flag.isEmpty ? "\(name), \(shown)" : "\(name), \(Contract.text(loop.phrase)). \(flag)" + (target.isEmpty ? "" : ". Configured target: " + target) + (build.isEmpty ? "" : ". " + build),
                                     accessibilityHelp: choices.count > 1 ? "Shows what you can do with this loop." : "Opens this loop in the panel.",
-                                    toolTip: [short == name ? "" : name, target.isEmpty ? "" : "Configured target: " + target].filter { !$0.isEmpty }.joined(separator: "\n"), command: choices.count > 1 ? nil : .openLoop(key: loop.key), submenu: choices.count > 1 ? choices : []))
+                                    toolTip: [short == name ? "" : name, target.isEmpty ? "" : "Configured target: " + target].filter { !$0.isEmpty }.joined(separator: "\n"), command: choices.count > 1 ? nil : .openLoop(key: loop.key), submenu: choices.count > 1 ? choices : [], tone: tones[stateKey] ?? .quiet))
             }
             if list.canAll?.contains("pause") == true {
                 rows.append(action("Pause All Loops…", .reviewAll(.pause), symbol: "pause.circle",
