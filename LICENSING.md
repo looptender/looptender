@@ -31,6 +31,10 @@ For commercial terms, open a [licensing inquiry](https://github.com/looptender/l
 
 Third-party dependencies, assets, and license documents retain their own terms; the project license does not relicense them. The terms of the software inside the executable, the Go runtime and standard library and the modules it links, are reproduced in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES), which ships in every release archive.
 
+## Future versions
+
+The licensor may offer future versions of looptender under different terms, and may offer separate terms to a particular person or company. A version that has already been published keeps the terms it was published under for anyone who received it.
+
 ## Contributions
 
 New contributions follow [CONTRIBUTING.md](CONTRIBUTING.md) and the [contributor agreement](CONTRIBUTOR_LICENSE_AGREEMENT.md). Contributors retain copyright and give the steward permission to license their contributions under other terms, including commercial terms. The agreement applies only when accepted; it is not retroactive and does not convert earlier DCO sign-offs into consent.
