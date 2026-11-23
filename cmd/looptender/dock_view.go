@@ -274,9 +274,10 @@ type dockLoop struct {
 	Limits    []dockLimit    `json:"limits"`
 	LimitWait *dockLimitWait `json:"limitWait,omitempty"`
 	// UsageLimit is the provider usage limit on the active target, from
-	// client status: which window, until when, which account, the other
-	// configured accounts, and what a person can do.
-	UsageLimit  *usageLimitStatus `json:"usageLimit,omitempty"`
+	// client status, in compact form. The page says it in the row's detail
+	// and waiting reason; only panel list carries the record, so the
+	// report's size does not grow per loop at a limit.
+	UsageLimit  *usageLimitStatus `json:"-"`
 	Issues      []string          `json:"issues"`
 	Identifiers *dockIdentifiers  `json:"identifiers,omitempty"`
 	// NoProgress is the no-progress flag, the same value status shows; nil
@@ -1315,7 +1316,7 @@ func dockWaitingOf(l dockLoop, need *dockNeed, st *statusOut, tl *timelineReport
 		w.Kind, w.By, w.Reason, w.Since, w.SinceEvidence = "limit", "check", "A provider usage limit, with no other route able to take over.", nil, ""
 		if u := l.UsageLimit; u != nil {
 			// Fixed words: the window's phrase and the reset time.
-			w.Reason = "A provider usage limit (" + u.Words + "), until " + u.ResetsAt.UTC().Format(time.RFC3339) + "."
+			w.Reason = "The " + u.Words + ", until " + u.ResetsAt.UTC().Format(time.RFC3339) + "."
 			at := u.ObservedAt
 			w.Since, w.SinceEvidence = &at, "limit_observed"
 		}
@@ -1737,7 +1738,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		l.Moved = snap.Moved
 	}
 	if snap != nil {
-		l.UsageLimit = snap.UsageLimit
+		l.UsageLimit = snap.UsageLimit.compact()
 	}
 	l.LastCheck = dockLastCheck(st, now, staleAfter)
 	l.NextCheck = dockNextCheck(snap, st, now)
@@ -1864,7 +1865,9 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			// as what it is, not as supervising.
 			u := l.UsageLimit
 			l.State, l.Phrase = "waiting_on_limit", "Waiting for a limit to reset"
-			l.Detail = "Its " + u.Words + " on " + u.Provider + " was reached; it resets in " + dockSpan(u.ResetsAt.Sub(now)) + ", at " + u.ResetsAt.UTC().Format(time.RFC3339) + ". The loop is not held and keeps checking."
+			// The reset's time is in the waiting reason; this stays short, as
+			// it is said on the row and again in "worth a look".
+			l.Detail = "Its " + u.Words + " was reached; it resets in " + dockSpan(u.ResetsAt.Sub(now)) + ". The loop is not held."
 			if l.Children.Failed > 0 {
 				l.Detail += " " + dockPlural(l.Children.Failed, "of its lanes is", "of its lanes are") + " in error as well; lanes on the same account wait for the same reset."
 			}

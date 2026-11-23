@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/looptender/looptender/internal/accounts"
@@ -40,27 +41,45 @@ type usageLimitStatus struct {
 	// Held names the hold in force: a held loop observes nothing, so the
 	// limit is from before it.
 	Held string `json:"held,omitempty"`
-	// Account is the accounts catalog entry that reached the limit: the one
-	// the route states (match route_account), or the one whose directory is
-	// the CLAUDE_CONFIG_DIR its check ran under (match config_dir). Absent
-	// when neither is known.
+	// Account is the accounts catalog entry that reached the limit, as far
+	// as it is known (usageAccount.Match says how). Absent when it is not:
+	// the route states no account, and no catalog entry has the directory
+	// this supervisor was started with.
 	Account *usageAccount `json:"account,omitempty"`
-	// Others are the other catalog entries of a supported provider, the same
-	// provider first, each with its last saved quota reading.
-	Others  []usageAccount `json:"others"`
+	// AccountUnknown says why Account is absent: bb_directory_unknown (a BB
+	// route: BB does not say which Claude directory its threads use) or
+	// no_match; AccountUnknownText in fixed words.
+	AccountUnknown     string `json:"accountUnknown,omitempty"`
+	AccountUnknownText string `json:"accountUnknownText,omitempty"`
+	// OtherAccounts counts the other catalog entries of a supported
+	// provider. The list itself is said once per read, not per loop: in
+	// panel list's accountQuotas and the dock report's accounts.
+	OtherAccounts int `json:"otherAccounts"`
+	// Others is that list, for status's own text only.
+	Others  []usageAccount `json:"-"`
 	Actions []usageAction  `json:"actions"`
 	// configDir is the directory, for private surfaces only.
 	configDir string
 }
 
 type usageAccount struct {
-	Label        string `json:"label"`
-	Provider     string `json:"provider"`
+	// Handle is the account's handle, as in panel list's accountQuotas
+	// (never its catalog ID). Label is its catalog label, on private reads
+	// only (status, client status --private): a label can be an email
+	// address.
+	Handle   string `json:"handle"`
+	Label    string `json:"label,omitempty"`
+	Provider string `json:"provider"`
+	// Match is route_account (the route states it: known) or
+	// supervisor_directory (the catalog entry for the Claude directory this
+	// supervisor was started with: not known to be the thread's; Caveat
+	// says why).
 	Match        string `json:"match,omitempty"`
+	Caveat       string `json:"caveat,omitempty"`
 	SameProvider bool   `json:"sameProvider"`
 	// Quota is the last saved quota reading in one sentence, and QuotaAt
-	// when it was read; absent when none is saved.
-	Quota   string     `json:"quota"`
+	// when it was read, on private reads only.
+	Quota   string     `json:"quota,omitempty"`
 	QuotaAt *time.Time `json:"quotaAt,omitempty"`
 }
 
@@ -69,12 +88,27 @@ type usageAccount struct {
 // placeholder for them and is what the panel list and the menu show.
 type usageAction struct {
 	Kind          string `json:"kind"` // login_bb_directory or arm_takeover
-	Text          string `json:"text"`
-	Command       string `json:"command"`
-	PublicCommand string `json:"publicCommand"`
+	Text          string `json:"text,omitempty"`
+	Command       string `json:"command,omitempty"`
+	PublicCommand string `json:"publicCommand,omitempty"`
 }
 
 const bbClaudeDirPlaceholder = "<BB's Claude directory>"
+
+var usageAccountUnknownText = map[string]string{
+	"no_match":             "Its route states no account, and no catalog entry has the Claude directory this supervisor was started with.",
+	"bb_directory_unknown": "Its route states no account, and BB does not say which Claude directory its threads run under; no catalog entry has the directory this supervisor was started with either.",
+}
+
+const usageLoginText = "Log BB's Claude directory in to another Claude account that has quota, then quit and reopen BB so its Claude threads restart under the new login. This moves every Claude thread BB runs, not only this loop's, and supervisors started from BB threads stop when BB quits: run them as a service first (looptender service install)."
+
+func usageArmText(provider string) string {
+	return "An armed takeover would move this work, with its lanes, to a new conversation on " + provider + " at a limit like this one. Arming it is your decision: it starts a conversation on another subscription."
+}
+
+// usageSupervisorDirCaveat is why a supervisor_directory match is not known
+// to be the account that reached the limit.
+const usageSupervisorDirCaveat = "This is the catalog entry for the Claude directory this supervisor was started with, not one the thread is known to run under: BB does not say which directory its threads use, and the directory may since have been logged in to another account."
 
 // describeUsageLimit reads the catalog (never a provider) to say which
 // account reached the limit and what else is configured.
@@ -83,7 +117,7 @@ func describeUsageLimit(u *state.UsageLimit, cfg *config.Config, held string, no
 		return nil
 	}
 	out := &usageLimitStatus{Target: u.Target, Provider: u.Provider, Window: u.Window.Kind(), WindowKey: u.Window.Key, Model: u.Window.Model(), Words: u.Window.Words(),
-		ResetsAt: u.ResetsAt, ResetPassed: !u.ResetsAt.After(now), ObservedAt: u.ObservedAt, Held: held, Others: []usageAccount{}, Actions: []usageAction{}, configDir: u.ConfigDir}
+		ResetsAt: u.ResetsAt, ResetPassed: !u.ResetsAt.After(now), ObservedAt: u.ObservedAt, Held: held, Actions: []usageAction{}, configDir: u.ConfigDir}
 	if out.Window == "" {
 		out.Window = "unknown"
 	}
@@ -97,10 +131,10 @@ func describeUsageLimit(u *state.UsageLimit, cfg *config.Config, held string, no
 		switch {
 		case stated != "" && e.ID == stated:
 			matched = e.ID
-			out.Account = &usageAccount{Label: e.Label, Provider: e.Provider, Match: "route_account", SameProvider: true}
+			out.Account = &usageAccount{Handle: catalog.Handle(e.ID), Label: clip(e.Label, 120), Provider: e.Provider, Match: "route_account", SameProvider: true}
 		case stated == "" && u.ConfigDir != "" && e.Mode == "explicit_directory" && e.Directory != "" && filepath.Clean(e.Directory) == u.ConfigDir:
 			matched = e.ID
-			out.Account = &usageAccount{Label: e.Label, Provider: e.Provider, Match: "config_dir", SameProvider: true}
+			out.Account = &usageAccount{Handle: catalog.Handle(e.ID), Label: clip(e.Label, 120), Provider: e.Provider, Match: "supervisor_directory", SameProvider: true, Caveat: usageSupervisorDirCaveat}
 		}
 		if matched == e.ID {
 			out.Account.Quota, out.Account.QuotaAt = usageQuota(views, e.ID, now)
@@ -111,23 +145,31 @@ func describeUsageLimit(u *state.UsageLimit, cfg *config.Config, held string, no
 		if e.ID == matched || (e.Provider != "claude-code" && e.Provider != "codex" && e.Provider != "antigravity") {
 			continue
 		}
-		a := usageAccount{Label: clip(e.Label, 120), Provider: e.Provider, SameProvider: e.Provider == out.Provider}
+		a := usageAccount{Handle: catalog.Handle(e.ID), Label: clip(e.Label, 120), Provider: e.Provider, SameProvider: e.Provider == out.Provider}
 		a.Quota, a.QuotaAt = usageQuota(views, e.ID, now)
 		out.Others = append(out.Others, a)
 	}
+	out.OtherAccounts = len(out.Others)
 	sort.SliceStable(out.Others, func(i, j int) bool { return out.Others[i].SameProvider && !out.Others[j].SameProvider })
+	if out.Account == nil {
+		out.AccountUnknown = "no_match"
+		if agent.Adapter == "bb" {
+			out.AccountUnknown = "bb_directory_unknown"
+		}
+		out.AccountUnknownText = usageAccountUnknownText[out.AccountUnknown]
+	}
 	if agent.Adapter == "bb" && out.Provider == "claude-code" {
 		dir := u.ConfigDir
 		if dir == "" {
 			dir = bbClaudeDirPlaceholder
 		}
 		out.Actions = append(out.Actions, usageAction{Kind: "login_bb_directory",
-			Text:    "Log BB's Claude directory in to another Claude account that has quota, then quit and reopen BB so its Claude threads restart under the new login. This moves every Claude thread BB runs, not only this loop's, and supervisors started from BB threads stop when BB quits: run them as a service first (looptender service install).",
+			Text:    usageLoginText,
 			Command: "CLAUDE_CONFIG_DIR=" + shellQuote(dir) + " claude auth login", PublicCommand: "CLAUDE_CONFIG_DIR=" + shellQuote(bbClaudeDirPlaceholder) + " claude auth login"})
 	}
 	if other := usageOtherProvider(out.Others, out.Provider); other != "" && !takeoverArmed(cfg) && agent.Adapter == "bb" {
 		out.Actions = append(out.Actions, usageAction{Kind: "arm_takeover",
-			Text:    "An armed takeover would move this work, with its lanes, to a new conversation on " + other + " at a limit like this one. Arming it is your decision: it starts a conversation on another subscription.",
+			Text:    usageArmText(other),
 			Command: "looptender fallbacks arm -c CONFIG", PublicCommand: "looptender fallbacks arm -c CONFIG"})
 	}
 	return out
@@ -172,7 +214,34 @@ var usageAccountsDir string
 
 // usageCatalog reads the accounts catalog and its saved quota readings; an
 // unreadable catalog is empty.
+// One read (status, client status, the dock report, panel list) describes
+// every loop at the same time, so the catalog is read once for it: the
+// last result is kept for the same time and catalog.
 func usageCatalog(now time.Time) (accounts.File, map[string]accounts.QuotaView) {
+	usageMemo.Lock()
+	defer usageMemo.Unlock()
+	if usageMemo.set && usageMemo.now.Equal(now) && usageMemo.dir == usageAccountsDir {
+		return usageMemo.f, usageMemo.views
+	}
+	f, views := usageCatalogRead(now)
+	usageMemo.set, usageMemo.now, usageMemo.dir, usageMemo.f, usageMemo.views = true, now, usageAccountsDir, f, views
+	return f, views
+}
+
+var usageMemo struct {
+	sync.Mutex
+	set   bool
+	now   time.Time
+	dir   string
+	f     accounts.File
+	views map[string]accounts.QuotaView
+}
+
+// usageCatalogReads counts real reads, for tests.
+var usageCatalogReads int
+
+func usageCatalogRead(now time.Time) (accounts.File, map[string]accounts.QuotaView) {
+	usageCatalogReads++
 	dir, err := accountsDirectory(usageAccountsDir)
 	if err != nil {
 		return accounts.File{}, nil
@@ -215,10 +284,12 @@ func printUsageLimit(w io.Writer, u *usageLimitStatus, now time.Time) {
 		fmt.Fprintf(w, "; the loop is held (%s), so this is from before the hold", u.Held)
 	}
 	fmt.Fprintln(w)
-	if a := u.Account; a != nil {
-		fmt.Fprintf(w, "  account at the limit: %s (%s)\n", a.Label, map[string]string{"route_account": "the account its route states", "config_dir": "the catalog entry for the Claude directory its check ran under"}[a.Match])
+	if a := u.Account; a != nil && a.Match == "route_account" {
+		fmt.Fprintf(w, "  account at the limit: %s (the account its route states)\n", a.Label)
+	} else if a != nil {
+		fmt.Fprintf(w, "  account at the limit: probably %s. %s\n", a.Label, a.Caveat)
 	} else {
-		fmt.Fprintln(w, "  account at the limit: unknown (its route states none, and its check did not run under a catalog entry's directory)")
+		fmt.Fprintf(w, "  account at the limit: unknown. %s\n", u.AccountUnknownText)
 	}
 	for _, a := range u.Others {
 		at := "no reading saved"
@@ -232,18 +303,75 @@ func printUsageLimit(w io.Writer, u *usageLimitStatus, now time.Time) {
 	}
 }
 
-// public is the limit without real paths: the commands carry placeholders.
-// It is what the panel list, the menu and any non-private read get.
+// public is the limit without real paths or labels: the commands carry
+// placeholders and the account is named by its handle. It is what client
+// status, the dock and panel list get. A reader that shows labels takes
+// them from panel list's accountQuotas, which has them by the same handle.
 func (u *usageLimitStatus) public() *usageLimitStatus {
 	if u == nil {
 		return nil
 	}
 	c := *u
-	c.configDir = ""
+	c.configDir, c.Others = "", nil
+	if u.Account != nil {
+		a := *u.Account
+		// The label and the quota reading are in panel list's accountQuotas
+		// and the dock report's accounts, by the same handle.
+		a.Label, a.Quota, a.QuotaAt = "", "", nil
+		c.Account = &a
+	}
 	c.Actions = make([]usageAction, len(u.Actions))
 	for i, a := range u.Actions {
 		a.Command = a.PublicCommand
 		c.Actions[i] = a
 	}
 	return &c
+}
+
+// compact is the limit as the dock report and panel list carry it on each
+// loop: codes only. The words are said once per read, in usageLimitWords,
+// so a read of many loops at one limit does not repeat them per loop.
+func (u *usageLimitStatus) compact() *usageLimitStatus {
+	c := u.public()
+	if c == nil {
+		return nil
+	}
+	c.AccountUnknownText = ""
+	if c.Account != nil {
+		c.Account.Caveat = ""
+	}
+	for i := range c.Actions {
+		c.Actions[i] = usageAction{Kind: c.Actions[i].Kind}
+	}
+	return c
+}
+
+// usageLimitWords are the fixed words behind compact's codes, carried once
+// at the top of the dock report and panel list when a loop has a limit.
+type usageLimitWords struct {
+	// Accounts says where the accounts the handles name are listed.
+	Accounts       string                     `json:"accounts"`
+	Match          map[string]string          `json:"match"`
+	AccountUnknown map[string]string          `json:"accountUnknown"`
+	Actions        map[string]usageActionWord `json:"actions"`
+}
+
+type usageActionWord struct {
+	Text    string `json:"text"`
+	Command string `json:"command"`
+}
+
+func usageLimitGlossary() *usageLimitWords {
+	return &usageLimitWords{
+		Accounts: "Each account is named by its handle; the accounts, with labels and their last quota reading, are listed once in accountQuotas (panel list) or accounts (the dock report).",
+		Match: map[string]string{
+			"route_account":        "The account its route states.",
+			"supervisor_directory": usageSupervisorDirCaveat,
+		},
+		AccountUnknown: usageAccountUnknownText,
+		Actions: map[string]usageActionWord{
+			"login_bb_directory": {Text: usageLoginText, Command: "CLAUDE_CONFIG_DIR=" + shellQuote(bbClaudeDirPlaceholder) + " claude auth login"},
+			"arm_takeover":       {Text: usageArmText("another configured provider"), Command: "looptender fallbacks arm -c CONFIG"},
+		},
+	}
 }

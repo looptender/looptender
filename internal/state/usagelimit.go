@@ -31,10 +31,11 @@ type UsageLimit struct {
 	ResetsAt time.Time          `json:"resetsAt"`
 	// ObservedAt is the check that found it.
 	ObservedAt time.Time `json:"observedAt"`
-	// ConfigDir is the CLAUDE_CONFIG_DIR the check ran under, when it was
-	// set: for a supervisor started from a BB thread, the directory BB runs
-	// its Claude threads with, so the login that reached the limit. Empty
-	// when unknown.
+	// ConfigDir is the CLAUDE_CONFIG_DIR this supervisor was started with,
+	// when it was set. It is not known to be the target's: BB runs Claude
+	// itself and does not say which directory a thread uses, so it matches
+	// only for a supervisor started from a BB thread, and the directory may
+	// since have been logged in to another account. Empty when unset.
 	ConfigDir string `json:"configDir,omitempty"`
 }
 

@@ -1008,15 +1008,18 @@ func panelStopAt(e env, dir string) (bool, error) {
 // no registration ID, thread ID, path or note.
 type panelList struct {
 	AccountQuotas *panelQuotaList `json:"accountQuotas,omitempty"`
-	SchemaVersion int             `json:"schemaVersion"`
-	ReadAt        time.Time       `json:"readAt"`
-	Registry      string          `json:"registry"` // available or unavailable
-	Complete      bool            `json:"complete"`
-	AllClear      bool            `json:"allClear"`
-	NeedsYou      int             `json:"needsYou"`
-	Unread        int             `json:"unread"`
-	Omitted       int             `json:"omitted"`
-	Loops         []panelListLoop `json:"loops"`
+	// UsageLimitWords are the words behind the loops' usageLimit codes, once
+	// per list; absent when no loop has a limit.
+	UsageLimitWords *usageLimitWords `json:"usageLimitWords,omitempty"`
+	SchemaVersion   int              `json:"schemaVersion"`
+	ReadAt          time.Time        `json:"readAt"`
+	Registry        string           `json:"registry"` // available or unavailable
+	Complete        bool             `json:"complete"`
+	AllClear        bool             `json:"allClear"`
+	NeedsYou        int              `json:"needsYou"`
+	Unread          int              `json:"unread"`
+	Omitted         int              `json:"omitted"`
+	Loops           []panelListLoop  `json:"loops"`
 	// Volumes is one notice for each volume holding loops' state that is
 	// filling or nearly full (see dockReport.Volumes).
 	Volumes []dockVolume `json:"volumes,omitempty"`
@@ -1131,7 +1134,10 @@ func buildPanelList(r dockReport) panelList {
 			row.NoProgress = np.Text
 		}
 		row.Reason, row.CheckedAt, row.Supervisor = l.Detail, l.LastCheck.At, l.Supervisor
-		row.UsageLimit = l.UsageLimit.public()
+		row.UsageLimit = l.UsageLimit.compact()
+		if row.UsageLimit != nil && out.UsageLimitWords == nil {
+			out.UsageLimitWords = usageLimitGlossary()
+		}
 		if w := l.Waiting; w != nil {
 			row.Reason = w.Reason
 			row.Waiting = &panelWaiting{Kind: w.Kind, By: w.By, Since: w.Since, AtLeast: w.SinceEvidence == "control_changed"}

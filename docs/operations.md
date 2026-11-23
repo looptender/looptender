@@ -831,7 +831,7 @@ A question is the loop's record that it needs a person's decision. It is saved i
 Unreleased. When a check finds the loop's active target at a provider usage limit, it records which window the provider says is blocked and when it resets (`usage-limit.json` in the state directory, its own record rather than a field of `state.json`, so no state format changes and a build without it neither reads nor rewrites it; after a rollback to such a build the record stays as it was, unread, until a newer build's next check replaces or removes it), and `status` says it:
 
     usage limit: weekly limit (all models) on primary (claude-code), resets 2026-11-28T04:00:00Z; seen at the check of …
-      account at the limit: Example A (the catalog entry for the Claude directory its check ran under)
+      account at the limit: probably Example A. This is the catalog entry for the Claude directory this supervisor was started with, not one the thread is known to run under: …
       other account: Example B (claude-code): <its last saved quota reading> (read 2 h ago)
       other account: Example Codex (codex): …
       you can: Log BB's Claude directory in to another Claude account that has quota, then quit and reopen BB …
@@ -840,15 +840,16 @@ Unreleased. When a check finds the loop's active target at a provider usage limi
         looptender fallbacks arm -c CONFIG
 
 - **The window** comes from BB's own rate-limit event: the provider's key for it (`five_hour`, `seven_day`, or one model's weekly window such as `seven_day_opus`), its label, and the reason the limit was reached. It is shown as "5-hour limit", "weekly limit (all models)" or "weekly limit for <model>". Values outside a short plain vocabulary are dropped. A model-specific window means other models of that account may still have quota.
-- **The account** is the [accounts catalog](accounts.md) entry the route states (`account`), or else the entry whose directory is the `CLAUDE_CONFIG_DIR` the check ran under. For a supervisor started from a BB thread, that is the directory BB starts its Claude threads with. Without either, the account is unknown and said to be.
+- **The account** is known only when the route states it (`account`, match `route_account`). Otherwise looptender cannot learn it: BB runs Claude itself and does not say which Claude directory a thread runs under (a request to BB for that is open). The fallback is the catalog entry whose directory is the `CLAUDE_CONFIG_DIR` this supervisor was started with (match `supervisor_directory`), said as "probably", with why it may be wrong: that matches BB's directory only for a supervisor started from a BB thread, a service supervisor has no such variable, and the directory may since have been logged in to another account, so the entry's label can name the previous login. Without either, the account is unknown and said to be, with why (`accountUnknown`: `bb_directory_unknown` or `no_match`).
 - **The other accounts** are the catalog's other entries of a supported provider, the same provider first, each with its last saved quota reading and that reading's age. Nothing is read from a provider for this; [read a quota](accounts.md#read-selected-context-subscription-quota) to refresh one.
 - **What you can do** is said in fixed words. looptender itself never logs in, switches an account or arms a takeover.
   - For a BB Claude thread: the one command that logs BB's Claude directory in to another account. It moves every Claude thread BB runs, not only this loop's, and needs BB restarted, which stops supervisors started from BB threads, so run those as a service first.
   - For a loop with no armed takeover, when the catalog has an account on another provider: that an armed takeover would move the work there, with `looptender fallbacks arm -c CONFIG`.
 - **Where it shows.**
   - `status` (with real paths) and `status --json` (`usageLimit`).
-  - Client status and the panel (`usageLimit` on each loop): the loop reads "Waiting for a limit to reset" with the window and reset, and the coordinator's row adds how many of its lanes are in error.
-  - `panel list --json` (`usageLimit`, with labels and placeholders only: no path, ID or real command).
+  - Client status (`usageLimit`): placeholders for paths, and the account by its handle, not its label, unless `--private` (a label can be an email address).
+  - The panel: the loop reads "Waiting for a limit to reset" with the window and reset, and the coordinator's row adds how many of its lanes are in error. The dock report carries no per-loop record for it.
+  - `panel list --json` (`usageLimit` on each loop, in codes only: the window, reset, the account's handle and `match`, how many other accounts there are, and the kinds of action; the words behind the codes once at the top, in `usageLimitWords`; the accounts, with labels and quota readings, once in `accountQuotas`). So a list of many loops at one limit does not repeat the catalog per loop.
 - **Lanes.** With [lane recovery](#lane-recovery) on, the lanes it inspects in a check are also counted when they are at a usage limit. A child-error wake then adds one line: `[keepgoing:lanes-limited count=N resets=…]`, with how many are at a usage limit, which window, and the latest reset. Nothing reads a lane for it: with lane recovery off, or for a lane lane recovery does not inspect, a lane's log is never read and no such line is added. No lane is retried, messaged or stopped for it.
 
 ### A long limit wait with no way out

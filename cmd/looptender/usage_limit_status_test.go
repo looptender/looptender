@@ -54,14 +54,15 @@ func usageCatalogFixture(t *testing.T) (catalogDir, claudeDir string) {
 // things a person can do: the real command on status, placeholders in the
 // public form.
 func TestUsageLimitSaysWhatIsLimitedAndWhatToDo(t *testing.T) {
-	_, claudeDir := usageCatalogFixture(t)
+	catalogDir, claudeDir := usageCatalogFixture(t)
 	now := time.Date(2026, 11, 23, 5, 0, 0, 0, time.UTC)
 	cfg := &config.Config{}
 	cfg.Loop.Agent = config.Agent{Adapter: "bb", Provider: "claude-code", BB: &config.BB{Thread: "thr_example0001"}}
 	u := &state.UsageLimit{Target: state.Primary, Provider: "claude-code", Window: decide.CleanLimitWindow("seven_day", "Weekly limit", "seven_day"),
 		ResetsAt: now.Add(100 * time.Hour), ObservedAt: now.Add(-time.Minute), ConfigDir: claudeDir}
 	st := describeUsageLimit(u, cfg, "", now)
-	if st == nil || st.Window != "weekly" || st.Words != "weekly limit (all models)" || st.ResetPassed || st.Account == nil || st.Account.Label != "Example Claude A" || st.Account.Match != "config_dir" {
+	if st == nil || st.Window != "weekly" || st.Words != "weekly limit (all models)" || st.ResetPassed || st.Account == nil || st.Account.Label != "Example Claude A" || st.Account.Match != "supervisor_directory" ||
+		!strings.Contains(st.Account.Caveat, "may since have been logged in to another account") || st.Account.Handle == "" || st.OtherAccounts != 1 {
 		t.Fatalf("%+v", st)
 	}
 	if len(st.Others) != 1 || st.Others[0].Label != "Example Codex" || st.Others[0].SameProvider || st.Others[0].Quota == "" {
@@ -73,8 +74,32 @@ func TestUsageLimitSaysWhatIsLimitedAndWhatToDo(t *testing.T) {
 	}
 	pub := st.public()
 	raw, _ := json.Marshal(pub)
-	if strings.Contains(string(raw), claudeDir) || pub.Actions[0].Command != "CLAUDE_CONFIG_DIR='<BB'\\''s Claude directory>' claude auth login" {
+	if strings.Contains(string(raw), claudeDir) || strings.Contains(string(raw), "Example") || strings.Contains(string(raw), `"others"`) || pub.Account.Handle != st.Account.Handle || pub.Actions[0].Command != "CLAUDE_CONFIG_DIR='<BB'\\''s Claude directory>' claude auth login" {
 		t.Fatalf("public form carries a path or the wrong command: %s", raw)
+	}
+	// The account the route states is known, with no caveat. Text status
+	// says which is which.
+	catalog, err := accounts.Load(catalogDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Loop.Agent.Account = catalog.Entries[0].ID
+	if st := describeUsageLimit(u, cfg, "", now); st.Account == nil || st.Account.Match != "route_account" || st.Account.Caveat != "" {
+		t.Fatalf("route account: %+v", st.Account)
+	}
+	var b strings.Builder
+	printUsageLimit(&b, st, now)
+	if !strings.Contains(b.String(), "account at the limit: probably Example Claude A. This is the catalog entry for the Claude directory this supervisor was started with") ||
+		!strings.Contains(b.String(), "other account: Example Codex (codex)") {
+		t.Fatalf("%s", b.String())
+	}
+	cfg.Loop.Agent.Account = ""
+	// A supervisor started without the directory (a service) names no
+	// account, and says why.
+	none := *u
+	none.ConfigDir = ""
+	if st := describeUsageLimit(&none, cfg, "", now.Add(time.Second)); st.Account != nil || st.AccountUnknown != "bb_directory_unknown" || !strings.Contains(st.AccountUnknownText, "BB does not say which Claude directory") {
+		t.Fatalf("no directory: %+v", st)
 	}
 	// An armed takeover is not offered again, and a held loop says its limit
 	// is from before the hold.
@@ -88,7 +113,8 @@ func TestUsageLimitSaysWhatIsLimitedAndWhatToDo(t *testing.T) {
 	}
 }
 
-// The panel list carries the limit with labels and placeholders only.
+// The panel list carries the limit with handles and placeholders only: no
+// path, no label, and no list of other accounts per loop.
 func TestPanelListUsageLimitCarriesNoPath(t *testing.T) {
 	_, claudeDir := usageCatalogFixture(t)
 	cfg := &config.Config{}
@@ -103,9 +129,31 @@ func TestPanelListUsageLimitCarriesNoPath(t *testing.T) {
 	if l.State != "waiting_on_limit" || l.Waiting == nil || l.Waiting.Kind != "limit" || !strings.Contains(l.Detail, "5-hour limit") {
 		t.Fatalf("%s %q %+v", l.State, l.Detail, l.Waiting)
 	}
-	raw, _ := json.Marshal(buildPanelList(r))
-	row := buildPanelList(r).Loops[0]
-	if strings.Contains(string(raw), claudeDir) || row.UsageLimit == nil || row.UsageLimit.Window != "five_hour" || row.UsageLimit.Account == nil || row.UsageLimit.Account.Label != "Example Claude A" {
+	list := buildPanelList(r)
+	raw, _ := json.Marshal(list)
+	row := list.Loops[0]
+	if list.UsageLimitWords == nil || list.UsageLimitWords.Match["supervisor_directory"] != usageSupervisorDirCaveat || list.UsageLimitWords.Actions["login_bb_directory"].Command == "" ||
+		len(row.UsageLimit.Actions) != 2 || row.UsageLimit.Actions[0].Text != "" || row.UsageLimit.Account.Caveat != "" {
+		t.Fatalf("panel list words once, codes per loop: %s", raw)
+	}
+	if strings.Contains(string(raw), claudeDir) || row.UsageLimit == nil || row.UsageLimit.Window != "five_hour" || row.UsageLimit.Account == nil || row.UsageLimit.Account.Handle == "" ||
+		strings.Contains(string(raw), "Example Claude A") || strings.Contains(string(raw), `"others"`) || row.UsageLimit.OtherAccounts != 1 {
 		t.Fatalf("panel list: %s", raw)
+	}
+}
+
+// Every loop of one read is described from one read of the catalog.
+func TestUsageLimitReadsTheCatalogOncePerRead(t *testing.T) {
+	_, claudeDir := usageCatalogFixture(t)
+	cfg := &config.Config{}
+	cfg.Loop.Agent = config.Agent{Adapter: "bb", Provider: "claude-code", BB: &config.BB{Thread: "thr_example0001"}}
+	u := &state.UsageLimit{Target: state.Primary, Window: decide.CleanLimitWindow("five_hour", "", ""), ResetsAt: dockNow.Add(time.Hour), ObservedAt: dockNow, ConfigDir: claudeDir}
+	before := usageCatalogReads
+	for range 20 {
+		describeUsageLimit(u, cfg, "", dockNow)
+	}
+	describeUsageLimit(u, cfg, "", dockNow.Add(time.Minute))
+	if n := usageCatalogReads - before; n != 2 {
+		t.Fatalf("%d catalog reads for two reads", n)
 	}
 }
