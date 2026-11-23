@@ -1427,7 +1427,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.BuildAdoption = describeBuildAdoption(l.StateDir, out.Daemon, now)
 	{
 		rec, _ := loadAdoptRecord(l.StateDir)
-		out.BuildFreshness = deriveBuildFreshness(out.Daemon, rec, version, installedBuildTime(), now,
+		out.BuildFreshness = deriveBuildFreshness(out.Daemon, rec, version, now,
 			freshContextOf(ctl.Enabled, ctl.Paused, ctl.Stop, ctl.AwaitingUser, ctl.Completed, ctl.SupersededBy != "", freshServiceOf(l.StateDir)))
 	}
 	out.SupervisorStartRefused = currentStartRefusal(l.StateDir, st.CheckedAt, out.Daemon)

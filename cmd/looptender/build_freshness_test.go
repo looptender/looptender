@@ -19,8 +19,16 @@ func freshDaemon(label, mode string) daemonStatus {
 	return daemonStatus{State: "responsive", version: label, Adoption: mode}
 }
 
-func derive(d daemonStatus, rec *adoptRecord, installed string, installedAt, now time.Time, c freshContext) *buildFreshness {
-	return deriveBuildFreshness(d, rec, installed, installedAt, now, c)
+// derive is deriveBuildFreshness for a process that is not behind the install;
+// the file time argument is ignored (a file time proves nothing).
+func derive(d daemonStatus, rec *adoptRecord, installed string, _ time.Time, now time.Time, c freshContext) *buildFreshness {
+	return deriveBuildFreshness(d, rec, installed, now, c)
+}
+
+func init() {
+	// No test depends on the real installed file, or asks ps about a process.
+	freshPanelBehind = func() bool { return false }
+	freshIsServiceProcess = func(pid int) (bool, bool) { return true, true }
 }
 
 func TestBuildFreshnessStates(t *testing.T) {
@@ -82,9 +90,6 @@ func TestBuildFreshnessStates(t *testing.T) {
 func TestBuildFreshnessNeverSaysOlderFromAFileTime(t *testing.T) {
 	now := freshAt(t)
 	started := now.Add(-48 * time.Hour)
-	oldStart := freshProcessStart
-	defer func() { freshProcessStart = oldStart }()
-	freshProcessStart = now // this reader started after every file time below: it is not the one that is behind
 	d := freshDaemon("v0.2.0-dev.aaaaaaaaaaaa", "off")
 	d.StartedAt = &started
 	const inst = "v0.2.0-dev.bbbbbbbbbbbb"
@@ -98,54 +103,88 @@ func TestBuildFreshnessNeverSaysOlderFromAFileTime(t *testing.T) {
 
 func TestBuildFreshnessSaysNothingPerLoopFromAPanelOlderThanTheInstall(t *testing.T) {
 	now := freshAt(t)
-	old := freshProcessStart
-	defer func() { freshProcessStart = old }()
-	freshProcessStart = now.Add(-2 * time.Hour)
-	// The installed file was written after this panel started: its own build is the earlier one.
-	if f := derive(freshDaemon("v0.3.0", "moved_link"), nil, "v0.2.0", now.Add(-time.Hour), now, freshContext{}); f != nil {
+	old := freshPanelBehind
+	defer func() { freshPanelBehind = old }()
+	// The installed file is not this process's image (whatever its file time says).
+	freshPanelBehind = func() bool { return true }
+	if f := derive(freshDaemon("v0.3.0", "moved_link"), nil, "v0.2.0", time.Time{}, now, freshContext{}); f != nil {
 		t.Errorf("a switched daemon read as %+v", f)
 	}
-	if f := derive(freshDaemon("v0.2.0", "off"), nil, "v0.2.0", now.Add(-time.Hour), now, freshContext{}); f != nil {
+	if f := derive(freshDaemon("v0.2.0", "off"), nil, "v0.2.0", time.Time{}, now, freshContext{}); f != nil {
 		t.Errorf("a daemon on the panel's own build read as current: %+v", f)
 	}
-	oldTime := installedBuildTime
-	defer func() { installedBuildTime = oldTime }()
-	installedBuildTime = func() time.Time { return now.Add(-time.Hour) }
 	sum := summarizeBuildFreshness([]*buildFreshness{{State: freshCurrent}}, "v0.2.0", now)
 	if sum == nil || sum.Text != freshPanelBehindText || sum.OnIt != 0 {
 		t.Errorf("summary: %+v", sum)
 	}
-	// Written before this panel started: nothing is behind.
-	installedBuildTime = func() time.Time { return now.Add(-3 * time.Hour) }
-	if f := derive(freshDaemon("v0.2.0", "off"), nil, "v0.2.0", now.Add(-3*time.Hour), now, freshContext{}); f == nil || f.State != freshCurrent {
+	if summarizeBuildFreshness(nil, "v0.2.0", now) != nil {
+		t.Error("no loops, nothing said")
+	}
+	freshPanelBehind = func() bool { return false }
+	if f := derive(freshDaemon("v0.2.0", "off"), nil, "v0.2.0", time.Time{}, now, freshContext{}); f == nil || f.State != freshCurrent {
 		t.Errorf("not behind: %+v", f)
 	}
 }
 
-func TestBuildFreshnessARefusedSwitchIsNotPending(t *testing.T) {
+func TestPanelBehindIsJudgedByTheInstalledFilesDigestNotItsTime(t *testing.T) {
+	// The real check: with no executable image (as in tests) nothing is behind.
+	real := freshPanelBehind
+	defer func() { freshPanelBehind = real }()
+	freshPanelBehind = realFreshPanelBehind
+	if freshPanelBehind() && processExecutableImage == nil {
+		t.Error("no image, yet behind")
+	}
+}
+
+func TestBuildFreshnessARefusedSwitchIsToldByItsCause(t *testing.T) {
 	now := freshAt(t)
 	started := now.Add(-48 * time.Hour)
 	d := freshDaemon("v0.1.0", "moved_link")
 	d.StartedAt = &started
-	refused := &adoptRecord{Outcome: adoptRefused, At: now.Add(-time.Minute), From: adoptBuildID{Label: "v0.1.0"}, To: adoptBuildID{Label: "v0.2.0"},
-		Reason: "the installed build is older than this loop's state format; going back needs the documented stop, restore and start"}
-	f := derive(d, refused, "v0.2.0", time.Time{}, now, freshContext{})
-	if f.State != freshRefused || f.Text != "Not switching to the installed build" || !strings.Contains(f.Detail, "state format") || strings.Contains(f.Text, "next check") {
-		t.Fatalf("%+v", f)
+	rec := func(reason string) *adoptRecord {
+		return &adoptRecord{Outcome: adoptRefused, At: now.Add(-time.Minute), From: adoptBuildID{Label: "v0.1.0"}, To: adoptBuildID{Label: "v0.2.0"}, Reason: reason}
 	}
-	if f.Action == "" {
-		t.Errorf("a refused switch is told what to do: %+v", f)
+	cases := []struct {
+		name, reason, state, text string
+		command                   bool
+		action                    string
+	}{
+		{"cannot take over", adoptTakeOverReason, freshRefused, "Not switching to the installed build", true, "until you start it again the loop has no supervisor"},
+		{"written in place", adoptInPlaceReason, freshRefused, "Not switching to the installed build", true, "until you start it again the loop has no supervisor"},
+		{"older than the state format", adoptStateFormatReason, freshRefused, "Not switching to the installed build", false, "documented stop, restore and start"},
+		{"does not validate", adoptValidateReason, freshRefused, "Not switching to the installed build", false, "leave it with no supervisor"},
+		{"could not be started", adoptStartReason, freshRefused, "Not switching to the installed build", false, "leave it with no supervisor"},
+		{"low disk, tried again", adoptDiskReason, freshPending, "Update pending · waiting", false, ""},
+		{"changed at the last moment", adoptChangedReason, freshPending, "Update pending · waiting", false, ""},
+		{"another state directory, deliberate", adoptStateDirReason, freshPending, "Update pending · waiting", false, ""},
+		{"a cause added later", "some new reason a later build records", freshRefused, "Not switching to the installed build", false, "no restart is offered"},
+	}
+	for _, c := range cases {
+		f := derive(d, rec(c.reason), "v0.2.0", time.Time{}, now, freshContext{})
+		if f.State != c.state || f.Text != c.text || (f.Command != "") != c.command || !strings.Contains(f.Action, c.action) || !strings.Contains(f.Detail, c.reason) {
+			t.Errorf("%s: %+v", c.name, f)
+		}
+		if f.State == freshPending && (f.Command != "" || f.Action != "" || strings.Contains(f.Text, "next check")) {
+			t.Errorf("%s: a wait offers nothing: %+v", c.name, f)
+		}
+		if c.command && f.Command != freshShutdownCommand {
+			t.Errorf("%s: %q", c.name, f.Command)
+		}
 	}
 	// A refusal from before this build started, or about another build, is history.
-	older := *refused
+	older := *rec(adoptTakeOverReason)
 	older.At = started.Add(-time.Hour)
-	if f := derive(d, &older, "v0.2.0", time.Time{}, now, freshContext{}); f.State != freshPending {
-		t.Errorf("old refusal: %q", f.State)
+	if f := derive(d, &older, "v0.2.0", time.Time{}, now, freshContext{}); f.State != freshPending || f.Text != "Update pending · switches at next check" {
+		t.Errorf("old refusal: %+v", f)
 	}
-	other := *refused
+	other := *rec(adoptTakeOverReason)
 	other.To = adoptBuildID{Label: "v0.9.0"}
 	if f := derive(d, &other, "v0.2.0", time.Time{}, now, freshContext{}); f.State != freshPending {
 		t.Errorf("refusal of another build: %q", f.State)
+	}
+	// The table knows exactly these, and an unknown reason is no command.
+	if adoptRefusalCause("anything else") != causeUnknown || adoptRefusalCause(adoptTakeOverReason) != causeRestartOK {
+		t.Error("cause table")
 	}
 }
 
@@ -161,16 +200,42 @@ func TestBuildFreshnessAdviceIsTrueForHowTheSupervisorRuns(t *testing.T) {
 		}
 		return f
 	}
-	// A service: its own restart, never the clean exit that its unit would not restart from.
+	// A held loop under its service: the service's own restart, never the clean exit that its unit would not restart from.
 	for name, tc := range map[string]struct {
-		svc  *freshService
-		want string
-	}{"launchd": {svcLaunchd, "launchctl kickstart -k gui/501/org.keepgoing.loop.0123"}, "systemd": {svcSystemd, "systemctl --user restart org.keepgoing.loop.0123.service"}} {
+		svc          *freshService
+		want, public string
+	}{
+		"launchd": {svcLaunchd, "launchctl kickstart -k gui/501/org.keepgoing.loop.0123", "launchctl kickstart -k gui/<uid>/<service label>"},
+		"systemd": {svcSystemd, "systemctl --user restart org.keepgoing.loop.0123.service", "systemctl --user restart <service unit>"},
+	} {
 		for _, d := range []daemonStatus{reports, silent} {
-			f := get(d, freshContext{Service: tc.svc})
-			if f.Command != tc.want || strings.Contains(f.Command+f.Action, "daemon-shutdown") || strings.Contains(f.Action, "starts again by itself") {
+			f := get(d, freshContext{Service: tc.svc, Held: true})
+			if f.Command != tc.want || f.commandPublic != tc.public || strings.Contains(f.Command+f.Action, "daemon-shutdown") || strings.Contains(f.Action, "starts again by itself") {
 				t.Errorf("%s: %+v", name, f)
 			}
+			if p := f.public(); p.Command != tc.public || strings.Contains(p.Command, "0123") || strings.Contains(p.Command, "501") {
+				t.Errorf("%s: public command leaks an identifier: %q", name, p.Command)
+			}
+			if !strings.Contains(f.Action, "service status -c CONFIG") || !strings.HasSuffix(f.Action, "does not resume it.") {
+				t.Errorf("%s: %q", name, f.Action)
+			}
+		}
+		// Not held: the restart would cancel a check in progress, so none is offered.
+		f := get(reports, freshContext{Service: tc.svc})
+		if f.Command != "" || !strings.Contains(f.Action, "cancels a check in progress") {
+			t.Errorf("%s not held: %+v", name, f)
+		}
+	}
+	// A recorded service that this supervisor is not the process of: the restart would restart the wrong thing.
+	prev := freshIsServiceProcess
+	freshIsServiceProcess = func(int) (bool, bool) { return false, true }
+	f0 := get(reports, freshContext{Service: svcLaunchd, Held: true})
+	freshIsServiceProcess = func(int) (bool, bool) { return false, false }
+	f1 := get(reports, freshContext{Service: svcLaunchd, Held: true})
+	freshIsServiceProcess = prev
+	for _, f := range []*buildFreshness{f0, f1} {
+		if f.Command != "" || !strings.Contains(f.Action, "does not look like its process") {
+			t.Errorf("not the service's process: %+v", f)
 		}
 	}
 	// A background-started supervisor that can be asked to exit: the sequence says it is left with none until started.
@@ -186,12 +251,12 @@ func TestBuildFreshnessAdviceIsTrueForHowTheSupervisorRuns(t *testing.T) {
 	// Held or disabled: never start (it enables the loop); daemon keeps the controls, and the loop stays held.
 	for _, d := range []daemonStatus{reports, silent} {
 		f = get(d, freshContext{Held: true})
-		if strings.Contains(f.Action, "start --background") || !strings.Contains(f.Action, "looptender daemon -c CONFIG") || !strings.HasSuffix(f.Action, "The loop stays held; this does not resume it.") {
+		if strings.Contains(f.Action, "start --background") || !strings.Contains(f.Action, "looptender daemon -c CONFIG") || !strings.Contains(f.Action, "looptender service install") || !strings.HasSuffix(f.Action, "The loop stays held; this does not resume it.") {
 			t.Errorf("held: %+v", f)
 		}
 	}
 	f = get(reports, freshContext{Held: true, Service: svcLaunchd})
-	if !strings.HasSuffix(f.Action, "The loop stays held; this does not resume it.") || strings.Contains(f.Action, "daemon -c") {
+	if !strings.HasSuffix(f.Action, "The loop stays held; this does not resume it.") || strings.Contains(f.Action, "daemon -c CONFIG") {
 		t.Errorf("held service: %+v", f)
 	}
 	// A replaced loop: nothing to restart, and no chip that says to restart.
@@ -218,7 +283,7 @@ func TestServiceAdviceMatchesTheInstalledUnits(t *testing.T) {
 	}
 	// So no service advice may end the supervisor cleanly.
 	for _, s := range []*freshService{{Backend: "launchd", UID: 501, Label: "l"}, {Backend: "systemd", Label: "l.service"}} {
-		if c := freshServiceRestart(s); strings.Contains(c, "shutdown") || !(strings.HasPrefix(c, "launchctl kickstart -k ") || strings.HasPrefix(c, "systemctl --user restart ")) {
+		if c := freshServiceRestart(s, false); strings.Contains(c, "shutdown") || !(strings.HasPrefix(c, "launchctl kickstart -k ") || strings.HasPrefix(c, "systemctl --user restart ")) {
 			t.Errorf("%q", c)
 		}
 	}
@@ -283,9 +348,7 @@ func TestBuildFreshnessJSONShape(t *testing.T) {
 func TestBuildFreshnessSummary(t *testing.T) {
 	now := freshAt(t)
 	old := installedBuildTime
-	oldStart := freshProcessStart
-	defer func() { installedBuildTime, freshProcessStart = old, oldStart }()
-	freshProcessStart = now
+	defer func() { installedBuildTime = old }()
 	installedBuildTime = func() time.Time { return now.Add(-3 * time.Hour) }
 	cur, pend := &buildFreshness{State: freshCurrent}, &buildFreshness{State: freshPending}
 	got := summarizeBuildFreshness([]*buildFreshness{cur, {State: freshUpdated}, pend, {State: freshOlder}, {State: freshDifferent}, nil}, "v0.2.0", now)
@@ -310,7 +373,7 @@ func TestPanelListCarriesFreshnessAndOffersNoRestart(t *testing.T) {
 	r := dockReport{ReadAt: freshAt(t), BuildFreshness: &buildFreshnessSummary{Text: "Build v0.2.0 · 0 supervisors on it · 1 not on it", NotOnIt: 1},
 		Loops: []dockLoop{{Key: "k", Name: "held", State: "paused", Phrase: "Paused · also waiting for you", Can: []string{"resume"}, BuildFreshness: f}}}
 	l := buildPanelList(r)
-	if l.BuildFreshness == nil || l.BuildFreshness.NotOnIt != 1 || l.Loops[0].BuildFreshness != f {
+	if l.BuildFreshness == nil || l.BuildFreshness.NotOnIt != 1 || l.Loops[0].BuildFreshness == nil || *l.Loops[0].BuildFreshness != *f {
 		t.Fatalf("not carried: %+v", l)
 	}
 	if got := strings.Join(l.Loops[0].Can, ","); got != "resume" {
@@ -348,5 +411,25 @@ func TestStatusAndClientStatusCarryTheSameFreshness(t *testing.T) {
 	b, _ := json.Marshal(out)
 	if !strings.Contains(string(b), `"buildFreshness":{"state":"older"`) {
 		t.Errorf("status --json lacks it: %s", b)
+	}
+}
+
+func TestPanelListAndClientStatusCarryNoServiceIdentifier(t *testing.T) {
+	now := freshAt(t)
+	svc := &freshService{Backend: "launchd", UID: 501, Label: "org.keepgoing.loop.0123456789abcdef0123456789abcdef"}
+	f := derive(freshDaemon("v0.1.0", "off"), nil, "v0.2.0", time.Time{}, now, freshContext{Service: svc, Held: true})
+	if !strings.Contains(f.Command, "gui/501/org.keepgoing.loop.") {
+		t.Fatalf("the page's command is whole: %q", f.Command)
+	}
+	r := dockReport{ReadAt: now, Loops: []dockLoop{{Key: "k", Name: "n", State: "paused", BuildFreshness: f}}}
+	pl := buildPanelList(r)
+	b, _ := json.Marshal(pl)
+	if strings.Contains(string(b), "org.keepgoing") || strings.Contains(string(b), "gui/501") || pl.Loops[0].BuildFreshness.Command != "launchctl kickstart -k gui/<uid>/<service label>" {
+		t.Errorf("panel list: %s", b)
+	}
+	// The dock report itself, for the authenticated page, keeps it whole.
+	d, _ := json.Marshal(r)
+	if !strings.Contains(string(d), "gui/501/org.keepgoing.loop.") {
+		t.Errorf("dock report: %s", d)
 	}
 }

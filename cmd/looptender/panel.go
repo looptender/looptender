@@ -1094,7 +1094,7 @@ func buildPanelList(r dockReport) panelList {
 			}
 		}
 		row := panelListLoop{Key: l.Key, Name: l.Name, DiskSpace: dockDiskLevel(l.DiskSpace), State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
-			BuildDiffers: l.Build.Availability == "different", BuildFreshness: l.BuildFreshness}
+			BuildDiffers: l.Build.Availability == "different", BuildFreshness: l.BuildFreshness.public()}
 		// Lengthened with the installed label when the two would read the same.
 		var inst string
 		row.RecordedBuild, inst = shortBuildPair(l.Build.Recorded, version)

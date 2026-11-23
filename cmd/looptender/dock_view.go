@@ -1804,7 +1804,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	if in.Daemon.State == "responsive" {
 		l.Versions.Daemon = in.Daemon.version
 	}
-	l.BuildFreshness = deriveBuildFreshness(in.Daemon, in.AdoptRecord, version, installedBuildTime(), now, freshContextOfSnapshot(snap, in.FreshService))
+	l.BuildFreshness = deriveBuildFreshness(in.Daemon, in.AdoptRecord, version, now, freshContextOfSnapshot(snap, in.FreshService))
 	l.Versions.Service = in.ServiceFile
 	l.BuildChange = in.BuildChange
 	if l.LanesFailed != "" && need == nil {

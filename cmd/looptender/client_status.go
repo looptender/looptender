@@ -353,7 +353,7 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 	s.Daemon = query(queryCtx, entry.StateDir, version, offline)
 	{
 		rec, _ := loadAdoptRecord(entry.StateDir)
-		s.BuildFreshness = deriveBuildFreshness(s.Daemon, rec, version, installedBuildTime(), now, freshContextOfSnapshot(s, freshServiceOf(entry.StateDir)))
+		s.BuildFreshness = deriveBuildFreshness(s.Daemon, rec, version, now, freshContextOfSnapshot(s, freshServiceOf(entry.StateDir))).public()
 	}
 	if d := describeDiskSpace(entry.StateDir); d.lowDisk() {
 		s.DiskSpace = &dockDiskSpace{Level: d.Level, Message: d.Message, AvailableBytes: d.AvailableBytes, TotalBytes: d.TotalBytes}

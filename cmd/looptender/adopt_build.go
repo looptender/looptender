@@ -560,12 +560,12 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 	}
 	var probe adoptProbe
 	if err != nil || code != 0 || json.Unmarshal(out, &probe) != nil || probe.Protocol != adoptProtocol {
-		refuse("the installed build cannot take over a running daemon; restart supervision to use it")
+		refuse(adoptTakeOverReason)
 		return
 	}
 	to.Label = dockBuildLabel(probe.Version)
 	if probe.StateFormat < adoptStateFormat {
-		refuse("the installed build is older than this loop's state format; going back needs the documented stop, restore and start")
+		refuse(adoptStateFormatReason)
 		return
 	}
 	vctx, cancel := context.WithTimeout(ctx, adoptCheckLimit)
@@ -575,7 +575,7 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 		return
 	}
 	if err != nil || code != 0 {
-		refuse("the installed build does not validate this loop's configuration")
+		refuse(adoptValidateReason)
 		return
 	}
 	// No check of this loop may be running in another process: hold the
@@ -615,12 +615,23 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 	if errors.Is(err, errAdoptChanged) {
 		// Another file arrived at the last moment: nothing ran; look at
 		// it after the next check.
-		a.note(adoptRecord{Outcome: adoptRefused, Mode: a.mode, From: from, To: to, Reason: "the installed build changed just before the switch; it is checked again after the next check"})
+		a.note(adoptRecord{Outcome: adoptRefused, Mode: a.mode, From: from, To: to, Reason: adoptChangedReason})
 		return
 	}
 	a.skip[c.sha] = true
-	a.note(adoptRecord{Outcome: adoptRefused, Mode: a.mode, From: from, To: to, Reason: "the installed build could not be started; this daemon carries on with its build"})
+	a.note(adoptRecord{Outcome: adoptRefused, Mode: a.mode, From: from, To: to, Reason: adoptStartReason})
 }
+
+// The reasons a switch is refused that a reader tells apart; see
+// adoptRefusalCauses in build_freshness.go, which says what each means for a
+// person.
+const (
+	adoptTakeOverReason    = "the installed build cannot take over a running daemon; restart supervision to use it"
+	adoptStateFormatReason = "the installed build is older than this loop's state format; going back needs the documented stop, restore and start"
+	adoptValidateReason    = "the installed build does not validate this loop's configuration"
+	adoptChangedReason     = "the installed build changed just before the switch; it is checked again after the next check"
+	adoptStartReason       = "the installed build could not be started; this daemon carries on with its build"
+)
 
 const adoptDiskReason = "waiting for room: the volume that holds the state directory is nearly full (below 100 MiB free); the switch is tried again after each check"
 
