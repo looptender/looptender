@@ -155,7 +155,7 @@ func TestChildNoticesSeparateExecutionFromObligations(t *testing.T) {
 func TestWithLimitedLanes(t *testing.T) {
 	at := time.Date(2026, 11, 28, 4, 0, 0, 0, time.UTC)
 	m := WithLimitedLanes(Message{Text: "x"}, 16, at, "weekly limit (all models)")
-	if !strings.Contains(m.Text, "[keepgoing:lanes-limited count=16 resets=2026-11-28T04:00:00Z]") || strings.Count(m.Text, "keepgoing notice") != 1 || !strings.Contains(m.Text, "weekly limit (all models)") {
+	if !strings.Contains(m.Text, "[keepgoing:lanes-limited count=16 resets=2026-11-28T04:00:00Z]") || strings.Count(m.Text, "looptender notice:") != 1 || strings.Contains(m.Text[strings.Index(m.Text, "[keepgoing:lanes-limited"):], "keepgoing notice") || !strings.Contains(m.Text, "weekly limit (all models)") {
 		t.Fatalf("%q", m.Text)
 	}
 	if WithLimitedLanes(Message{Text: "x"}, 0, at, "w").Text != "x" {

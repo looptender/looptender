@@ -12,3 +12,6 @@
 # Builds the daemon adoption scenario installs; a test killed before its
 # cleanup leaves them behind.
 /internal/scenario/.adopt-fixture-*
+
+# Python bytecode, wherever a script is run.
+__pycache__/

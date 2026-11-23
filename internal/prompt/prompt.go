@@ -128,8 +128,8 @@ func WithLimitedLanes(m Message, n int, until time.Time, window string) Message 
 	}
 	at := until.UTC().Format(time.RFC3339)
 	m.Text += fmt.Sprintf("[keepgoing:lanes-limited count=%d resets=%s]\n"+
-		"keepgoing notice: %d of them are at a provider usage limit (%s) until %s, and cannot run before it on the account they use. "+
-		"keepgoing has not retried, messaged or stopped them. looptender status names the account and what can be done about it.\n", n, at, n, window, at)
+		"looptender notice: %d of them are at a provider usage limit (%s) until %s, and cannot run before it on the account they use. "+
+		"looptender has not retried, messaged or stopped them. looptender status names the account and what can be done about it.\n", n, at, n, window, at)
 	return m
 }
 

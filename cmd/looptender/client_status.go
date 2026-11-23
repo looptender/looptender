@@ -52,6 +52,14 @@ type clientSnapshot struct {
 	// filling or nearly full.
 	DiskSpace         *dockDiskSpace `json:"diskSpace,omitempty"`
 	ExternalScheduler string         `json:"externalScheduler"`
+	// Archived is set while the loop is archived (as in status --json); its
+	// note only with --private. ArchiveLapsed: a record the loop no longer
+	// honours, since it supervises again.
+	Archived      *archiveView `json:"archived,omitempty"`
+	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	// Naming: as in status --json (loop_naming.go); the unmasked thread
+	// title only with --private.
+	Naming *loopNaming `json:"naming,omitempty"`
 }
 type clientControls struct {
 	Enabled      bool `json:"enabled"`
@@ -282,6 +290,12 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 		}
 		s.Controls = &clientControls{ctl.Gate().Enabled, ctl.Paused, ctl.Stop, ctl.AwaitingUser, ctl.Completed}
 		s.ControlState = ctl.Summary()
+		s.Archived, s.ArchiveLapsed = loopArchive(entry.StateDir, ctl)
+		for _, a := range []*archiveView{s.Archived, s.ArchiveLapsed} {
+			if a != nil && !private {
+				a.Note = ""
+			}
+		}
 	}
 	var st state.File
 	stateOK := readTransferRecord(entry.StateDir, state.FileName, &st) == nil
@@ -318,6 +332,15 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 		if !configured {
 			issue("target_unavailable")
 		}
+		thread := ""
+		if s.Target != nil {
+			thread = s.Target.BBThread
+		}
+		n := namingOf(cfg.Loop, thread)
+		if !private {
+			n = n.withoutPrivate()
+		}
+		s.Naming = &n
 		if controlOK {
 			in, _, err := window.Inside(cfg.Loop.Window, now)
 			if err != nil {

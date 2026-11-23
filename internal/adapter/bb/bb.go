@@ -90,6 +90,7 @@ type envelope struct {
 type showResponse struct {
 	Thread *struct {
 		Status         string `json:"status"`
+		Title          string `json:"title"`
 		Queued         int    `json:"queuedMessageCount"`
 		BackgroundJobs int    `json:"activeBackgroundAgentCount"`
 		ArchivedAt     any    `json:"archivedAt"`
@@ -123,6 +124,7 @@ func (a *Adapter) Observe(ctx context.Context) (decide.Observation, error) {
 		Queued:     t.Queued,
 		Background: t.BackgroundJobs,
 		Gone:       t.ArchivedAt != nil || t.DeletedAt != nil,
+		Title:      t.Title,
 	}
 	if obs.Gone {
 		return obs, nil
@@ -573,3 +575,7 @@ func (a *Adapter) SignalExits() int { return a.signalExits }
 // errStopped marks a bb command that was killed at its time limit or because
 // the check was cancelled.
 var errStopped = errors.New("bb command stopped before it finished")
+
+// ObservedThread is the thread Observe reads, for the display-only title
+// record (state.NoteThreadTitle).
+func (a *Adapter) ObservedThread() string { return a.cfg.Thread }

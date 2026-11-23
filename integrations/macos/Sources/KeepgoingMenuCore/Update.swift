@@ -45,6 +45,23 @@ public enum InstalledBuild {
         return "the installed build"
     }
 
+    /// The names the menu app has had in a build, newest first: a build of
+    /// the current name ships LooptenderMenu.app, with a KeepgoingMenu.app
+    /// link beside it (and a KeepgoingMenu link to its program inside) so a
+    /// menu from an earlier build still finds it; an earlier build has only
+    /// KeepgoingMenu.app. Remove the earlier name once no such menu runs.
+    static let appNames: [(app: String, program: String)] = [("LooptenderMenu.app", "LooptenderMenu"), ("KeepgoingMenu.app", "KeepgoingMenu")]
+
+    /// `rest`, the menu's path inside its build directory, and the same path
+    /// under each other name the app has had. A path that is not a program in
+    /// an app bundle has no other names.
+    static func alternatives(_ rest: String) -> [String] {
+        let parts = rest.split(separator: "/").map(String.init)
+        guard let i = parts.firstIndex(where: { $0.hasSuffix(".app") }), parts.count == i + 4, parts[i + 1] == "Contents", parts[i + 2] == "MacOS",
+              appNames.contains(where: { $0.app == parts[i] }) else { return [rest] }
+        return [rest] + appNames.filter { $0.app != parts[i] }.map { (parts[..<i] + [$0.app, "Contents", "MacOS", $0.program]).joined(separator: "/") }
+    }
+
     /// What the install says now. `noMenu` is the layout rule finding that
     /// `<root>/current` leads to a build that ships no menu app there.
     public enum State: Equatable {
@@ -66,7 +83,7 @@ public enum InstalledBuild {
         var isDir: ObjCBool = false
         guard target != mine, fileManager.fileExists(atPath: target, isDirectory: &isDir), isDir.boolValue else { return .same }
         let rest = parts[(i + 2)...].joined(separator: "/")
-        guard identity(of: target + "/" + rest, fileManager: fileManager) == nil else { return .same }
+        guard alternatives(rest).allSatisfy({ identity(of: target + "/" + $0, fileManager: fileManager) == nil }) else { return .same }
         return .noMenu(label: label(forRealPath: target + "/" + rest))
     }
 
@@ -85,7 +102,7 @@ public enum InstalledBuild {
             let rest = parts[(i + 2)...].joined(separator: "/")
             let link = root == "/" ? "/current" : root + "/current"
             let target = URL(fileURLWithPath: link).resolvingSymlinksInPath().path
-            candidates.append(target + "/" + rest)
+            candidates += alternatives(rest).map { target + "/" + $0 }
         }
         for candidate in candidates {
             if let found = identity(of: candidate, fileManager: fileManager), found.id != running.id { return found }
@@ -123,6 +140,7 @@ public final class MenuUpdater {
     static let attemptsKey = "updateAttempts"
     static let relaunchedKey = "updateRelaunchedTo"
     static let toldKey = "updateToldGaps"
+    static let oldPIDKey = "updateOldPID"
     /// Automatic attempts in any hour, whatever the builds: a path rewritten in
     /// place gives each rewrite a new identity, and this stops that being
     /// unlimited.
@@ -206,13 +224,24 @@ public final class MenuUpdater {
         store.set(nil, forKey: Self.relaunchedKey)
     }
 
-    /// Said once, by the menu that an automatic relaunch started, about its
-    /// own build; nil otherwise.
-    public func updatedNotice() -> String? {
-        guard store.string(forKey: Self.relaunchedKey) == running.id else { return nil }
-        store.set(nil, forKey: Self.relaunchedKey)
-        return "looptender menu updated to \(running.label)"
+    /// What the new menu may say about an automatic relaunch that started it,
+    /// and the process it replaces. Not consumed until `finishUpdate`, which
+    /// the caller runs only once that process has exited.
+    public struct PendingUpdate: Equatable {
+        public let text: String
+        public let oldPID: Int32?
     }
+    public func pendingUpdate() -> PendingUpdate? {
+        guard store.string(forKey: Self.relaunchedKey) == running.id else { return nil }
+        return PendingUpdate(text: "looptender menu updated to \(running.label)", oldPID: store.string(forKey: Self.oldPIDKey).flatMap { Int32($0) })
+    }
+    public func finishUpdate() {
+        store.set(nil, forKey: Self.relaunchedKey)
+        store.set(nil, forKey: Self.oldPIDKey)
+    }
+    /// The process that is about to be replaced, written before the new menu
+    /// starts; nil clears it.
+    public func handOverPID(_ pid: Int32?) { store.set(pid.map(String.init), forKey: Self.oldPIDKey) }
 
     public static func availableNotice(_ label: String) -> String { "looptender menu: update available (\(label))" }
 
