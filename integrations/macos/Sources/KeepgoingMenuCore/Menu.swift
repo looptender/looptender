@@ -101,6 +101,9 @@ public struct PanelList: Decodable, Equatable {
     /// Events to tell the person about, the same list the panel page reads.
     /// Absent from a CLI that predates it.
     public var notices: [PanelNotice]? = nil
+    /// The notification settings the menu, the panel and push share, and
+    /// whether the menu is notifying. Absent from a CLI that predates it.
+    public var notify: PanelNotify? = nil
     /// "Build X installed … · N supervisors on it · M older"; absent from a
     /// CLI that predates it.
     public var buildFreshness: PanelFreshnessSummary? = nil
@@ -188,6 +191,11 @@ public enum MenuCommand: Equatable {
     case stopPanel
     /// Turns one kind of notification on or off. Runs no CLI command.
     case toggleNoticeKind(String)
+    /// Runs `keepgoing panel notify set --kind K --on|--off`: writes the shared
+    /// settings. Only a known kind.
+    case notifySet(kind: String, on: Bool)
+    /// Runs `keepgoing panel notify heartbeat`: records that the menu runs.
+    case notifyHeartbeat(notifying: Bool)
     /// Relaunches the menu from the installed build. Runs no CLI command.
     case relaunchMenu
     /// Turns "Update the menu automatically" on or off. Runs no CLI command.
@@ -573,6 +581,9 @@ public enum MenuBuilder {
             for e in expects { arguments += ["--expect", e.key + "=" + e.expect] }
             if lanes { arguments.append("--lanes") }
             return arguments + ["--json"]
+        case .notifySet(let kind, let on):
+            return NoticeKinds.all.contains { $0.kind == kind } ? ["panel", "notify", "set", "--kind", kind, on ? "--on" : "--off"] : nil
+        case .notifyHeartbeat(let notifying): return ["panel", "notify", "heartbeat", "--notifying=" + (notifying ? "true" : "false")]
         case .quit, .relaunchMenu, .toggleAutoUpdate, .toggleNoticeKind: return nil
         }
     }

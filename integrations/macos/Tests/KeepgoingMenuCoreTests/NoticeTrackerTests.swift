@@ -12,7 +12,6 @@ final class NoticeTrackerTests: XCTestCase {
         .read(PanelList(schemaVersion: 1, registry: "available", complete: complete, allClear: false, needsYou: 0, unread: 0, omitted: 0, loops: [], notices: notices), at: t0)
     }
     func on(_ kind: String) -> Bool { NoticeKinds.defaultOn.contains(kind) }
-    func store() -> NoticeSettings { NoticeSettings(store: MemoryStore()) }
 
     func testTheFirstReadIsABaselineAndSaysNothing() {
         var t = NoticeTracker()
@@ -82,14 +81,59 @@ final class NoticeTrackerTests: XCTestCase {
         XCTAssertEqual(t.recent.first?.text, "event 13")
     }
 
-    func testSettingsDefaultsAndToggling() {
-        let s = store()
-        XCTAssertEqual(NoticeKinds.all.filter { s.isOn($0.kind) }.map(\.kind), ["needs_you", "limit", "supervisor_gone"])
-        s.toggle("needs_you")
-        s.toggle("disk")
-        XCTAssertFalse(s.isOn("needs_you"))
-        XCTAssertTrue(s.isOn("disk"))
-        XCTAssertEqual(s.map["limit"], true)
+    func testSettingsAreTheSharedOnesAndDefaultWithoutThem() {
+        XCTAssertEqual(NoticeKinds.all.filter { NoticeSettings.isOn($0.kind, nil) }.map(\.kind), ["needs_you", "limit", "supervisor_gone"])
+        let shared = PanelNotify(kinds: ["needs_you": false, "disk": true])
+        XCTAssertFalse(NoticeSettings.isOn("needs_you", shared))
+        XCTAssertTrue(NoticeSettings.isOn("disk", shared))
+        XCTAssertTrue(NoticeSettings.isOn("limit", shared), "a kind the file does not name follows its default")
+        XCTAssertEqual(NoticeSettings.map(shared)["supervisor_gone"], true)
+    }
+
+    func testTheMenuWritesTheSharedSettingsThroughTheCLIOnly() {
+        XCTAssertEqual(MenuBuilder.arguments(.notifySet(kind: "disk", on: true)), ["panel", "notify", "set", "--kind", "disk", "--on"])
+        XCTAssertEqual(MenuBuilder.arguments(.notifySet(kind: "limit", on: false)), ["panel", "notify", "set", "--kind", "limit", "--off"])
+        XCTAssertNil(MenuBuilder.arguments(.notifySet(kind: "--on", on: true)), "only a known kind")
+        XCTAssertNil(MenuBuilder.arguments(.notifySet(kind: "disk; rm", on: true)))
+        XCTAssertEqual(MenuBuilder.arguments(.notifyHeartbeat(notifying: true)), ["panel", "notify", "heartbeat", "--notifying=true"])
+        XCTAssertEqual(MenuBuilder.arguments(.notifyHeartbeat(notifying: false)), ["panel", "notify", "heartbeat", "--notifying=false"])
+    }
+
+    func testAGroupIsToldByItsRealTotalNotOnlyByWhatIsNew() {
+        var t = NoticeTracker()
+        let old = (1...4).map { notice("l\($0)", kind: "limit", loop: "l00000000000\($0)", name: "example-\($0)", text: "example-\($0) stopped.", group: "limit.x", groupText: "{n} loops stopped: usage limit.") }
+        _ = t.next(read(old), now: t0, isOn: on)
+        let one = notice("l5", kind: "limit", loop: "l000000000005", name: "example-5", text: "example-5 stopped.", group: "limit.x", groupText: "{n} loops stopped: usage limit.")
+        let posted = t.next(read(old + [one]), now: t0, isOn: on)
+        XCTAssertEqual(posted.map(\.body), ["5 loops stopped: usage limit."], "one new loop joined four: the group's total, not 1")
+        XCTAssertNil(posted.first?.loop)
+    }
+
+    func testAnUrgentQuestionThatBeganWhileTheMenuWasDownIsToldOnceAtStart() {
+        let down = t0.addingTimeInterval(-3600)
+        let ask = PanelNotice(id: "a", kind: "needs_you", severity: "urgent", loop: "l000000000001", name: "example-api", text: "example-api is asking you a question.",
+                              since: ISO8601DateFormatter().string(from: t0.addingTimeInterval(-600)), group: "needs_you.asked", groupText: "{n} loops are asking you a question.")
+        let before = PanelNotice(id: "b", kind: "needs_you", severity: "urgent", loop: "l000000000002", name: "example-docs", text: "example-docs is asking you a question.",
+                                 since: ISO8601DateFormatter().string(from: t0.addingTimeInterval(-7200)), group: "needs_you.asked", groupText: "{n} loops are asking you a question.")
+        let held = notice("h", kind: "needs_you")
+        func list(_ ns: [PanelNotice], lastRunning: Date?) -> MenuReading {
+            let menu = PanelNotifyMenu(notifying: false, lastRunningAt: lastRunning.map { ISO8601DateFormatter().string(from: $0) })
+            return .read(PanelList(schemaVersion: 1, registry: "available", complete: true, allClear: false, needsYou: 0, unread: 0, omitted: 0, loops: [], notices: ns, notify: PanelNotify(menu: menu)), at: t0)
+        }
+        var t = NoticeTracker()
+        let first = t.next(list([ask, before, held], lastRunning: down), now: t0, isOn: on)
+        XCTAssertEqual(first.map(\.body), ["example-api is asking you a question."], "only what began since the menu last ran, only urgent")
+        XCTAssertEqual(t.next(list([ask, before, held], lastRunning: down), now: t0.addingTimeInterval(60), isOn: on), [], "once")
+        // Two such questions are one notification, never a storm.
+        var u = NoticeTracker()
+        let two = PanelNotice(id: "c", kind: "needs_you", severity: "urgent", loop: "l000000000003", name: "example-site", text: "example-site is asking you a question.",
+                              since: ISO8601DateFormatter().string(from: t0.addingTimeInterval(-300)), group: "needs_you.asked", groupText: "{n} loops are asking you a question.")
+        XCTAssertEqual(u.next(list([ask, two], lastRunning: down), now: t0, isOn: on).map(\.body), ["2 loops are asking you a question."])
+        // No record of an earlier run: a baseline, nothing told. A kind that is off is not told.
+        var v = NoticeTracker()
+        XCTAssertEqual(v.next(list([ask], lastRunning: nil), now: t0, isOn: on), [])
+        var w = NoticeTracker()
+        XCTAssertEqual(w.next(list([ask], lastRunning: down), now: t0, isOn: { _ in false }), [])
     }
 
     func testTheMenuListsRecentWithAgeAndTheSettingsAndRunsNothing() {

@@ -16,6 +16,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     var onNoticeClick: ((String) -> Void)?
     private var rule = OverdueNotices()
     private let center: UNUserNotificationCenter?
+    /// Whether this menu posts notifications at all (an app bundle, and not turned off).
+    var canNotify: Bool { center != nil }
 
     init(enabled: Bool) {
         guard enabled else {

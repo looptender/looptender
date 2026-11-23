@@ -86,7 +86,8 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let launchPath: String
     let updater: MenuUpdater?
     var tracker = NoticeTracker()
-    let noticeSettings = NoticeSettings(store: DefaultsStore())
+    /// The shared settings as the last read gave them (the CLI keeps them in one place).
+    var notify: PanelNotify? { if case .read(let list, _) = reading { return list.notify }; return nil }
     /// Work the menu must not quit under: a change being read, confirmed (its
     /// window open) or applied, and the panel being restarted. Shared with the
     /// update flow, which asks it at each step.
@@ -233,7 +234,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func render() {
         let offer = updater.map { UpdateOffer(availableLabel: flow?.installed?.label, automatic: $0.automatic, failure: $0.lastFailure, noMenuLabel: flow?.noMenuLabel) }
         let model = MenuBuilder.build(reading, now: Date(), notice: notice, refreshing: loading, panel: panel, update: renderPath == nil ? offer : nil,
-                                       notices: renderPath == nil ? NoticeView(recent: tracker.recent, on: noticeSettings.map) : nil)
+                                       notices: renderPath == nil ? NoticeView(recent: tracker.recent, on: NoticeSettings.map(notify)) : nil)
         if let button = item.button {
             // A dot after the count marks an update that is waiting; the label says so in words.
             let mark = flow?.installed != nil && renderPath == nil ? "\u{2022}" : ""
@@ -315,8 +316,12 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             flow?.relaunch(byRequest: true)
             return
         case .toggleNoticeKind(let kind):
-            noticeSettings.toggle(kind)
-            render()
+            // The shared setting is the CLI's: write it there, then read again.
+            let turnOn = !NoticeSettings.isOn(kind, notify)
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                try? client.open(.notifySet(kind: kind, on: turnOn))
+                DispatchQueue.main.async { [self] in refresh() }
+            }
             return
         case .toggleAutoUpdate:
             // Turning it on does not relaunch under the open menu: the check
@@ -530,6 +535,19 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         flow?.check()
     }
 
+    /// Tells the CLI this menu runs and whether it can post notifications.
+    func sendHeartbeat(_ running: Bool) {
+        let notifying = running && notifier.canNotify
+        DispatchQueue.global(qos: .utility).async { [client] in try? client.open(.notifyHeartbeat(notifying: notifying)) }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Not waiting: a menu that quits is stale in a few minutes anyway.
+        let process = Process()
+        _ = process
+        try? client.open(.notifyHeartbeat(notifying: false))
+    }
+
     func refresh() {
         guard !loading else { return }
         loading = true
@@ -558,8 +576,12 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 render()
                 notifier.update(result)
                 if renderPath == nil {
-                    for posted in tracker.next(result, now: Date(), isOn: noticeSettings.isOn) { notifier.post(notice: posted) }
+                    let settings = notify
+                    for posted in tracker.next(result, now: Date(), isOn: { NoticeSettings.isOn($0, settings) }) { notifier.post(notice: posted) }
                     render()
+                    // Say that the menu runs, and whether it notifies, so the panel does not
+                    // send a second banner for the same event on this computer.
+                    if !failed { sendHeartbeat(true) }
                 }
                 checkForUpdate()
                 if let path = renderPath { renderMenu(to: path) }

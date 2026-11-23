@@ -591,17 +591,31 @@
   ];
   var NOTICE_DEFAULT_ON = { needs_you: true, limit: true, supervisor_gone: true };
   var NOTICE_RECENT = 10;
-  state.notices = { seen: Object.create(null), baselined: false, log: [], unread: 0, settings: Object.create(null), browser: false };
+  state.notices = { seen: Object.create(null), baselined: false, log: [], unread: 0, open: false };
 
-  // Settings are kept for this page's life only: the page stores nothing in the
-  // browser (a test holds it to that), so a reload returns to the defaults.
+  // The choices are the shared ones the server keeps in one place (the macOS
+  // menu reads them too): they arrive with each read as `notify`, and a change
+  // is saved to the server, so they survive a reload. The page itself stores
+  // nothing in the browser (a test holds it to that).
   function noticeSetting(kind) {
-    var v = state.notices.settings[kind];
-    return v === undefined ? NOTICE_DEFAULT_ON[kind] === true : v;
+    var n = state.data && state.data.notify;
+    if (n && n.kinds && typeof n.kinds[kind] === "boolean") return n.kinds[kind];
+    return NOTICE_DEFAULT_ON[kind] === true;
   }
-  function setNoticeSetting(kind, on) { state.notices.settings[kind] = on; }
+  function menuNotifying() { var n = state.data && state.data.notify; return !!(n && n.menu && n.menu.notifying); }
   function browserNoticesOn() {
-    return state.notices.browser === true && typeof Notification !== "undefined" && Notification.permission === "granted";
+    var n = state.data && state.data.notify;
+    return !!(n && n.browser === true) && typeof Notification !== "undefined" && Notification.permission === "granted";
+  }
+  // Saves one choice: {kind, on} or {browser}. The reply is the new shared state.
+  function saveNotify(body) {
+    var form = state.server && state.server.notifyForm;
+    if (!form) return Promise.resolve(null);
+    return fetch("api/v1/notify", { method: "POST", cache: "no-store", credentials: "same-origin",
+      headers: { "Content-Type": "application/json", Accept: "application/json", "X-Keepgoing-Form": form }, body: JSON.stringify(body) })
+      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
+      .then(function (shared) { if (state.data) state.data.notify = shared; return shared; })
+      .catch(function () { notice("notify", "That choice could not be saved. It stays as it was.", false); return null; });
   }
   function noticeEntry(text, at) {
     state.notices.log.unshift({ text: String(text), at: at, unread: true });
@@ -609,13 +623,14 @@
     state.notices.unread = state.notices.log.filter(function (x) { return x.unread; }).length;
   }
 
-  // Takes one read's notices; returns the sentences to push as browser notifications.
+  // Takes one read's notices; returns what to push as browser notifications:
+  // {text, loop}. A group's count is its real total in this read.
   function noticeStep(d) {
     var st = state.notices, ns = d && Array.isArray(d.notices) ? d.notices : null;
     if (!ns) return [];
-    var cur = Object.create(null), fresh = [], push = [], now = Date.now();
-    ns.forEach(function (n) { if (n && typeof n.id === "string") { cur[n.id] = n; if (!st.seen[n.id]) fresh.push(n); } });
-    var complete = d.complete === true;
+    var cur = Object.create(null), fresh = [], push = [], now = Date.now(), total = Object.create(null);
+    ns.forEach(function (n) { if (n && typeof n.id === "string") { cur[n.id] = n; total[n.group] = (total[n.group] || 0) + 1; if (!st.seen[n.id]) fresh.push(n); } });
+    var complete = d.complete === true, before = st.unread;
     if (st.baselined) {
       if (complete) Object.keys(st.seen).forEach(function (id) { if (!cur[id] && st.seen[id].endText) noticeEntry(st.seen[id].endText, now); });
       fresh.forEach(function (n) { noticeEntry(n.text, now); });
@@ -627,23 +642,35 @@
       });
       order.forEach(function (g) {
         var m = groups[g];
-        push.push(m.length === 1 ? m[0].text : String(m[0].groupText).replace("{n}", String(m.length)));
+        push.push(m.length === 1 && total[g] === 1 ? { text: m[0].text, loop: m[0].loop } : { text: String(m[0].groupText).replace("{n}", String(Math.max(m.length, total[g] || 0))), loop: "" });
       });
+      // The list opens when something new arrives, and is never closed for the person.
+      if (st.unread > before) st.open = true;
     }
     if (complete) st.seen = cur; else Object.keys(cur).forEach(function (id) { st.seen[id] = cur[id]; });
     st.baselined = true;
     return push;
   }
 
-  function postBrowserNotices(texts) {
-    if (!browserNoticesOn()) return;
-    texts.forEach(function (text) { try { new Notification("looptender", { body: text }); } catch (e) { /* the browser refused it */ } });
+  // Browser notifications: only after the person's click (saved in the shared
+  // settings), never while the menu on this computer is already notifying (it
+  // pushes every kind that is on, so a second banner would repeat it), and a
+  // click on one focuses this page on the loop.
+  function postBrowserNotices(items) {
+    if (!browserNoticesOn() || menuNotifying()) return;
+    items.forEach(function (it) {
+      try {
+        var n = new Notification("looptender", { body: it.text });
+        n.onclick = function () { try { window.focus(); } catch (e) { /* nothing to focus */ } if (it.loop) window.location.hash = "#/loop/" + it.loop; if (n.close) n.close(); };
+      } catch (e) { /* the browser refused it */ }
+    });
   }
 
   function noticeArea() {
     var st = state.notices;
     var box = el("details", "notices");
-    box.open = st.unread > 0;
+    box.open = st.open;
+    box.addEventListener("toggle", function () { st.open = box.open; });
     var sum = el("summary", null, st.unread ? "Notifications · " + st.unread + " new" : "Notifications");
     box.appendChild(sum);
     if (!st.log.length) box.appendChild(el("p", "sub", "Nothing new since this page was opened. Events are listed here when they begin: a loop needing you, a usage limit, a supervisor that stopped answering."));
@@ -669,22 +696,20 @@
     NOTICE_KINDS.forEach(function (k) {
       var lab = el("label", "notice-kind"), cb = document.createElement("input");
       cb.type = "checkbox"; cb.checked = noticeSetting(k[0]);
-      cb.addEventListener("change", function () { setNoticeSetting(k[0], cb.checked); });
+      cb.addEventListener("change", function () { saveNotify({ kind: k[0], on: cb.checked }).then(function () { render(false, true); }); });
       lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + k[1]));
       set.appendChild(lab);
     });
     box.appendChild(set);
+    if (menuNotifying()) box.appendChild(el("p", "sub", "The looptender menu on this computer is already notifying for these kinds, so the browser stays quiet and nothing is shown twice. This list still fills."));
     if (typeof Notification !== "undefined") {
-      var granted = Notification.permission === "granted" && browserNoticesOn();
+      var granted = browserNoticesOn();
       var ask = el("button", "btn", granted ? "Browser notifications are on" : "Notify me");
       ask.type = "button";
       ask.disabled = granted || Notification.permission === "denied";
       ask.title = Notification.permission === "denied" ? "This browser has blocked notifications for this page." : "Shows a browser notification for each new event in the kinds above. Nothing leaves this computer.";
       ask.addEventListener("click", function () {
-        Promise.resolve(Notification.requestPermission()).then(function (p) {
-          state.notices.browser = p === "granted";
-          render(false, true);
-        });
+        Promise.resolve(Notification.requestPermission()).then(function (p) { return saveNotify({ browser: p === "granted" }); }).then(function () { render(false, true); });
       });
       box.appendChild(ask);
     }

@@ -157,9 +157,10 @@ func panelNotifyCommand(e env, args []string) int {
 	if len(args) == 0 {
 		return usage()
 	}
-	dir := panelClientsDir("")
 	fs := flag.NewFlagSet("panel notify", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	panelDir := fs.String("panel-directory", "", "")
+	dir := ""
 	switch args[0] {
 	case "set":
 		kind := fs.String("kind", "", "")
@@ -167,6 +168,7 @@ func panelNotifyCommand(e env, args []string) int {
 		if fs.Parse(args[1:]) != nil || fs.NArg() != 0 || *on == *off || !notifyKindKnown(*kind) {
 			return usage()
 		}
+		dir = panelClientsDir(*panelDir)
 		if setNotify(dir, *kind, nil, *on, time.Now()) != nil {
 			e.errf("panel notify: could not save")
 			return exitFailed
@@ -176,6 +178,7 @@ func panelNotifyCommand(e env, args []string) int {
 		if fs.Parse(args[1:]) != nil || fs.NArg() != 0 {
 			return usage()
 		}
+		dir = panelClientsDir(*panelDir)
 		if notifyBeat(dir, *notifying, time.Now()) != nil {
 			e.errf("panel notify: could not save")
 			return exitFailed

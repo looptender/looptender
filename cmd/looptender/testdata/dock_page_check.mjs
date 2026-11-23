@@ -216,60 +216,106 @@ for (const [name, mutate, checks] of expectations) await render(name, scenario(m
 }
 
 // Notifications: the first read is a baseline, a later read adds each new id once,
-// a repeat adds nothing, many that share a group are one line, an ended hold is listed,
-// and no browser notification is made without the person's click.
-{
+// a repeat adds nothing, many that share a group are one line with the group's real
+// total, an ended hold is listed, no browser notification is made without the person's
+// click, the choices are the server's shared ones (they survive a reload and are saved
+// through the notify route), a menu that is already notifying keeps the browser quiet,
+// an opened list stays open, and a click on a notification focuses the loop.
+async function notifyScenario(label, setup) {
   const errors = [];
   const vc = new VirtualConsole(); vc.on("jsdomError", () => {});
   const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "http://127.0.0.1:1/s/token/", virtualConsole: vc });
   const w = dom.window;
   const n = (id, kind, text, extra = {}) => ({ id, kind, severity: "high", loop: "l000000000001", name: "example-api", text, since: "2030-01-01T00:00:00Z", group: kind, groupText: "{n} loops are held for you.", ...extra });
-  let notices = [n("a", "needs_you", "example-api is held for you.")];
-  let completeRead = true; let fetches = 0;
-  w.fetch = async (url) => {
-    if (String(url).includes("api/v1/dock")) fetches++;
+  const env = { notices: [n("a", "needs_you", "example-api is held for you.")], complete: true, shared: { kinds: { needs_you: true, limit: true, supervisor_gone: true, lane_failed: false, hold: false, install: false, disk: false, bound: false }, browser: false, menu: { notifying: false } }, saved: [], made: [] };
+  w.fetch = async (url, opts) => {
     const path = String(url).split("?")[0].replace(/^.*\/s\/[^/]+\//, "");
-    const d = clone(fixture.dock); d.notices = clone(notices); d.complete = completeRead;
-    const found = { "api/v1/dock": d, "api/v1/server": fixture.server, "api/v1/usage": fixture.usage }[path];
+    if (opts && opts.method === "POST" && path === "api/v1/notify") {
+      const b = JSON.parse(opts.body); env.saved.push(b);
+      if (b.browser !== undefined) env.shared.browser = b.browser; else env.shared.kinds[b.kind] = b.on;
+      return { ok: true, status: 200, json: async () => clone(env.shared), text: async () => "" };
+    }
+    const d = clone(fixture.dock); d.notices = clone(env.notices); d.complete = env.complete; d.notify = clone(env.shared);
+    const server = { ...clone(fixture.server), notifyForm: "form-value" };
+    const found = { "api/v1/dock": d, "api/v1/server": server, "api/v1/usage": fixture.usage }[path];
     return { ok: found !== undefined, status: found !== undefined ? 200 : 404, json: async () => clone(found), text: async () => JSON.stringify(found) };
   };
-  const made = [];
-  w.Notification = function (title, o) { made.push([title, o && o.body]); };
+  w.Notification = function (title, o) { this.title = title; this.body = o && o.body; this.close = () => {}; env.made.push(this); };
   w.Notification.permission = "default";
   w.Notification.requestPermission = async () => { w.Notification.permission = "granted"; return "granted"; };
-  w.TextEncoder = TextEncoder; w.scrollTo = () => {}; w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} }); w.Element.prototype.scrollIntoView = () => {};
+  w.TextEncoder = TextEncoder; w.scrollTo = () => {}; w.focus = () => {}; w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} }); w.Element.prototype.scrollIntoView = () => {};
+  if (setup) setup(env, w);
   w.eval(js);
   const tick = () => new Promise((r) => setTimeout(r, 25));
-  const read = async () => { w.document.getElementById("refresh").click(); await tick(); await tick(); await tick(); await tick(); };
+  const settle = async () => { await tick(); await tick(); await tick(); await tick(); };
+  const read = async () => { w.document.getElementById("refresh").click(); await settle(); };
   const area = () => w.document.querySelector("#pane .notices");
-  await tick(); await tick();
-  if (!area()) errors.push("the Overview has no notifications area");
-  else if (/\d new/.test(area().textContent) || w.document.title.includes("new")) errors.push("the first read was not a baseline: " + w.document.title);
-  // The person opts in to browser notifications by clicking, then a new event arrives.
-  [...w.document.querySelectorAll("#pane .notices button")].find((b) => b.textContent === "Notify me").click(); await tick(); await tick();
-  notices = [n("a", "needs_you", "example-api is held for you."), n("b", "limit", "example-docs stopped: usage limit until Fri 04:00.")];
+  const button = (text) => [...w.document.querySelectorAll("#pane .notices button")].find((b) => b.textContent === text);
+  await settle();
+  return { w, env, n, read, area, button, settle, errors, fail: (m) => errors.push(`${label}: ${m}`) };
+}
+
+{
+  const t = await notifyScenario("notices");
+  const { w, env, n, read, area, button, settle } = t;
+  if (!area()) t.fail("the Overview has no notifications area");
+  else if (/\d new/.test(area().textContent) || w.document.title.includes("new")) t.fail("the first read was not a baseline: " + w.document.title);
+  button("Notify me").click(); await settle();
+  if (JSON.stringify(env.saved) !== '[{"browser":true}]' || !env.shared.browser) t.fail("the browser choice was not saved through the server: " + JSON.stringify(env.saved));
+  env.notices = [n("a", "needs_you", "example-api is held for you."), n("b", "limit", "example-docs stopped: usage limit until Fri 04:00.", { loop: "l000000000002" })];
   await read();
-  if (made.length !== 1 || made[0][1] !== "example-docs stopped: usage limit until Fri 04:00.") errors.push("one browser notification for the new event expected: " + JSON.stringify(made));
-  if (!w.document.title.includes("1 new")) errors.push("the title does not count the unread event: " + w.document.title);
+  if (env.made.length !== 1 || env.made[0].body !== "example-docs stopped: usage limit until Fri 04:00.") t.fail("one browser notification for the new event expected: " + JSON.stringify(env.made.map((x) => x.body)));
+  if (!w.document.title.includes("1 new")) t.fail("the title does not count the unread event: " + w.document.title);
+  // A click on it focuses the page on that loop.
+  env.made[0].onclick(); if (w.location.hash !== "#/loop/l000000000002") t.fail("a click did not focus the loop: " + w.location.hash);
+  w.location.hash = "#/"; w.dispatchEvent(new w.Event("hashchange")); await settle();
   await read(); await read();
-  if (made.length !== 1) errors.push("a repeat read notified again");
-  // Five loops on one limit are one notification and five lines.
-  notices = notices.concat([1, 2, 3, 4, 5].map((i) => n("g" + i, "limit", "example-" + i + " stopped: usage limit.", { group: "limit.x", groupText: "{n} loops stopped: usage limit." })));
-  await read();
-  if (made.length !== 2 || made[1][1] !== "5 loops stopped: usage limit.") errors.push("five on one cause should be one notification: " + JSON.stringify(made));
-  // A kind that is off is listed and not pushed.
-  notices = notices.concat([n("c", "lane_failed", "example-api has a failed lane.")]);
-  await read();
-  if (made.length !== 2 || !/failed lane/.test(area().textContent)) errors.push("a quiet kind is listed and not pushed: " + "fetches=" + fetches + " " + made.length + " " + (area() && area().textContent.slice(0, 500)));
-  // A cut-off read cannot end a hold; a complete one can.
-  notices = notices.concat([n("h", "hold", "example-api was held.", { endText: "example-api is no longer held." })]); await read();
-  notices = notices.filter((x) => x.id !== "h"); completeRead = false; await read();
-  if (/no longer held/.test(area().textContent)) errors.push("a cut-off read ended a hold");
-  completeRead = true; await read();
-  if (!/no longer held/.test(area().textContent)) errors.push("a complete read did not list the hold lifted");
-  if ([...w.document.querySelectorAll("#pane .notices li")].length > 10) errors.push("more than ten listed");
+  if (env.made.length !== 1) t.fail("a repeat read notified again");
+  // One loop joins four already on one cause: the group is told by its real total.
+  const g = (i) => n("g" + i, "limit", "example-" + i + " stopped.", { group: "limit.x", groupText: "{n} loops stopped: usage limit." });
+  env.notices = env.notices.concat([1, 2, 3, 4].map(g)); await read();
+  env.notices = env.notices.concat([g(5)]); await read();
+  if (env.made.length !== 3 || env.made[1].body !== "4 loops stopped: usage limit." || env.made[2].body !== "5 loops stopped: usage limit.") t.fail("a group's count should be its real total: " + JSON.stringify(env.made.map((x) => x.body)));
+  env.notices = env.notices.concat([n("c", "lane_failed", "example-api has a failed lane.")]); await read();
+  if (env.made.length !== 3 || !/failed lane/.test(area().textContent)) t.fail("a quiet kind is listed and not pushed");
+  env.notices = env.notices.concat([n("h", "hold", "example-api was held.", { endText: "example-api is no longer held." })]); await read();
+  env.notices = env.notices.filter((x) => x.id !== "h"); env.complete = false; await read();
+  if (/no longer held/.test(area().textContent)) t.fail("a cut-off read ended a hold");
+  env.complete = true; await read();
+  if (!/no longer held/.test(area().textContent)) t.fail("a complete read did not list the hold lifted");
+  if ([...w.document.querySelectorAll("#pane .notices li")].length > 10) t.fail("more than ten listed");
+  // A list the person opened stays open through the next read; it is not closed for them.
+  area().open = true; area().dispatchEvent(new w.Event("toggle")); await read();
+  if (!area().open) t.fail("a read closed the list the person had opened");
+  area().open = false; area().dispatchEvent(new w.Event("toggle")); await read();
+  if (area().open) t.fail("a read reopened a list the person closed with nothing new");
+  // A choice is saved to the server, and a reload (a new page on the same server) shows it.
+  const box = [...area().querySelectorAll("input[type=checkbox]")].find((c) => /disk/i.test(c.parentNode.textContent));
+  box.checked = true; box.dispatchEvent(new w.Event("change")); await settle();
+  if (!env.saved.some((x) => x.kind === "disk" && x.on === true)) t.fail("the choice was not saved: " + JSON.stringify(env.saved));
   w.close();
-  for (const e of errors) failures.push("notices: " + e);
+  for (const e of t.errors) failures.push("notices: " + e);
+  // The reload: a new page against the same shared state remembers the choice and the browser opt-in.
+  const again = await notifyScenario("reload", (e, win) => { e.shared = clone(env.shared); win.Notification.permission = "granted"; });
+  const diskBox = [...again.area().querySelectorAll("input[type=checkbox]")].find((c) => /disk/i.test(c.parentNode.textContent));
+  if (!diskBox || !diskBox.checked) again.fail("a reload lost the choice");
+  if (!/Browser notifications are on/.test(again.area().textContent)) again.fail("a reload lost the browser opt-in");
+  again.w.close();
+  for (const e of again.errors) failures.push("notices: " + e);
+}
+
+{
+  // The menu on this computer is notifying: the browser stays quiet and says why.
+  const t = await notifyScenario("menu notifying", (e) => { e.shared.browser = true; e.shared.menu = { notifying: true }; });
+  const { w, env, n, read, area } = t;
+  w.Notification.permission = "granted";
+  await read();
+  env.notices = env.notices.concat([n("b", "limit", "example-docs stopped: usage limit.")]); await read();
+  if (env.made.length !== 0) t.fail("the browser notified while the menu does: " + JSON.stringify(env.made.map((x) => x.body)));
+  if (!/menu on this computer is already notifying/.test(area().textContent)) t.fail("the page does not say the menu is notifying");
+  if (!/usage limit/.test(area().textContent)) t.fail("the list stopped filling");
+  w.close();
+  for (const e of t.errors) failures.push("notices: " + e);
 }
 
 if (unlisted.size) failures.push(`the variants set loop fields that dock_page_variant_keys.json does not list (add them, and they will be checked against dockLoop's JSON tags): ${[...unlisted].join(", ")}`);
