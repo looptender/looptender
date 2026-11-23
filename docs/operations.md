@@ -857,6 +857,20 @@ A question is the loop's record that it needs a person's decision. It is saved i
 
 `status` prints a `question:` line while one is open. The incident journal records `question_raised` and `question_withdrawn` control records, by ID only; `question_answered` is kept for the answer commands. A new question replaces an open one, which is recorded as withdrawn. A question whose situation has cleared, because the loop is running again, is withdrawn. Answering from the panel or with `client review|apply answer` is not built yet. Until it is, `keepgoing resume` withdraws the question and goes on: for `refused` the streak starts over and continuing starts again at 1 minute, and for `restricted` it is the one more try above.
 
+### Warning before the weekly window runs out
+
+Unreleased, opt-in; **fixtures only**.
+- **The setting.** `looptender usage-watch -c CONFIG --account <accounts catalog ID> [--every 30m] [--warn-within 12h]` names the [accounts catalog](accounts.md) entry the loop's own conversation runs on. `--off` turns it off, and with no flags the command shows it.
+  - It is a record in the state directory (`usage-watch-setting.json`), not a key of the configuration, so an older build, including the rollback copy after an install, still loads the configuration and never reads the record.
+  - `status` and `doctor` show it. `doctor` warns when the catalog has no such entry.
+- **The read.** Checks read that entry's subscription quota with the catalog's quota read, which makes no model request, at most every `every` (10m to 24h).
+  - Only on a check that observed the primary conversation of a loop that could be woken: never on a dry run, a fallback, or a loop that is off, paused, stopped, waiting for a person or finished.
+  - The reading is kept in `usage-watch.json`, its own record.
+- **The rate** is the weekly all-models window's use so far divided by the time since it began (its reset less a week). A model's or a client's weekly window (Claude's `seven_day_<x>`) is not used. Nothing is projected in the window's first 12 hours, where a little use would project a run-out far too soon, or before anything is used.
+- **The words.** While, at that rate, the window runs out before it resets, from a reading no older than twice `--every`, `status`, `status --json` (`usageBurn`) and the panel's row say "At this rate the weekly window is used up in about N h, before it resets."; `panel list` carries the sentence as `usageBurn`.
+- **One wake.** When the run-out is also within `--warn-within` (default `12h`, 1h to 168h), the agent is told once per window: `[keepgoing:usage-burn window=weekly used=… exhausts=… resets=…]` with one notice. It rides on the ordinary wake of an idle session. A session idle on purpose while its children run gets it alone, once, under the same spacing as the child-error notice, and is told that it is not an instruction to continue. It is recorded as sent only when the send is accepted. A reading whose reset is within an hour of the warned one is the same window, however the reported reset drifts between reads; a new window warns again.
+- **Never acts.** It reads no lane, messages, pauses or stops no child, and changes no route. A failed read is recorded (`reason`) and retried when next due.
+
 ### Which limit, which account, and what you can do
 
 Unreleased. When a check finds the loop's active target at a provider usage limit, it records which window the provider says is blocked and when it resets (`usage-limit.json` in the state directory, its own record rather than a field of `state.json`, so no state format changes and a build without it neither reads nor rewrites it; after a rollback to such a build the record stays as it was, unread, until a newer build's next check replaces or removes it), and `status` says it:

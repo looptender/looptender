@@ -218,6 +218,17 @@ func doctor(e env, args []string, run doctorRun) int {
 			r.add("loop.archived", "warning", "An archive record "+archiveSince(a)+" is ignored: the loop supervises again, resumed by a build from before archiving.", "Run looptender unarchive -c "+shellQuote(cfg.Path())+" to remove the record, or pause the loop to archive it again.")
 		}
 	}
+	switch v := describeUsageWatch(cfg.Loop.StateDir); {
+	case v == nil:
+	case v.Unreadable:
+		r.add("usage_watch", "warning", "The usage watch setting cannot be read, so the watch is off.", "Set it again with usage-watch --account, or turn it off with usage-watch --off.")
+	default:
+		if known, _ := usageWatchAccountKnown(v.Account); !known {
+			r.add("usage_watch", "warning", "The usage watch is on, but the accounts catalog has no entry for its account, so no quota is read.", "Name an entry from accounts list with usage-watch --account.")
+		} else {
+			r.add("usage_watch", "ok", "The usage watch is on: its account's quota is read every "+v.Every+", and the agent is warned once a window when it would run out within "+v.WarnWithin+".", "")
+		}
+	}
 	st, stateErr := state.Load(cfg.Loop.StateDir)
 	if stateErr != nil {
 		r.add("state", "error", "Tick state could not be read.", "Inspect or restore state.json; preserve the active session and control file.")
