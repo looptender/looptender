@@ -123,6 +123,7 @@ public final class MenuUpdater {
     static let attemptsKey = "updateAttempts"
     static let relaunchedKey = "updateRelaunchedTo"
     static let toldKey = "updateToldGaps"
+    static let oldPIDKey = "updateOldPID"
     /// Automatic attempts in any hour, whatever the builds: a path rewritten in
     /// place gives each rewrite a new identity, and this stops that being
     /// unlimited.
@@ -206,13 +207,24 @@ public final class MenuUpdater {
         store.set(nil, forKey: Self.relaunchedKey)
     }
 
-    /// Said once, by the menu that an automatic relaunch started, about its
-    /// own build; nil otherwise.
-    public func updatedNotice() -> String? {
-        guard store.string(forKey: Self.relaunchedKey) == running.id else { return nil }
-        store.set(nil, forKey: Self.relaunchedKey)
-        return "looptender menu updated to \(running.label)"
+    /// What the new menu may say about an automatic relaunch that started it,
+    /// and the process it replaces. Not consumed until `finishUpdate`, which
+    /// the caller runs only once that process has exited.
+    public struct PendingUpdate: Equatable {
+        public let text: String
+        public let oldPID: Int32?
     }
+    public func pendingUpdate() -> PendingUpdate? {
+        guard store.string(forKey: Self.relaunchedKey) == running.id else { return nil }
+        return PendingUpdate(text: "looptender menu updated to \(running.label)", oldPID: store.string(forKey: Self.oldPIDKey).flatMap { Int32($0) })
+    }
+    public func finishUpdate() {
+        store.set(nil, forKey: Self.relaunchedKey)
+        store.set(nil, forKey: Self.oldPIDKey)
+    }
+    /// The process that is about to be replaced, written before the new menu
+    /// starts; nil clears it.
+    public func handOverPID(_ pid: Int32?) { store.set(pid.map(String.init), forKey: Self.oldPIDKey) }
 
     public static func availableNotice(_ label: String) -> String { "looptender menu: update available (\(label))" }
 
