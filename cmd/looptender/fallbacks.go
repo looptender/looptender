@@ -198,7 +198,7 @@ func printFallbacks(e env, out fallbacksOut, asJSON bool, cfgPath string) {
 		}
 	}
 	if len(unprobed) > 0 {
-		fmt.Fprintf(e.stdout, "Not probed yet: %s.\nPreview a check for free with:\n  keepgoing fallbacks check --dry-run %s\n    -c %s\n", strings.Join(unprobed, ", "), lineContinuation(), commandQuote(cfgPath))
+		fmt.Fprintf(e.stdout, "Not probed yet: %s.\nPreview a check for free with:\n  looptender fallbacks check --dry-run %s\n    -c %s\n", strings.Join(unprobed, ", "), lineContinuation(), commandQuote(cfgPath))
 	}
 }
 

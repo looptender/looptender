@@ -121,7 +121,7 @@ func overdueSentence(s state.Schedule) string {
 	if r := s.StartedBy; r != nil && r.Source == state.RoutineBBAutomation && r.Routine != "" {
 		return text + "the BB automation that runs this loop (" + r.Routine + ") may have disabled itself; check it in BB's Automations"
 	}
-	return text + "the scheduler that runs `keepgoing tick` for this loop may have stopped"
+	return text + "the scheduler that runs `looptender tick` for this loop may have stopped"
 }
 
 // scheduleDoctorLine is doctor's supervisor.schedule finding, or ok=false
@@ -132,11 +132,11 @@ func scheduleDoctorLine(s scheduleStatus) (level, text, fix string, ok bool) {
 	case s.Overdue && sch.Basis == "never_checked":
 		return "error", "Unsupervised: " + s.Message + ".", "Start supervision for this loop: `looptender start --background -c CONFIG`, or `looptender service install`. A loop that is moved or transferred starts with no check record, so its supervisor has to be started again.", true
 	case s.Overdue && sch.NotRecorded:
-		return "warning", "Checks are not being recorded: " + s.Message + ".", "The daemon is running passes that end without recording a check. Its error output (the terminal running keepgoing start, or the service's log) says why: an unwritable state directory, a held lock or a failed source check.", true
+		return "warning", "Checks are not being recorded: " + s.Message + ".", "The daemon is running passes that end without recording a check. Its error output (the terminal running looptender start, or the service's log) says why: an unwritable state directory, a held lock or a failed source check.", true
 	case s.Overdue && sch.Blocked:
-		return "warning", "Checks are not finishing: " + s.Message + ".", "Look for a keepgoing tick that has been running for a long time and end it; the next check then runs.", true
+		return "warning", "Checks are not finishing: " + s.Message + ".", "Look for a looptender tick that has been running for a long time and end it; the next check then runs.", true
 	case s.Overdue:
-		return "warning", "No check may be running: " + s.Message + ".", "If the computer was not asleep, start the scheduler again. A BB automation that failed repeatedly may have disabled itself (doctor --bb-automation <id> --bb-project <id> inspects one); `keepgoing service install` runs checks from a service the operating system restarts.", true
+		return "warning", "No check may be running: " + s.Message + ".", "If the computer was not asleep, start the scheduler again. A BB automation that failed repeatedly may have disabled itself (doctor --bb-automation <id> --bb-project <id> inspects one); `looptender service install` runs checks from a service the operating system restarts.", true
 	case s.NotJudged == "held":
 		return "ok", "Not judged while the loop is held (paused, waiting for a person or complete): its scheduler may have been stopped on purpose.", "", true
 	case !s.Judging:
@@ -163,4 +163,22 @@ func tickCadenceSentence(s scheduleStatus, now time.Time) string {
 		by = "a BB automation (" + r.Routine + ")"
 	}
 	return fmt.Sprintf("not scheduled by a daemon: checks are run by %s; recent checks ran about every %s, the last %s ago (past checks, not a forecast)", by, s.Cadence, state.ShortDuration(now.Sub(*s.LastCheckAt)))
+}
+
+// noteTickCadence is the one place that says how a loop with no answering
+// daemon is checked: status text, status JSON (daemon and runtime), client
+// status JSON and doctor all read the records it sets. It does nothing while
+// a daemon answers, or when recent checks do not show ticks.
+func noteTickCadence(d *daemonStatus, rt *runtimeStatus, s scheduleStatus, now time.Time) {
+	if d == nil || d.State == "responsive" {
+		return
+	}
+	t := tickCadenceSentence(s, now)
+	if t == "" {
+		return
+	}
+	d.NextCheck, d.CheckedBy, d.Cadence = t, "ticks", s.Cadence
+	if rt != nil {
+		rt.NextCheck = t
+	}
 }

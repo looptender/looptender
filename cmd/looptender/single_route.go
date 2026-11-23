@@ -74,7 +74,7 @@ func doctorRoutes(r *doctorReport, cfg *config.Config, cfgPath string, st state.
 // the one command that gives it a takeover by a new conversation.
 func singleRouteFix(cfg *config.Config, cfgPath string) string {
 	if cfg.Loop.Adapter == "bb" && !cfg.Loop.FollowsStandard() {
-		return "To have a new conversation on another provider take over at a limit, run keepgoing fallbacks arm -c " + commandQuote(cfgPath) + " (it previews first). " + limitWaitWayOut
+		return "To have a new conversation on another provider take over at a limit, run looptender fallbacks arm -c " + commandQuote(cfgPath) + " (it previews first). " + limitWaitWayOut
 	}
 	return limitWaitWayOut
 }

@@ -40,7 +40,10 @@ type clientSnapshot struct {
 	Goal               *control.GoalSummary `json:"goal,omitempty"`
 	PrivateGoal        *clientGoalDisplay   `json:"privateGoal,omitempty"`
 	Daemon             daemonStatus         `json:"daemon"`
-	ExternalScheduler  string               `json:"externalScheduler"`
+	// DiskSpace is set when the volume that holds the loop's state is
+	// filling or nearly full.
+	DiskSpace         *dockDiskSpace `json:"diskSpace,omitempty"`
+	ExternalScheduler string         `json:"externalScheduler"`
 }
 type clientControls struct {
 	Enabled      bool `json:"enabled"`
@@ -110,7 +113,7 @@ func clientCommand(e env, args []string) int {
 		return clientReviewCommand(e, args)
 	}
 	if len(args) == 0 || args[0] != "status" {
-		e.errf("usage: keepgoing client status|pause|stop|prepare-resume|resume --id ID, or client review|apply pause|stop|resume --loop KEY [--directory private-registry] [--json]; see each command --help")
+		e.errf("usage: looptender client status|pause|stop|prepare-resume|resume --id ID, or client review|apply pause|stop|resume --loop KEY [--directory private-registry] [--json]; see each command --help")
 		return exitUsage
 	}
 	fs := flag.NewFlagSet("client status", flag.ContinueOnError)
@@ -344,10 +347,14 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 	// scheduler queries, task files, output logs or provider session files.
 	queryCtx, cancel := context.WithTimeout(ctx, time.Second)
 	s.Daemon = query(queryCtx, entry.StateDir, version, offline)
+	if d := describeDiskSpace(entry.StateDir); d.lowDisk() {
+		s.DiskSpace = &dockDiskSpace{Level: d.Level, Message: d.Message, AvailableBytes: d.AvailableBytes, TotalBytes: d.TotalBytes}
+	}
 	// After the daemon is asked: one that ran the last check and is still
 	// running means the computer slept.
 	if scheduleOf != nil && s.Runtime != nil {
 		sch := scheduleOf(&s.Daemon)
+		noteTickCadence(&s.Daemon, nil, sch, now)
 		s.Runtime.Overdue, s.Runtime.OverdueMessage = sch.Overdue, sch.Message
 		if sch.Overdue && sch.Since != nil {
 			s.Runtime.OverdueSince = sch.Since

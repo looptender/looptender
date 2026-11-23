@@ -88,7 +88,7 @@ func setupLabel(e accounts.Entry) string { return bbLabel(e.Label, setupLabelWid
 // printSetupAccountChoices lists the entries a person may pick by number,
 // names padded by characters so the second column lines up.
 func printSetupAccountChoices(w io.Writer, choices []accounts.Entry) {
-	fmt.Fprintln(w, "  Your named accounts (keepgoing accounts list):")
+	fmt.Fprintln(w, "  Your named accounts (looptender accounts list):")
 	width := 0
 	for _, e := range choices {
 		width = max(width, utf8.RuneCountInString(setupLabel(e)))
@@ -119,11 +119,11 @@ func setupAccountEntry(id string) (*accounts.Entry, error) {
 	id = strings.TrimSpace(id)
 	f := setupCatalog()
 	if f == nil {
-		return nil, errors.New("--account: the accounts catalog could not be read, so the account cannot be named; leave --account out or check keepgoing accounts list")
+		return nil, errors.New("--account: the accounts catalog could not be read, so the account cannot be named; leave --account out or check looptender accounts list")
 	}
 	e := accounts.Find(f, id)
 	if e == nil {
-		return nil, fmt.Errorf("--account: the accounts catalog has no entry with ID %q (keepgoing accounts list)", bbLabel(id, 40))
+		return nil, fmt.Errorf("--account: the accounts catalog has no entry with ID %q (looptender accounts list)", bbLabel(id, 40))
 	}
 	out := *e
 	return &out, nil
@@ -187,7 +187,7 @@ func setupFitting(kind, provider, dir string) string {
 		names = append(names, fmt.Sprintf("%q", setupLabel(c)))
 	}
 	if len(names) == 0 {
-		return "No named account fits it; name one with keepgoing accounts add."
+		return "No named account fits it; name one with looptender accounts add."
 	}
 	return "Named accounts that fit it: " + strings.Join(names, ", ") + "."
 }

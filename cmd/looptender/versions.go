@@ -210,7 +210,7 @@ func dockVersionsOf(loops []dockLoop, clients *clientsFile, clientsErr error, no
 	}
 	panelCurrent := a == "current" && refKind == "newest_release"
 	add(dockVersionRow{Kind: "panel", Title: "This panel", Label: dockBuildLabel(version), Availability: a, Text: t,
-		Update: "Start the panel again from the newest build: keepgoing panel stop, then keepgoing panel, with that binary."})
+		Update: "Start the panel again from the newest build: looptender panel stop, then looptender panel, with that binary."})
 	for _, l := range loops {
 		a, t := dockVersionAgainst(l.Build.Recorded, ref, refKind)
 		if a == "not_recorded" && l.Versions.Daemon == "" && l.Versions.Service == "" {
@@ -270,7 +270,7 @@ func dockVersionsOf(loops []dockLoop, clients *clientsFile, clientsErr error, no
 	v.Summary = dockVersionsSummary(v, ref, refKind)
 	v.Lede = "Where each " + productName + " build on this computer runs, as its records say, against " + map[string]string{"newest_release": "the newest release seen here, " + ref, "this_panel": "this panel's own build, " + ref}[refKind] + ". Nothing is run to ask a version, and nothing is fetched from the network."
 	if v.Clients == "none" {
-		v.Lede += " The BB plugin and the macOS menu are listed once keepgoing panel has run once on this computer and they have reported, with a build that knows --client."
+		v.Lede += " The BB plugin and the macOS menu are listed once looptender panel has run once on this computer and they have reported, with a build that knows --client."
 	}
 	return v
 }

@@ -4,7 +4,7 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import plugin, { NOT_THIS_THREAD } from "./server.ts";
+import plugin, { NOT_THIS_THREAD, NOT_THIS_SETUP } from "./server.ts";
 
 // A pause or stop asked for from a thread's card reaches only a loop that
 // thread belongs to: its primary or its current target.
@@ -56,7 +56,7 @@ test("a saved setup is paused only from the thread it was saved for", async () =
     const record = { id: "setup_1", threadId: "thr_setup", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: "/projects/example", provider: "example-provider", configPath: "/private/example/looptender.yaml", loop: "example-loop" };
     await w.bb.storage.kv.set("setups.v1", [record]);
     const refused = await w.harness.behavior.callRpc("control", { configPath: record.configPath, managedId: record.id, action: "pause", expectedThreadId: "thr_elsewhere" }) as { ok: boolean; message: string };
-    assert.equal(refused.ok, false); assert.equal(refused.message, NOT_THIS_THREAD);
+    assert.equal(refused.ok, false); assert.equal(refused.message, NOT_THIS_SETUP); assert.match(NOT_THIS_SETUP, /thread it was saved for.*destination of its move/);
     assert.deepEqual(w.hostCalls, [], "nothing reached the host");
     const allowed = await w.harness.behavior.callRpc("control", { configPath: record.configPath, managedId: record.id, action: "pause", expectedThreadId: "thr_setup" }) as { ok: boolean };
     assert.equal(allowed.ok, true); assert.deepEqual(w.hostCalls, ["command:pause"]);

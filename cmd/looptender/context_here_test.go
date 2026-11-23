@@ -294,8 +294,8 @@ func TestContextHereUsage(t *testing.T) {
 		thread string
 		want   string
 	}{
-		{[]string{"context", "--here", "-c", "x.yaml"}, "", "usage: keepgoing context --here"},
-		{[]string{"context", "--here", "extra"}, "", "usage: keepgoing context --here"},
+		{[]string{"context", "--here", "-c", "x.yaml"}, "", "usage: looptender context --here"},
+		{[]string{"context", "--here", "extra"}, "", "usage: looptender context --here"},
 		{[]string{"status", "--here"}, "", "--here is only supported by context"},
 		{[]string{"context", "--here"}, "not-a-thread", "BB_THREAD_ID is set but is not a BB thread ID"},
 	} {

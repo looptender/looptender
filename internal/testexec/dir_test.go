@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -216,6 +217,62 @@ func TestRunOnceRetryRule(t *testing.T) {
 		if (err == nil) != c.ok || *launches != c.launches || errors.As(err, &refused) {
 			t.Errorf("%s: %v after %d launches", name, err, *launches)
 		}
+	}
+}
+
+// A launch refused as text file busy (a write handle that a process forked
+// by another test still holds) is tried again until the program starts, and
+// does not count as a launch; past busyFor it is returned as a failure to
+// start, not as a refusal.
+func TestRunOnceWaitsOutATextFileBusy(t *testing.T) {
+	busy := &os.PathError{Op: "fork/exec", Path: "example", Err: syscall.ETXTBSY}
+	launches := fakeLaunches(t, busy, busy, busy, nil)
+	if err := RunOnce("example", nil); err != nil || *launches != 4 {
+		t.Fatalf("%v after %d launches", err, *launches)
+	}
+	// Busy launches do not use up the bound on signals.
+	killed := killedError(t)
+	errs := []error{}
+	for range maxLaunches {
+		errs = append(errs, busy)
+	}
+	for range maxLaunches - 1 {
+		errs = append(errs, killed)
+	}
+	launches = fakeLaunches(t, append(errs, nil)...)
+	if err := RunOnce("example", nil); err != nil || *launches != 2*maxLaunches {
+		t.Fatalf("busy then killed: %v after %d launches", err, *launches)
+	}
+	old := busyFor
+	busyFor = 50 * time.Millisecond
+	t.Cleanup(func() { busyFor = old })
+	fakeLaunches(t, busy)
+	err := RunOnce("example", nil)
+	var refused *RefusedError
+	if !errors.Is(err, syscall.ETXTBSY) || errors.As(err, &refused) || !strings.Contains(err.Error(), "could not be started") {
+		t.Fatalf("busy past the bound: %v", err)
+	}
+}
+
+// A real one: on Linux, a program cannot be started while a handle open for
+// writing it is held, as a forked child holds one until it calls exec. Here
+// the test holds it itself, and closes it while RunOnce waits.
+func TestRunOnceStartsAProgramOnceItsWriterCloses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "probe")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o700)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("#!/bin/sh\nexit 0\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command(path).Run(); !errors.Is(err, syscall.ETXTBSY) {
+		f.Close()
+		t.Skipf("this host starts a program open for writing (%v)", err)
+	}
+	time.AfterFunc(100*time.Millisecond, func() { f.Close() })
+	if err := RunOnce(path, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -166,11 +166,14 @@ type buildAdopter struct {
 	from string
 	// loop is the loop's name, for the run log; taken from the
 	// configuration at each safe point.
-	loop     string
-	image    *state.ExecutableImage
-	cfgPath  string
-	stateDir string
-	mode     string // daemon, foreground, background, service
+	loop string
+	// disk is the daemon's disk watch, handed to the new build so a switch
+	// does not start a new low-disk episode; diskSeed is the one handed in.
+	disk, diskSeed *diskWatch
+	image          *state.ExecutableImage
+	cfgPath        string
+	stateDir       string
+	mode           string // daemon, foreground, background, service
 	// expectedStateDir is the service's bound state directory, checked
 	// again by the new build.
 	expectedStateDir string
@@ -433,6 +436,9 @@ type adoptPayload struct {
 	OwnerGeneration uint64 `json:"ownerGeneration"`
 	// ExpectedStateDir is a service's bound state directory.
 	ExpectedStateDir string `json:"expectedStateDir,omitempty"`
+	// DiskEpisode is the daemon's low-disk episode, so the new build does
+	// not tell of it again. Absent from an earlier build's handover.
+	DiskEpisode *diskEpisode `json:"diskEpisode,omitempty"`
 	// Returning, when set, is why the build handing over could not start:
 	// this image is the earlier build, taking the daemon back.
 	Returning string `json:"returning,omitempty"`
@@ -596,6 +602,7 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 		ExpectSHA: c.sha, OwnerThread: thread, OwnerGeneration: generation, ExpectedStateDir: a.expectedStateDir, ConfigArg: adoptConfigArg()}
 	if adoptConfigArg() {
 		payload.DaemonStartedAt, payload.DaemonLastPassStartedAt, payload.DaemonLastPassAt = optionalTime(a.monitor.StartedAt()), optionalTime(a.monitor.LastPassStartedAt()), optionalTime(a.monitor.LastPassAt())
+		payload.DiskEpisode = a.disk.episode()
 	}
 	a.note(adoptRecord{Outcome: adoptSwitching, Mode: a.mode, From: from, To: to})
 	err = handover(payload, a.launch, probe.ConfigArg && adoptConfigArg(), func(argv []string, keep []*os.File) error {
@@ -752,6 +759,9 @@ func (p adoptPayload) run(e env) int {
 	}
 	defer daemonLock.Release()
 	a := newBuildAdopter(p.Config, p.StateDir, p.Mode, p.ExpectedStateDir, daemonLock)
+	if adoptConfigArg() { // the earlier form never read it
+		a.diskSeed = p.DiskEpisode.watch()
+	}
 	return daemonLoop(e, cfg, p.Config, false, lease, monitor, a)
 }
 
@@ -912,8 +922,8 @@ func (a *buildAdopter) watch(m *daemoninfo.Server) {
 // by the tests, makes this build speak the handover as builds from before
 // the configuration argument did: its probe answer has no configArg, it
 // accepts exactly `--handover-fd N`, hands only that on, and neither sends
-// nor reads the daemon's start and last pass. It stands in for a released
-// earlier build in a switch in either direction.
+// nor reads the daemon's start, last pass and low-disk episode. It stands in
+// for a released earlier build in a switch in either direction.
 var adoptEarlierForm string
 
 func adoptConfigArg() bool { return adoptEarlierForm == "" }

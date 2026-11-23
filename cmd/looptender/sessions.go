@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
@@ -39,6 +40,10 @@ type otherLoop struct {
 	Primary bool
 	// Shares lists, in words, what else is shared.
 	Shares []string
+	// Held names the hold on it (paused, stopped, completed or awaiting a
+	// person), or is empty while it supervises: enabled is a flag, not
+	// activity.
+	Held string
 }
 
 // loopSessions are the sessions a loop acts on: its primary and each
@@ -129,7 +134,7 @@ func findOtherLoops(cfg *config.Config) []otherLoop {
 		if err != nil || !ctl.Enabled {
 			continue
 		}
-		o := otherLoop{Loop: other.Loop.Name, Config: other.Path(), StateDir: c.stateDir}
+		o := otherLoop{Loop: other.Loop.Name, Config: other.Path(), StateDir: c.stateDir, Held: loopHeld(ctl, false)}
 		theirPrimary, theirHave, theirs := loopSessions(other)
 		if havePrimary && theirHave && theirPrimary == primary {
 			o.Primary = true
@@ -210,11 +215,25 @@ func sharedLoopWarnings(cfg *config.Config, others []otherLoop) []string {
 	primary, _ := session.Of(cfg.Loop.Agent)
 	var out []string
 	for _, o := range others {
+		// A held loop sends nothing until a person lifts its hold: say so,
+		// so it does not read as a second live supervisor.
+		state := "is enabled and supervising"
+		if o.Held != "" {
+			until := "it sends nothing while it is " + o.Held
+			if o.Held == "paused" || o.Held == "awaiting a person" {
+				until = "it sends nothing until a person resumes it"
+			}
+			state = "is enabled but held (" + o.Held + "): " + until
+		}
 		if o.Primary {
-			out = append(out, fmt.Sprintf("loop %s (%s) also supervises %s; the two can both prompt it, though never at the same moment", o.Loop, o.Config, primary.Describe()))
+			if o.Held != "" {
+				out = append(out, fmt.Sprintf("loop %s (%s) also supervises %s but %s; once it resumes, the two can both prompt it, though never at the same moment", o.Loop, o.Config, primary.Describe(), strings.TrimPrefix(state, "is enabled but ")))
+			} else {
+				out = append(out, fmt.Sprintf("loop %s (%s) also supervises %s; the two can both prompt it, though never at the same moment", o.Loop, o.Config, primary.Describe()))
+			}
 		}
 		for _, s := range o.Shares {
-			out = append(out, fmt.Sprintf("loop %s (%s) is enabled and %s", o.Loop, o.Config, s))
+			out = append(out, fmt.Sprintf("loop %s (%s) %s, and %s", o.Loop, o.Config, state, s))
 		}
 	}
 	return out

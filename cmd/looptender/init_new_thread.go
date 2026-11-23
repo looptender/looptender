@@ -170,7 +170,7 @@ func offerCandidate(o newThreadOffer, permission string) config.Candidate {
 }
 
 // initNewThreadOff is how init's person turns the takeover off.
-const initNewThreadOff = "answer no, or pass --new-thread-provider none; later, remove the fallback with keepgoing fallbacks remove, or set bb.replace_blocked_children: false to keep only the takeover"
+const initNewThreadOff = "answer no, or pass --new-thread-provider none; later, remove the fallback with looptender fallbacks remove, or set bb.replace_blocked_children: false to keep only the takeover"
 
 // isNewThreadCandidate reports a candidate that starts a new BB conversation.
 func isNewThreadCandidate(c config.Candidate) bool {

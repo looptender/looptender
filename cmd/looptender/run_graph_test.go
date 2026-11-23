@@ -429,7 +429,7 @@ func TestRunsNamesTheSupervisedConversationALoopIsWaitingOn(t *testing.T) {
 	if strings.Contains(parentView, "thr_child") || strings.Contains(text, "thr_child") {
 		t.Fatal("the child's thread ID was printed in the parent's view")
 	}
-	if !strings.Contains(text, "follow it with: keepgoing runs --registry-id "+childEntry.ID) || !strings.Contains(text, "waiting on: blocked") || !strings.Contains(text, "a registered loop: "+childEntry.ID+" (example-child)  run "+childGraph.CurrentRun) {
+	if !strings.Contains(text, "follow it with: looptender runs --registry-id "+childEntry.ID) || !strings.Contains(text, "waiting on: blocked") || !strings.Contains(text, "a registered loop: "+childEntry.ID+" (example-child)  run "+childGraph.CurrentRun) {
 		t.Fatal(text)
 	}
 	// Nothing was sent, queried, stopped, claimed or written by any of it.

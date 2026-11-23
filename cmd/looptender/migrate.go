@@ -124,7 +124,7 @@ func migrateCommand(e env, args []string) int {
 		return exitUsage
 	}
 	if fl.NArg() != 0 {
-		e.errf("usage: keepgoing migrate [--undo] [--apply] [--json]")
+		e.errf("usage: looptender migrate [--undo] [--apply] [--json]")
 		return exitUsage
 	}
 	out := migrateOutput{SchemaVersion: 1, Operation: "move", DryRun: !*apply, Places: []migratePlace{}, Refusals: []migrateRefusal{}}
@@ -420,7 +420,7 @@ func (h *migrateHeld) inUse(root string) []migrateRefusal {
 			}
 		case strings.HasPrefix(name, "service-") && strings.HasSuffix(name, ".json"):
 			if services++; services <= 5 {
-				out = append(out, migrateRefusal{Code: "service_installed", Path: filepath.Dir(path), Message: "a loop kept here has an installed service, which names its files by their full path. Remove the service (keepgoing service remove), move, then install it again"})
+				out = append(out, migrateRefusal{Code: "service_installed", Path: filepath.Dir(path), Message: "a loop kept here has an installed service, which names its files by their full path. Remove the service (looptender service remove), move, then install it again"})
 			}
 		}
 		return nil
@@ -444,7 +444,7 @@ func migrateLockMeaning(root, path string) string {
 	case strings.HasPrefix(dir, "panel/") && name == clientsLock+".lock":
 		return "the BB plugin or the macOS menu is recording which version it is; try again in a moment"
 	case strings.HasPrefix(dir, "panel/"):
-		return "the panel is running; stop it with keepgoing panel stop"
+		return "the panel is running; stop it with looptender panel stop"
 	case strings.HasPrefix(dir, "registry/"):
 		return "the loop registry is being changed"
 	case strings.HasPrefix(dir, "telegram/") && name == telegramPollLock+".lock":
@@ -620,9 +620,9 @@ func migratePrint(e env, out migrateOutput) {
 			break
 		}
 		if out.Operation == "undo" {
-			fmt.Fprintf(w, "The link under the earlier name would be removed and the directory renamed back. Nothing was changed. Run keepgoing migrate --undo --apply to move %s.\n", moving)
+			fmt.Fprintf(w, "The link under the earlier name would be removed and the directory renamed back. Nothing was changed. Run looptender migrate --undo --apply to move %s.\n", moving)
 		} else {
-			fmt.Fprintf(w, "A link named %s would be left in place of each directory, so builds from before the rename and paths recorded with that name keep working. Nothing was changed. Run keepgoing migrate --apply to move %s.\n", userdir.LegacyName, moving)
+			fmt.Fprintf(w, "A link named %s would be left in place of each directory, so builds from before the rename and paths recorded with that name keep working. Nothing was changed. Run looptender migrate --apply to move %s.\n", userdir.LegacyName, moving)
 		}
 	case "done":
 		if out.References > 0 {
@@ -631,7 +631,7 @@ func migratePrint(e env, out migrateOutput) {
 		if out.Operation == "undo" {
 			fmt.Fprintln(w, "Done. The directories are under the earlier name again.")
 		} else {
-			fmt.Fprintf(w, "Done. Each %s is now a link to %s beside it; keep the link while any configuration, script or service names the earlier path. keepgoing migrate --undo --apply moves everything back.\n", userdir.LegacyName, userdir.Name)
+			fmt.Fprintf(w, "Done. Each %s is now a link to %s beside it; keep the link while any configuration, script or service names the earlier path. looptender migrate --undo --apply moves everything back.\n", userdir.LegacyName, userdir.Name)
 		}
 	case "failed":
 		fmt.Fprintln(w, out.Message)

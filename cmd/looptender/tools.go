@@ -60,7 +60,7 @@ func netRetry(e env, args []string) int {
 	}
 	argv := fs.Args()
 	if len(argv) == 0 {
-		e.errf("usage: keepgoing net-retry [--max-wait 2h] [--attempts 6] -- command [args...]")
+		e.errf("usage: looptender net-retry [--max-wait 2h] [--attempts 6] -- command [args...]")
 		return exitUsage
 	}
 	return netretry.Command(e.ctx, netretry.Options{MaxWait: *maxWait, Attempts: *attempts, Log: func(s string) { e.errf("net-retry: %s", s) }}, argv)
