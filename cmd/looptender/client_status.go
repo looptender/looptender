@@ -332,7 +332,8 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 		if m := movedOf(ctl, st); controlOK && m != nil {
 			s.Moved = &clientMoved{Held: m.Held, Text: m.Text}
 		}
-		if u := describeUsageLimit(st.UsageLimit, cfg, loopHeld(ctl, !controlOK), now); u != nil {
+		ul, _ := state.LoadUsageLimit(entry.StateDir)
+		if u := describeUsageLimit(ul, cfg, loopHeld(ctl, !controlOK), now); u != nil {
 			if !private {
 				u = u.public()
 			}

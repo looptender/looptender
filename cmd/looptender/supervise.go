@@ -1317,7 +1317,9 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		out.PromptSend.GoalCopy = st.GoalCopy
 	}
 	out.LimitWait = describeLimitWait(st.LimitWaitReport, l, loopHeld(ctl, out.controlUnreadable), now)
-	out.UsageLimit = describeUsageLimit(st.UsageLimit, cfg, loopHeld(ctl, out.controlUnreadable), now)
+	if u, err := state.LoadUsageLimit(l.StateDir); err == nil {
+		out.UsageLimit = describeUsageLimit(u, cfg, loopHeld(ctl, out.controlUnreadable), now)
+	}
 	out.IdleSpacing = describeIdleSpacing(st, l.Progress)
 	out.TurnRetry = describeTurnRetry(st.LastTurnRetry)
 	out.ContextWindow = describeContext(st.Context, st.Target(), activeBB(cfg, st.Target()) != nil, now)

@@ -20,18 +20,17 @@ func TestCheckRecordsTheUsageLimitWindow(t *testing.T) {
 	obs.LimitWindow = decide.CleanLimitWindow("seven_day", "Weekly limit", "seven_day")
 	p := w.primary(obs)
 	runTick(t, w, t0)
-	st, err := state.Load(w.dir)
-	if err != nil || st.UsageLimit == nil {
-		t.Fatalf("%+v %v", st.UsageLimit, err)
+	u, err := state.LoadUsageLimit(w.dir)
+	if err != nil || u == nil {
+		t.Fatalf("%+v %v", u, err)
 	}
-	u := st.UsageLimit
 	if u.Target != state.Primary || u.Provider != "claude-code" || u.Window.Kind() != "weekly" || !u.ResetsAt.Equal(obs.ResetsAt) || !u.ObservedAt.Equal(t0) || u.ConfigDir != dir {
 		t.Fatalf("%+v", u)
 	}
 	p.obs = decide.Observation{State: decide.Idle}
 	runTick(t, w, t0.Add(time.Hour))
-	if st, _ := state.Load(w.dir); st.UsageLimit != nil {
-		t.Fatalf("not cleared: %+v", st.UsageLimit)
+	if u, err := state.LoadUsageLimit(w.dir); u != nil || err != nil {
+		t.Fatalf("not cleared: %+v %v", u, err)
 	}
 }
 

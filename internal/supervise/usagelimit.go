@@ -10,23 +10,27 @@ import (
 )
 
 // noteUsageLimit records the provider usage limit this check observed on
-// the active target, with the window it is in and the Claude config
-// directory the check runs under, or clears the record when the target is
-// not at a limit. Nothing is decided from it: it is what status, the panel
-// and reports say about the limit.
+// the active target (state.UsageLimitFileName), with the window it is in
+// and the Claude config directory the check runs under, or removes the
+// record when the target is not at a limit. Nothing is decided from it: it
+// is what status, the panel and reports say about the limit.
 func (t *tick) noteUsageLimit(target string, agent config.Agent, obs decide.Observation) {
 	if t.opts.DryRun {
 		return
 	}
 	if obs.ErrorClass != decide.ErrRateLimit || !obs.ResetsAt.After(t.now) {
-		t.st.UsageLimit = nil
+		if err := state.SaveUsageLimit(t.loop.StateDir, nil); err != nil {
+			t.warn("the usage limit record could not be cleared: %v", err)
+		}
 		return
 	}
 	u := &state.UsageLimit{Target: target, Provider: agent.Provider, Window: obs.LimitWindow, ResetsAt: obs.ResetsAt.UTC(), ObservedAt: t.now}
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" && filepath.IsAbs(dir) && len(dir) <= 4096 {
 		u.ConfigDir = filepath.Clean(dir)
 	}
-	t.st.UsageLimit = u
+	if err := state.SaveUsageLimit(t.loop.StateDir, u); err != nil {
+		t.warn("the usage limit could not be recorded: %v", err)
+	}
 }
 
 // noteLaneLimit counts a lane lane recovery inspected that is at a provider

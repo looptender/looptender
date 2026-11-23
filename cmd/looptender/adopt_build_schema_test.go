@@ -50,9 +50,6 @@ var adoptSchemaFingerprints = map[int]string{
 	// (successor threads replacing child lanes blocked on another provider)
 	// and childMove's movedIds.
 	6: "caa99878e54f0d0a3dde2da240155cd6b9b23db79beab3d6e5429b342c9ed73b",
-	// 7: state.json gained usageLimit (the provider usage limit the last
-	// check found, with its window and the Claude directory it ran under).
-	7: "bf1e793259de9f74d358f61bd15727d924ae7ab854a98f1964c86fb5f5735508",
 }
 
 // schemaFingerprint lists every JSON field reachable from t, by path, with

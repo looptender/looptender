@@ -828,7 +828,7 @@ A question is the loop's record that it needs a person's decision. It is saved i
 
 ### Which limit, which account, and what you can do
 
-Unreleased. When a check finds the loop's active target at a provider usage limit, it records which window the provider says is blocked and when it resets (`usageLimit` in `state.json`), and `status` says it:
+Unreleased. When a check finds the loop's active target at a provider usage limit, it records which window the provider says is blocked and when it resets (`usage-limit.json` in the state directory, its own record rather than a field of `state.json`, so no state format changes and a build without it neither reads nor rewrites it; after a rollback to such a build the record stays as it was, unread, until a newer build's next check replaces or removes it), and `status` says it:
 
     usage limit: weekly limit (all models) on primary (claude-code), resets 2026-11-28T04:00:00Z; seen at the check of …
       account at the limit: Example A (the catalog entry for the Claude directory its check ran under)
