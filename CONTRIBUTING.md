@@ -65,7 +65,7 @@ Read the short [Contributor License Agreement](CONTRIBUTOR_LICENSE_AGREEMENT.md)
 
 For each PR, every contributor other than the project steward must personally post the following statement in their own PR description or comment, linking the agreement revision they read:
 
-> I have read and agree to the keepgoing Contributor License Agreement at [link to the agreement revision] for my contributions in this pull request.
+> I have read and agree to the looptender Contributor License Agreement at [link to the agreement revision] for my contributions in this pull request.
 
 Use a GitHub permalink to the agreement at a specific commit, and confirm you have any necessary employer authorization. For a substantial contribution from someone employed elsewhere, the maintainer will ask for the employer's written confirmation that the contributor may make it on these terms before merging. Do not accept for another contributor. The maintainer must verify acceptance from every contributor before merging and retain the public record. The metadata check only verifies sign-offs; it does not automate this review. The steward does not need to grant rights to themself.
 
