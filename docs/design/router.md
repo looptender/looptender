@@ -34,7 +34,7 @@ Rules that also do not bend:
 - Nothing of a request or a response is logged or stored: no body, no header value, no query string, no path beyond its fixed name.
 - The listener is loopback only.
 - A refusal, a policy block or an account restriction is not a limit. It never causes a move to another account or model (AGENTS.md, "never a way around a provider's safeguards").
-- Whether a plan's terms allow using several subscriptions this way is the person's decision. looptender gives no opinion on it, and the router is off until a person turns it on and names the subscriptions it may use.
+- Whether a plan's terms allow using several subscriptions this way is the person's decision. looptender gives no opinion on it, and the router is off until a person turns it on and names the subscriptions it may use. `router on`, `router account add` and the documentation say what to check, in these words: "Using several subscriptions through one router, and moving one conversation between them, may be governed by your plan's terms. Check them for each subscription you add." They also name the practical risk: a provider may treat requests whose login changes mid-conversation as unusual and restrict an account, and that is the one consequence looptender cannot undo.
 - Nothing in the core path assumes macOS.
 
 ## The parts
@@ -51,7 +51,7 @@ Rules that also do not bend:
 **The front** is the only thing in the path of a request. It is deliberately dull:
 
 - It accepts a request on loopback, checks it (see [Security](#security-review-of-the-local-listener)), and asks the router one question: "which subscription for this conversation and model?"
-- It waits a bounded time for the answer (default 150 ms). With an answer naming another subscription, it swaps the request's `Authorization` value for that subscription's and forwards. With no answer, an answer of "your own", or any error, it forwards the request unchanged.
+- It waits a bounded time for the answer (see [The decision bound](#the-decision-bound)). With an answer naming another subscription, it swaps the request's `Authorization` value for that subscription's and forwards. With no answer, an answer of "your own", or any error, it forwards the request unchanged.
 - It holds the connection to the provider itself and streams the response back. The router is never in the byte path, so a router crash cannot cut a stream.
 - It reports back to the router, without waiting, only: the conversation key, the model name, the HTTP status, `Retry-After`, and the provider's rate-limit header values.
 - It reads no file except its start-up record, writes no file, and imports only the Go standard library and one small internal package. A test enforces the import list.
@@ -62,7 +62,13 @@ Rules that also do not bend:
 - It answers the front over a private channel (a Unix socket in a `0700` directory; on Windows a named pipe restricted to the user). The answer can contain an access token, so the channel is never a TCP port.
 - It can be stopped, upgraded or crashed at any time without a session noticing more than "requests go to my own login for a while".
 
-**The pointer** is the setting that sends a session to the front: `ANTHROPIC_BASE_URL=https://127.0.0.1:<port>/c/<client secret>` in the `env` block of a Claude Code `settings.json`, with the entry that makes the client trust the front's own loopback certificate (see the security review). No token. In particular the router does **not** set `ANTHROPIC_AUTH_TOKEN`, so Claude Code keeps using its own login and sends it with every request [unverified: that Claude Code sends its subscription login to a custom base URL when no token is set]. This is the difference from sessionpipe's pool that makes rule 2 possible: every request already carries a credential that works without us.
+**The pointer** is the group of settings that sends a session to the front, written into the `env` block of a Claude Code `settings.json`:
+
+- `ANTHROPIC_BASE_URL=https://127.0.0.1:<port>`: a fixed address with no secret in it. A base URL is configuration that a client may show in its status screen, error texts, debug logs and reports that leave the machine, so it must not carry anything secret.
+- The client secret in a custom header, through the client's variable for extra request headers [unverified, V2]. The front removes that header before forwarding.
+- The entry that makes the client trust the front's own loopback certificate (see the security review) [unverified, V11].
+- Whatever the client needs to keep behaving as it does against the provider's own address. sessionpipe's pool sets `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1` for this ([source]); see V3.
+- **No token.** The router does not set `ANTHROPIC_AUTH_TOKEN`, so Claude Code keeps using its own login and sends it with every request [unverified, V1]. This is the difference from sessionpipe's pool that makes rule 2 possible: every request already carries a credential that works without us.
 
 They are separate processes of the same `looptender` binary: `looptender router front` and `looptender router run`.
 
@@ -108,7 +114,7 @@ Three properties hold across every change of mode:
 | `own` | The pool is on for other directories | Nothing; they are not ours | One line in `router status` |
 | `sessionpipe` | Our pointer in a settings file (an old build, a restore from backup) | Removes our own pointer after confirming the front is not serving it, never touching the pool's | "Removed a leftover looptender router setting from <directory>." |
 | `sessionpipe` | The pool is off or has no accounts | Nothing | "Mode is sessionpipe but its pool is off: nothing is switching subscriptions." |
-| `off` | The pool is on and covers a supervised directory | Reads it as in mode `sessionpipe` so limits are not misread, without changing the recorded mode | "sessionpipe's pool is switching subscriptions for <directory>. Set `router mode sessionpipe` to make that the stated mode." |
+| `off` | The pool is on and covers a supervised directory | Reads it as in mode `sessionpipe` so limits are not misread, without changing the recorded mode | On every `status` and every check, not once: "sessionpipe's pool is switching subscriptions for <directory>, and looptender's limit decisions follow it although the mode is off. Set `router mode sessionpipe` to make that the stated mode." |
 | `off` | Our pointer present | As the `sessionpipe` row | The same |
 
 Mode `sessionpipe` and the detection rows need no credential and no listener, so they can be built independently of the router itself; they are phase 2a in the plan.
@@ -151,12 +157,12 @@ Two inputs: its source, and an isolated lab that ran version 0.18.2 against a st
 
 | # | Situation | A running session | The person is told |
 |---|---|---|---|
-| R1 | Router not running (never started, stopped, crashed) | Nothing visible. Each request waits at most the decision bound once (150 ms), then goes on its own login. After 3 misses the front stops asking for 5 s at a time, so the wait is not paid per request. | Notice `router_down`: "The router is not running; N sessions are on their own login. `looptender router start`". Status, doctor, panel, menu. |
+| R1 | Router not running (never started, stopped, crashed) | Nothing visible. When the private channel refuses the connection (nobody is there), the front knows at once, forwards on the session's own login, and asks again only every 5 s. Conversations it already holds a decision for keep it until that subscription's token expires. | Notice `router_down`: "The router is not running; N sessions are on their own login. `looptender router start`". Status, doctor, panel, menu. |
 | R2 | Router crashes while a response is streaming | Nothing. The front holds the stream. | As R1. |
 | R3 | Router restarting during an install or upgrade | As R1 for the seconds it takes. Conversation-to-subscription pins are on disk, so each conversation returns to the subscription it was on. | Nothing unless it stays down longer than a minute. |
 | R4 | Front crashes or is killed | In-flight streams through it are cut: the session sees a broken response and retries it by itself [unverified]. New requests: where the operating system holds the listening socket (launchd, systemd), the connection is accepted and waits for the restarted front, typically well under a second. Elsewhere, connections are refused until the service manager restarts it. | Notice `router_front_restarted` if it restarts more than twice in ten minutes, with the count. |
-| R5 | Front replaced during an upgrade | Nothing in the normal case: the front is only replaced when its own protocol number changed, the new one takes over the listening socket, and the old one finishes its open streams (up to 30 min) before exiting. | Nothing. |
-| R6 | Front not running and not restartable (service removed, binary deleted by hand, port taken by another program) | Running sessions get "connection refused": this is the one case rule 2 cannot cover, because sessions read the setting only at start. | Every looptender process that runs (supervisors, the menu, any command) checks the pointer. If the front does not answer for 30 s: it removes the pointer so new sessions go direct, and raises `router_front_gone`: "N running sessions point at a router front that is not running. Start it with `looptender router start`, or restart those sessions." See [Fail-open](#fail-open-concretely). |
+| R5 | Front replaced during an upgrade | The front is replaced only when its protocol number changed, which is rare, and then **at an idle moment**: the installer asks the running front whether any stream is open and restarts it at the first moment none is, waiting up to 24 h. Until then the old front does not understand the new router and treats it as absent, so requests go on their own login. The restart itself is a pause on a held socket (macOS, Linux) or a short refusal (elsewhere). If no idle moment comes in 24 h, the front is restarted with a 20 s drain and whatever is still open is cut. An earlier draft promised a handover in which the old front finishes its streams while a new one accepts; with the listening socket owned by the service manager's job that needs passing descriptors between processes outside the job, and it is not worth it for an event this rare. | Nothing in the normal case. "The router front is waiting for an idle moment to upgrade; routing is paused" after 10 minutes. If streams were cut: how many. |
+| R6 | Front not running and not restartable (service removed, binary deleted by hand, port taken by another program) | Running sessions get "connection refused": this is the one case rule 2 cannot cover. Its real size is: every session started while the pointer was present, until that session is restarted or the front returns. If the client re-reads its settings during a session (V15), the pointer check repairs running sessions too and the gap nearly closes; if not, nothing cheap closes it. | Every looptender process that runs (supervisors, the menu, any command) checks the pointer. If the front does not answer for 30 s: it removes the pointer so new sessions go direct, and raises `router_front_gone`: "N running sessions point at a router front that is not running. Start it with `looptender router start`, or restart those sessions." See [Fail-open](#fail-open-concretely). |
 | R7 | A subscription's access token has expired and nothing refreshed it | Nothing. That subscription is skipped; requests go to the next one with room, or the session's own login. | Notice `router_login_stale`: "<label>: its login has not been refreshed since <time>. Run `<the official tool's command>` in <directory>." |
 | R8 | The provider rejects a routed subscription's token (401) | Before any byte reached the session: the front sends the request again once, unchanged, on the session's own login. | `router_login_stale` for that subscription, which leaves the rotation until its login is read again successfully. |
 | R9 | A subscription is restricted or refused (403, policy) | The provider's answer passes through untouched. No other subscription is tried for that request. | "<label> was refused by the provider. looptender does not route around that; it is out of the rotation until you clear it." |
@@ -167,7 +173,7 @@ Two inputs: its source, and an isolated lab that ran version 0.18.2 against a st
 | R14 | The login session is gone (as on the evening of 2026-11-23: new processes could not read the keychain or resolve names, running ones were fine) | The front and router are already running with tokens in memory, so routed requests continue until those tokens expire; after that, own login. A session whose own process has the same problem fails as it would without us. | "Cannot read the login for <label> right now" (never "signed out"), using the distinction from PR #508. No one is told to sign in again unless a login was actually read as absent. |
 | R15 | Disk full | The front needs no disk. The router keeps deciding from memory and stops saving; a restart then loses pins made since the last save, which costs at most a prompt-cache miss per conversation. The pointer is never written when a write cannot be completed atomically. | The existing `disk` notice, plus "router state not saved since <time>". |
 | R16 | Two users on one machine | Each user has their own front, port, client secrets, router and state directory. The private channel is per user. One user's front cannot be asked for another user's tokens. | Nothing. See the security review for a port taken over by another user. |
-| R17 | The router's decision is slow (machine overloaded) | Each affected request goes on its own login after 150 ms. No queueing behind the router. | Counted; shown in `router status` as "decisions missed". |
+| R17 | The router's decision is slow (machine overloaded) | A conversation the front already holds a decision for is not affected: no question is asked. A first request waits up to the bound, which grows with observed delay to at most 500 ms, then goes on its own login. If that answer is a 429, the second decision may wait 2 s. Slow answers never stop the front from asking. | Counted; shown in `router status` as "decisions missed". |
 | R18 | The provider is unreachable or answers 5xx/529 | The provider's answer or the connection error passes through. No switch: an unclassified error never causes a move. | Nothing new. |
 | R19 | The next subscription cannot use the model | The first such answer passes through once; the pair (subscription, model) is then skipped for that model. | "<label> does not offer <model>" on `router status`. |
 | R20 | The home subscription itself is logged out | The session cannot start a request at all; that is the provider tool's own "not logged in". The router is not involved. | The existing account check. |
@@ -182,15 +188,25 @@ Two inputs: its source, and an isolated lab that ran version 0.18.2 against a st
 
 ### The path of one request
 
-1. The front accepts the connection and checks `Host`, the path and the client secret.
+1. The front accepts the connection and checks `Host`, the path and the client secret, and removes the secret's header.
 2. It reads the body into memory (up to 32 MiB) and takes two things from it: the model name and the conversation id. Nothing else is parsed or kept.
-3. It asks the router for a decision and waits at most 150 ms.
+3. If it holds no decision for this conversation, it asks the router and waits up to the decision bound.
 4. It forwards to the provider: with the named subscription's token, or unchanged.
-5. If the provider answers 429 or 401 **before any byte has been sent to the session** and the request was routed, the front reports it and tries once more: on the next subscription the router names, or unchanged on the session's own login. After the first byte nothing is retried by the front.
+5. If the provider answers 429 or 401 **before any byte has been sent to the session** and the request was routed, the front reports it and tries once more: on the next subscription the router names, or unchanged on the session's own login. A 429 or 401 means the provider did not run the request, so sending it again is safe; this second decision may wait up to 2 s, because the request has failed already. The same applies when the session's own login is the one answered 429: that is the moment routing matters most. After the first byte, and after any connection error once the body was sent, nothing is retried by the front.
 6. It streams the response. Rate-limit headers pass through, so Claude Code's own usage display shows the subscription that served the request.
 7. It tells the router the outcome and forgets the request.
 
 A request already in flight is never moved. If the router dies during step 6, nothing happens to it. If the front dies during step 6, the stream is cut and the session's own retry applies; no design that sits in the path can do better, which is why the front does so little.
+
+### The decision bound
+
+A fixed 150 ms would fail exactly when routing matters: on a heavily loaded machine every decision could miss it, and the session's own login, perhaps the one at its limit, would serve everything while a spare subscription sat idle. So:
+
+- **Most requests ask nothing.** The front keeps the last decision for each conversation (the subscription, and its token until expiry). Only a conversation's first request, a request after the decision expired, and a retry ask the router. The router sees every outcome and replaces a held decision whenever its own answer changes (a threshold crossed, a cold point reached, a reset); a 429 or 401 drops it. With the router gone, a held decision lasts until its token expires.
+- **The first wait adapts.** It starts at 150 ms and follows the router's recent answer times up to 500 ms.
+- **The retry waits longer.** After a 429 or 401 before the first byte, up to 2 s.
+- **A slow router is still asked.** Only a refused channel (no router at all) makes the front stop asking, for 5 s at a time.
+- **Misses are counted** and shown, with the load at the time, so "routing was skipped because the machine was overloaded" is visible rather than silent.
 
 ### What the front may answer by itself
 
@@ -206,8 +222,8 @@ Any internal failure that is not one of these becomes pass-through.
 
 ### Stopping and draining
 
-- On a stop signal the front stops accepting, and finishes its open streams before exiting: up to 30 min for an upgrade handover, 60 s for `looptender router stop` (`--now` skips it). It says how many streams it waited for and how many it cut.
-- New connections during the drain go to the new front where the system holds the socket, and are refused briefly elsewhere.
+- On a stop signal the front stops accepting, and finishes its open streams before exiting: 20 s when the service manager stops it (an upgrade waits for an idle moment first, R5), 60 s for `looptender router stop` (`--now` skips it). It says how many streams it waited for and how many it cut.
+- Connections arriving during the drain wait on the held socket (macOS, Linux) until the next front starts, and are refused briefly elsewhere. This is why the drain is short.
 - The router stops at once; nothing depends on it.
 
 ### Alternatives compared
@@ -297,6 +313,8 @@ The decision is a pure function with table tests, like the existing decision eng
 - **Room** is read from, in order of freshness: the rate-limit headers on that subscription's own responses (exact, free); the usage-limit record (PR #489) and the usage-burn readings (PR #496) that supervisors already write; the catalog's usage read for idle subscriptions. Every reading has an age, and an old reading is shown as old.
 - **What never causes a switch:** a refusal, a policy answer, a 403, a 5xx or 529, a network error, an answer the front cannot classify.
 - **Headroom for what has not been counted yet.** A subscription's numbers arrive only with its answers, so several conversations placed at the same moment can overshoot (S10). Each conversation placed on a subscription since its last reading counts as an estimated share of its tightest window, and when the reading is older than a few minutes or within five points of the soft threshold, new conversations are spread across subscriptions with room instead of all going to the first.
+- **No trading back and forth.** A subscription that caused a move counts as full until its window resets or a fresh reading (from an answer, not an estimate) shows it below 85%. Two nearly full subscriptions therefore cannot pass conversations between them on noisy readings.
+- **The cost of a hard switch is shown.** `router status` lists each switch with the size of the request that was sent uncached and the change in the new subscription's window around it, so a large context moving mid-turn is visible as the share of a window it spent.
 - **Holds.** A 429 holds a subscription until the reset it names (believed for at most an hour without a named reset time); the hold is saved.
 
 ## State that persists
@@ -332,6 +350,7 @@ BB needs no change. If BB later offers a per-thread account, the router does not
 - **status:** a `router` block: running or not, front and router separately, the pointer per settings file, each subscription's room and age, the serving subscription for this loop's conversation, decisions missed. `status --json` carries the same.
 - **doctor:** checks, each with its fix: front answers; router answers; pointer present and ours; pointer not stale; each subscription's login readable; two entries are not one login; service registered; lingering (Linux).
 - **Panel and menu:** an Accounts view row per subscription with "serving N conversations"; the menu's reason line names a switch ("moved to <label> at 11:45: weekly limit on <label>; back after <time>").
+- **The supervised conversation itself:** the front never adds anything to a request, so the agent is not told through the model. When a loop's own conversation was moved, the supervisor's next wake to it carries one fixed line: "looptender's router moved this conversation to another subscription at <time> because of <which limit>; the usage display now shows that subscription." Conversations without a loop get the notice only.
 - **Notices:** new kinds `router_down`, `router_front_gone`, `router_login_stale`, `router_switched` (off by default; one per switch, grouped), alongside the extended `limit`.
 
 ## Model step-down
@@ -344,6 +363,7 @@ PR #512 adds an opt-in step-down: at one model's weekly limit, the loop changes 
   2. the next model on the same subscription (#512; keeps the cache's account, changes the model);
   3. the next model on another subscription.
 - **How they fit:** with the router off, #512 works exactly as written. With the router on, #512's check asks the router first, and steps down only when the router answers that no subscription has room for that model. Its record (`model-step.json`) is unchanged, and the step back waits for the earliest reset among subscriptions.
+- **A condition:** the router makes step-backs more frequent, so #512's open review finding (a step back that overrides a model the person chose meanwhile) must be fixed before the two are connected.
 
 ## Providers
 
@@ -359,9 +379,10 @@ PR #512 adds an opt-in step-down: at one model's weekly limit, the loop changes 
 | A web page calling the port | `Host` must be `127.0.0.1:<port>` or `localhost:<port>`; no CORS answers; requests carrying `Origin` are refused. Same guards as the panel's listener. |
 | Another local program of the same user | It could already read that user's logins; the listener gives it nothing new. The client secret still stops accidental use. |
 | Another user on the machine connecting to the port | Without a valid client secret a request is never given another subscription's token. It is forwarded unchanged or refused, which gives the caller nothing it did not bring. |
-| Any other program holding the port when the front is not (observed with sessionpipe's pool, S6) | The serious one: sessions would send their own login to it. Proposed default: **the front speaks TLS on loopback with a certificate made on this machine at `router on`**, and the pointer also names that certificate for the client to trust [unverified, V11]. A program without the private key (kept `0600` in the state directory) cannot complete the handshake, so the login is never sent. This works the same on every system. In addition: the port is fixed per user, outside the ephemeral range, and never moves under running sessions (R25); the system holds the socket from login where it can (D); the pointer check removes the pointer at once when the port is held by something that is not our front. If V11 is false, those three remain and the window before the check runs is a stated residual risk. |
-| The client secret leaking (it is in a settings file) | The file is made `0600` when the pointer is written; a directory others can write is refused. The secret only selects routing; it is not a provider credential and cannot mint one. `router rotate` issues a new one; the old stays valid until its sessions end. |
+| Any other program holding the port when the front is not (observed with sessionpipe's pool, S6) | The serious one: sessions would send their own login to it. Proposed default: **the front speaks TLS on loopback with a certificate made on this machine at `router on`**, and the pointer also names that certificate for the client to trust [unverified, V11]. A program without the private key (kept `0600` in the state directory) cannot complete the handshake, so the login is never sent. This works the same on every system. In addition: the port is fixed per user, outside the ephemeral range, and never moves under running sessions (R25); the system holds the socket from login where it can (D); the pointer check removes the pointer at once when the port is held by something that is not our front. If V11 is false, those three remain and the window before the check runs is a stated residual risk. On a system that cannot hold the socket (Windows, or anywhere the service is not loaded), `router on` then refuses on a machine with more than one interactive user unless the person passes a flag that names the risk. |
+| The client secret leaking | It travels in a request header, never in the URL, so it does not appear where a client shows or reports its base URL. The front removes the header before forwarding, so the provider never receives it. The settings file is made `0600` when the pointer is written; a directory others can write is refused. The secret only selects routing; it is not a provider credential and cannot mint one. `router rotate` issues a new one; the old stays valid until its sessions end. |
 | Using the listener to reach other hosts or sensitive paths | One fixed upstream host per provider profile; a path allowlist; minting, sign-in and billing paths refused. |
+| Request smuggling and header leaks through the front | Ordinary reverse-proxy hygiene, each with a test: hop-by-hop and `Proxy-*` headers are removed; a request with both `Transfer-Encoding` and `Content-Length`, or with repeated length headers, is refused; the upstream `Host` is fixed, never taken from the request; header size and count are capped; the client secret's header is never forwarded; nothing from the provider's answer is used to choose where to connect (no redirects followed). |
 | Tokens in memory | Access tokens only, until expiry; never in a core dump setting we control, a log or an error text. Errors name the subscription's label, never a value. |
 | Large or slow requests exhausting the front | Body cap, header and idle time limits, a cap on concurrent requests per client. Over a cap the request is passed through unbuffered (no retry) rather than refused. |
 | Private channel abuse | A Unix socket in a `0700` directory, peer user checked; a named pipe with a user-only access list on Windows. |
@@ -374,10 +395,11 @@ Each phase is one or two small draft pull requests.
 1. **Decision function.** `internal/router/route`: order, pins, soft and hard thresholds, cold points, switch-back, holds, model availability, "what never causes a switch". Pure, table tests. No I/O.
 2. **The front against stand-in upstreams.** `internal/router/front` and a hidden command: listener, guards, bounded decision call, pass-through on every failure, one retry before the first byte, streaming, drain. Tokens are test strings; upstreams and the router are local test stand-ins. Tests are the failure model: router absent, router killed mid-stream, slow decision, 429 and 401 before the first byte, 5xx, a stream cut by the upstream, a hung upstream, a stop signal with streams open, the port already taken, two conversations placed at once, body over the cap, wrong `Host`, wrong secret.
    - **2a, independent of 1 and 2:** the mode setting, mode `sessionpipe` (reading the pool, the decision changes, the standing warning, `pool_down`) and the detection table. No listener, no credential.
+   - **Then, before anything else is built: the supervised verification** of the provider assumptions ([What must be verified](#what-must-be-verified)). V1 is the premise of rule 2; if it is false, the front, the pointer and the fail-open path all change, and phases 3 to 5 would be built on the wrong shape.
 3. **Router process, private channel, state**, and `looptender router status`. Still stand-ins.
 4. **The pointer**: write and remove with byte-exact restore, the pointer check, `router on|off`, the uninstall order. Tested in temporary directories only.
-5. **Services** on macOS and Linux, then Windows.
-6. **Reading a real login** (needs the owner's approval of this design): the per-system store readers, the idle-subscription decision, and the verifications below, run with the owner.
+5. **Services** on macOS and Linux. Windows follows the first release.
+6. **Reading a real login.** Before it: V1, V3, V8, V13 and V14 answered; AGENTS.md amended (open question 4); the owner's answers to questions 1 to 4. the per-system store readers, the idle-subscription decision, and the verifications below, run with the owner.
 7. **Surfaces**: doctor, panel, menu, notices, the usage records.
 8. **Per-conversation and per-lane choice**; the #512 hand-off.
 9. **Other providers.**
@@ -389,7 +411,7 @@ Each phase is one or two small draft pull requests.
 - phases 1 and 2: about 1,500 to 2,000 lines of Go including tests;
 - phases 3 to 5: about 3,000 to 4,000, of which Windows service support is new ground for the project;
 - phases 6 to 8: about 2,500 to 3,500;
-- in all, 10 to 14 pull requests and roughly three to five weeks of lane time at the current review and CI pace, not counting a second provider. The live steps in phase 6 need the owner present, and each [unverified] item that turns out false costs a redesign of its part.
+- in all, expect the upper end of 10 to 14 pull requests and about five weeks of lane time at the current review and CI pace for macOS and Linux, not counting Windows or a second provider. The independent review judged the earlier "three to five weeks including Windows" optimistic, and it was. The live steps in phase 6 need the owner present, and each [unverified] item that turns out false costs a redesign of its part.
 
 ## What must be verified
 
@@ -398,30 +420,42 @@ None of these has been tested; no login, account switch or settings change was m
 | # | Assumption | If false |
 |---|---|---|
 | V1 | Claude Code sends its own subscription login to a custom `ANTHROPIC_BASE_URL` when no token variable is set | The pointer must also set a token, as sessionpipe does; the front then needs the home login to go direct, which weakens rule 2. This is the most important one. |
-| V2 | The base URL may carry a path prefix (for the client secret) | The secret moves to a custom header variable. |
-| V3 | A custom base URL does not change which features the client offers (context size, usage display) | An extra setting may be needed, as sessionpipe uses. |
+| V2 | Claude Code adds headers named in a settings variable to every request it sends to the base URL | The client secret has no safe carrier; the front then treats every caller as one client (no per-client order), and a path secret is the worse fallback. |
+| V3 | With the pointer's settings, a session has the same context window, models, features and usage display as against the provider's own address. sessionpipe's pool needs an extra, undocumented-looking setting for this, so the plain assumption is probably false without it. | Any difference that remains is a "worse off than without the router" case while the router is healthy, which breaks the first rule. Mode `own` does not ship until the difference is zero or the owner accepts a named one. |
 | V4 | The conversation id is readable from a header or from `metadata.user_id` | Stickiness falls back to per client. |
 | V5 | The provider accepts a request whose metadata names one account while the token is another's | The front would have to change the body, which this design forbids; the owner decides. |
 | V6 | What Claude Code does when a stream is cut, and when a connection is refused (retries, how many, how long) | R4 and the Windows restart gap are worse than stated. |
 | V7 | An invocation of the official tool refreshes a directory's login without a model request | Idle-subscription option 1 falls; see credentials. |
-| V8 | Where the login is stored on Linux and Windows today, and whether another program of the same user can read the macOS keychain item without a prompt | Phase 6's readers change; a prompt would need a one-time consent step. |
+| V8 | Where the login is stored on Linux and Windows today; and that a background job with nobody at the screen can read the macOS keychain item Claude Code wrote, without a prompt (the item's access list may name only the program that wrote it, and a prompt cannot be answered at the login window) | Phase 6's readers change. If a prompt is needed, reading from the official store works only while someone is logged in at the screen, which pushes the idle-subscription choice towards option 2. |
 | V9 | Prompt caches are not shared between accounts; the cache lifetime in use | The cold-point default changes; the rule stays. |
 | V10 | The rate-limit header names and the 429 shape for each window | Room falls back to the usage read until corrected. |
 | V11 | Claude Code can be told, from settings, to trust one extra certificate for a loopback `https` base URL | The port-takeover defence falls back to the pointer check, with a residual window (R25). |
 | V12 | The provider sends something on an open stream at least every two minutes | The idle bound in R24 is raised or dropped. |
+| V13 | Nothing else in a request ties it to the home account: no account, organisation or session-bound header beyond what V5 covers, and the provider does not bind a token to the client's context | A swapped request may be rejected or flagged. That is a provider safeguard acting on the person's accounts, not a routing failure: the router stops and the owner decides. |
+| V14 | Claude Code does not act on the served subscription's rate-limit headers as if they were its own login's (warnings, slowing itself, a stored "limit reached") | A session could behave worse with the router than without. The front would then pass through the home subscription's last known values instead, or none. |
+| V15 | Whether Claude Code re-reads the `env` block of `settings.json` during a session | If it does, the pointer check also repairs running sessions (R6). If not, the gap stays as stated. Either answer is acceptable; it sizes the gap. |
 
-V1 to V6, V11 and V12 can be answered with a stand-in upstream on loopback and one throwaway session; that session's real login would reach our stand-in in a header, so it is a credential-touching test and waits for the owner.
+**How each is checked, and who must be there.** The stand-in upstream from phase 2 records, for each request, only header names, the kind of credential, the length of its prefix and its length: never a value.
+
+| Check | How | Owner present |
+|---|---|---|
+| V2, V4 | Read from a stand-in session that has no login at all (a made-up token variable for that one run) | No |
+| V1, V3, V6, V11, V12 (client side), V14, V15 | One throwaway session with a real login, pointed at the stand-in on loopback. The login reaches our stand-in in a header, so this touches a credential. | Yes |
+| V5, V9, V10, V12 (provider side), V13 | One real request to the provider on a spare subscription, sent through the front by hand | Yes |
+| V7, V8 | Run by the owner in a terminal, and once from a background job | Yes |
+
+Everything can be prepared beforehand. Only the first row runs without the owner.
 
 ## Open questions for the owner
 
 1. **Reading logins.** May the router read each opted-in subscription's access token from the official tool's own store, read-only, kept in memory only? This is the first time looptender would read a credential.
 2. **Idle subscriptions.** If no free refresh by the official tool exists (V7): a long-lived token held by looptender in the system's secret store, or a spare subscription that sometimes needs a person to wake it?
 3. **Plan terms.** Routing several subscriptions through one router is yours to decide per account. The design keeps the router off until turned on and each subscription out until added. Is anything more wanted, for example a line in `router on` that says so?
-4. **AGENTS.md.** The engineering rules say looptender "never copies credentials" and holds none. The router copies none but reads them. Should the rules be amended to say exactly that, in the same pull request as phase 6?
-5. **The verification session** (V1 to V6, V11, V12): when, and on which subscription?
-6. **Defaults.** Soft 90%, hard 98%, automatic switch-back at cold points, decision bound 150 ms. Any of these different?
+4. **AGENTS.md.** The engineering rules say looptender "never copies credentials". The router copies none between stores, but it reads them and attaches one subscription's token to another session's request, which is a new kind of handling. Proposed sentence, to land with phase 6: "The router reads a subscription's access token read-only from the official tool's own store, keeps it in memory only, and attaches it only to allow-listed provider paths; it never refreshes, stores or copies a credential." Agreed?
+5. **The verification session** (the table under "What must be verified"): when, and on which subscription? It comes right after phase 2 and before anything else is built.
+6. **Defaults.** Soft 90%, hard 98%, automatic switch-back at cold points, hysteresis at 85%, the decision bound as described. Any of these different?
 7. **Scope of the pointer.** Only BB's directory at first, or every Claude Code directory in the catalog?
 8. **The front's last act (R13).** Should the front, when it finds its own binary gone, remove the pointer itself before it stops? It is the only file write the front would ever do.
 9. **Another program taking the port.** The lab showed sessionpipe's pool sending its bearer to whatever held the old port. The design proposes a loopback certificate by default (V11) because what would leak here is the session's real login. Agreed, or is the pointer check alone enough?
-10. **Windows.** Before or after the surfaces?
+10. **Windows.** Proposed: after the first release, and with a warning against multi-user machines unless the loopback certificate (V11) holds.
 11. **`router_switched` notices.** Off by default as proposed, or on?
