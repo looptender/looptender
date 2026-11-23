@@ -71,24 +71,25 @@ func TestInitSessionpipeInteractive(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "setup")
 	var out, errOut bytes.Buffer
 	e := env{ctx: context.Background(), stdout: &out, stderr: &errOut}
-	input := strings.NewReader("\n" + spSession + "\n\n")
+	input := strings.NewReader(spSession + "\n\n\n")
 	if code := setupLoop(e, []string{"--agent", "sessionpipe", "--directory", dir}, input, noCLI); code != exitOK {
 		t.Fatalf("exit %d: %s\n%s", code, errOut.String(), out.String())
 	}
 	cfg, err := config.Load(filepath.Join(dir, config.FileName))
-	if err != nil || cfg.Loop.Name != "observed-session" || cfg.Loop.Agent.Sessionpipe.Session != spSession {
+	if err != nil || cfg.Loop.Name != "observed-claude-code-8c132906" || cfg.Loop.Agent.Sessionpipe.Session != spSession {
 		t.Fatalf("%v %+v", err, cfg)
 	}
 }
 
 func TestInitSessionpipeRefusals(t *testing.T) {
 	for name, args := range map[string][]string{
-		"a task":            {"--agent", "sessionpipe", "--name", "x", "--session", spSession, "--task", "do things"},
-		"a fallback":        {"--agent", "sessionpipe", "--name", "x", "--session", spSession, "--fallback", "codex:pool"},
-		"no session":        {"--agent", "sessionpipe", "--name", "x"},
-		"a bad session":     {"--agent", "sessionpipe", "--name", "x", "--session", "a title"},
-		"session on claude": {"--agent", "claude", "--name", "x", "--task", "t", "--session", spSession},
-		"events file on bb": {"--agent", "bb", "--name", "x", "--task", "t", "--events-file", "/x"},
+		"a task":             {"--agent", "sessionpipe", "--name", "x", "--session", spSession, "--task", "do things"},
+		"a fallback":         {"--agent", "sessionpipe", "--name", "x", "--session", spSession, "--fallback", "codex:pool"},
+		"no session":         {"--agent", "sessionpipe", "--name", "x"},
+		"no session or name": {"--agent", "sessionpipe"},
+		"a bad session":      {"--agent", "sessionpipe", "--name", "x", "--session", "a title"},
+		"session on claude":  {"--agent", "claude", "--name", "x", "--task", "t", "--session", spSession},
+		"events file on bb":  {"--agent", "bb", "--name", "x", "--task", "t", "--events-file", "/x"},
 	} {
 		var out, errOut bytes.Buffer
 		e := env{ctx: context.Background(), stdout: &out, stderr: &errOut}
@@ -142,5 +143,35 @@ func TestDoctorSessionpipeWalksTheSteps(t *testing.T) {
 	_, next = walk(&fakeSessionpipe{version: "0.18.2", status: sessionpipeStatusJSON("file:"+file, 0, "null", "null", "current")})
 	if next.Status != "ok" {
 		t.Fatalf("all well: %+v", next)
+	}
+}
+
+// Without --name, the loop is named after the session, so the shortest
+// command works.
+func TestInitSessionpipeNamesTheLoopAfterTheSession(t *testing.T) {
+	var out, errOut bytes.Buffer
+	e := env{ctx: context.Background(), stdout: &out, stderr: &errOut}
+	dry := filepath.Join(t.TempDir(), "dry")
+	if code := setupLoop(e, []string{"--non-interactive", "--json", "--dry-run", "--agent", "sessionpipe", "--session", "example:demo", "--directory", dry}, strings.NewReader(""), noCLI); code != exitOK {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var r initSessionpipeReport
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil || r.Loop != "observed-example-demo" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	for session, want := range map[string]string{
+		spSession:                        "observed-claude-code-8c132906",
+		"codex:01A10860-a43f":            "observed-codex-01a10860",
+		"gemini-cli:...":                 "observed-gemini-cli",
+		"not a session":                  "observed-session",
+		strings.Repeat("h", 64) + ":abc": "observed-" + strings.Repeat("h", 46) + "-abc",
+	} {
+		got := sessionpipeLoopName(session)
+		if got != want {
+			t.Errorf("%q: %q, want %q", session, got, want)
+		}
+		if len(got) > 64 || strings.Trim(got, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
+			t.Errorf("%q: %q is not a valid loop name", session, got)
+		}
 	}
 }

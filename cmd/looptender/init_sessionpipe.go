@@ -21,6 +21,34 @@ func sessionpipeSinkLine(eventsFile string) string {
 	return "sessionpipe sink add " + commandQuote("file:"+eventsFile) + " --tier 0 --name looptender"
 }
 
+// sessionpipeLoopName is the default loop name for a session: "observed-",
+// its harness and the first eight letters or digits of its id, so two
+// sessions of one harness get different names. It is a valid loop name for
+// any session config.SplitSessionpipeRef accepts.
+func sessionpipeLoopName(session string) string {
+	harness, id, ok := config.SplitSessionpipeRef(session)
+	if !ok {
+		return "observed-session"
+	}
+	var short []byte
+	for _, c := range []byte(strings.ToLower(id)) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			short = append(short, c)
+			if len(short) == 8 {
+				break
+			}
+		}
+	}
+	name := "observed-" + harness
+	if len(name) > 55 {
+		name = strings.TrimRight(name[:55], "-")
+	}
+	if len(short) > 0 {
+		name += "-" + string(short)
+	}
+	return name
+}
+
 // initSessionpipeReport is init --json for an observed sessionpipe target.
 type initSessionpipeReport struct {
 	SchemaVersion int      `json:"schemaVersion"`
@@ -70,15 +98,18 @@ func setupSessionpipe(e env, o initOptions, session, eventsFile string, input io
 			return nil
 		}
 		fmt.Fprintln(e.stdout, "An observed sessionpipe session: looptender reads its tier-0 events and never sends to, wakes or stops it.")
-		if err := ask("name", "Loop name", "observed-session", &o.name); err != nil {
-			return fail("%v", err)
-		}
 		if err := ask("session", "Session, as <harness>:<id> (session.id in `sessionpipe tail --tier 0 --json`)", "", &session); err != nil {
 			return fail("%v", err)
 		}
+		if err := ask("name", "Loop name", sessionpipeLoopName(session), &o.name); err != nil {
+			return fail("%v", err)
+		}
 	}
-	if o.name == "" || session == "" {
-		return fail("--agent sessionpipe needs --name and --session <harness>:<id>")
+	if session == "" {
+		return fail("--agent sessionpipe needs --session <harness>:<id>")
+	}
+	if o.name == "" {
+		o.name = sessionpipeLoopName(session)
 	}
 	if o.name == "" || len(o.name) > 64 || strings.Trim(o.name, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" || o.name[0] == '-' {
 		return fail("name must be 1-64 lowercase letters, digits, or hyphens, starting with a letter or digit")

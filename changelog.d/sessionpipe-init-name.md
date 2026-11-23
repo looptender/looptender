@@ -1,0 +1,1 @@
+- `init --agent sessionpipe` no longer needs `--name`: without it the loop is named after the session (`observed-<harness>-<first eight letters or digits of the id>`), and the interactive setup asks for the session first and offers that name.
