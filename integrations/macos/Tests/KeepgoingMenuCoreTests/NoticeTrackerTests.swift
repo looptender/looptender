@@ -163,4 +163,15 @@ final class NoticeTrackerTests: XCTestCase {
         let old = try JSONDecoder().decode(PanelList.self, from: Data(#"{"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":true,"needsYou":0,"unread":0,"omitted":0,"loops":[]}"#.utf8))
         XCTAssertNil(old.notices)
     }
+
+    func testTheMenuSaysItIsNotifyingOnlyWhenTheyHaveAllowedNotifications() {
+        // Declined, still being asked, or not read yet: not notifying, so the panel keeps its own banners.
+        for p in [NotificationPermission.denied, .notDetermined, .unknown] {
+            XCTAssertFalse(HeartbeatPolicy.notifying(running: true, canPost: true, permission: p), "\(p)")
+        }
+        XCTAssertTrue(HeartbeatPolicy.notifying(running: true, canPost: true, permission: .authorized))
+        // Not an app bundle (or turned off), or quitting: not notifying, whatever the permission says.
+        XCTAssertFalse(HeartbeatPolicy.notifying(running: true, canPost: false, permission: .authorized))
+        XCTAssertFalse(HeartbeatPolicy.notifying(running: false, canPost: true, permission: .authorized))
+    }
 }

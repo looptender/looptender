@@ -155,6 +155,8 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.renderDark = renderDark
         super.init()
         notifier.onUpdateClick = { [weak self] in self?.flow?.relaunch(byRequest: true) }
+        // The answer to the permission question, or a change in System Settings, is told at once.
+        notifier.onPermissionChange = { [weak self] in self?.sendHeartbeat(true) }
         notifier.onNoticeClick = { [weak self] loop in self?.run(loop.isEmpty ? .openPanel : .openLoop(key: loop)) }
     }
 
@@ -583,7 +585,9 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Tells the CLI this menu runs and whether it can post notifications.
     func sendHeartbeat(_ running: Bool) {
-        let notifying = running && notifier.canNotify
+        // Read the permission now: the person may have changed it in System Settings.
+        notifier.refreshPermission()
+        let notifying = HeartbeatPolicy.notifying(running: running, canPost: notifier.canPost, permission: notifier.permission)
         DispatchQueue.global(qos: .utility).async { [client] in try? client.open(.notifyHeartbeat(notifying: notifying)) }
     }
 

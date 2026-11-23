@@ -17,7 +17,30 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private var rule = OverdueNotices()
     private let center: UNUserNotificationCenter?
     /// Whether this menu posts notifications at all (an app bundle, and not turned off).
-    var canNotify: Bool { center != nil }
+    var canPost: Bool { center != nil }
+    /// What the person has allowed, read from the system; unknown until first read.
+    private(set) var permission: NotificationPermission = .unknown
+    /// Called on the main queue when the permission changes (granted, or turned off in System Settings).
+    var onPermissionChange: (() -> Void)?
+
+    /// Reads the system's answer now and, when it differs from the last, says so.
+    func refreshPermission() {
+        guard let center else { return }
+        center.getNotificationSettings { [weak self] settings in
+            let now: NotificationPermission
+            switch settings.authorizationStatus {
+            case .authorized, .provisional: now = .authorized
+            case .denied: now = .denied
+            case .notDetermined: now = .notDetermined
+            default: now = .unknown
+            }
+            DispatchQueue.main.async {
+                guard let self, now != self.permission else { return }
+                self.permission = now
+                self.onPermissionChange?()
+            }
+        }
+    }
 
     init(enabled: Bool) {
         guard enabled else {
@@ -35,7 +58,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         super.init()
         center?.delegate = self
         // macOS asks the person once; if they decline, nothing is posted.
-        center?.requestAuthorization(options: [.alert]) { _, _ in }
+        center?.requestAuthorization(options: [.alert]) { [weak self] _, _ in self?.refreshPermission() }
+        refreshPermission()
     }
 
     /// The gaps already told, for the menu that replaces this one.
