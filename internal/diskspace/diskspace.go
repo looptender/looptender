@@ -81,14 +81,43 @@ func Size(n uint64) string {
 	return fmt.Sprintf("%d KiB", n>>10)
 }
 
+// SizesApart formats a, which is below b, and b so that a reads below b:
+// with Size when that tells them apart, else with more precision or a
+// smaller unit. 18.50 against 18.53 GiB reads "18.50 GiB" and "18.53 GiB",
+// not "18 GiB" twice.
+func SizesApart(a, b uint64) (string, string) {
+	if x, y := Size(a), Size(b); x != y || a >= b {
+		return x, y
+	}
+	for _, f := range []struct {
+		unit  float64
+		name  string
+		least uint64
+	}{{1 << 30, "GiB", 1 << 30}, {1 << 20, "MiB", 1 << 20}, {1 << 10, "KiB", 0}} {
+		if a < f.least {
+			continue
+		}
+		for decimals := 1; decimals <= 3; decimals++ {
+			x := fmt.Sprintf("%.*f %s", decimals, float64(a)/f.unit, f.name)
+			y := fmt.Sprintf("%.*f %s", decimals, float64(b)/f.unit, f.name)
+			if x != y {
+				return x, y
+			}
+		}
+	}
+	return fmt.Sprintf("%d bytes", a), fmt.Sprintf("%d bytes", b)
+}
+
 // Sentence says what the reading means for the loop, or "" when it is ok.
 func (r Reading) Sentence() string {
-	free := fmt.Sprintf("%s free of %s", Size(r.Available), Size(r.Total))
+	of := " free of " + Size(r.Total)
 	switch r.Level() {
 	case Critical:
-		return "the volume that holds the state directory is nearly full (" + free + ", below " + Size(FloorBytes) + "): any record may fail to save, and a check that cannot save the record of a send sends nothing. Free space on it now"
+		free, floor := SizesApart(r.Available, FloorBytes)
+		return "the volume that holds the state directory is nearly full (" + free + of + ", below " + floor + "): any record may fail to save, and a check that cannot save the record of a send sends nothing. Free space on it now"
 	case Low:
-		return "the volume that holds the state directory is filling (" + free + ", below " + Size(r.LowAt()) + "): free space on it before records fail to save"
+		free, low := SizesApart(r.Available, r.LowAt())
+		return "the volume that holds the state directory is filling (" + free + of + ", below " + low + "): free space on it before records fail to save"
 	case Unknown:
 		return "the free space on the volume that holds the state directory could not be read"
 	}

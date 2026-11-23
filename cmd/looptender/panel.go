@@ -1017,6 +1017,9 @@ type panelList struct {
 	Unread        int             `json:"unread"`
 	Omitted       int             `json:"omitted"`
 	Loops         []panelListLoop `json:"loops"`
+	// Volumes is one notice for each volume holding loops' state that is
+	// filling or nearly full (see dockReport.Volumes).
+	Volumes []dockVolume `json:"volumes,omitempty"`
 	// CanAll is which changes can be made to every loop at once
 	// (client review|apply --all): pause and stop, while any loop can be.
 	CanAll []string `json:"canAll"`
@@ -1029,11 +1032,14 @@ type panelList struct {
 
 type panelListLoop struct {
 	// Key is the loop's key on the page; panel --loop accepts it.
-	Key      string `json:"key"`
-	Name     string `json:"name"`
-	State    string `json:"state"`
-	Phrase   string `json:"phrase"`
-	NeedsYou bool   `json:"needsYou"`
+	Key string `json:"key"`
+	// DiskSpace is low or critical when the volume that holds the loop's
+	// state is filling or nearly full.
+	DiskSpace string `json:"diskSpace,omitempty"`
+	Name      string `json:"name"`
+	State     string `json:"state"`
+	Phrase    string `json:"phrase"`
+	NeedsYou  bool   `json:"needsYou"`
 	// NoProgress is the no-progress flag's sentence when it is raised, in
 	// the page's words; empty otherwise. It is never a need.
 	NoProgress string `json:"noProgress,omitempty"`
@@ -1063,6 +1069,7 @@ func buildPanelList(r dockReport) panelList {
 	out := panelList{SchemaVersion: 1, ReadAt: r.ReadAt, Registry: r.Registry.Availability, Complete: r.Complete, AllClear: r.AllClear,
 		NeedsYou: len(r.NeedsYou), Unread: r.Unread, Omitted: r.Registry.Omitted, Loops: []panelListLoop{}}
 	out.AccountQuotas = panelQuotaSummary(r)
+	out.Volumes = r.Volumes
 	out.InstalledBuild = shortBuildLabel(version)
 	needs := map[string]bool{}
 	overdue := map[string]*time.Time{}
@@ -1079,7 +1086,7 @@ func buildPanelList(r dockReport) panelList {
 				out.CanAll = append(out.CanAll, a)
 			}
 		}
-		row := panelListLoop{Key: l.Key, Name: l.Name, State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
+		row := panelListLoop{Key: l.Key, Name: l.Name, DiskSpace: dockDiskLevel(l.DiskSpace), State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
 			BuildDiffers: l.Build.Availability == "different"}
 		// Lengthened with the installed label when the two would read the same.
 		var inst string
@@ -1175,4 +1182,11 @@ func panelCallerKind() string {
 }
 func panelBuildReuseAllowed(rec panelRecord, caller string) bool {
 	return (caller == "person" || caller == "agent") && rec.BuildAuthority == caller
+}
+
+func dockDiskLevel(d *dockDiskSpace) string {
+	if d == nil {
+		return ""
+	}
+	return d.Level
 }
