@@ -57,6 +57,15 @@ const (
 
 // ErrNotTierZero is returned while the events file holds a line that is not
 // a tier-0 protocol-1 event. Nothing past that line is read.
+var (
+	// ErrNotRegular: the events file is a FIFO, device, directory or other
+	// non-regular file, after following a link. It is never opened.
+	ErrNotRegular = errors.New("the sessionpipe events file is not a regular file; point sessionpipe.events_file at the file sink's file")
+	// ErrWritableByOthers: a user other than the owner can write the file,
+	// and so could make the session look waiting, ended or idle.
+	ErrWritableByOthers = errors.New("other users can write the sessionpipe events file, so it is not read; remove group and other write access (chmod go-w)")
+)
+
 var ErrNotTierZero = errors.New("the sessionpipe events file holds an event above tier 0 or of another protocol; looptender reads only a tier-0 file sink (sessionpipe sink add file:PATH --tier 0); replace the file")
 
 // Adapter observes one session.
@@ -104,7 +113,12 @@ type readState struct {
 	Version int `json:"version"`
 	// Offset is where the next read starts; Prefix the hash of the file's
 	// first PrefixLen bytes when it was last read.
-	Offset    int64  `json:"offset"`
+	Offset int64 `json:"offset"`
+	// Size and FileID are the file's size and identity (device and inode,
+	// or volume and file index) when it was last read. A smaller size or
+	// another identity means it was replaced.
+	Size      int64  `json:"size,omitempty"`
+	FileID    string `json:"fileId,omitempty"`
 	Prefix    string `json:"prefix,omitempty"`
 	PrefixLen int    `json:"prefixLen,omitempty"`
 	// Skipping: the read stopped inside a line longer than MaxLine, which is
@@ -117,15 +131,17 @@ type readState struct {
 	// LastAt is the newest applied event's time.
 	LastAt time.Time `json:"lastAt,omitzero"`
 	// Phase is idle, active, error or ended.
-	Phase      string   `json:"phase,omitempty"`
-	Background int      `json:"background,omitempty"`
-	Attention  []string `json:"attention,omitempty"`
-	TurnID     string   `json:"turnId,omitempty"`
+	Phase      string `json:"phase,omitempty"`
+	Background int    `json:"background,omitempty"`
+	// Attention and TurnID are tokens (idToken) of the protocol's ids, never
+	// the ids a writer chose.
+	Attention []string `json:"attention,omitempty"`
+	TurnID    string   `json:"turnId,omitempty"`
 	// Skipped counts lines that were not valid JSON or too long.
 	Skipped int `json:"skipped,omitempty"`
 }
 
-const readStateVersion = 1
+const readStateVersion = 2
 
 func (a *Adapter) statePath() string { return filepath.Join(a.dir, ReadStateFile) }
 
@@ -161,7 +177,19 @@ func (a *Adapter) Observe(ctx context.Context) (decide.Observation, error) {
 		return unknown(), err
 	}
 	s := a.load()
-	f, err := os.Open(a.file)
+	// Stat first, following a link: only a regular file is opened, so a
+	// FIFO or device in its place is refused rather than waited on.
+	before, err := os.Stat(a.file)
+	if err != nil {
+		return unknown(), fmt.Errorf("the sessionpipe events file cannot be read: %w", pathless(err))
+	}
+	if !before.Mode().IsRegular() {
+		return unknown(), ErrNotRegular
+	}
+	if refused, known := othersCanWrite(a.file, before); known && refused {
+		return unknown(), ErrWritableByOthers
+	}
+	f, err := openEvents(a.file)
 	if err != nil {
 		return unknown(), fmt.Errorf("the sessionpipe events file cannot be read: %w", pathless(err))
 	}
@@ -170,12 +198,13 @@ func (a *Adapter) Observe(ctx context.Context) (decide.Observation, error) {
 	if err != nil {
 		return unknown(), fmt.Errorf("the sessionpipe events file cannot be read: %w", pathless(err))
 	}
-	if !info.Mode().IsRegular() {
-		return unknown(), errors.New("the sessionpipe events file is not a regular file")
+	if !info.Mode().IsRegular() || !os.SameFile(before, info) {
+		return unknown(), errors.New("the sessionpipe events file changed while it was opened; the next check reads it again")
 	}
-	size := info.Size()
-	if s.Offset > size || !a.samePrefix(f, s) {
-		// Replaced or truncated: read it again from its start.
+	size, id := info.Size(), fileIdentity(f, info)
+	replaced := s.Offset > size || size < s.Size || (s.FileID != "" && id != "" && id != s.FileID) || !a.samePrefix(f, s)
+	if replaced {
+		// Replaced, truncated or rotated: read it again from its start.
 		s = readState{Version: readStateVersion}
 	}
 	caughtUp, rerr := a.read(f, size, &s)
@@ -187,6 +216,7 @@ func (a *Adapter) Observe(ctx context.Context) (decide.Observation, error) {
 	if err := a.remember(f, size, &s); err != nil {
 		return unknown(), err
 	}
+	s.Size, s.FileID = size, id
 	if err := a.save(s); err != nil {
 		return unknown(), fmt.Errorf("the sessionpipe reader's record cannot be saved: %w", pathless(err))
 	}
@@ -315,6 +345,13 @@ func idWord(s string) bool {
 	return true
 }
 
+// idToken stands for an id from the file: a short digest, so nothing a
+// writer of the file chose is kept or returned as it was written.
+func idToken(id string) string {
+	h := sha256.Sum256([]byte("sessionpipe-id\x00" + id))
+	return hex.EncodeToString(h[:8])
+}
+
 func (a *Adapter) apply(line []byte, s *readState) error {
 	var e event
 	if json.Unmarshal(line, &e) != nil {
@@ -366,7 +403,7 @@ func (a *Adapter) applyType(e event, s *readState) bool {
 	case "turn.started":
 		s.Phase, s.Background, s.Attention, s.TurnID = "active", 0, nil, ""
 		if idWord(d.TurnID) {
-			s.TurnID = d.TurnID
+			s.TurnID = idToken(d.TurnID)
 		}
 	case "turn.ended":
 		switch d.Reason {
@@ -382,7 +419,7 @@ func (a *Adapter) applyType(e event, s *readState) bool {
 			s.Background = min(*d.Background, 1000)
 		}
 		if idWord(d.TurnID) {
-			s.TurnID = d.TurnID
+			s.TurnID = idToken(d.TurnID)
 		}
 	case "attention.needed":
 		switch d.Kind {
@@ -390,15 +427,16 @@ func (a *Adapter) applyType(e event, s *readState) bool {
 			if !idWord(d.AttentionID) {
 				return false
 			}
+			tok := idToken(d.AttentionID)
 			for _, id := range s.Attention {
-				if id == d.AttentionID {
+				if id == tok {
 					return true
 				}
 			}
 			if len(s.Attention) >= maxAttentions {
 				s.Attention = s.Attention[1:]
 			}
-			s.Attention = append(s.Attention, d.AttentionID)
+			s.Attention = append(s.Attention, tok)
 		case "idle":
 			s.Phase = "idle"
 		case "error":
@@ -410,9 +448,10 @@ func (a *Adapter) applyType(e event, s *readState) bool {
 		if !idWord(d.AttentionID) {
 			return false
 		}
+		tok := idToken(d.AttentionID)
 		kept := s.Attention[:0]
 		for _, id := range s.Attention {
-			if id != d.AttentionID {
+			if id != tok {
 				kept = append(kept, id)
 			}
 		}

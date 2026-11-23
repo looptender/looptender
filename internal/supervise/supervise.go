@@ -1052,6 +1052,10 @@ func (t *tick) run() error {
 		Reprompts: t.st.Reprompts, MaxReprompts: loop.Errors.MaxReprompts,
 		SinceLastReprompt: sinceReprompt, Backoff: loop.Errors.Backoff.Duration,
 		SwitchBackReady: t.switchBackReady(target),
+		// Set here, once, so every decision taken from this input (lane
+		// recovery, the hung-turn rule, the check's own) treats an observed
+		// target as never woken, not only the ones made through t.decide.
+		ObservedOnly: t.observedOnly(),
 	}
 	in.AssignmentReady = t.assignmentObservation(a, obs)
 	in.IdleSpacing = t.idleSpacingInput(obs, ctl)

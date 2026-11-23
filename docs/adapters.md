@@ -68,7 +68,7 @@ To change the matrix, edit the table and run `KEEPGOING_UPDATE_ADAPTERS_DOC=1 go
 | [Supervision context in sends](#supervision-context-in-sends) | yes · fixture | yes · fixture | yes · fixture | yes · fixture | missing · none | yes · fixture | n/a | yes · fixture |
 | [Turn usage reading](#turn-usage-reading) | missing · none | missing · none | yes · fixture | missing · none | missing · none | missing · none | missing · none | missing · none |
 | [Handoff into a new conversation](#handoff-into-a-new-conversation) | yes · fixture | yes · fixture | yes · fixture | missing · none | missing · none | n/a | n/a | yes · fixture |
-| [Run graph and keepgoing runs](#run-graph-and-keepgoing-runs) | yes · live | yes · fixture | yes · fixture | yes · fixture | missing · none | partial · fixture | n/a | partial · fixture |
+| [Run graph and looptender runs](#run-graph-and-looptender-runs) | yes · live | yes · fixture | yes · fixture | yes · fixture | missing · none | partial · fixture | n/a | partial · fixture |
 | [Stop and owned cancellation](#stop-and-owned-cancellation) | yes · live | yes · fixture | yes · fixture | yes · live | missing · none | partial · fixture | n/a | partial · fixture |
 | [Stop the lanes too](#stop-the-lanes-too) | yes · fixture | n/a | n/a | n/a | missing · none | n/a | n/a | n/a |
 | [Permission prompts](#permission-prompts) | yes · live | missing · none | missing · none | missing · none | yes · fixture | yes · fixture | yes · fixture | partial · fixture |
@@ -359,7 +359,7 @@ Take the work over in a conversation that did not exist before the handoff.
 - **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. Configuration refuses fallbacks, routes, switch-back and timing for it. [`TestSessionpipeTargetIsStandaloneAndPromptless`](../internal/config/sessionpipe_test.go)
 - **Agent defined in configuration:** yes, evidence fixture. A candidate has no saved session, so the handoff brief starts one. [`TestDefinedAgentTurnLifecycle`](../internal/adapter/runner/definition_unix_test.go)
 
-### Run graph and keepgoing runs
+### Run graph and looptender runs
 
 Record runs, sends and the conversation reference, and show them offline.
 

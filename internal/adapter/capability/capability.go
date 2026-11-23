@@ -325,7 +325,7 @@ var Matrix = []Behaviour{
 			"cursor":  {Missing, None, "Not a fallback candidate.", nil},
 			"process": {NA, None, "The resume command decides which conversation receives the brief.", nil},
 		})},
-	{ID: "run_graph", Title: "Run graph and keepgoing runs", What: "Record runs, sends and the conversation reference, and show them offline.",
+	{ID: "run_graph", Title: "Run graph and looptender runs", What: "Record runs, sends and the conversation reference, and show them offline.",
 		Cells: merge(map[string]Cell{
 			"bb": {Yes, Live, "The configured thread, labelled configured.", []Ref{d(runsLive), t(graphTest, "TestTickRecordsRunIntentBeforeSendSessionAndGoal")}},
 		}, same(Cell{Yes, Fixture, "The runner's saved resume ID, labelled observed.", []Ref{t(graphTest, "TestHeadlessTargetRecordsItsSavedSession")}}, headless...),

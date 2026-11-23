@@ -38,7 +38,8 @@ func TestDockSaysAnObservedTargetIsNeverWoken(t *testing.T) {
 			t.Errorf("%s: observed %v %q tool %q", tc.name, l.Observed, l.ObservedNote, l.CurrentRoute.Tool)
 		}
 		list := buildPanelList(dockReport{Loops: []dockLoop{l}})
-		if len(list.Loops) != 1 || !list.Loops[0].Observed || slicesContain(list.CanAll, "stop") {
+		if len(list.Loops) != 1 || !list.Loops[0].Observed || slicesContain(list.CanAll, "stop") ||
+			!strings.Contains(list.Loops[0].ObservedNote, "Pause and resume change only whether looptender checks it; nothing is ever sent") {
 			t.Errorf("%s: panel list %+v", tc.name, list)
 		}
 	}

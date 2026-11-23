@@ -167,6 +167,9 @@ func TestObserveWaitingOnPerson(t *testing.T) {
 	if !o.AwaitingInput {
 		t.Fatalf("a permission prompt does not read as waiting on a person: %+v", o)
 	}
+	if b, _ := os.ReadFile(f.a.statePath()); strings.Contains(string(b), "att-1") {
+		t.Fatalf("the attention id is kept as written: %s", b)
+	}
 	f.append(line("attention.cleared", 4, t0.Add(3*time.Second), map[string]any{"attention_id": "att-1", "how": "answered"}))
 	if o := f.observe(t0.Add(4 * time.Second)); o.AwaitingInput || o.State != decide.Active {
 		t.Fatalf("after attention.cleared: %+v", o)
@@ -192,8 +195,12 @@ func TestErrorTurnHasNoClass(t *testing.T) {
 	f.append(line("session.started", 1, t0, nil), line("turn.started", 2, t0, map[string]any{"turn_id": "turn-9"}),
 		line("turn.ended", 3, t0.Add(time.Second), map[string]any{"turn_id": "turn-9", "reason": "error", "error": "rate_limit"}))
 	o := f.observe(t0.Add(2 * time.Second))
-	if o.State != decide.Error || o.ErrorClass != decide.ErrUnknown || o.ErrorTurn != "turn-9" {
-		t.Fatalf("an errored turn: %+v, want error of class unknown on turn-9", o)
+	if o.State != decide.Error || o.ErrorClass != decide.ErrUnknown || o.ErrorTurn != idToken("turn-9") || o.ErrorTurn == "turn-9" || len(o.ErrorTurn) != 16 {
+		t.Fatalf("an errored turn: %+v, want error of class unknown on turn-9's token", o)
+	}
+	b, err := os.ReadFile(f.a.statePath())
+	if err != nil || strings.Contains(string(b), "turn-9") {
+		t.Fatalf("the turn id is kept as written: %s %v", b, err)
 	}
 	if o.Evidence.Source != EvidenceSource || o.Evidence.Code != "unavailable" {
 		t.Fatalf("evidence %+v", o.Evidence)
@@ -285,6 +292,56 @@ func TestObserveReplacedFileIsReadAgain(t *testing.T) {
 	f.append(line("turn.ended", 1, t0.Add(2*time.Minute), map[string]any{"reason": "stop"}))
 	if o := f.observe(t0.Add(2 * time.Minute)); o.State != decide.Active {
 		t.Fatalf("a repeated sequence number was applied: %s", o.State)
+	}
+}
+
+// A file replaced by another whose start is the same and that is longer
+// than what was read is still read again from its start: its identity
+// changed. So is a file that got shorter.
+func TestObserveRotatedFileWithTheSameStart(t *testing.T) {
+	f := newFixture(t)
+	head := line("session.started", 1, t0, nil) + strings.Repeat(lineFor(other, 0, "session.heartbeat", 1, t0, nil), 4)
+	f.append(head, line("turn.started", 2, t0, nil))
+	if o := f.observe(t0); o.State != decide.Active {
+		t.Fatalf("%s", o.State)
+	}
+	// Rotated: a new file (a new identity) with the same start, then a turn
+	// end at a lower sequence that a read from the old offset would miss.
+	next := f.file + ".new"
+	body := head + strings.Repeat(lineFor(other, 0, "session.heartbeat", 2, t0, nil), 8) + line("turn.started", 1, t0.Add(time.Minute), nil) + line("turn.ended", 2, t0.Add(time.Minute), map[string]any{"reason": "stop"})
+	if err := os.WriteFile(next, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(next, f.file); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && fileIdentity(nil, mustStat(t, f.file)) == "" {
+		t.Skip("this platform gives no file identity")
+	}
+	if o := f.observe(t0.Add(time.Minute)); o.State != decide.Idle {
+		t.Fatalf("a rotated file with the same start was not read again: %s", o.State)
+	}
+}
+
+func mustStat(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
+
+// A FIFO, a directory or a device in the events file's place is refused
+// without being opened, so a check never waits on it.
+func TestObserveRefusesAFileThatIsNotRegular(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "a-directory")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a := New(config.Sessionpipe{Session: harness + ":" + session, EventsFile: dir}, t.TempDir())
+	if _, err := a.Observe(t.Context()); !errors.Is(err, ErrNotRegular) {
+		t.Fatalf("a directory: %v", err)
 	}
 }
 

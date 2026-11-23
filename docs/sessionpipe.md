@@ -74,6 +74,7 @@ lines of the one configured session and, of those, only these:
   protocol, type, time, tier, harness name, session id and sequence, and the
   data keys `reason`, `kind`, `attention_id`, `background` and `turn_id`. Each
   value must be one of the protocol's words or an id of its character set.
+  Turn and attention ids are kept only as a short digest, never as written.
   The session's title (by default the first prompt, cut short), folder,
   repository, branch, model, account and every other key are never decoded,
   stored, logged or shown. Unknown and extension event types are ignored.
@@ -81,11 +82,20 @@ lines of the one configured session and, of those, only these:
   makes the whole file unreadable for this loop until it is replaced: a higher
   tier carries words and paths. A line over 64 KiB or that is not JSON is
   skipped.
+- **Only a regular file only you can write.** The path is checked before it is
+  opened, following a link: a FIFO, device or directory is refused without
+  being opened, so a check never waits on it, and on Unix the open does not
+  block either. On Unix a file that group or other users can write is not read,
+  since they could make the session look waiting, ended or idle (`chmod go-w`).
+  On Windows mode bits do not say who can write a file, so a check does not
+  refuse one; doctor's DACL check reports it.
 - **Bounded and restartable.** A check reads at most 4 MiB. The reader keeps
-  its position, a hash of the file's first 256 bytes and the session's state in
-  `targets/<id>/sessionpipe-read.json` (owner-only), and reads a replaced or
-  truncated file again from its start. Sequence numbers already applied are not
-  applied again.
+  its position, the file's size and identity (device and inode on Unix, volume
+  and file index on Windows), a hash of its first 256 bytes and the session's
+  state in `targets/<id>/sessionpipe-read.json` (owner-only). A file that got
+  smaller, has another identity or starts differently was replaced, rotated or
+  truncated and is read again from its start. Sequence numbers already applied
+  are not applied again.
 - **Never the outbox, never a command.** looptender does not read sessionpipe's
   outbox, which keeps every event at full detail, and runs no sessionpipe command
   during a check.
@@ -99,7 +109,9 @@ any gone target does. `status` prints an `observed:` line and reports `task:
 none`; its JSON marks `targetAgent.observed`. The dock and panel JSON set
 `observed` on the loop, and a loop's `can` never holds `stop` for an observed
 target: it holds `pause` when the loop is not paused and `resume` when a hold
-is set. Pause and resume change only whether looptender checks the session.
+is set. Pause and resume change only whether looptender checks the session;
+nothing is ever sent. The panel list carries that sentence as `observedNote`
+on the loop's row, as the dock does, for a page or menu to show.
 `looptender stop` is still accepted: it ends the checks and leaves the session
 alone.
 

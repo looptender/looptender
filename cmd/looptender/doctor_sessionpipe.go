@@ -21,7 +21,7 @@ const sessionpipeMinVersion = "0.18.0"
 
 // sessionpipeObservedNotice is what doctor, status and the dock say about an
 // observed target.
-const sessionpipeObservedNotice = "Observed, never woken: looptender reads this session's tier-0 sessionpipe events and never sends to, wakes, re-prompts or stops it. Pause and resume change only whether looptender checks it; a stop ends the checks and leaves the session alone."
+const sessionpipeObservedNotice = "Observed, never woken: looptender reads this session's tier-0 sessionpipe events and never sends to, wakes, re-prompts or stops it. Pause and resume change only whether looptender checks it; nothing is ever sent. A stop ends the checks and leaves the session alone."
 
 // sessionpipeSinkCommand is the one line the person runs to add the sink.
 func sessionpipeSinkCommand() string {
