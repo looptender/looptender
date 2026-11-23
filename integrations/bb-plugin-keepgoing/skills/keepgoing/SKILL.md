@@ -1,19 +1,17 @@
 ---
 name: keepgoing
-description: Show or control the looptender (formerly keepgoing) loops that supervise BB threads, with bb keepgoing status, pause and stop; coordinate explicitly authorized BB child-lane delegation with the bounded agent workflow. Resume is a person's.
+description: Show or control the looptender (formerly keepgoing) loops that supervise BB threads, with bb looptender status, pause and stop; coordinate explicitly authorized BB child-lane delegation with the bounded agent workflow. Resume is a person's.
 ---
 
 # looptender in BB
 
-keepgoing is being renamed to looptender. The plugin's labels in BB say looptender ("looptender: enabled"); the commands below and the `keepgoing` executable keep their names for now.
-
 keepgoing supervises agent loops: it wakes an idle thread, nudges a stalled one, and hands off to a confirmed fallback on a usage limit. This plugin shows its state in each supervised thread's context card and exposes these commands:
 
 ```sh
-bb keepgoing status           # every configured loop: control state, target, last state
-bb keepgoing pause <loop>     # stop waking the thread until resumed
-bb keepgoing resume <loop>    # refused: a person resumes from the looptender panel or `keepgoing resume -c <config>` in a terminal
-bb keepgoing stop <loop>      # stop the running turn, then send nothing more
+bb looptender status           # every configured loop: control state, target, last state
+bb looptender pause <loop>     # stop waking the thread until resumed
+bb looptender resume <loop>    # refused: a person resumes from the looptender panel or `keepgoing resume -c <config>` in a terminal
+bb looptender stop <loop>      # stop the running turn, then send nothing more
 ```
 
 Loops listed in the plugin's "Loop configs" setting and UI-created setups and explicitly imported registry references are shown or controlled (registry attachment is unreleased source). UI-created setups retain their host identity; existing configured paths remain server-local.
