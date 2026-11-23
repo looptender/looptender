@@ -323,3 +323,25 @@ func TestAnArchivedLoopHasNoNotices(t *testing.T) {
 		t.Errorf("an archived loop is out of the way: %v", ns)
 	}
 }
+
+func TestNoticeNameUsesTheDisplayNameAndOnlyDisguisesRealThreadSlugs(t *testing.T) {
+	l := noticeLoop("l1", "bb-thr-ab12cd34ef")
+	l.Naming = &loopNaming{DisplayName: "Billing cleanup"}
+	if got := noticeName(l); got != "Billing cleanup" {
+		t.Errorf("a display name is used: %q", got)
+	}
+	l.Naming = nil
+	for _, slug := range []string{"bb-thr-ab12cd34ef", "thr_example123"} {
+		l.Name = slug
+		if got := noticeName(l); got != "A loop" {
+			t.Errorf("%s: %q", slug, got)
+		}
+	}
+	// Real names that merely contain the letters are kept, so loops stay apart.
+	for _, name := range []string{"example-thr-api", "my-thr-loop", "throttle-docs", "example-api"} {
+		l.Name = name
+		if got := noticeName(l); got != name {
+			t.Errorf("%s was turned into %q", name, got)
+		}
+	}
+}
