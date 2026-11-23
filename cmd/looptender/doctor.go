@@ -212,6 +212,9 @@ func doctor(e env, args []string, run doctorRun) int {
 		r.ControlState = ctl.Summary()
 		r.add("control", "ok", "Control state: "+r.ControlState+".", "")
 		r.Archived, r.ArchiveLapsed = loopArchive(cfg.Loop.StateDir, ctl)
+		if wt := waitOf(cfg.Loop.StateDir, ctl); wt != nil {
+			r.add("loop.wait", "ok", "The loop is "+wt.Text+".", "")
+		}
 		if a := r.Archived; a != nil {
 			r.add("loop.archived", "ok", "The loop is archived "+archiveSince(a)+": it is listed apart, needs nobody and is checked by no daemon; warnings about its routes are not given.", "")
 		}

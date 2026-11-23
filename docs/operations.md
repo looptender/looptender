@@ -794,6 +794,28 @@ If recording history fails after the session is reset, the command reports failu
 
 The reset is recorded. `runs.jsonl` gets a `session_reset` event with the target, whether a session was saved, the `--note` text, and who ran it: `by` is `thread` with the BB thread ID, or `terminal` when no thread identity was present. `timeline` shows it in words (`session reset by a BB thread` or `session reset from a terminal or scheduler`) without any identity or session identifier, and keeps it among the records of who had the loop. A build older than this change shows that record's operation as `unavailable`. `--json` prints a `session_reset` object with `target`, `hadSession`, `by` and the holds still in force.
 
+## A wait that ends by itself
+
+`looptender wait -c CONFIG --until CONDITION [--note TEXT] [--for DURATION]` is for a session that cannot go on until something outside it changes, which the supervisor can check by itself without trusting the session:
+
+- `host-session`: this computer's login session is back (the keychain can be reached and someone is logged in at the console);
+- `network`: the loop's connectivity check passes;
+- `time:RFC3339`: that time has come;
+- `limit-reset`: the usage-limit reset recorded for the loop has come (refused when none is recorded).
+
+Any other condition is refused. While the condition does not hold the loop sends nothing, and when it holds the loop carries on by itself at its next check, with no resume: the control record becomes exactly what it was before the wait. A wait is saved as an ordinary await-user hold, so a build without waits sends nothing either and shows it as waiting for a person; this build records the condition in `wait.json` and shows it as a wait: `status` prints `waiting:   waiting for … since …`, `status --json` and `client status` carry `wait` (`until`, `untilTime`, `since`, `expiresAt`, `text`; the note only with `--private`), `doctor` adds `loop.wait`, and the panel and the dock report give the state `waiting_on_condition` with `waiting.kind` `condition`, which needs nobody. After `--for` (default 24 hours, at most 7 days) a wait whose condition never held becomes an ordinary await-user with its reason kept ("waited … for host-session, which did not come"). A stop, a pause, the deadline and the send limits still apply. Any change to the control record by anyone while it waits (a person's pause, resume or await-user) ends it as a wait: the record is left as that change made it. A hold a person had set before the wait is part of what the wait restores, so it stays. Waiting on an archived loop is refused.
+
+### Withdrawing the session's own question
+
+A hold set by a person, a terminal, a client or another thread, a stop and a pause are lifted only by a person, as before. The one exception: the loop's owner thread may take back an await-user it set itself, with `looptender await-user --withdraw -c CONFIG --note WHY`, only when
+
+- the await-user was saved by the owner thread (the journal's caller `owner_thread`), with the same owner and generation as now;
+- it is the last control change in the journal, so a hold older than the retained history, or one whose setter the journal does not show, cannot be withdrawn;
+- nothing changed the control record since, by anyone;
+- the loop is not archived.
+
+The withdrawal restores exactly the control record from before that await-user: a person's hold underneath (an await-user, a pause, a stop) stays, so re-running await-user on top of a person's hold and withdrawing it changes nothing a person set. It is journalled as `await-user_withdrawn` by the owner thread, never as a person's resume, and `status` says `question:  the session withdrew its own question: WHY` until the next await-user. It can be done once per await-user.
+
 ## Situations that need a person
 
 - **The agent is waiting on a person.** A pending interaction is reported once as `await_user`, and nothing is sent until it is answered. `keepgoing await-user --note` reports at once and holds the loop until `keepgoing resume`.

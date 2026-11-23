@@ -239,7 +239,8 @@ type dockLoop struct {
 	LoopArg string `json:"loopArg,omitempty"`
 	// State is one of supervising, waiting_for_you, waiting_on_limit,
 	// waiting_on_network, checks_failing, paused, stopped, finished, off,
-	// outside_hours, not_checked_recently, archived or unknown. Phrase is its label,
+	// outside_hours, not_checked_recently, waiting_on_condition, archived or
+	// unknown. Phrase is its label,
 	// Detail one sentence about it, PickerState the picker row's second line.
 	State       string `json:"state"`
 	Phrase      string `json:"phrase"`
@@ -353,6 +354,8 @@ type dockLoop struct {
 	Archived      *archiveView `json:"archived,omitempty"`
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
 	Naming        *loopNaming  `json:"naming,omitempty"`
+	// Wait is a wait in force (State waiting_on_condition).
+	Wait *waitView `json:"wait,omitempty"`
 	// Lineage: the count of earlier loops and the key of the one it
 	// continues; absent for a loop that continues none.
 	Lineage *listLineage `json:"lineage,omitempty"`
@@ -1292,6 +1295,9 @@ type dockHold struct {
 //	           deadline, no-progress limits, refusals or a restricted
 //	           account, or a provider usage limit it waits out (By: check)
 //	checks     its checks have stopped (By: check)
+//	condition  a wait for a condition the supervisor checks itself (looptender
+//	           wait): it carries on by itself, needing nobody (By: the role
+//	           that set the wait)
 //	unreadable a record it needs cannot be read (By: unknown)
 //	unknown    the records do not say (By: unknown)
 //
@@ -1408,7 +1414,7 @@ func secondsSince(now, t time.Time) *int64 {
 }
 
 var dockStatePriority = map[string]int{
-	"waiting_for_you": 0, "unknown": 1, "checks_failing": 2, "not_checked_recently": 3, "waiting_on_limit": 4, "waiting_on_network": 4,
+	"waiting_for_you": 0, "unknown": 1, "checks_failing": 2, "not_checked_recently": 3, "waiting_on_limit": 4, "waiting_on_network": 4, "waiting_on_condition": 4,
 	"supervising": 5, "outside_hours": 6, "paused": 7, "off": 8, "stopped": 9, "finished": 10, "archived": 11,
 }
 
@@ -2093,6 +2099,19 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			r.Thread = ""
 			c.ContinuedIn = &r
 			snap.Archived = &c
+		}
+		if wt := snap.Wait; wt != nil && snap.Archived == nil {
+			// A wait needs nobody: it ends by itself when its condition holds.
+			l.State, l.Phrase, l.PickerState = "waiting_on_condition", "Waiting for "+waitPhrase[wt.Until], "Waiting for "+waitPhrase[wt.Until]
+			l.Detail = "It " + wt.Text + "."
+			since := wt.Since
+			by := "unknown"
+			if in.Hold != nil && in.Hold.Caller != "" {
+				by = in.Hold.Caller
+			}
+			l.Waiting = &dockWaiting{Kind: "condition", By: by, Reason: "It waits for " + waitPhrase[wt.Until] + " and carries on by itself.", Since: &since}
+			l.Wait, l.AlsoWaiting = wt, ""
+			need = nil
 		}
 		if a := snap.Archived; a != nil {
 			// Archived: listed apart, needing nobody, with no control offered
@@ -3096,3 +3115,6 @@ func dockNoteState(l dockLoop) string {
 	}
 	return l.State
 }
+
+// waitPhrase is a wait's condition in a few fixed words.
+var waitPhrase = map[string]string{"host-session": "the login session", "network": "the network", "time": "a time", "limit-reset": "a usage-limit reset"}
