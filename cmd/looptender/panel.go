@@ -1100,8 +1100,8 @@ type panelListLoop struct {
 	Archived      *archiveView `json:"archived,omitempty"`
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
 	// Naming is the loop's one display name and what goes with it
-	// (loop_naming.go); absent when it is the loop's name and nothing more.
-	// (loop_naming.go): the same on every surface; no reader composes its own.
+	// (loop_naming.go), the same on every surface; no reader composes its
+	// own. Absent when it is the loop's name and nothing more.
 	Naming *loopNaming `json:"naming,omitempty"`
 }
 

@@ -51,7 +51,8 @@ func NoteThreadTitle(dir, thread, title string, labels []string, now time.Time) 
 	}
 	// The first title read becomes the display name when none is recorded,
 	// without the words of a provider, model or generation; a later title
-	// never replaces it. A title with nothing else records nothing.
+	// never replaces it. A title that is nothing but such a qualifier is kept
+	// as it is.
 	if dn, err := LoadDisplayName(dir); err == nil && dn == nil {
 		if name, trimmed := DisplayNameFromTitle(title, labels); name != "" {
 			source := DisplayNameThreadTitle

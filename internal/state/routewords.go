@@ -6,45 +6,45 @@ import (
 	"unicode"
 )
 
-// routeWords are the words of a provider, a model, an effort level or a
-// generation, which a display name never carries: they change with routing
-// and migration. The list is maintained here; a loop's own route labels
-// (its providers, models, groups and accounts) are added by the caller.
-var routeWords = map[string]bool{
+// providerWords name a provider, a model or a plan: a trailing qualifier
+// made of route words is dropped from a title-derived display name only when
+// it has one of these (or one of the loop's own route labels).
+var providerWords = map[string]bool{
 	"claude": true, "anthropic": true, "opus": true, "sonnet": true, "haiku": true, "fable": true,
-	"openai": true, "gpt": true, "codex": true, "o1": true, "o3": true, "o4": true, "mini": true,
-	"gemini": true, "google": true, "antigravity": true, "cursor": true, "grok": true, "xai": true,
-	"llama": true, "mistral": true, "deepseek": true, "qwen": true,
+	"openai": true, "gpt": true, "codex": true, "o1": true, "o3": true, "o4": true,
+	"gemini": true, "antigravity": true, "neon": true, "cursor": true, "grok": true, "xai": true,
+	"llama": true, "mistral": true, "deepseek": true, "qwen": true, "ultra": true,
+}
+
+// effortWords are ordinary words that count only inside such a qualifier,
+// beside a provider or model word: never on their own and never in running
+// text ("Write code", "Make the CLI fast" are names).
+var effortWords = map[string]bool{
 	"low": true, "medium": true, "high": true, "xhigh": true, "max": true, "fast": true, "thinking": true,
-	"code": true, "model": true, "effort": true, "reasoning": true,
-	"gen": true, "generation": true, "v": true,
+	"code": true, "model": true, "effort": true, "reasoning": true, "mini": true, "pro": true,
+	"v": true, "gen": true, "generation": true, "conversation": true, "thread": true,
 }
 
 var (
-	// versionWord is an explicit version or generation: "v2", "gen3".
-	versionWord = regexp.MustCompile(`^(v|gen)\d+(\.\d+)*$`)
-	// numberWord is a bare number, a generation only after a route word
-	// ("Claude 4", "Opus 4.5"), never alone ("PR 478").
-	numberWord = regexp.MustCompile(`^\d+(\.\d+)*$`)
-	// ordinalWord is a generation count: "4th", in "4th conversation".
-	ordinalWord = regexp.MustCompile(`^\d+(st|nd|rd|th)$`)
-	// countedWords follow an ordinal in a generation count.
-	countedWords = map[string]bool{"conversation": true, "thread": true, "generation": true, "gen": true}
+	// countWord is a version, a generation or a plan multiplier: "4",
+	// "4.5", "v2", "gen3", "4th", "5x".
+	countWord = regexp.MustCompile(`^(v|gen)?\d+(\.\d+)*(st|nd|rd|th|x)?$`)
+	ordinal   = regexp.MustCompile(`^\d+(st|nd|rd|th)$`)
+	// qualifierSep starts a trailing qualifier segment.
+	qualifierSeps = []string{" · ", " - ", " – ", " — ", " | "}
 )
 
-// titleSegment splits a title where a qualifier usually starts: " · ",
-// " - ", " – ", " — ", " | ", ":", and brackets.
-var titleSegment = regexp.MustCompile(`\s+[·|\-–—]\s+|[()\[\]:]`)
-
 // DisplayNameFromTitle is the default display name made from a BB thread's
-// title: the title without the words of a provider, model, effort level or
-// generation (routeWords, a version or generation number, or a word of one
-// of labels, the loop's own route labels). A qualifier made only of such
-// words is dropped with the separator before it ("… · Sonnet medium",
-// "… (Claude 4)"), and so are such words at the end of a part ("coordinator
-// claude 4"); the rest of the title is kept as written, and trailing
-// separators are trimmed. trimmed says whether anything was dropped; ""
-// means nothing usable is left. A name a person sets is never changed.
+// title. Only whole trailing qualifiers are dropped, one after another: a
+// bracketed group at the end, or the part after the last " · ", " - ",
+// " – ", " — " or " | ", when it consists entirely of route words and names
+// a provider, model or plan (or is a generation count such as "4th
+// conversation"): " · Sonnet medium", " (Claude 4)", " · codex high",
+// " (Antigravity, Neon high)", " · Ultra 5x", or one of labels, the loop's
+// own route labels. Running text is never cut and brackets are kept whole.
+// When nothing usable would be left, the title is kept as it is. trimmed
+// says whether a qualifier was dropped. A name a person sets is never
+// changed.
 func DisplayNameFromTitle(title string, labels []string) (name string, trimmed bool) {
 	title = CleanLaneTitle(title)
 	extra := map[string]bool{}
@@ -53,83 +53,83 @@ func DisplayNameFromTitle(title string, labels []string) (name string, trimmed b
 			extra[w] = true
 		}
 	}
-	isRoute := func(w string) bool {
-		return routeWords[w] || extra[w] || versionWord.MatchString(w) || ordinalWord.MatchString(w)
+	name = title
+	for {
+		rest, q, ok := trailingQualifier(name)
+		if !ok || !routeQualifier(q, extra) {
+			break
+		}
+		name = strings.TrimSpace(rest)
 	}
-	// dropLast says whether the last of words is a route word in context.
-	dropLast := func(words []string) bool {
-		toks := routeTokens(words[len(words)-1])
-		if len(toks) == 0 {
-			return true // a separator or punctuation alone
-		}
-		var prev []string
-		if len(words) > 1 {
-			prev = routeTokens(words[len(words)-2])
-		}
-		for i, w := range toks {
-			w = strings.Trim(w, ".")
-			before := prev
-			if i > 0 {
-				before = toks[:i]
-			}
-			last := ""
-			if len(before) > 0 {
-				last = strings.Trim(before[len(before)-1], ".")
-			}
-			switch {
-			case isRoute(w):
-			case numberWord.MatchString(w) && (routeWords[last] || extra[last]):
-			case countedWords[w] && ordinalWord.MatchString(last):
-			default:
-				return false
-			}
-		}
-		return true
-	}
-	// Alternating parts and the separators between them.
-	seps := titleSegment.FindAllStringIndex(title, -1)
-	var b strings.Builder
-	start, pendingSep := 0, ""
-	for i := 0; i <= len(seps); i++ {
-		end := len(title)
-		if i < len(seps) {
-			end = seps[i][0]
-		}
-		part := title[start:end]
-		words := strings.Fields(part)
-		n := len(words)
-		for n > 0 && dropLast(words[:n]) {
-			n--
-		}
-		if n > 0 {
-			kept := part
-			if n < len(words) {
-				// Cut the part just after its last kept word.
-				idx := 0
-				for _, w := range words[:n] {
-					idx = strings.Index(part[idx:], w) + idx + len(w)
-				}
-				kept = part[:idx]
-			}
-			if b.Len() > 0 {
-				b.WriteString(pendingSep)
-			}
-			b.WriteString(kept)
-		}
-		if i < len(seps) {
-			pendingSep = title[seps[i][0]:seps[i][1]]
-			start = seps[i][1]
-		}
-	}
-	name = strings.TrimRight(strings.TrimSpace(b.String()), " -–—·|:,.;([")
-	// An opening bracket left without its close is a fragment: close it.
-	if strings.Count(name, "(") > strings.Count(name, ")") {
-		name += ")"
+	if name == "" {
+		return title, false
 	}
 	return name, name != title
 }
 
-// routeTokens splits a label or word into lower-case tokens at anything that
+// trailingQualifier splits off the last qualifier of s: a balanced bracketed
+// group that ends s and follows a space, or else the part after the last
+// qualifier separator.
+func trailingQualifier(s string) (rest, q string, ok bool) {
+	if end := len(s) - 1; end > 0 && (s[end] == ')' || s[end] == ']') {
+		open, close := byte('('), s[end]
+		if close == ']' {
+			open = '['
+		}
+		depth := 0
+		for i := end; i >= 0; i-- {
+			switch s[i] {
+			case close:
+				depth++
+			case open:
+				depth--
+			}
+			if depth == 0 {
+				if i > 0 && s[i-1] == ' ' {
+					return s[:i], s[i+1 : end], true
+				}
+				return "", "", false // glued to a word, or the whole title
+			}
+		}
+		return "", "", false // unbalanced: kept as written
+	}
+	at, sep := -1, ""
+	for _, x := range qualifierSeps {
+		if i := strings.LastIndex(s, x); i > at {
+			at, sep = i, x
+		}
+	}
+	if at < 0 {
+		return "", "", false
+	}
+	return s[:at], s[at+len(sep):], true
+}
+
+// routeQualifier reports whether q consists only of route words and names a
+// provider, model or plan, or is a generation count.
+func routeQualifier(q string, extra map[string]bool) bool {
+	toks := routeTokens(q)
+	if len(toks) == 0 {
+		return false
+	}
+	named, counted := false, false
+	for i, w := range toks {
+		w = strings.Trim(w, ".")
+		switch {
+		case providerWords[w] || extra[w]:
+			named = true
+		case countWord.MatchString(w) || effortWords[w]:
+			if (w == "conversation" || w == "thread" || w == "generation") && i > 0 && ordinal.MatchString(toks[i-1]) {
+				counted = true
+			}
+		default:
+			return false
+		}
+	}
+	return named || counted
+}
+
+// routeTokens splits a label or text into lower-case tokens at anything that
 // is not a letter or digit, keeping dotted versions whole ("4.5").
 func routeTokens(s string) []string {
 	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {

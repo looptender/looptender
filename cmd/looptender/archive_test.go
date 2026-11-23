@@ -356,15 +356,15 @@ func TestGroupChangesAndClientsLeaveArchivedLoopsAlone(t *testing.T) {
 	}
 }
 
-// A person's name is never trimmed, and a title made only of route words
-// leaves the slug.
-func TestDisplayNameKeepsAPersonsNameAndSkipsAnAllRouteTitle(t *testing.T) {
+// A person's name is never trimmed, and a title that is only a route
+// qualifier is kept as it is, never replaced by the slug.
+func TestDisplayNameKeepsAPersonsNameAndAnAllRouteTitle(t *testing.T) {
 	dir := t.TempDir()
 	l := config.Loop{Name: "example-loop", StateDir: dir}
-	if err := state.NoteThreadTitle(dir, "thr_example1", "Claude 4 (Opus)", nil, time.Now()); err != nil {
+	if err := state.NoteThreadTitle(dir, "thr_example1", "(Claude 4)", nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if n := namingOf(l, ""); n.NameSource != "slug" || n.DisplayName != "example-loop" {
+	if n := namingOf(l, ""); n.NameSource != state.DisplayNameThreadTitle || n.DisplayName != "(Claude 4)" {
 		t.Fatalf("all-route title: %+v", n)
 	}
 	if err := state.SaveDisplayName(dir, "Coordinator (Claude 4)", state.DisplayNameSet, time.Now()); err != nil {
