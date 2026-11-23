@@ -26,8 +26,8 @@ func TestStatusAndDoctorSayTheScheduleMayHaveStopped(t *testing.T) {
 		want      string
 	}{
 		{"started by a BB automation", &state.Routine{Source: state.RoutineBBAutomation, Routine: "auto_example1"}, "the computer may have slept, or the BB automation that runs this loop (auto_example1) may have disabled itself; check it in BB's Automations"},
-		{"no scheduler identity", nil, "the computer may have slept, or the scheduler that runs `keepgoing tick` for this loop may have stopped"},
-		{"another scheduler", &state.Routine{Source: "example-scheduler", Routine: "nightly"}, "the computer may have slept, or the scheduler that runs `keepgoing tick` for this loop may have stopped"},
+		{"no scheduler identity", nil, "the computer may have slept, or the scheduler that runs `looptender tick` for this loop may have stopped"},
+		{"another scheduler", &state.Routine{Source: "example-scheduler", Routine: "nightly"}, "the computer may have slept, or the scheduler that runs `looptender tick` for this loop may have stopped"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)

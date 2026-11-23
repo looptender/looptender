@@ -90,7 +90,7 @@ func TestInitNewThreadFlags(t *testing.T) {
 		t.Fatalf("detected without --detect-takeover: %d %t\n%s", code, *ran, out)
 	}
 	code, out, errOut := f.run(t, append(bbInitArgs(f), "--dry-run", "--detect-takeover"), "")
-	if code != 0 || !strings.Contains(out, "Takeover: not set up. codex is usable") || !strings.Contains(out, "--new-thread-provider codex --new-thread-model example-codex-model") || !strings.Contains(errOut, "keepgoing fallbacks arm -c") {
+	if code != 0 || !strings.Contains(out, "Takeover: not set up. codex is usable") || !strings.Contains(out, "--new-thread-provider codex --new-thread-model example-codex-model") || !strings.Contains(errOut, "looptender fallbacks arm -c") {
 		t.Fatalf("%d\n%s\n%s", code, out, errOut)
 	}
 	code, out, _ = f.run(t, append(bbInitArgs(f), "--dry-run", "--new-thread-provider", "codex", "--new-thread-model", "m", "--new-thread-permission-mode", "auto"), "")

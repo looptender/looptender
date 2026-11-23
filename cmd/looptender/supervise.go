@@ -79,7 +79,7 @@ func validate(e env, cfg *config.Config, path string, takeOver ...bool) int {
 				e.errf("  %s", strings.ReplaceAll(cfg.RouteList.Invalid, "\n", "\n  "))
 			}
 		case fb == nil:
-			e.errf("warning: follows the standard route list, but none of its routes applies to this loop; see keepgoing routes list")
+			e.errf("warning: follows the standard route list, but none of its routes applies to this loop; see looptender routes list")
 		default:
 			fmt.Fprintf(e.stdout, "ok: follows the standard route list (%d of its routes apply, min_healthy %d across %s)\n", len(fb.Candidates), fb.Redundancy.MinHealthy, fb.Redundancy.Span)
 		}
@@ -149,7 +149,7 @@ func validateRouteAccounts(e env, cfg *config.Config, catalogDir string) bool {
 		switch {
 		case r.Refused:
 			ok = false
-			e.errf("error: route %s: account %s: %s; fix the account in the configuration or the catalog (keepgoing accounts list)", r.ID, r.Account, accounts.RouteCheckText(r.Check))
+			e.errf("error: route %s: account %s: %s; fix the account in the configuration or the catalog (looptender accounts list)", r.ID, r.Account, accounts.RouteCheckText(r.Check))
 		case r.Check == accounts.RouteCatalogUnavailable:
 		case r.Check == accounts.RouteNotInCatalog:
 			e.errf("warning: route %s: account %s: %s; assigned by you; not verified", r.ID, r.Account, accounts.RouteCheckText(r.Check))
@@ -1166,7 +1166,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 		fmt.Fprintf(w, "resumed episodes: %d (last %s); each resume of a held loop starts the re-prompt and nudge counts over\n", st.ResumeEpisodes, when(st.LastResumeEpisodeAt))
 	}
 	if r := out.Routes; r != nil {
-		fmt.Fprintln(w, "routes:    follows the standard route list (keepgoing routes list)")
+		fmt.Fprintln(w, "routes:    follows the standard route list (looptender routes list)")
 		if r.Unreadable {
 			fmt.Fprintf(w, "  %s\n", config.StandardRoutesUnreadable)
 		}
@@ -1412,9 +1412,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.Daemon = query(queryCtx, l.StateDir, version, false)
 	cancel()
 	out.Schedule = describeSchedule(&l, st, ctl, &out.Daemon, now)
-	if t := tickCadenceSentence(out.Schedule, now); t != "" && out.Daemon.State != "responsive" {
-		out.Runtime.NextCheck = t
-	}
+	noteTickCadence(&out.Daemon, &out.Runtime, out.Schedule, now)
 	out.BuildAdoption = describeBuildAdoption(l.StateDir, out.Daemon, now)
 	out.SupervisorStartRefused = currentStartRefusal(l.StateDir, st.CheckedAt, out.Daemon)
 	out.DiskSpace = describeDiskSpace(l.StateDir)

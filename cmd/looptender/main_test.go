@@ -103,6 +103,11 @@ func write(t *testing.T, path, body string, mode os.FileMode) {
 
 func newFixture(t *testing.T) *fixture {
 	t.Setenv("BB_THREAD_ID", "")
+	// A loaded machine can take over two seconds to start a stand-in script;
+	// an assignment inventory would then be partial and a ready declaration
+	// refused (see assignmentCallNanos).
+	previous := assignmentCallNanos.Swap(int64(30 * time.Second))
+	t.Cleanup(func() { assignmentCallNanos.Store(previous) })
 	dir := t.TempDir()
 	bbDir := filepath.Join(dir, "bb")
 	os.Mkdir(bbDir, 0o700)

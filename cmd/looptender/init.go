@@ -77,7 +77,7 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 	fs.StringVar(&o.thread, "thread", "", "existing BB thread ID; required for bb")
 	fs.StringVar(&o.provider, "provider", "", "existing BB thread provider label; required for bb")
 	fs.StringVar(&o.account, "account-dir", "", "existing Claude Code or Codex account configuration directory")
-	fs.StringVar(&o.accountID, "account", "", "accounts catalog ID of the account you name for the first route (keepgoing accounts list); fills --account-dir from it and writes account: ID")
+	fs.StringVar(&o.accountID, "account", "", "accounts catalog ID of the account you name for the first route (looptender accounts list); fills --account-dir from it and writes account: ID")
 	fs.StringVar(&o.group, "group", "", "primary quota pool label (default: the named account's label, else provider)")
 	fs.StringVar(&o.model, "model", "", "headless model (default: CLI configuration)")
 	fs.StringVar(&o.routes, "routes", "", "standard: follow your standard route list for handoffs; own (the default without asking): only --fallback")
@@ -239,7 +239,7 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 	fmt.Fprintf(e.stdout, "  %s start --foreground -c %s\n", initCommandPrefix(), commandQuote(cfgPath))
 	fmt.Fprintln(e.stdout, "Or choose --background to keep the daemon running after this terminal closes. Start validates local setup and enables the loop; existing holds remain. No service is installed.")
 	if svc := serviceInstallCommand(cfgPath); svc != nil {
-		fmt.Fprintln(e.stdout, "Or, instead of start, keep checks running across restarts with a service the operating system restarts, the recommended way (see Services in the keepgoing documentation). A service does not enable the loop, so enable it first:")
+		fmt.Fprintln(e.stdout, "Or, instead of start, keep checks running across restarts with a service the operating system restarts, the recommended way (see Services in the looptender documentation). A service does not enable the loop, so enable it first:")
 		fmt.Fprintf(e.stdout, "  %s enable -c %s\n", initCommandPrefix(), commandQuote(cfgPath))
 		fmt.Fprintf(e.stdout, "  %s service install -c %s\n", initCommandPrefix(), commandQuote(cfgPath))
 	}
@@ -625,12 +625,12 @@ func planInit(o *initOptions, lookPath func(string) (string, error)) (map[string
 		if err != nil {
 			code := config.RoutesProblem(err)
 			if code == "" {
-				return fail(errors.New("--routes standard: no standard route list has been written yet; add a route first with keepgoing routes add"))
+				return fail(errors.New("--routes standard: no standard route list has been written yet; add a route first with looptender routes add"))
 			}
 			return fail(fmt.Errorf("--routes standard: the standard route list cannot be used (%s): %s", code, routesProblemText(code)))
 		}
 		if len(standard.Routes) == 0 {
-			return fail(errors.New("--routes standard: the standard route list has no routes yet; add one first with keepgoing routes add"))
+			return fail(errors.New("--routes standard: the standard route list has no routes yet; add one first with looptender routes add"))
 		}
 	default:
 		return fail(errors.New("--routes is standard or own"))
@@ -1050,7 +1050,7 @@ func initPickAccount(w io.Writer, ask func(label, value string) (string, error),
 			return nil, "", nil
 		}
 		if f != nil {
-			fmt.Fprintln(w, "Name your accounts with keepgoing accounts add to pick them here.")
+			fmt.Fprintln(w, "Name your accounts with looptender accounts add to pick them here.")
 		}
 		dir, err := ask("Existing account directory (blank inherits current login)", "")
 		return nil, dir, err

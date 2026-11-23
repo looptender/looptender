@@ -40,8 +40,8 @@ import (
 const routesFollowUsage = `Switch a loop between the standard route list and a list of its own.
 
 Usage:
-  keepgoing routes follow-standard (--loop NAME | -c looptender.yaml)
-  keepgoing routes own (--loop NAME | -c looptender.yaml) [--file fallbacks.yaml]
+  looptender routes follow-standard (--loop NAME | -c looptender.yaml)
+  looptender routes own (--loop NAME | -c looptender.yaml) [--file fallbacks.yaml]
 
 Each command previews the change and writes only after you answer yes, or
 with --yes. --dry-run previews only; --expect binds --yes to a preview.
@@ -78,7 +78,7 @@ func routesFollow(e env, op string, args []string, input io.Reader) int {
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	switch {
 	case fs.NArg() != 0 || (*cfgPath == "") == (*loopName == ""):
-		e.errf("usage: keepgoing routes %s (--loop NAME | -c looptender.yaml)", op)
+		e.errf("usage: looptender routes %s (--loop NAME | -c looptender.yaml)", op)
 		return exitUsage
 	case op != "own" && set["file"]:
 		e.errf("routes %s: --file applies only to routes own", op)
@@ -170,7 +170,7 @@ func routeSourceChange(req routeChangeRequest, path, file string, apply bool) (r
 	} else {
 		var err error
 		if cfg, err = config.Load(path); err != nil {
-			return routeChangeRefused(req, refuseRoute("configuration_unavailable", "The configuration cannot be loaded; inspect it with keepgoing validate.")), exitUsage
+			return routeChangeRefused(req, refuseRoute("configuration_unavailable", "The configuration cannot be loaded; inspect it with looptender validate.")), exitUsage
 		}
 		req.loop = cfg.Loop.Name
 	}
@@ -240,7 +240,7 @@ func routeSourceChange(req routeChangeRequest, path, file string, apply bool) (r
 		recorded = recordRouteChange(cfg.Loop.StateDir, "handoff_on", "", req.caller) == nil
 	}
 	if !recorded {
-		again.out.Warnings = append(again.out.Warnings, "the change was saved, but could not be recorded in the loop's history (keepgoing timeline)")
+		again.out.Warnings = append(again.out.Warnings, "the change was saved, but could not be recorded in the loop's history (looptender timeline)")
 	}
 	again.out.Outcome = "changed"
 	return again.out, exitOK
@@ -276,7 +276,7 @@ func planRouteSource(req routeChangeRequest, cfg *config.Config, file string) (*
 			return nil, refuseRoute("not_possible", "The standard list covers bb, claude and codex loops; a %s loop keeps its own list.", l.Adapter)
 		}
 		if current != state.Primary {
-			return nil, refuseRoute("not_on_first_route", "Loop %s is on %q, not its first route. Move it back first with: keepgoing retarget primary", l.Name, current)
+			return nil, refuseRoute("not_on_first_route", "Loop %s is on %q, not its first route. Move it back first with: looptender retarget primary", l.Name, current)
 		}
 		path, err := config.StandardRoutesPath()
 		var r *config.Routes
@@ -286,7 +286,7 @@ func planRouteSource(req routeChangeRequest, cfg *config.Config, file string) (*
 		if err != nil {
 			code := config.RoutesProblem(err)
 			if code == "" {
-				return nil, refuseRoute("list_missing", "No standard route list has been written yet. Add a route first with: keepgoing routes add")
+				return nil, refuseRoute("list_missing", "No standard route list has been written yet. Add a route first with: looptender routes add")
 			}
 			return nil, refuseRoute(code, "The standard route list cannot be used: %s.", routesProblemText(code))
 		}
@@ -347,17 +347,17 @@ func planRouteSource(req routeChangeRequest, cfg *config.Config, file string) (*
 				o.After = o.Before
 				break
 			}
-			return nil, refuseRoute("not_following", "Loop %s does not follow the standard list; add routes of its own with keepgoing fallbacks add.", l.Name)
+			return nil, refuseRoute("not_following", "Loop %s does not follow the standard list; add routes of its own with looptender fallbacks add.", l.Name)
 		}
 		if cfg.RouteList.Unreadable {
 			return nil, refuseRoute(cfg.RouteList.Problem, "The standard route list cannot be used (%s), so there is nothing to copy.", cfg.RouteList.Problem)
 		}
 		if cfg.FallbackSet == nil {
-			return nil, refuseRoute("no_route_applies", "No standard route applies to loop %s, so there is nothing to copy; add routes of its own with keepgoing fallbacks add once it has a list.", l.Name)
+			return nil, refuseRoute("no_route_applies", "No standard route applies to loop %s, so there is nothing to copy; add routes of its own with looptender fallbacks add once it has a list.", l.Name)
 		}
 		if current != state.Primary {
 			if c, ok := cfg.FallbackSet.Find(current); !ok || c.Disabled {
-				return nil, refuseRoute("current_not_in_list", "Loop %s is on %q, which the standard list no longer gives it. Move it first with: keepgoing retarget primary", l.Name, current)
+				return nil, refuseRoute("current_not_in_list", "Loop %s is on %q, which the standard list no longer gives it. Move it first with: looptender retarget primary", l.Name, current)
 			}
 		}
 		if file == "" || file != filepath.Base(file) || strings.HasPrefix(file, ".") {
@@ -372,7 +372,7 @@ func planRouteSource(req routeChangeRequest, cfg *config.Config, file string) (*
 		if err != nil {
 			return nil, refuseRoute("not_possible", "The routes cannot be written as a fallbacks file.")
 		}
-		p.fallbacksYAML = append([]byte("# Copied from the standard route list by keepgoing routes own.\n"), body...)
+		p.fallbacksYAML = append([]byte("# Copied from the standard route list by looptender routes own.\n"), body...)
 		parsed, err := config.ParseFallbacks(p.fallbacksYAML)
 		if err != nil || !reflect.DeepEqual(parsed.Candidates, after.Candidates) || !reflect.DeepEqual(parsed.Redundancy, after.Redundancy) || !reflect.DeepEqual(parsed.Probe, after.Probe) {
 			return nil, refuseRoute("not_possible", "The routes cannot be copied exactly into a fallbacks file.")

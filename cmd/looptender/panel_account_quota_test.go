@@ -175,3 +175,35 @@ func TestPanelAccountQuotaExposureFitsNativeConfirmation(t *testing.T) {
 		t.Fatal("native controls confirmation would refuse the authority statement")
 	}
 }
+
+// panel --account resolves a handle from panel list against the catalog the
+// panel reads, and leaves a catalog ID, or a value that catalog cannot
+// resolve, as given. panel list names the account by that same handle.
+func TestPanelAccountByIDOrHandle(t *testing.T) {
+	dir, e := accountFixture(t, "codex")
+	f, err := accounts.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := f.Handle(e.ID)
+	if handle == "" || handle == e.ID {
+		t.Fatalf("handle %q", handle)
+	}
+	unknown := strings.Repeat("c", 32)
+	for value, want := range map[string]string{handle: e.ID, e.ID: e.ID, unknown: unknown} {
+		if got := panelAccountByIDOrHandle(dir, value); got != want {
+			t.Errorf("%q resolved to %q, want %q", value, got, want)
+		}
+	}
+	// Another catalog does not resolve this one's handle.
+	other, _ := accountFixture(t, "codex")
+	if got := panelAccountByIDOrHandle(other, handle); got != handle {
+		t.Errorf("another catalog resolved the handle to %q", got)
+	}
+	// The handle is what panel list carries for the account, from the same
+	// catalog.
+	r := dockReport{Accounts: func() *accounts.View { v := accounts.ReadView(dir, time.Now()); return &v }()}
+	if l := buildPanelList(r).AccountQuotas; l == nil || len(l.Accounts) != 1 || l.Accounts[0].ID != handle {
+		t.Errorf("panel list: %+v", l)
+	}
+}

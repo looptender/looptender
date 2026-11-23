@@ -784,11 +784,11 @@ func describeIncident(r incident.Record) string {
 		text += fmt.Sprintf("; RETURNED TO THE PRIMARY: the loop was on %s, which %s, so this check ran on the primary", timelineTarget(ret.FromKey), why)
 	}
 	if r.RouteListChanged {
-		text += "; ROUTE LIST: the standard route list changed since this loop's previous check, and this check used the new list (keepgoing routes list shows it)"
+		text += "; ROUTE LIST: the standard route list changed since this loop's previous check, and this check used the new list (looptender routes list shows it)"
 	}
 	text += describeProbes(r.Probes)
 	if r.NewThread {
-		text += "; NEW THREAD: keepgoing created a BB thread for this handoff and left the earlier conversation as it was (`keepgoing runs` shows both references)"
+		text += "; NEW THREAD: keepgoing created a BB thread for this handoff and left the earlier conversation as it was (`looptender runs` shows both references)"
 	}
 	if r.Action == "handoff" || r.Action == "switch_back" {
 		if r.TargetKeyAfter != "unavailable" && r.TargetKeyAfter == r.TargetKey && !r.DryRun && r.Outcome != "dry_run" {
@@ -882,7 +882,7 @@ func describeDelivery(d report.Delivery) string {
 }
 
 func printTimeline(w io.Writer, r timelineReport) {
-	fmt.Fprintf(w, "keepgoing incident timeline (offline, read-only)\nread at: %s; stale after %s\ncurrent control: %s (%s; source control.json)\n", r.ReadAt.Format(time.RFC3339), r.StaleAfter, r.Control.State, r.Control.Availability)
+	fmt.Fprintf(w, "looptender incident timeline (offline, read-only)\nread at: %s; stale after %s\ncurrent control: %s (%s; source control.json)\n", r.ReadAt.Format(time.RFC3339), r.StaleAfter, r.Control.State, r.Control.Availability)
 	if r.Control.UpdatedAt != nil {
 		fmt.Fprintf(w, "control saved at: %s (local timestamp)\n", r.Control.UpdatedAt.Format(time.RFC3339))
 	}

@@ -31,7 +31,7 @@ type adapterCheckReport struct {
 
 func adapterCommand(e env, args []string) int {
 	if len(args) == 0 || args[0] != "check" {
-		e.errf("usage: keepgoing adapter check [-c FILE] [--target primary|ID] [--list] [--json] [--limit 30s]")
+		e.errf("usage: looptender adapter check [-c FILE] [--target primary|ID] [--list] [--json] [--limit 30s]")
 		return exitUsage
 	}
 	fs := flag.NewFlagSet("adapter check", flag.ContinueOnError)

@@ -92,6 +92,11 @@ test("a loop nothing supervises shows the alarm, and one checked by ticks withou
   const ticked = diagnosticLines({ ...base, schedule: { overdue: false, judging: false, checkedBy: "ticks", cadence: "10m" } }, "primary", true);
   assert.ok(ticked.includes("Schedule: checked by ticks run without a daemon (an external scheduler or by hand), about every 10m"));
   assert.ok(ticked.some((line) => line.startsWith("Daemon: unavailable from this build")));
+  // A looptender that records the ticks on the daemon (client status) says
+  // so on the daemon line, once, instead of "running supervisor not confirmed".
+  const recorded = diagnosticLines({ ...base, daemon: { state: "not_recorded", checkedBy: "ticks", cadence: "10m" }, schedule: { overdue: false, judging: false, checkedBy: "ticks", cadence: "10m" } }, "primary", true);
+  assert.ok(recorded.includes("Daemon: not_recorded; the loop is checked by ticks run without a daemon (an external scheduler or by hand), about every 10m"), recorded.join("\n"));
+  assert.ok(!recorded.some((line) => line.includes("running supervisor not confirmed") || line.startsWith("Schedule: checked by ticks")), recorded.join("\n"));
 });
 
 test("a long limit wait says why no handoff is possible and whether anyone was told", () => {

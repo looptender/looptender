@@ -94,13 +94,13 @@ func fallbacksByLoop(e env, sub string, args []string) ([]string, int, bool) {
 	}
 	switch len(found) {
 	case 0:
-		e.errf("fallbacks %s: no registered loop named %q (keepgoing registry list)", sub, bbLabel(name, 40))
+		e.errf("fallbacks %s: no registered loop named %q (looptender registry list)", sub, bbLabel(name, 40))
 		return nil, exitUsage, false
 	case 1:
 		// A configuration moved or deleted since it was registered is
 		// refused as routes --loop refuses it, without the path.
 		if _, err := config.Load(found[0].ConfigPath); err != nil {
-			e.errf("fallbacks %s: refused, nothing written.\n  Loop %s's configuration cannot be loaded; inspect it with keepgoing validate.", sub, bbLabel(name, 40))
+			e.errf("fallbacks %s: refused, nothing written.\n  Loop %s's configuration cannot be loaded; inspect it with looptender validate.", sub, bbLabel(name, 40))
 			return nil, exitUsage, false
 		}
 		// After the leading positional arguments (move ID, handoff on), which
@@ -108,7 +108,7 @@ func fallbacksByLoop(e env, sub string, args []string) ([]string, int, bool) {
 		pos, rest := splitPositional(out)
 		return append(append(pos, "-c", found[0].ConfigPath), rest...), exitOK, true
 	default:
-		e.errf("fallbacks %s: %d registered loops are named %q; pass -c with the one you mean (keepgoing registry list --private)", sub, len(found), bbLabel(name, 40))
+		e.errf("fallbacks %s: %d registered loops are named %q; pass -c with the one you mean (looptender registry list --private)", sub, len(found), bbLabel(name, 40))
 		return nil, exitUsage, false
 	}
 }

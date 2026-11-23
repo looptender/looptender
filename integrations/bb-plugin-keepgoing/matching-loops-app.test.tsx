@@ -24,7 +24,9 @@ test("card retains retired, active and completed matches; pending controls follo
     const region = (name: string) => within(ui.getByRole("region", { name: `Loop ${name}` }));
     await ui.findByRole("region", { name: `Loop ${active.loop}` });
     assert.equal(ui.getAllByRole("region").length, 3);
-    assert.ok(region(retired.loop).getByText(/ordinary terminal/));
+    // Two loops are held, so the sentence is said once for the card and each loop keeps its own command.
+    assert.equal(ui.getAllByText(/A person resumes a held loop from an ordinary terminal/).length, 1);
+    assert.ok(region(retired.loop).getByText(/keepgoing resume -c "\/example\/retired-example\/looptender.yaml"/)); assert.equal(ui.queryAllByText(/A person resumes this/).length, 0);
     assert.ok(region(completed.loop).getByText("looptender: completed"));
     assert.equal(ui.queryByRole("button", { name: "Resume" }), null);
     fireEvent.click(region(active.loop).getByRole("button", { name: "Pause" }));

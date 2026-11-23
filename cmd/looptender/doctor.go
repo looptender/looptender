@@ -362,9 +362,11 @@ func doctor(e env, args []string, run doctorRun) int {
 			if level, text, fix, ok := scheduleDoctorLine(sch); ok {
 				r.add("supervisor.schedule", level, text, fix)
 			}
-			if t := tickCadenceSentence(sch, r.CheckedAt); t != "" {
+			if t := tickCadenceSentence(sch, r.CheckedAt); t != "" && d.State != "responsive" {
 				r.add("supervisor.ticks", "ok", "No daemon answers, and the loop is "+t+".", "")
 			}
+			noteTickCadence(&d, nil, sch, r.CheckedAt)
+			r.NextCheck = d.NextCheck
 		}
 	}
 	if _, err := state.LoadLedger(cfg.Loop.StateDir); err != nil {
@@ -376,7 +378,7 @@ func doctor(e env, args []string, run doctorRun) int {
 		r.add("supervisor.start_refused", "warning", "Supervisor start refused: "+refusal.sentence()+".", "Start supervision from the BB thread that owns the loop, or transfer ownership deliberately first (enable --take-over from the new owning thread). A start from a terminal inherits that terminal's BB_THREAD_ID.")
 	}
 	if stateErr == nil && st.StartRefused != nil {
-		r.add("runner.wrapper", "error", fmt.Sprintf("No turn can be started, since %s: %s.", st.StartRefused.Since.Format(time.RFC3339), st.StartRefused.Reason), "Stop the daemon, make sure the keepgoing binary at its path is the one you mean to run, and start the daemon again. Nothing is sent or counted until then.")
+		r.add("runner.wrapper", "error", fmt.Sprintf("No turn can be started, since %s: %s.", st.StartRefused.Since.Format(time.RFC3339), st.StartRefused.Reason), "Stop the daemon, make sure the looptender binary at its path is the one you mean to run, and start the daemon again. Nothing is sent or counted until then.")
 	}
 	doctorTickBudget(&r, cfg.Loop)
 	doctorNetworkCheck(e.ctx, &r, cfg.Loop, st, *offline)
@@ -476,7 +478,7 @@ func doctorFailedChecks(r *doctorReport, st state.File, stateReadable bool) {
 	case st.FailedChecks == 0:
 		r.add("supervisor.failed_checks", "ok", "The last recorded check completed.", "")
 	default:
-		r.add("supervisor.failed_checks", "warning", fmt.Sprintf("The last %d recorded checks in a row failed to observe or act, since %s.", st.FailedChecks, st.FailedSince.Format(time.RFC3339)), "Run `keepgoing status` for the reason of the last check and read the errors in the run log; fix the provider CLI, network or repository it names.")
+		r.add("supervisor.failed_checks", "warning", fmt.Sprintf("The last %d recorded checks in a row failed to observe or act, since %s.", st.FailedChecks, st.FailedSince.Format(time.RFC3339)), "Run `looptender status` for the reason of the last check and read the errors in the run log; fix the provider CLI, network or repository it names.")
 	}
 }
 
@@ -492,7 +494,7 @@ func printDoctor(e env, r doctorReport, asJSON bool) int {
 		fmt.Fprintln(e.stdout, string(b))
 		return code
 	}
-	fmt.Fprintf(e.stdout, "keepgoing doctor (%s)\n", r.Version)
+	fmt.Fprintf(e.stdout, "looptender doctor (%s)\n", r.Version)
 	if r.Loop != "" {
 		fmt.Fprintf(e.stdout, "loop: %s; control: %s; target: %s\n", r.Loop, r.ControlState, r.Target)
 	}
@@ -966,17 +968,17 @@ func doctorUsed(f userdir.Found) string {
 func doctorRouteAccounts(r *doctorReport, cfg *config.Config, catalogDir string) {
 	results, readable := routeAccountChecks(cfg, catalogDir)
 	if !readable {
-		r.add("accounts.catalog", "warning", "The accounts catalog could not be read, so the accounts routes name were not compared with it. Supervision is not affected.", "Run keepgoing accounts list to see why.")
+		r.add("accounts.catalog", "warning", "The accounts catalog could not be read, so the accounts routes name were not compared with it. Supervision is not affected.", "Run looptender accounts list to see why.")
 	}
 	for _, x := range results {
 		id := "agent." + x.ID + ".account"
 		text := accounts.RouteCheckText(x.Check)
 		switch {
 		case x.Refused:
-			r.add(id, "error", "Account "+x.Account+": "+text+".", "Set this route's account to the ID of a catalog entry for the same provider and directory (keepgoing accounts list), or remove it.")
+			r.add(id, "error", "Account "+x.Account+": "+text+".", "Set this route's account to the ID of a catalog entry for the same provider and directory (looptender accounts list), or remove it.")
 		case x.Check == accounts.RouteCatalogUnavailable:
 		case x.Check == accounts.RouteNotInCatalog:
-			r.add(id, "warning", "Account "+x.Account+": "+text+". This BB thread route's account is assigned by you; not verified.", "Check the ID with keepgoing accounts list.")
+			r.add(id, "warning", "Account "+x.Account+": "+text+". This BB thread route's account is assigned by you; not verified.", "Check the ID with looptender accounts list.")
 		case x.Check == accounts.RouteNotVerified:
 			r.add(id, "ok", "Account "+x.Label+": "+text+". BB has no account per thread.", "")
 		default:

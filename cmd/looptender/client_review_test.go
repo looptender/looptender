@@ -220,7 +220,7 @@ func TestClientApplyRefusesAReviewForAnythingElse(t *testing.T) {
 	// The text line names the registry directory, so it can be pasted.
 	var out, errs bytes.Buffer
 	clientCommand(env{context.Background(), &out, &errs}, []string{"review", "pause", "--loop", dockKey(alpha.ID), "--directory", d.directory})
-	if !strings.Contains(out.String(), "To confirm before it expires: keepgoing client apply pause --loop "+dockKey(alpha.ID)+" --expect r1.") || !strings.Contains(out.String(), "--directory "+shellQuote(d.directory)) {
+	if !strings.Contains(out.String(), "To confirm before it expires: looptender client apply pause --loop "+dockKey(alpha.ID)+" --expect r1.") || !strings.Contains(out.String(), "--directory "+shellQuote(d.directory)) {
 		t.Errorf("%s", out.String())
 	}
 }

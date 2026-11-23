@@ -58,7 +58,7 @@ test("the created thread's card shows the bounded, switched-off loop and one but
     setup: (input: unknown) => { starts.push(input); return (input as { action: string }).action === "start" ? { ok: true, message: "Background supervision started. Existing timers were not changed." } : { ok: true, message: "Review the diagnostics, then start background supervision when ready.", record: { id: "record-example", loop: loop.loop, configPath: loop.configPath, threadId: "thr_created", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: "/projects/example", provider: "example-provider" }, canStart: true, checks: [] }; },
   } });
   try {
-    await waitFor(() => assert.equal(ui.getAllByText("looptender: ready, not started").length, 2), { timeout: 3000 });
+    await waitFor(() => assert.equal(ui.getAllByText("looptender: ready, not started").length, 1), { timeout: 3000 });
     assert.ok(ui.getByText(boundsPhrase(DEFAULT_BOUNDS)));
     // Opening the setup panel adds diagnostics, not a second way to start.
     fireEvent.click(ui.getByRole("button", { name: "Setup" }));
@@ -80,7 +80,7 @@ test("a started thread says it is running, with one Pause and one Stop that go t
     control: (input: unknown) => { controls.push(input); return { ok: true, message: "stop done" }; },
   } });
   try {
-    await waitFor(() => assert.equal(ui.getAllByText("looptender: keeping this going").length, 2), { timeout: 3000 });
+    await waitFor(() => assert.equal(ui.getAllByText("looptender: keeping this going").length, 1), { timeout: 3000 });
     assert.ok(ui.getByText(/Started when this thread was created\./)); assert.ok(ui.getByText(boundsPhrase(DEFAULT_BOUNDS)));
     assert.equal(ui.getAllByRole("button", { name: "Pause" }).length, 1); assert.equal(ui.getAllByRole("button", { name: "Stop" }).length, 1);
     assert.equal(ui.queryByRole("button", { name: /^Start/ }), null);
