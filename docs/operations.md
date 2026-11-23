@@ -873,14 +873,24 @@ Unreleased, opt-in; **fixtures only**.
 
 ### Stepping down a model at one model's weekly limit
 
-Unreleased, opt-in; **fixtures only**.
-- **The setting.** `looptender model-step -c CONFIG --models <strongest>,<next>[,…]` (2 to 6 model names, strongest first) turns it on, `--off` turns it off, and with no flags the command shows it. Like the usage watch it is a record in the state directory (`model-step-setting.json`), not a configuration key, and `status` shows it.
-- **When.** A check finds the loop's own BB conversation at a usage limit whose window is one model's (Claude's `seven_day_<model>`, from BB's rate-limit event; see [which limit](#which-limit-which-account-and-what-you-can-do)), with its reset ahead.
-  - That window, not the all-models one, is what blocked it, so the same account still has the other models.
-  - The blocked model is found in the order by name (the window names `opus`, the order `claude-opus-…`).
-  - If there is a weaker model after it, the conversation's model is changed to that one (`bb thread update --model`: the same thread, account, settings and hooks), and its failed turn is retried by reference, with no text sent. It counts as a send. The check makes no other decision.
+Unreleased, opt-in; **fixtures only**. This is the BB-thread version that works today. The account router is meant to supersede or absorb it as a routing decision; its setting (an ordered list of models) would carry over as that router's step-down order.
+
+- **The setting.** `looptender model-step -c CONFIG --models <strongest>,<next>[,…]` (2 to 6 model names, strongest first, at most one of each weekly-limit family: not two opus models) turns it on.
+  - `--off` turns it off and cancels a pending step back: the conversation stays on the model it is on, and the command says so. With no flags, the command shows the setting.
+  - The setting is a record in the state directory (`model-step-setting.json`), not a configuration key. `status` shows it.
+  - It changes the owner's live conversation, so it takes the same owner check as the other controls, and is refused from the supervised conversation and anything its supervisor started, as resume is.
+- **When.** A check finds the loop's own BB conversation at a usage limit whose window is one model's (Claude's `seven_day_<model>`, from BB's rate-limit event; see [which limit](#which-limit-which-account-and-what-you-can-do)), with its reset ahead. That window, not the all-models one, is what blocked it, so the same account still has the other models.
+  - **Matching:** the window's model is matched exactly to each order entry's family, the first part of its name after the provider's (`claude-opus-5-5` is `opus`).
+  - **The step:** if a weaker model follows it, the step is recorded first (`model-step.json`), then the conversation's model is changed (`bb thread update --model`: the same thread, account, settings and hooks). Only then is a send reserved and the failed turn retried by reference, with no text sent. The check makes no other decision.
+  - **Takeover:** at such a limit the step-down runs before any takeover.
+- **When the change fails** (a model not available to that provider, BB refusing it), no send is spent. The failure is recorded and shown in `status`, and a `model_step` notice says so. It is not tried again until that window resets; the usual limit handling goes on.
+- **Telling people and the agent.**
+  - A step down produces a `model_step` notice (info) for the menu and the panel, which ends when the step does.
+  - The agent's next message carries one line: `[keepgoing:model-step to=… from=… resets=…]` and a looptender notice of which model it is on and why. A step back is said the same way.
 - **Not when.** Never for the all-models or 5-hour window, a model not in the order or the last one, a dry run, a fallback target, or a loop that is off, paused, stopped, waiting for a person or finished. With no weaker model left, the loop waits for the reset as before.
-- **Stepping back.** `model-step.json` records the step: from, to, the window and its reset. At the first check after that reset that finds the conversation between turns, its model is changed back to the stronger one and the record is cleared. A second step-down keeps the first's model and reset.
+- **Stepping back.** At the first check after the recorded reset that finds the conversation between turns, the model is changed back, but only if the latest turn ran on the model it was stepped down to (BB's turn requests carry their model) and step-down is still on.
+  - Otherwise the record is cleared and the model is left as a person or the agent set it; the check's reason says so.
+  - A second step-down keeps the first step's model and reset.
 - **Never acts on lanes**, routes or accounts.
 
 ### Which limit, which account, and what you can do

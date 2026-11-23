@@ -20,10 +20,12 @@ const modelStepTimeout = 20 * time.Second
 // blocked it, so the same account can go on with the next model of the
 // configured order: the conversation's model is changed (bb thread update
 // --model, same account, same settings) and its failed turn retried by
-// reference, with no text sent. When the window that blocked the stronger
-// model has reset, the conversation is stepped back to it at a check that
-// finds it between turns. It never acts on lanes, never changes a route or
-// an account, and never runs on a dry run or for a held loop.
+// reference, with no text sent. The agent is told with its next message.
+// When the window that blocked the stronger model has reset, the
+// conversation is stepped back at a check that finds it between turns,
+// still on the model it was stepped down to. It never acts on lanes, never
+// changes a route or an account, and never runs on a dry run or for a held
+// loop. At a one-model weekly limit it runs before any takeover.
 //
 // It reports whether it handled the check (a step-down was made or tried),
 // in which case no other decision is made this check.
@@ -34,32 +36,26 @@ func (t *tick) modelStep(a adapter.Adapter, target string, obs decide.Observatio
 	if c := t.ctl; !c.Enabled || c.SupersededBy != "" || c.Paused || c.Stop || c.AwaitingUser || c.Completed {
 		return false, nil
 	}
-	setting, err := state.LoadModelStepSetting(t.loop.StateDir)
+	dir := t.loop.StateDir
+	setting, err := state.LoadModelStepSetting(dir)
 	if err != nil {
 		t.warn("the model step-down setting could not be read: %v", err)
 		return false, nil
 	}
-	rec, err := state.LoadModelStep(t.loop.StateDir)
+	rec, err := state.LoadModelStep(dir)
 	if err != nil {
 		t.warn("the model step-down record could not be read: %v", err)
 		return false, nil
 	}
 	ms, canSet := a.(adapter.ModelSetter)
-	// Step back: the stronger model's window has reset and the session is
-	// between turns. Done even if the setting was turned off since.
-	if rec != nil && !t.now.Before(rec.ResetsAt) && obs.State == decide.Idle && canSet {
-		ctx, cancel := context.WithTimeout(t.ctx, min(modelStepTimeout, t.left()))
-		err := ms.SetModel(ctx, rec.From)
-		cancel()
-		if err != nil {
-			t.warn("stepping the model back to %s failed: %v", rec.From, err)
-			return false, nil
+	if rec != nil && !t.now.Before(rec.ResetsAt) {
+		if rec.Failed {
+			// A failed step is tried again only in a later window.
+			t.clearModelStep()
+			rec = nil
+		} else if obs.State == decide.Idle && canSet {
+			return false, t.stepBack(ms, *rec, obs, setting)
 		}
-		if err := state.SaveModelStep(t.loop.StateDir, nil); err != nil {
-			t.warn("the model step-down record could not be cleared: %v", err)
-		}
-		t.res.ModelStep = "stepped_back"
-		return false, nil
 	}
 	if setting == nil || !canSet || !inWindow {
 		return false, nil
@@ -75,41 +71,55 @@ func (t *tick) modelStep(a adapter.Adapter, target string, obs decide.Observatio
 	blocked := strings.ToLower(w.Model())
 	i := -1
 	for n, m := range setting.Models {
-		if blocked != "" && strings.Contains(strings.ToLower(m), blocked) {
+		if blocked != "" && state.ModelFamily(m) == blocked {
 			i = n
 			break
 		}
 	}
-	if rec != nil && (i < 0 || setting.Models[i] != rec.To) {
+	switch {
+	case rec != nil && rec.Failed:
+		return false, nil // tried and failed in this window: wait for the reset
+	case rec != nil && (i < 0 || setting.Models[i] != rec.To):
 		return false, nil // the step in force is not what is blocked now
-	}
-	if i < 0 || i+1 >= len(setting.Models) {
+	case i < 0 || i+1 >= len(setting.Models):
 		return false, nil // nothing weaker to step to: wait for the reset
 	}
 	next := setting.Models[i+1]
-	if _, err := t.reserveSend(string(decide.Reprompt), target); err != nil {
-		return true, err
-	}
-	ctx, cancel := context.WithTimeout(t.ctx, min(modelStepTimeout, t.left()))
-	err = ms.SetModel(ctx, next)
-	cancel()
-	if err != nil {
-		t.res.Action, t.res.Reason = string(decide.None), "model step-down failed: the model could not be changed"
-		return true, err
-	}
 	step := state.ModelStep{From: setting.Models[i], To: next, Window: w.Key, ResetsAt: obs.ResetsAt.UTC(), At: t.now}
 	if rec != nil {
 		// A second step keeps the first: the conversation steps back to the
 		// strongest model when its window resets.
 		step.From, step.ResetsAt = rec.From, rec.ResetsAt
 	}
-	if err := state.SaveModelStep(t.loop.StateDir, &step); err != nil {
-		t.warn("the model step-down could not be recorded: %v", err)
+	// The record first: a model changed with no record would never be
+	// changed back.
+	if err := state.SaveModelStep(dir, &step); err != nil {
+		t.warn("the model step-down could not be recorded, so the model was not changed: %v", err)
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(t.ctx, min(modelStepTimeout, t.left()))
+	err = ms.SetModel(ctx, next)
+	cancel()
+	if err != nil {
+		step.Failed, step.Failure = true, "the model could not be changed"
+		if serr := state.SaveModelStep(dir, &step); serr != nil {
+			t.warn("the failed model step-down could not be recorded: %v", serr)
+		}
+		t.warn("model step-down to %s failed: %v; not tried again until the window resets", next, err)
+		t.res.ModelStep = "step_failed"
+		return false, nil // the usual limit handling goes on; no send was spent
+	}
+	t.res.ModelStep = "stepped_down"
+	t.saveModelStepNote(fmt.Sprintf("[keepgoing:model-step to=%s from=%s resets=%s]\nlooptender notice: this conversation now runs on %s instead of %s, on the same account, because %s's weekly limit was reached. It moves back to %s after that limit resets at %s.",
+		next, step.From, step.ResetsAt.Format(time.RFC3339), next, step.From, step.From, step.From, step.ResetsAt.Format(time.RFC3339)))
+	// The send is reserved only now that the model has changed.
+	if _, err := t.reserveSend(string(decide.Reprompt), target); err != nil {
+		return true, err
 	}
 	ctx, cancel = context.WithTimeout(t.ctx, min(turnRetryTimeout, t.left()))
-	res, err := r.RetryFailedTurn(ctx)
+	_, err = r.RetryFailedTurn(ctx)
 	cancel()
-	t.res.Action, t.res.Recovery, t.res.ModelStep = string(decide.Reprompt), string(decide.RecoverByTurnRetry), "stepped_down"
+	t.res.Action, t.res.Recovery = string(decide.Reprompt), string(decide.RecoverByTurnRetry)
 	t.res.Reason = fmt.Sprintf("%s reached; stepped down to %s on the same account, until it resets", w.Words(), next)
 	var unsupported adapter.ErrUnsupported
 	if errors.As(err, &unsupported) {
@@ -117,9 +127,60 @@ func (t *tick) modelStep(a adapter.Adapter, target string, obs decide.Observatio
 		// recovers it as any error.
 		return true, nil
 	}
-	if err != nil {
-		return true, err
+	return true, err
+}
+
+// stepBack changes the model back once the window has reset, only while the
+// conversation is still on the model it was stepped down to and the setting
+// is on. Otherwise it stands down: the record is cleared and the model left
+// as a person or the agent set it.
+func (t *tick) stepBack(ms adapter.ModelSetter, rec state.ModelStep, obs decide.Observation, setting *state.ModelStepSetting) error {
+	if setting == nil || obs.TurnModel != rec.To {
+		t.clearModelStep()
+		t.res.ModelStep = "stood_down"
+		t.res.Reason = fmt.Sprintf("model step-down: not moved back to %s: the conversation is no longer on %s, or step-down is off", rec.From, rec.To)
+		return nil
 	}
-	_ = res
-	return true, nil
+	ctx, cancel := context.WithTimeout(t.ctx, min(modelStepTimeout, t.left()))
+	err := ms.SetModel(ctx, rec.From)
+	cancel()
+	if err != nil {
+		t.warn("stepping the model back to %s failed: %v", rec.From, err)
+		return nil
+	}
+	t.clearModelStep()
+	t.res.ModelStep = "stepped_back"
+	t.saveModelStepNote(fmt.Sprintf("[keepgoing:model-step to=%s from=%s]\nlooptender notice: this conversation is back on %s: the weekly limit that moved it to %s has reset.", rec.From, rec.To, rec.From, rec.To))
+	return nil
+}
+
+func (t *tick) clearModelStep() {
+	if err := state.SaveModelStep(t.loop.StateDir, nil); err != nil {
+		t.warn("the model step-down record could not be cleared: %v", err)
+	}
+}
+
+func (t *tick) saveModelStepNote(text string) {
+	if err := state.SaveModelStepNote(t.loop.StateDir, &state.ModelStepNote{Text: text, At: t.now}); err != nil {
+		t.warn("the model change could not be kept for the agent's next message: %v", err)
+	}
+}
+
+// withModelStepNote adds the pending model-change line to a message, and
+// reports whether it did.
+func (t *tick) withModelStepNote(text string) (string, bool) {
+	n, err := state.LoadModelStepNote(t.loop.StateDir)
+	if err != nil || n == nil || t.opts.DryRun {
+		return text, false
+	}
+	return text + "\n\n" + n.Text + "\n", true
+}
+
+// modelStepNoteSent clears the line once a message carrying it was accepted.
+func (t *tick) modelStepNoteSent(carried bool, err error) {
+	if carried && err == nil {
+		if serr := state.SaveModelStepNote(t.loop.StateDir, nil); serr != nil {
+			t.warn("the model change line could not be cleared: %v", serr)
+		}
+	}
 }

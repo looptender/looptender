@@ -208,6 +208,7 @@ func (a *Adapter) Observe(ctx context.Context) (decide.Observation, error) {
 	if obs.ErrorClass == decide.ErrRateLimit && sig.resetsAt.After(a.now()) {
 		obs.ResetsAt, obs.LimitWindow = sig.resetsAt, sig.window
 	}
+	obs.TurnModel = sig.model
 	return obs, nil
 }
 
@@ -265,6 +266,7 @@ type signals struct {
 	blocked      bool
 	resetsAt     time.Time
 	window       decide.LimitWindow
+	model        string
 	pending      bool
 	ok           bool
 	// turnStartedMs is BB's time of the latest turn start, or 0 when unknown.
@@ -282,7 +284,7 @@ type signals struct {
 // started count, so a stale error from an earlier turn is ignored.
 func (a *Adapter) signals(ctx context.Context) signals {
 	c, ok := a.scan(ctx)
-	s := signals{class: decide.ErrUnknown, ok: ok, blocked: c.Blocked, resetsAt: c.ResetsAt, window: c.Window, pending: len(c.Pending) > 0, lastEventAt: c.LastEventAt, turnStartedMs: c.TurnStartedMs,
+	s := signals{class: decide.ErrUnknown, ok: ok, blocked: c.Blocked, resetsAt: c.ResetsAt, window: c.Window, model: c.Model, pending: len(c.Pending) > 0, lastEventAt: c.LastEventAt, turnStartedMs: c.TurnStartedMs,
 		turnStartSeq: c.TurnStartSeq, toolsRunning: c.ToolsUncertain || len(c.OpenTools) > 0, fallbackSeq: c.FallbackSeq, childOutcome: c.ChildOutcomeSeq,
 		turnRequests: c.TurnRequests, turnStarts: c.TurnStarts}
 	if c.Error != nil {

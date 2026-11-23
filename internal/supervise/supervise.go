@@ -2009,6 +2009,8 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 			}
 		}
 		text, usageCarried := t.usageWarningText(d, text)
+		var stepCarried bool
+		text.Text, stepCarried = t.withModelStepNote(text.Text)
 		var backlogNotice *backlogDelivery
 		if d.Action == decide.Wake && !d.AssignmentWake && !text.NoticeOnly && loop.PRBacklog != nil {
 			var allowed bool
@@ -2048,6 +2050,7 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 		}
 		t.childNoticeSent(childErrors, err)
 		t.usageWarningSent(usageCarried, err)
+		t.modelStepNoteSent(stepCarried, err)
 		// The adapter was called: count the attempt whatever it returned, so a
 		// failing or unsupported send cannot repeat on every check outside the
 		// per-episode caps and spacing.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/state"
 )
 
@@ -40,30 +42,58 @@ func modelStepCommand(e env, args []string) int {
 		return exitUsage
 	}
 	dir := cfg.Loop.StateDir
-	if (*off || *models != "") && os.MkdirAll(dir, 0o700) != nil {
-		e.errf("model-step: the state directory cannot be created")
-		return exitFailed
-	}
-	switch {
-	case *off:
-		if err := state.SaveModelStepSetting(dir, nil); err != nil {
-			e.errf("model-step: %v", err)
-			return exitFailed
-		}
-	case *models != "":
-		s := state.ModelStepSetting{SetAt: time.Now().UTC()}
+	var setting *state.ModelStepSetting
+	if *models != "" {
+		setting = &state.ModelStepSetting{SetAt: time.Now().UTC()}
 		for _, m := range strings.Split(*models, ",") {
-			s.Models = append(s.Models, strings.TrimSpace(m))
+			setting.Models = append(setting.Models, strings.TrimSpace(m))
 		}
-		if !s.Valid() {
-			e.errf("model-step: --models takes 2 to 6 distinct model names, strongest first")
+		if !setting.Valid() {
+			e.errf("model-step: --models takes 2 to 6 model names, strongest first, each of its own weekly-limit family (no two opus or two sonnet models)")
 			return exitUsage
 		}
-		if err := state.SaveModelStepSetting(dir, &s); err != nil {
+	}
+	if *off || setting != nil {
+		// It changes the owner's live conversation: the owner's check, under
+		// the control lock, and never from the supervised conversation or
+		// anything its supervisor started, as for resume.
+		caller := os.Getenv("BB_THREAD_ID")
+		if err := checkHoldClearer(cfg, caller); err != nil {
+			e.errf("model-step refused: %v", err)
+			return exitFailed
+		}
+		if os.MkdirAll(dir, 0o700) != nil {
+			e.errf("model-step: the state directory cannot be created")
+			return exitFailed
+		}
+		stayed := ""
+		_, err := control.UpdateChecked(dir, func(f *control.File) error {
+			if err := archiveOwnerCheck("model-step")(*f); err != nil {
+				return err
+			}
+			if err := state.SaveModelStepSetting(dir, setting); err != nil {
+				return err
+			}
+			if setting == nil {
+				// Off cancels a pending step-back: the conversation stays on
+				// the model it is on.
+				if rec, _ := state.LoadModelStep(dir); rec != nil && !rec.Failed {
+					stayed = rec.To
+				}
+				if err := state.SaveModelStep(dir, nil); err != nil {
+					return err
+				}
+			}
+			return errModelStepNoControlChange
+		})
+		if err != nil && !errors.Is(err, errModelStepNoControlChange) {
 			e.errf("model-step: %v", err)
 			return exitFailed
 		}
-		if cfg.Loop.Adapter != "bb" {
+		if stayed != "" {
+			e.errf("model-step: the step back is cancelled; the conversation stays on %s", stayed)
+		}
+		if setting != nil && cfg.Loop.Adapter != "bb" {
 			e.errf("model-step: warning: step-down acts only on a BB conversation; this loop's adapter is %s", cfg.Loop.Adapter)
 		}
 	}
@@ -82,6 +112,10 @@ func modelStepCommand(e env, args []string) int {
 	printModelStep(e.stdout, v)
 	return exitOK
 }
+
+// errModelStepNoControlChange ends the control update without writing it:
+// the setting is its own record; the lock is held only for the owner check.
+var errModelStepNoControlChange = errors.New("no control change")
 
 // modelStepView is the setting and any step in force, as status says them.
 type modelStepView struct {
@@ -117,7 +151,9 @@ func printModelStep(w io.Writer, v *modelStepView) {
 	default:
 		fmt.Fprintln(w, "model step-down: off")
 	}
-	if s := v.InForce; s != nil {
-		fmt.Fprintf(w, "  stepped down from %s to %s (%s); steps back after %s, between turns\n", s.From, s.To, s.Window, s.ResetsAt.Format(time.RFC3339))
+	if s := v.InForce; s != nil && s.Failed {
+		fmt.Fprintf(w, "  could not step down from %s to %s (%s): %s; not tried again until %s\n", s.From, s.To, s.Window, s.Failure, s.ResetsAt.Format(time.RFC3339))
+	} else if s != nil {
+		fmt.Fprintf(w, "  stepped down from %s to %s (%s); steps back after %s, between turns, if it is still on %s\n", s.From, s.To, s.Window, s.ResetsAt.Format(time.RFC3339), s.To)
 	}
 }

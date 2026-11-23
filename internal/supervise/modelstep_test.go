@@ -2,6 +2,8 @@ package supervise
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,11 +18,12 @@ import (
 type steppingAdapter struct {
 	*retryingAdapter
 	models []string
+	setErr error
 }
 
 func (s *steppingAdapter) SetModel(_ context.Context, m string) error {
 	s.models = append(s.models, m)
-	return nil
+	return s.setErr
 }
 
 func steppingWorld(t *testing.T, obs decide.Observation) (*world, *steppingAdapter) {
@@ -76,8 +79,15 @@ func TestModelStepDownAndBack(t *testing.T) {
 	if res := stepTick(t, w, s, reset.Add(time.Minute)); res.ModelStep != "" || len(s.models) != 1 {
 		t.Fatalf("stepped back mid-turn: %+v", res)
 	}
-	// Between turns: back to the stronger model.
-	s.obs = decide.Observation{State: decide.Idle}
+	// The agent is told with its next message, once.
+	s.obs = decide.Observation{State: decide.Idle, TurnModel: "claude-sonnet-example"}
+	if res := stepTick(t, w, s, t0.Add(2*time.Hour)); res.Action != "wake" || len(s.sent) != 1 || !strings.Contains(s.sent[0], "[keepgoing:model-step to=claude-sonnet-example from=claude-opus-example") {
+		t.Fatalf("%+v %q", res, s.sent)
+	}
+	if n, _ := state.LoadModelStepNote(w.dir); n != nil {
+		t.Fatal("the line was kept after it was sent")
+	}
+	// Between turns, still on the weaker model: back to the stronger one.
 	if res := stepTick(t, w, s, reset.Add(2*time.Minute)); res.ModelStep != "stepped_back" || len(s.models) != 2 || s.models[1] != "claude-opus-example" {
 		t.Fatalf("%+v %v", res, s.models)
 	}
@@ -125,5 +135,76 @@ func TestModelStepOnlyForAModelWindowItCanLeave(t *testing.T) {
 		if res.ModelStep != "" || len(s.models) != 0 || s.retries != 0 {
 			t.Fatalf("%s: %+v %v", name, res, s.models)
 		}
+	}
+}
+
+// After the reset the conversation is moved back only if it is still on the
+// model it was stepped down to and step-down is on; otherwise the record is
+// cleared and the model left as it is.
+func TestModelStepBackStandsDownForAPersonsChoice(t *testing.T) {
+	reset := t0.Add(30 * time.Hour)
+	for name, c := range map[string]struct {
+		model string
+		off   bool
+	}{"another model": {"claude-haiku-example", false}, "step-down off": {"claude-sonnet-example", true}} {
+		w, s := steppingWorld(t, decide.Observation{State: decide.Idle, TurnModel: c.model})
+		setting := &state.ModelStepSetting{Models: []string{"claude-opus-example", "claude-sonnet-example"}, SetAt: t0}
+		if c.off {
+			setting = nil
+		}
+		if err := state.SaveModelStepSetting(w.dir, setting); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.SaveModelStep(w.dir, &state.ModelStep{From: "claude-opus-example", To: "claude-sonnet-example", Window: "seven_day_opus", ResetsAt: reset}); err != nil {
+			t.Fatal(err)
+		}
+		res := stepTick(t, w, s, reset.Add(time.Minute))
+		if res.ModelStep != "stood_down" || len(s.models) != 0 {
+			t.Fatalf("%s: %+v %v", name, res, s.models)
+		}
+		if rec, _ := state.LoadModelStep(w.dir); rec != nil {
+			t.Fatalf("%s: record kept", name)
+		}
+	}
+}
+
+// A model change that fails spends no send and is not tried again in the
+// same window; the usual limit handling goes on.
+func TestFailedModelStepIsNotRetriedEachCheck(t *testing.T) {
+	reset := t0.Add(30 * time.Hour)
+	w, s := steppingWorld(t, modelLimit("seven_day_opus", reset))
+	s.setErr = errors.New("model not available")
+	if err := state.SaveModelStepSetting(w.dir, &state.ModelStepSetting{Models: []string{"claude-opus-example", "claude-sonnet-example"}, SetAt: t0}); err != nil {
+		t.Fatal(err)
+	}
+	res := stepTick(t, w, s, t0)
+	if res.ModelStep != "step_failed" || res.Action == "reprompt" || s.retries != 0 {
+		t.Fatalf("%+v retries %d", res, s.retries)
+	}
+	if sends, _ := state.LoadSends(w.dir); sends != 0 {
+		t.Fatalf("a send was spent: %d", sends)
+	}
+	rec, _ := state.LoadModelStep(w.dir)
+	if rec == nil || !rec.Failed {
+		t.Fatalf("%+v", rec)
+	}
+	if res := stepTick(t, w, s, t0.Add(time.Hour)); res.ModelStep != "" || len(s.models) != 1 {
+		t.Fatalf("tried again: %+v %v", res, s.models)
+	}
+}
+
+// An order holds one model per weekly-limit family, and a window's model is
+// matched to the family exactly.
+func TestModelStepOrderHasOneModelPerFamily(t *testing.T) {
+	for _, bad := range [][]string{{"claude-opus-5-5", "claude-opus-4"}, {"claude-opus-example"}, {"claude-sonnet-x", "5-5"}} {
+		if (state.ModelStepSetting{Models: bad}).Valid() {
+			t.Fatalf("accepted %v", bad)
+		}
+	}
+	if !(state.ModelStepSetting{Models: []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}}).Valid() {
+		t.Fatal("refused a good order")
+	}
+	if state.ModelFamily("claude-opus-5-5") != "opus" || state.ModelFamily("sonnet-4") != "sonnet" {
+		t.Fatal("family")
 	}
 }

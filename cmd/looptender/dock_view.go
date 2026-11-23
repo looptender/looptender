@@ -288,6 +288,9 @@ type dockLoop struct {
 	// NoProgress is the no-progress flag, the same value status shows; nil
 	// when the loop's status could not be read. It is never a need.
 	NoProgress *noProgressView `json:"noProgress,omitempty"`
+	// ModelStep is the model step-down in force or failed, for the notice
+	// list only; status says it in full.
+	ModelStep *modelStepView `json:"-"`
 	// UsageBurn is the usage watch's projection, the same value status
 	// shows; nil when it has none.
 	UsageBurn *usageBurnView `json:"usageBurn,omitempty"`
@@ -2038,6 +2041,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		// the hold, not current.
 		np.Text = noProgressText(np, loopHeld(st.Control, st.controlUnreadable))
 		l.NoProgress = &np
+		l.ModelStep = st.ModelStep
 		l.UsageBurn = st.UsageBurn
 		if r := st.Refusals; r.Total > 0 || r.Question != "" {
 			l.Refusals = &r

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -29,28 +30,78 @@ type ModelStepSetting struct {
 
 var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$`)
 
-// Valid: two to six distinct model names.
+// Valid: two to six model names, each of its own weekly-limit family.
 func (s ModelStepSetting) Valid() bool {
 	if len(s.Models) < 2 || len(s.Models) > 6 {
 		return false
 	}
 	seen := map[string]bool{}
 	for _, m := range s.Models {
-		if !modelName.MatchString(m) || seen[m] {
+		f := ModelFamily(m)
+		if !modelName.MatchString(m) || f == "" || seen[f] {
 			return false
 		}
-		seen[m] = true
+		seen[f] = true
 	}
 	return true
 }
 
-// ModelStep is a step-down in force.
+// ModelFamily is the model's weekly-limit family: the name a provider's
+// per-model window uses (Claude's seven_day_<family>): the first part of the
+// name that is not the provider's own ("claude-opus-5-5" is opus,
+// "sonnet-4" is sonnet). Two models of one family share that window, so a
+// step-down order holds at most one of each, and a window's model is
+// matched to the family exactly.
+func ModelFamily(m string) string {
+	for _, p := range strings.FieldsFunc(strings.ToLower(m), func(r rune) bool { return r == '-' || r == '_' || r == '.' || r == ':' || r == '/' }) {
+		if p == "claude" || p == "anthropic" || p == "" || (p[0] >= '0' && p[0] <= '9') {
+			continue
+		}
+		return p
+	}
+	return ""
+}
+
+// ModelStep is a step-down in force, or one that failed for this window.
 type ModelStep struct {
 	From     string    `json:"from"`
 	To       string    `json:"to"`
 	Window   string    `json:"window"`
 	ResetsAt time.Time `json:"resetsAt"`
 	At       time.Time `json:"at"`
+	// Failed: the model could not be changed. It is not tried again until
+	// the window resets; Failure says why, in fixed words.
+	Failed  bool   `json:"failed,omitempty"`
+	Failure string `json:"failure,omitempty"`
+}
+
+// ModelStepNoteName holds the one line the agent is told with its next
+// message after its model was changed, so it knows which model it is on and
+// why.
+const ModelStepNoteName = "model-step-note.json"
+
+// ModelStepNote is that line, until it is sent.
+type ModelStepNote struct {
+	Text string    `json:"text"`
+	At   time.Time `json:"at"`
+}
+
+// LoadModelStepNote reads the line; nil, nil when there is none.
+func LoadModelStepNote(stateDir string) (*ModelStepNote, error) {
+	var n ModelStepNote
+	found, err := loadSmallRecord(stateDir, ModelStepNoteName, &n)
+	if err != nil || !found {
+		return nil, err
+	}
+	return &n, nil
+}
+
+// SaveModelStepNote replaces the line, or removes it when n is nil.
+func SaveModelStepNote(stateDir string, n *ModelStepNote) error {
+	if n == nil {
+		return removeRecord(stateDir, ModelStepNoteName)
+	}
+	return saveSmallRecord(stateDir, ModelStepNoteName, n)
 }
 
 // LoadModelStepSetting reads the setting; nil, nil when step-down is off.

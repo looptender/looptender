@@ -27,11 +27,12 @@ const (
 	noticeInstall    = "install"         // an install was adopted or refused
 	noticeDisk       = "disk"            // the state volume is low or critical
 	noticeBound      = "bound"           // a deadline or send limit was reached
+	noticeModelStep  = "model_step"      // a conversation was stepped down a model, or could not be
 )
 
 // noticeKinds is every kind, for settings. Kinds a person is pushed by
 // default are in noticeDefaultOn; the rest are listed but quiet.
-var noticeKinds = []string{noticeNeedsYou, noticeLimit, noticeSupervisor, noticeLane, noticeHold, noticeInstall, noticeDisk, noticeBound}
+var noticeKinds = []string{noticeNeedsYou, noticeLimit, noticeSupervisor, noticeLane, noticeHold, noticeInstall, noticeDisk, noticeBound, noticeModelStep}
 var noticeDefaultOn = map[string]bool{noticeNeedsYou: true, noticeLimit: true, noticeSupervisor: true}
 
 // Severities: urgent (an agent asked a question), high, normal, info.
@@ -140,6 +141,17 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 	checked := time.Time{}
 	if l.LastCheck.At != nil {
 		checked = *l.LastCheck.At
+	}
+	if v := l.ModelStep; v != nil && v.InForce != nil {
+		s := v.InForce
+		n := panelNotice{Kind: noticeModelStep, Severity: sevInfo, Since: s.At, ID: noticeID(noticeModelStep, l.Key, s.At, ""), Group: noticeModelStep + ".down",
+			Text: name + " runs on a weaker model until a one-model weekly limit resets " + noticeTime(s.ResetsAt) + ".", GroupText: "{n} loops run on a weaker model until a one-model weekly limit resets.",
+			EndText: name + " is back on its stronger model, or was moved off the weaker one."}
+		if s.Failed {
+			n.Severity, n.Group, n.ID = sevNormal, noticeModelStep+".failed", noticeID(noticeModelStep, l.Key, s.At, "failed")
+			n.Text, n.GroupText, n.EndText = name+" could not step down a model at a one-model weekly limit; it waits for the reset "+noticeTime(s.ResetsAt)+".", "{n} loops could not step down a model at a one-model weekly limit.", ""
+		}
+		add(n)
 	}
 	if w := l.Waiting; w != nil && needs {
 		since := time.Time{}
