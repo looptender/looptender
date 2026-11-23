@@ -195,7 +195,7 @@ public enum MenuCommand: Equatable {
     /// settings. Only a known kind.
     case notifySet(kind: String, on: Bool)
     /// Runs `keepgoing panel notify heartbeat`: records that the menu runs.
-    case notifyHeartbeat(notifying: Bool)
+    case notifyHeartbeat(notifying: Bool, pid: Int32)
     /// Relaunches the menu from the installed build. Runs no CLI command.
     case relaunchMenu
     /// Turns "Update the menu automatically" on or off. Runs no CLI command.
@@ -605,7 +605,7 @@ public enum MenuBuilder {
             return arguments + ["--json"]
         case .notifySet(let kind, let on):
             return NoticeKinds.all.contains { $0.kind == kind } ? ["panel", "notify", "set", "--kind", kind, on ? "--on" : "--off"] : nil
-        case .notifyHeartbeat(let notifying): return ["panel", "notify", "heartbeat", "--notifying=" + (notifying ? "true" : "false")]
+        case .notifyHeartbeat(let notifying, let pid): return pid > 0 ? ["panel", "notify", "heartbeat", "--notifying=" + (notifying ? "true" : "false"), "--pid=" + String(pid)] : nil
         case .quit, .relaunchMenu, .toggleAutoUpdate, .toggleNoticeKind: return nil
         }
     }

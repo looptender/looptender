@@ -42,6 +42,10 @@ type notifyMenuBeat struct {
 	Version   int       `json:"version"`
 	At        time.Time `json:"at"`
 	Notifying bool      `json:"notifying"`
+	// PID is the menu process that wrote it. A menu that is quitting says it is
+	// not notifying only if the file is still its own, so a late write from the
+	// old menu never overwrites the first beat of the menu that replaced it.
+	PID int `json:"pid,omitempty"`
 }
 
 // notifyState is what a reader needs: the resolved settings and whether the
@@ -143,8 +147,14 @@ func setNotify(dir, kind string, browser *bool, on bool, now time.Time) error {
 	return notifyWrite(dir, notifySettingsFile, s)
 }
 
-func notifyBeat(dir string, notifying bool, now time.Time) error {
-	return notifyWrite(dir, notifyMenuFile, notifyMenuBeat{Version: 1, At: now.UTC(), Notifying: notifying})
+func notifyBeat(dir string, notifying bool, pid int, now time.Time) error {
+	if !notifying && pid > 0 {
+		var cur notifyMenuBeat
+		if notifyRead(dir, notifyMenuFile, &cur) && cur.PID != 0 && cur.PID != pid {
+			return nil // another menu has written since: it is not this one's to retract
+		}
+	}
+	return notifyWrite(dir, notifyMenuFile, notifyMenuBeat{Version: 1, At: now.UTC(), Notifying: notifying, PID: pid})
 }
 
 // panelNotifyCommand is `panel notify set|heartbeat`, the menu's way to write
@@ -175,11 +185,12 @@ func panelNotifyCommand(e env, args []string) int {
 		}
 	case "heartbeat":
 		notifying := fs.Bool("notifying", true, "")
+		pid := fs.Int("pid", 0, "")
 		if fs.Parse(args[1:]) != nil || fs.NArg() != 0 {
 			return usage()
 		}
 		dir = panelClientsDir(*panelDir)
-		if notifyBeat(dir, *notifying, time.Now()) != nil {
+		if *pid < 0 || notifyBeat(dir, *notifying, *pid, time.Now()) != nil {
 			e.errf("panel notify: could not save")
 			return exitFailed
 		}

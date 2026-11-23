@@ -588,14 +588,17 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Read the permission now: the person may have changed it in System Settings.
         notifier.refreshPermission()
         let notifying = HeartbeatPolicy.notifying(running: running, canPost: notifier.canPost, permission: notifier.permission)
-        DispatchQueue.global(qos: .utility).async { [client] in try? client.open(.notifyHeartbeat(notifying: notifying)) }
+        let pid = ProcessInfo.processInfo.processIdentifier
+        DispatchQueue.global(qos: .utility).async { [client] in try? client.open(.notifyHeartbeat(notifying: notifying, pid: pid)) }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Not waiting: a menu that quits is stale in a few minutes anyway.
-        let process = Process()
-        _ = process
-        try? client.open(.notifyHeartbeat(notifying: false))
+        // Said once, in this process, before it exits (the app is ending, so this
+        // one call is made here and waited for). It carries this menu's pid, so
+        // it takes effect only if the heartbeat file is still this menu's: a menu
+        // that replaced this one has written since, and is not retracted.
+        let pid = ProcessInfo.processInfo.processIdentifier
+        try? client.open(.notifyHeartbeat(notifying: false, pid: pid))
     }
 
     func refresh() {

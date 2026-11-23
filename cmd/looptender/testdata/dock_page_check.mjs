@@ -293,6 +293,11 @@ async function notifyScenario(label, setup) {
   const box = [...area().querySelectorAll("input[type=checkbox]")].find((c) => /disk/i.test(c.parentNode.textContent));
   box.checked = true; box.dispatchEvent(new w.Event("change")); await settle();
   if (!env.saved.some((x) => x.kind === "disk" && x.on === true)) t.fail("the choice was not saved: " + JSON.stringify(env.saved));
+  // The host kind (this computer's session or load) is offered and on by default; it can be turned off.
+  const hostBox = [...area().querySelectorAll("input[type=checkbox]")].find((c) => /session or load/.test(c.parentNode.textContent));
+  if (!hostBox) t.fail("the host kind is not offered in the settings");
+  else if (!hostBox.checked) t.fail("the host kind is not on by default");
+  else { hostBox.checked = false; hostBox.dispatchEvent(new w.Event("change")); await settle(); if (!env.saved.some((x) => x.kind === "host" && x.on === false)) t.fail("the host choice was not saved"); }
   w.close();
   for (const e of t.errors) failures.push("notices: " + e);
   // The reload: a new page against the same shared state remembers the choice and the browser opt-in.
