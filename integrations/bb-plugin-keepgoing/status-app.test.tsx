@@ -25,7 +25,7 @@ test("card shows completion and evidence; failed refresh labels retained data an
     assert.match(title, /running supervisor not confirmed/); assert.match(title, /Last sent: unavailable/);
     // A held loop says where a person resumes it; the plugin offers no Resume.
     assert.ok(ui.getByText(/A person resumes this from an ordinary terminal/)); assert.equal(ui.queryByRole("button", { name: "Resume" }), null);
-    assert.ok(ui.getByText('keepgoing resume -c "/private/example/keepgoing.yaml"'));
+    assert.ok(ui.getByText('looptender resume -c "/private/example/keepgoing.yaml"'));
     phase = "lost"; await ui.behavior.emitRealtime("changed", {});
     await ui.findByRole("alert"); assert.ok(ui.getByText(/previous snapshot/));
     assert.equal(ui.queryByText(/A person resumes this from an ordinary terminal/), null);

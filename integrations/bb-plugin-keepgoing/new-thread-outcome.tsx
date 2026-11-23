@@ -82,6 +82,7 @@ export function NewThreadOutcome({ threadId, outcome, controlState, supervising,
         {outcome.bounds && <><dt>Limits</dt><dd>{boundsPhrase(outcome.bounds)}</dd></>}
       </dl>
       {!started && <p className="help">{outcome.message}</p>}
+      {started && <p className="help">Next: nothing to do. looptender now checks on its own; use Pause or Stop here to hold it.</p>}
       {!started && <div className="actions">
         <p className="help">Starting enables the loop and launches a background supervisor on this thread’s host. It may prompt the agent when eligible. Other timers are not detected or changed.</p>
         <div className="row"><button type="button" className="btn primary" disabled={busy} onClick={act}>Start background supervision</button></div></div>}

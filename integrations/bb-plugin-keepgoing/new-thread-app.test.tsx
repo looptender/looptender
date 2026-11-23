@@ -103,3 +103,15 @@ test("the banner summary names setup that is under way or could not go ahead; an
   const ordinary = renderSlot({ component: segment.summary }, props("thr_ordinary"), { rpc: { forThread: () => ({ loops: [], errors: [] }), newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }) } });
   try { await ordinary.findByRole("button", { name: "Add to Looptender" }); } finally { ordinary.lifecycle.unmount(); cleanup(); }
 });
+
+test("the send-menu row says what is true about a plain Send, and the card's entry button gets the phone target", async () => {
+  const c = app.composerCustomizations[0]!;
+  const d = c.sendMenu![0]!.description ?? "";
+  assert.match(d, /without sending/); assert.match(d, /plain Send still sends with no looptender/); assert.ok(!/nothing is sent/i.test(d));
+  const ui = renderSlot(app.threadContextCardRows[0]!, { threadId: "thr_entry", projectId: "proj_example", environment: null }, { rpc: { forThread: () => ({ loops: [], errors: [] }), newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }) } });
+  try {
+    const entry = await ui.findByRole("button", { name: "Add to Looptender" });
+    assert.ok(entry.classList.contains("kgs-chip"));
+    assert.match(ui.container.querySelector("style")?.textContent ?? "", /\.kgs-chip\{min-height:44px !important/);
+  } finally { ui.lifecycle.unmount(); cleanup(); }
+});

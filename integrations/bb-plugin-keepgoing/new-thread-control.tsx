@@ -130,12 +130,12 @@ export function KeepGoingBanner({ composer, call }: { composer: ComposerHandle; 
     <SetupStyles />
     <div className="card">
       <h4>Add the new thread to Looptender</h4>
-      <p>{sendEffect(mode)}</p>
+      <p id={`kgs-effect-${key}`}>{sendEffect(mode)}</p>
       <p className="help">{mode === "automatic" ? "Supervision starts once the thread exists. If anything about the start is uncertain, the setup is left switched off with the reason." : "Nothing runs until you start it from the new thread."}</p>
       <p className="help">{boundsPhrase(draft.bounds)}</p>
       <div className="actions">
         <div className="row">
-          <button type="button" className="btn primary" disabled={busy || blocked} title={blocked ? composer.submittingBlockedReason ?? sendEffect(mode) : sendEffect(mode)} onClick={() => void send()}>{sendLabel(mode)}</button>
+          <button type="button" className="btn primary" aria-describedby={`kgs-effect-${key}`} disabled={busy || blocked} title={blocked ? composer.submittingBlockedReason ?? sendEffect(mode) : sendEffect(mode)} onClick={() => void send()}>{sendLabel(mode)}</button>
           <button type="button" className="btn" disabled={busy} onClick={() => setDraft(key, { on: false, notice: "", bounds: DEFAULT_BOUNDS })}>Turn off</button>
         </div>
         <span className="help">A plain Enter sends without looptender.</span>

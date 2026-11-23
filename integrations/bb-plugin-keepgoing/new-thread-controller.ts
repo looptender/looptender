@@ -132,7 +132,7 @@ export function createNewThreadController(d: NewThreadDependencies) {
       if (!created.ok || !created.record) {
         // Creation was asked for and not confirmed: something may exist on the
         // host. Say what and where, so it is not left behind unseen.
-        fail(job, `${created.message || "Setup could not be confirmed."} A switched-off setup named ${attempted.loop} may exist on this thread's host and was not started. Check it there with keepgoing status -c (looptender's command in releases up to v0.2.0) on the path below; to discard it, delete its directory.`, attempted);
+        fail(job, `${created.message || "Setup could not be confirmed."} A switched-off setup named ${attempted.loop} may exist on this thread's host and was not started. Check it there with looptender status -c (installed as keepgoing in releases up to v0.2.0) on the path below; to discard it, delete its directory.`, attempted);
         return;
       }
       const l = preview.plan.limits;
@@ -162,7 +162,7 @@ export function createNewThreadController(d: NewThreadDependencies) {
       }
     } catch {
       fail(job, attempted
-        ? `Setup could not complete. A switched-off setup named ${attempted.loop} may exist on this thread's host and was not started. Check it there with keepgoing status -c (looptender's command in releases up to v0.2.0) on the path below; to discard it, delete its directory.`
+        ? `Setup could not complete. A switched-off setup named ${attempted.loop} may exist on this thread's host and was not started. Check it there with looptender status -c (installed as keepgoing in releases up to v0.2.0) on the path below; to discard it, delete its directory.`
         : "Setup could not complete. Nothing was created or started.", attempted);
     } finally { job.task = ""; d.changed(); }
   };

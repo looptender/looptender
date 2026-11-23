@@ -331,3 +331,38 @@ test("an invalid loop name is said next to the field and cannot be previewed", a
   } finally { cleanup(); }
 });
 
+
+test("the finished card carries its own message and a next action, and choices are described by their helper text", async () => {
+  const call = async (input: { action: string }): Promise<SetupResult> => {
+    if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket" };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [] };
+    if (input.action === "start") return { ok: true, message: "Background supervision started", record, canStart: false, started: true, checks: [] };
+    return { ok: true, message: "Nothing set up yet" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Nothing set up yet");
+    for (const name of ["Keep this conversation going", "Write my own task", "Record a goal for this task"]) {
+      const input = ui.getByRole(name === "Record a goal for this task" ? "checkbox" : "radio", { name });
+      const ids = (input.getAttribute("aria-describedby") ?? "").split(" ");
+      assert.ok(ids[0] && document.getElementById(ids[0]!)?.textContent, `${name} is described by its helper text`);
+    }
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" })); await ui.findByRole("button", { name: "Create setup" });
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" })); await ui.findByText("Saved disabled");
+    assert.ok(ui.getByText("Saved disabled").closest(".card.done"), "the message is inside the finished card, not below the diagnostics");
+    fireEvent.click(ui.getByRole("button", { name: "Start background supervision" })); await ui.findByText("Supervision started");
+    assert.ok(ui.getByText(/Next: nothing to do\. looptender now checks on its own; use Pause or Stop/));
+  } finally { cleanup(); }
+});
+
+test("focus rings and error text meet the contrast the form needs in both themes", async () => {
+  const { SetupStyles } = await import("./setup-style.tsx");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const css = renderToStaticMarkup(<SetupStyles />);
+  const lum = (hex: string) => { const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4); return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]!; };
+  const ratio = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x! + 0.05) / (y! + 0.05); };
+  const ring = /outline:2px solid (#[0-9a-f]{6})/.exec(css)?.[1]; assert.ok(ring, "an explicit ring colour");
+  assert.ok(ratio(ring!, "#ffffff") >= 3, "light"); assert.ok(ratio(ring!, "#1b1b1d") >= 3, "dark");
+  assert.ok(!/outline:2px solid Highlight/.test(css));
+  assert.match(css, /\.kgs-chip\{min-height:44px !important/);
+});

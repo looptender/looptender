@@ -97,13 +97,14 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
           <div className="row"><button type="button" className="btn primary" disabled={busy} onClick={() => void act("start")}>Start background supervision</button></div>
         </div>}
         {result.canStart && hideStart && <p className="help">Next: start it with the looptender control at the top of this thread.</p>}
+        {started && <p className="help">Next: nothing to do. looptender now checks on its own; use Pause or Stop in the looptender controls on this thread to hold it.</p>}
         <div className="actions"><div className="row"><button type="button" className="btn" disabled={busy} onClick={() => void act("inspect")}>Refresh diagnostics</button></div></div>
+        {message}
       </div>
       {result.checks && <details><summary>Diagnostics ({result.checks.length})</summary>
         <ul>{result.checks.map((c, i) => <li key={`${c.id}-${i}`}>{c.status}: {c.message}{c.fix && ` ${c.fix}`}</li>)}</ul>
       </details>}
       {busy && <p role="status" className="help">Checking…</p>}
-      {message}
     </section>;
   }
   const busyText = pending === "preview" ? "Previewing: this usually takes about 10 seconds and creates nothing." : pending === "create" ? "Creating the setup…" : "Checking setup…";
@@ -120,12 +121,12 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
     </div>
     <fieldset>
       <legend>What should the loop keep going?</legend>
-      <label className="choice" data-checked={mode === "conversation"} data-disabled={busy}><input type="radio" name="setup-mode" aria-label="Keep this conversation going" checked={mode === "conversation"} disabled={busy} onChange={() => { setChosen("conversation"); edit(); }} />
+      <label className="choice" data-checked={mode === "conversation"} data-disabled={busy}><input type="radio" name="setup-mode" aria-label="Keep this conversation going" aria-describedby={`kgs-h-conv-${threadId}`} checked={mode === "conversation"} disabled={busy} onChange={() => { setChosen("conversation"); edit(); }} />
         <span className="t">Keep this conversation going</span>
-        <span className="help">Continues the work already under way here, following your latest instructions, and stops for you when it needs you. The plugin reads nothing from the conversation.</span></label>
-      <label className="choice" data-checked={mode === "own"} data-disabled={busy}><input type="radio" name="setup-mode" aria-label="Write my own task" checked={mode === "own"} disabled={busy} onChange={() => { setChosen("own"); edit(); }} />
+        <span className="help" id={`kgs-h-conv-${threadId}`}>Continues the work already under way here, following your latest instructions, and stops for you when it needs you. The plugin reads nothing from the conversation.</span></label>
+      <label className="choice" data-checked={mode === "own"} data-disabled={busy}><input type="radio" name="setup-mode" aria-label="Write my own task" aria-describedby={`kgs-h-own-${threadId}`} checked={mode === "own"} disabled={busy} onChange={() => { setChosen("own"); edit(); }} />
         <span className="t">Write my own task</span>
-        <span className="help">Give the loop its own task and completion criteria.</span></label>
+        <span className="help" id={`kgs-h-own-${threadId}`}>Give the loop its own task and completion criteria.</span></label>
       {empty && chosen === undefined && <p className="help">This thread may not have started yet, so there may be nothing to continue. Write a task.</p>}
       {mode === "conversation"
         ? <div className="field"><label htmlFor={`kgs-note-${threadId}`}>Anything to add? <span className="help">(optional, one line)</span></label>
@@ -135,15 +136,15 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
     </fieldset>
     <fieldset>
       <legend>Options</legend>
-      <label className="choice" data-checked={withGoal} data-disabled={busy}><input type="checkbox" aria-label="Record a goal for this task" checked={withGoal} disabled={busy} onChange={e => { setWithGoal(e.target.checked); edit(); }} />
+      <label className="choice" data-checked={withGoal} data-disabled={busy}><input type="checkbox" aria-label="Record a goal for this task" aria-describedby={`kgs-h-goal-${threadId}`} checked={withGoal} disabled={busy} onChange={e => { setWithGoal(e.target.checked); edit(); }} />
         <span className="t">Record a goal for this task</span>
-        <span className="help">{withGoal ? "The loop name becomes the goal title. The task is saved once in a private file and future prompts share a short reference to the goal." : "The task is copied into the wake instructions without a goal record."}</span></label>
-      {standardRoutes && <label className="choice" data-checked={followStandard} data-disabled={busy}><input type="checkbox" aria-label="Follow my standard route list for handoffs" checked={followStandard} disabled={busy} onChange={e => { setFollowStandard(e.target.checked); edit(); }} />
+        <span className="help" id={`kgs-h-goal-${threadId}`}>{withGoal ? "The loop name becomes the goal title. The task is saved once in a private file and future prompts share a short reference to the goal." : "The task is copied into the wake instructions without a goal record."}</span></label>
+      {standardRoutes && <label className="choice" data-checked={followStandard} data-disabled={busy}><input type="checkbox" aria-label="Follow my standard route list for handoffs" aria-describedby={`kgs-h-std-${threadId}`} checked={followStandard} disabled={busy} onChange={e => { setFollowStandard(e.target.checked); edit(); }} />
         <span className="t">Follow my standard route list for handoffs</span>
-        <span className="help">On a rate limit the loop hands off to the routes of your standard list that apply to this thread. The preview names them.</span></label>}
-      {offer && !following && <label className="choice" data-checked={takeover === "on"} data-disabled={busy}><input type="checkbox" aria-label="Take over on a usage limit" checked={takeover === "on"} disabled={busy} onChange={e => { setTakeover(e.target.checked ? "on" : "off"); edit(); }} />
+        <span className="help" id={`kgs-h-std-${threadId}`}>On a rate limit the loop hands off to the routes of your standard list that apply to this thread. The preview names them.</span></label>}
+      {offer && !following && <label className="choice" data-checked={takeover === "on"} data-disabled={busy}><input type="checkbox" aria-label="Take over on a usage limit" aria-describedby={`kgs-h-take-${threadId}`} checked={takeover === "on"} disabled={busy} onChange={e => { setTakeover(e.target.checked ? "on" : "off"); edit(); }} />
         <span className="t">On a usage limit, start a new conversation on {offer.provider} ({offer.model}) that takes over</span>
-        <span className="help">Another provider is usable. You can turn this off.</span></label>}
+        <span className="help" id={`kgs-h-take-${threadId}`}>Another provider is usable. You can turn this off.</span></label>}
     </fieldset>
     {!result?.plan && <div className="actions">
       <div className="row"><button type="button" className="btn primary" disabled={busy || taskNeeded || !nameOk} aria-describedby={taskNeeded ? `kgs-why-${threadId}` : undefined} onClick={() => void act("preview")}>Preview setup</button></div>
