@@ -43,8 +43,11 @@ type clientSnapshot struct {
 	// Freshness is the daemon's build against the installed one, in the
 	// words the dock and the menu use; absent when it does not answer or
 	// reports no build. In every mode: labels only, no path.
-	Freshness         *buildFreshness `json:"freshness,omitempty"`
-	ExternalScheduler string          `json:"externalScheduler"`
+	Freshness *buildFreshness `json:"freshness,omitempty"`
+	// DiskSpace is set when the volume that holds the loop's state is
+	// filling or nearly full.
+	DiskSpace         *dockDiskSpace `json:"diskSpace,omitempty"`
+	ExternalScheduler string         `json:"externalScheduler"`
 }
 type clientControls struct {
 	Enabled      bool `json:"enabled"`
@@ -351,6 +354,9 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 	{
 		rec, _ := loadAdoptRecord(entry.StateDir)
 		s.Freshness = deriveBuildFreshness(s.Daemon, rec, version, installedBuildTime(), now, freshContextOfSnapshot(s))
+	}
+	if d := describeDiskSpace(entry.StateDir); d.lowDisk() {
+		s.DiskSpace = &dockDiskSpace{Level: d.Level, Message: d.Message, AvailableBytes: d.AvailableBytes, TotalBytes: d.TotalBytes}
 	}
 	// After the daemon is asked: one that ran the last check and is still
 	// running means the computer slept.

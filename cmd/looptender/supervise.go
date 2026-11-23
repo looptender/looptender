@@ -312,6 +312,12 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 	var disk *diskWatch
 	if !dryRun {
 		disk = &diskWatch{}
+		if adopter != nil && adopter.diskSeed != nil {
+			disk = adopter.diskSeed // the episode the build before this one was in
+		}
+		if adopter != nil {
+			adopter.disk = disk
+		}
 	}
 	// stopDone is the control signature of the last saved stop this daemon
 	// saw carried out, so the fast retry below is for a stop still to do.

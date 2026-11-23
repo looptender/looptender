@@ -76,7 +76,11 @@ type dockReport struct {
 	Lede string `json:"lede"`
 	// Worth are loops that do not need a person but are not routine.
 	Worth []dockWorth `json:"worth"`
-	Loops []dockLoop  `json:"loops"`
+	// Volumes is one notice for each volume holding loops' state that is
+	// filling or nearly full, said once for all the loops on it; absent
+	// when none is.
+	Volumes []dockVolume `json:"volumes,omitempty"`
+	Loops   []dockLoop   `json:"loops"`
 	// Routes is the same data grouped by route: a model on an account at an
 	// effort level, as configured. Each loop's chain entries name their
 	// route by key, so the views are one feed.
@@ -214,6 +218,9 @@ type dockNeed struct {
 type dockLoop struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
+	// DiskSpace is set when the volume that holds the loop's state is
+	// filling or nearly full (the reading status gives).
+	DiskSpace *dockDiskSpace `json:"diskSpace,omitempty"`
 	// LoopArg is "--loop NAME" with the loop's registered name quoted for a
 	// shell, for the commands the loop page shows to copy. It is absent when
 	// the name is longer than a page shows in full, so a clipped name never
@@ -1271,6 +1278,11 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 	statuses := make(map[string]*statusOut, len(inputs))
 	for _, in := range inputs {
 		loop, need := projectDockLoop(in, now, staleAfter, identifiers)
+		if in.Status != nil && in.Status.DiskSpace.lowDisk() {
+			d := in.Status.DiskSpace
+			loop.DiskSpace = &dockDiskSpace{Level: d.Level, Message: d.Message, AvailableBytes: d.AvailableBytes, TotalBytes: d.TotalBytes}
+			r.Volumes = dockAddVolume(r.Volumes, d, loop.Key)
+		}
 		r.Loops = append(r.Loops, loop)
 		statuses[loop.Key] = in.Status
 		if need != nil {
@@ -2754,6 +2766,39 @@ func dockCheckedByOf(snap *clientSnapshot, st *statusOut, serviceFile string) do
 		return dockCheckedBy{"none", "Not checked yet."}
 	}
 	return dockCheckedBy{"none", "Nothing on record checks it."}
+}
+
+// dockDiskSpace is a loop's filling or nearly full volume.
+type dockDiskSpace struct {
+	Level          string `json:"level"` // low or critical
+	Message        string `json:"message"`
+	AvailableBytes uint64 `json:"availableBytes"`
+	TotalBytes     uint64 `json:"totalBytes"`
+}
+
+// dockVolume is one volume that holds loops' state and is filling or nearly
+// full, with the loops on it.
+type dockVolume struct {
+	dockDiskSpace
+	Loops []string `json:"loops"` // their keys
+	id    string
+}
+
+// dockAddVolume adds a loop to its volume's notice. Loops whose volume
+// cannot be named get a notice each.
+func dockAddVolume(vs []dockVolume, d diskSpaceStatus, key string) []dockVolume {
+	if d.volume != "" {
+		for i := range vs {
+			if vs[i].id == d.volume {
+				vs[i].Loops = append(vs[i].Loops, key)
+				if d.AvailableBytes < vs[i].AvailableBytes { // read moments apart: the lowest is shown
+					vs[i].dockDiskSpace = dockDiskSpace{Level: d.Level, Message: d.Message, AvailableBytes: d.AvailableBytes, TotalBytes: d.TotalBytes}
+				}
+				return vs
+			}
+		}
+	}
+	return append(vs, dockVolume{dockDiskSpace: dockDiskSpace{Level: d.Level, Message: d.Message, AvailableBytes: d.AvailableBytes, TotalBytes: d.TotalBytes}, Loops: []string{key}, id: d.volume})
 }
 
 // dockNoteState is the state as the wording about tests and routes reads it: a
