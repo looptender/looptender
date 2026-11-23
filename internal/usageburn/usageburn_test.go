@@ -39,7 +39,13 @@ func TestProjectAtTheWindowsRate(t *testing.T) {
 	if p, ok := Project(Reading{UsedPercent: 20, ResetsAt: reset}, start.Add(96*time.Hour)); !ok || p.BeforeReset {
 		t.Fatalf("%+v %v", p, ok)
 	}
-	for name, at := range map[string]time.Time{"first hour": start.Add(30 * time.Minute), "after reset": reset.Add(time.Minute)} {
+	// Early in a window a little use would project a run-out far too soon:
+	// 8% in its first hour reads as 12 h left. Nothing is projected before
+	// MinElapsed.
+	if _, ok := Project(Reading{UsedPercent: 8, ResetsAt: reset}, start.Add(61*time.Minute)); ok {
+		t.Fatal("projected from the window's first hour")
+	}
+	for name, at := range map[string]time.Time{"first hour": start.Add(30 * time.Minute), "before the floor": start.Add(MinElapsed - time.Minute), "after reset": reset.Add(time.Minute)} {
 		if _, ok := Project(Reading{UsedPercent: 10, ResetsAt: reset}, at); ok {
 			t.Fatalf("%s projected", name)
 		}

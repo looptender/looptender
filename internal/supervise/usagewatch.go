@@ -28,10 +28,23 @@ type usageWarning struct {
 // conversation, on a check that observed it; never on a dry run. It reads no
 // lane and changes nothing but its own record.
 func (t *tick) usageWatchObservation() bool {
-	w := t.loop.UsageWatch
-	if w == nil || t.opts.DryRun || t.opts.UsageRead == nil || t.res.Target != state.Primary {
+	if t.opts.DryRun || t.opts.UsageRead == nil || t.res.Target != state.Primary {
 		return false
 	}
+	// Only a loop that could be woken: nothing is read for one that is off,
+	// paused, stopped, waiting for a person or finished.
+	if c := t.ctl; !c.Enabled || c.SupersededBy != "" || c.Paused || c.Stop || c.AwaitingUser || c.Completed {
+		return false
+	}
+	w, err := state.LoadUsageWatchSetting(t.loop.StateDir)
+	if err != nil {
+		t.warn("the usage watch setting could not be read: %v", err)
+		return false
+	}
+	if w == nil {
+		return false
+	}
+	every, warnWithin, _ := w.Durations()
 	rec, err := state.LoadUsageWatch(t.loop.StateDir)
 	if err != nil {
 		t.warn("the usage watch record could not be read: %v", err)
@@ -40,12 +53,12 @@ func (t *tick) usageWatchObservation() bool {
 	if rec == nil || rec.Account != w.Account {
 		rec = &state.UsageWatch{Account: w.Account}
 	}
-	if (rec.CheckedAt.IsZero() || t.now.Sub(rec.CheckedAt) >= w.Every.Duration || rec.CheckedAt.After(t.now)) && t.left() > 10*time.Second {
+	if (rec.CheckedAt.IsZero() || t.now.Sub(rec.CheckedAt) >= every || rec.CheckedAt.After(t.now)) && t.left() > 10*time.Second {
 		t.usageRead(rec)
 	}
 	t.usageView = rec
-	if rec.ExhaustsAt.IsZero() || !t.now.Before(rec.ResetsAt) || rec.WarnedFor.Equal(rec.ResetsAt) ||
-		t.now.Sub(rec.ReadAt) > 2*w.Every.Duration || rec.ExhaustsAt.Sub(t.now) > w.WarnWithin.Duration {
+	if rec.ExhaustsAt.IsZero() || !t.now.Before(rec.ResetsAt) || rec.Warned(rec.ResetsAt) ||
+		t.now.Sub(rec.ReadAt) > 2*every || rec.ExhaustsAt.Sub(t.now) > warnWithin {
 		return false
 	}
 	t.usageWarn = &usageWarning{rec: *rec, text: prompt.UsageWarning{
@@ -72,9 +85,6 @@ func (t *tick) usageRead(rec *state.UsageWatch) {
 		}
 	}
 	if rec.Reason == "" {
-		if !rec.ResetsAt.Equal(r.ResetsAt) && !rec.WarnedFor.Equal(r.ResetsAt) {
-			rec.WarnedFor = time.Time{}
-		}
 		rec.ReadAt, rec.Bucket, rec.UsedPercent, rec.ResetsAt = t.now, r.Bucket, r.UsedPercent, r.ResetsAt
 		rec.PercentPerHour, rec.ExhaustsAt = 0, time.Time{}
 		if p, ok := usageburn.Project(r, t.now); ok {

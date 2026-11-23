@@ -60,13 +60,17 @@ type Projection struct {
 	BeforeReset bool
 }
 
+// MinElapsed is how much of the window must have passed before it is
+// projected: early in a window a little use projects a run-out far too soon.
+const MinElapsed = 12 * time.Hour
+
 // Project computes the projection at now. False when it cannot be told:
-// the window began less than an hour ago, is not running, or nothing of it
-// is used yet.
+// less than MinElapsed of the window has passed, it is not running, or
+// nothing of it is used yet.
 func Project(r Reading, now time.Time) (Projection, bool) {
 	start := r.ResetsAt.Add(-week)
 	elapsed := now.Sub(start)
-	if elapsed < time.Hour || !now.Before(r.ResetsAt) || r.UsedPercent <= 0 || r.UsedPercent > 100 || math.IsNaN(r.UsedPercent) {
+	if elapsed < MinElapsed || !now.Before(r.ResetsAt) || r.UsedPercent <= 0 || r.UsedPercent > 100 || math.IsNaN(r.UsedPercent) {
 		return Projection{}, false
 	}
 	rate := r.UsedPercent / elapsed.Hours()

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/accounts"
-	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/state"
 	"github.com/looptender/looptender/internal/usageburn"
 )
@@ -42,21 +41,22 @@ type usageBurnView struct {
 	Warned      bool      `json:"warned,omitempty"`
 }
 
-func describeUsageBurn(l config.Loop, now time.Time) *usageBurnView {
-	w := l.UsageWatch
-	if w == nil {
+func describeUsageBurn(stateDir string, now time.Time) *usageBurnView {
+	w, err := state.LoadUsageWatchSetting(stateDir)
+	if err != nil || w == nil {
 		return nil
 	}
-	rec, err := state.LoadUsageWatch(l.StateDir)
+	every, _, _ := w.Durations()
+	rec, err := state.LoadUsageWatch(stateDir)
 	if err != nil || rec == nil || rec.Account != w.Account || rec.ExhaustsAt.IsZero() || !now.Before(rec.ResetsAt) ||
-		rec.ReadAt.After(now) || now.Sub(rec.ReadAt) > 2*w.Every.Duration {
+		rec.ReadAt.After(now) || now.Sub(rec.ReadAt) > 2*every {
 		return nil
 	}
 	h := usageburn.Hours(rec.ExhaustsAt, now)
 	if !now.Before(rec.ExhaustsAt) {
 		h = 0
 	}
-	v := &usageBurnView{UsedPercent: int(rec.UsedPercent), Hours: h, ExhaustsAt: rec.ExhaustsAt, ResetsAt: rec.ResetsAt, ReadAt: rec.ReadAt, Warned: rec.WarnedFor.Equal(rec.ResetsAt)}
+	v := &usageBurnView{UsedPercent: int(rec.UsedPercent), Hours: h, ExhaustsAt: rec.ExhaustsAt, ResetsAt: rec.ResetsAt, ReadAt: rec.ReadAt, Warned: rec.Warned(rec.ResetsAt)}
 	v.Words = fmt.Sprintf("At this rate the weekly window is used up in about %d h, before it resets.", h)
 	if h == 0 {
 		v.Words = "At this rate the weekly window is used up now, before it resets."

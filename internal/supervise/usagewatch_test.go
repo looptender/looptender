@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/accounts"
-	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/decide"
 	"github.com/looptender/looptender/internal/state"
 )
@@ -38,7 +38,9 @@ func (u *usageReads) read(_ context.Context, account string) (accounts.QuotaView
 
 func usageWorld(t *testing.T, obs decide.Observation) (*world, *fakeAdapter, *usageReads) {
 	w := newWorld(t, true, false)
-	w.cfg.Loop.UsageWatch = &config.UsageWatch{Account: "example-claude-a", Every: config.Duration{Duration: 30 * time.Minute}, WarnWithin: config.Duration{Duration: 12 * time.Hour}}
+	if err := state.SaveUsageWatchSetting(w.dir, &state.UsageWatchSetting{Account: "example-claude-a", Every: "30m", WarnWithin: "12h", SetAt: t0}); err != nil {
+		t.Fatal(err)
+	}
 	// The window began four days before t0 and resets three days after.
 	return w, w.primary(obs), &usageReads{reset: t0.Add(72 * time.Hour)}
 }
@@ -93,9 +95,12 @@ func TestUsageWatchWarnsTheCoordinatorOncePerWindow(t *testing.T) {
 		t.Fatalf("the warning wake carried the task prompt: %q", text)
 	}
 
-	// The same window: read again when due, never warned again.
+	// The same window: read again when due, never warned again, even as the
+	// reported reset drifts by seconds between reads.
 	u.used = 95
-	for _, at := range []time.Duration{90 * time.Minute, 150 * time.Minute, 210 * time.Minute} {
+	reset := u.reset
+	for i, at := range []time.Duration{90 * time.Minute, 150 * time.Minute, 210 * time.Minute} {
+		u.reset = reset.Add(time.Duration([]int{1, -2, 3}[i]) * time.Second)
 		if res := usageTick(t, w, u, t0.Add(at)); res.UsageWarned || len(p.sent) != 1 {
 			t.Fatalf("warned twice: %+v %q", res, p.sent)
 		}
@@ -141,9 +146,30 @@ func TestUsageWarningRidesOnTheOrdinaryWake(t *testing.T) {
 // Without the watch, nothing is read.
 func TestNoUsageWatchReadsNothing(t *testing.T) {
 	w, _, u := usageWorld(t, decide.Observation{State: decide.Idle})
-	w.cfg.Loop.UsageWatch = nil
+	if err := state.SaveUsageWatchSetting(w.dir, nil); err != nil {
+		t.Fatal(err)
+	}
 	u.used = 99
 	if res := usageTick(t, w, u, t0); len(u.accounts) != 0 || res.UsageWarned {
 		t.Fatalf("%+v %v", res, u.accounts)
+	}
+}
+
+// A loop that could not be woken reads nothing: paused, waiting for a
+// person, stopped.
+func TestUsageWatchReadsNothingForAHeldLoop(t *testing.T) {
+	for name, hold := range map[string]func(*control.File){
+		"paused":        func(f *control.File) { f.Paused = true },
+		"awaiting user": func(f *control.File) { f.AwaitingUser = true },
+		"stopped":       func(f *control.File) { f.Stop = true },
+	} {
+		w, _, u := usageWorld(t, decide.Observation{State: decide.Idle})
+		u.used = 99
+		if _, err := control.Update(w.dir, hold); err != nil {
+			t.Fatal(err)
+		}
+		if res := usageTick(t, w, u, t0); len(u.accounts) != 0 || res.UsageWarned {
+			t.Fatalf("%s: read %v", name, u.accounts)
+		}
 	}
 }
