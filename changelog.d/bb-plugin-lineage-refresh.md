@@ -1,0 +1,1 @@
+- The BB plugin's "Covered by <loop>" answer for a child thread is refreshed after a few minutes and when the thread's loops change, a failed lookup is retried with a growing delay instead of being remembered as "not a child", and the walk to the nearest ancestor with a loop follows each thread's own parent (up to 32) instead of relying on the order of the SDK's ancestor list.

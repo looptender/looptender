@@ -3,6 +3,7 @@ package supervise
 import (
 	"time"
 
+	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/decide"
 	"github.com/looptender/looptender/internal/incident"
@@ -49,7 +50,14 @@ func (t *tick) recordIncident(failed bool) error {
 	return incident.Append(t.loop.StateDir, r)
 }
 
+// observedOnly reports whether this check's target is observed, never woken.
+func (t *tick) observedOnly() bool {
+	return config.ObservedOnly(t.loop.Adapter) || config.ObservedOnly(t.incidentAdapter)
+}
+
 func (t *tick) decide(stage string, in decide.Input) decide.Decision {
+	// An observed target is never woken, whichever rule asks.
+	in.ObservedOnly = in.ObservedOnly || t.observedOnly()
 	d := decide.Decide(in)
 	t.incidentDecisions.Add(stage, in, d)
 	t.incidentLimitWait = d.LimitWait

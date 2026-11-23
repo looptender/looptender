@@ -56,11 +56,13 @@ type Cursor struct {
 	TurnStarts   int64 `json:"turnStarts,omitempty"`
 	// TurnStartedMs is BB's own createdAt of the latest turn/started event, in
 	// epoch milliseconds, unbounded. It is compared only with other BB times.
-	TurnStartedMs int64             `json:"turnStartedMs,omitempty"`
-	Error         *errorSignal      `json:"error,omitempty"`   // latest error since that turn started
-	Blocked       bool              `json:"blocked,omitempty"` // latest rate-limit window blocked
-	ResetsAt      time.Time         `json:"resetsAt,omitempty"`
-	Pending       map[string]string `json:"pending,omitempty"` // interaction id -> "pending"
+	TurnStartedMs int64        `json:"turnStartedMs,omitempty"`
+	Error         *errorSignal `json:"error,omitempty"`   // latest error since that turn started
+	Blocked       bool         `json:"blocked,omitempty"` // latest rate-limit window blocked
+	ResetsAt      time.Time    `json:"resetsAt,omitempty"`
+	// Window is the blocked window that resets at ResetsAt.
+	Window  decide.LimitWindow `json:"window,omitempty"`
+	Pending map[string]string  `json:"pending,omitempty"` // interaction id -> "pending"
 	// LastEventAt is the bounded time of the newest event that is not
 	// requested input (client/...), and
 	// ScannedAt the local time of the last complete scan. See eventTime.
@@ -334,7 +336,7 @@ func (c *Cursor) apply(e event, seenAt time.Time) {
 			c.FallbackSeq = e.Seq
 		}
 	case e.Type == "provider/rateLimits/updated":
-		c.Blocked, c.ResetsAt = rateLimits(e.Data)
+		c.Blocked, c.ResetsAt, c.Window = rateLimits(e.Data)
 	case e.Type == "system/interaction/lifecycle":
 		var d struct {
 			Interaction struct {
