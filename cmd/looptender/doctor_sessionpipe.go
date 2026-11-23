@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,25 +32,63 @@ func sessionpipeSinkCommand() string {
 // doctorSessionpipe checks an observed sessionpipe target. It runs only
 // `sessionpipe --version` and `sessionpipe status --json`, both read-only, and
 // never prints their output, the events file's path or anything in it.
+//
+// The checks run in the order a person sets the target up: the sessionpipe
+// command, its version, its hooks for the session's harness, the file sink,
+// then the events file. The last check, next, names the first that failed and
+// its next step, or says every check passed.
 func doctorSessionpipe(ctx context.Context, r *doctorReport, prefix string, s *config.Sessionpipe, offline bool, timeout time.Duration, run doctorRun) {
 	r.add(prefix+".observed", "ok", sessionpipeObservedNotice, "")
-	harness, _, _ := config.SplitSessionpipeRef(s.Session)
-	doctorSessionpipeFile(r, prefix+".events_file", s.EventsFile)
+	start := len(r.Checks)
+	sink := doctorSessionpipeTool(ctx, r, prefix, s, offline, timeout, run)
+	doctorSessionpipeFileStep(r, prefix+".events_file", s.EventsFile, sink)
 	r.add(prefix+".limits", "unavailable", "sessionpipe reports usage limits and error classes only at tier 1, which also carries words and paths, so this target reads neither: an errored turn is of class unknown and no usage is read.", "")
+	doctorSessionpipeNext(r, prefix, start)
+}
 
+// sinkState is what doctor learned about the file sink: found, not found, or
+// not checked (no command, offline, or unreadable status).
+type sinkState int
+
+const (
+	sinkUnchecked sinkState = iota
+	sinkFound
+	sinkMissing
+)
+
+// doctorSessionpipeNext adds the walk's last check: the first failed step
+// (an error before a warning) and what to do about it.
+func doctorSessionpipeNext(r *doctorReport, prefix string, start int) {
+	for _, want := range []string{"error", "warning"} {
+		for i, c := range r.Checks[start:] {
+			if c.Status != want || c.Fix == "" {
+				continue
+			}
+			step := strings.TrimPrefix(c.ID, prefix+".")
+			r.add(prefix+".next", want, fmt.Sprintf("Step %d of the sessionpipe setup (%s) needs attention: %s", i+1, step, c.Message), c.Fix)
+			return
+		}
+	}
+	r.add(prefix+".next", "ok", "Every sessionpipe check that could run passed. Start supervision with start and this configuration; nothing is ever sent to the session.", "")
+}
+
+// doctorSessionpipeTool checks the sessionpipe command, its version, its hooks
+// and the file sink.
+func doctorSessionpipeTool(ctx context.Context, r *doctorReport, prefix string, s *config.Sessionpipe, offline bool, timeout time.Duration, run doctorRun) sinkState {
+	harness, _, _ := config.SplitSessionpipeRef(s.Session)
 	resolved, err := exec.LookPath(s.CLI)
 	if err == nil {
 		resolved, err = filepath.Abs(resolved)
 	}
 	if err != nil {
-		r.add(prefix+".cli", "warning", "The sessionpipe command was not found, so its version and sink were not checked. Checks do not run it; they read the events file only.", "Install sessionpipe or set sessionpipe.cli, then run doctor again.")
-		return
+		r.add(prefix+".cli", "warning", "The sessionpipe command was not found, so its version and sink were not checked. Checks do not run it; they read the events file only.", "Install sessionpipe (npx sessionpipe install) or set sessionpipe.cli, then run doctor again.")
+		return sinkUnchecked
 	}
 	r.add(prefix+".cli", "ok", "The sessionpipe command resolves. Doctor runs only its --version and status --json.", "")
 	if offline || run == nil {
 		r.add(prefix+".version", "unavailable", "sessionpipe version query skipped in offline mode.", "")
 		r.add(prefix+".sink", "unavailable", "sessionpipe sink query skipped in offline mode.", "")
-		return
+		return sinkUnchecked
 	}
 	call := func(args ...string) ([]byte, error) {
 		cmdCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -70,9 +109,19 @@ func doctorSessionpipe(ctx context.Context, r *doctorReport, prefix string, s *c
 	out, err = call("status", "--json")
 	if err != nil {
 		r.add(prefix+".sink", "unavailable", "sessionpipe status --json failed, timed out, or exceeded its output limit.", "Run sessionpipe doctor; raw output is withheld.")
+		return sinkUnchecked
+	}
+	return doctorSessionpipeStatus(r, prefix, out, harness, s.EventsFile)
+}
+
+// doctorSessionpipeFileStep checks the events file. A missing file with a
+// sink already writing it only means no event has been written yet.
+func doctorSessionpipeFileStep(r *doctorReport, id, path string, sink sinkState) {
+	if _, err := os.Stat(path); os.IsNotExist(err) && sink == sinkFound {
+		r.add(id, "warning", "The file sink is set up, but sessionpipe has not written the events file yet: it does so with the session's next event.", "Send the session one message (or start it), then run doctor again.")
 		return
 	}
-	doctorSessionpipeStatus(r, prefix, out, harness, s.EventsFile)
+	doctorSessionpipeFile(r, id, path)
 }
 
 // doctorSessionpipeFile checks that the events file exists and that nobody
@@ -108,7 +157,7 @@ func doctorSessionpipeFile(r *doctorReport, id, path string) {
 
 // doctorSessionpipeStatus reads sessionpipe status --json: the hooks for the
 // session's harness, and a file sink at tier 0 writing the events file.
-func doctorSessionpipeStatus(r *doctorReport, prefix string, raw []byte, harness, eventsFile string) {
+func doctorSessionpipeStatus(r *doctorReport, prefix string, raw []byte, harness, eventsFile string) sinkState {
 	var st struct {
 		Harnesses map[string][]struct {
 			State string `json:"state"`
@@ -122,7 +171,7 @@ func doctorSessionpipeStatus(r *doctorReport, prefix string, raw []byte, harness
 	}
 	if len(raw) > 1<<20 || json.Unmarshal(raw, &st) != nil || st.Harnesses == nil {
 		r.add(prefix+".sink", "unavailable", "sessionpipe status --json returned an unrecognized shape; raw output is withheld.", "Run sessionpipe doctor.")
-		return
+		return sinkUnchecked
 	}
 	hooks, ok := st.Harnesses[harness]
 	switch {
@@ -164,8 +213,10 @@ func doctorSessionpipeStatus(r *doctorReport, prefix string, raw []byte, harness
 		}
 	}
 	if !found {
-		r.add(prefix+".sink", "error", "No sessionpipe file sink writes the events file, so the session will read as unknown.", "Add it once at this computer's terminal: "+sessionpipeSinkCommand()+", with PATH the absolute path in sessionpipe.events_file.")
+		r.add(prefix+".sink", "error", "No sessionpipe file sink writes the events file, so the session will read as unknown.", "Add it once at this computer's terminal: run the sessionpipe sink add line that looptender init printed, or "+sessionpipeSinkCommand()+" with PATH the absolute path in sessionpipe.events_file.")
+		return sinkMissing
 	}
+	return sinkFound
 }
 
 // sameSessionpipePath compares a sink's path, as sessionpipe keeps it (a
