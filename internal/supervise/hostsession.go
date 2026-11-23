@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/looptender/looptender/internal/decide"
@@ -17,38 +18,69 @@ import (
 // available to background processes.
 const HostSessionReason = hostcheck.Message + "; waiting for it, nothing sent"
 
+// HostSessionBound is how long a sign-in failure is taken for a lost login
+// session. After it, the failure is handled as usual: held for a person and
+// reported, with HostSessionLongReason.
+const HostSessionBound = 45 * time.Minute
+
+// HostSessionLongReason is the sign-in hold's reason once HostSessionBound
+// has passed with the session still unavailable.
+const HostSessionLongReason = "the login session has been unavailable for 45 min, or the account is signed out"
+
 // gateHostSession: a provider that says it is not logged in, while this
 // computer's login session is unavailable to background processes (after a
 // logout or a window-server restart, a supervisor that kept running cannot
-// reach the keychain), was not signed out. Nothing is sent, nothing is
-// handed off and no hold for a person is raised: the check waits. On the
-// first check that finds the session back, the error is the outage's, so it
-// is decided as an ordinary error (a re-prompt within the usual limits)
-// rather than as a sign-in a person must fix.
+// reach the keychain), was not necessarily signed out. For up to
+// HostSessionBound, nothing is sent and nothing is handed off (a wake, a
+// nudge, a re-prompt, a handoff to a route or a new thread, a switch-back),
+// and the sign-in hold is not raised. Every other decision stands: a
+// deadline, a send limit, a saved stop or any other hold still applies. On
+// the first check that finds the session back, the error is taken as the
+// outage's and decided as an ordinary error.
 func (t *tick) gateHostSession(obs decide.Observation, in decide.Input, d decide.Decision) decide.Decision {
+	ep := t.hostEp()
+	noteConsole()
 	if t.opts.DryRun || obs.State != decide.Error || obs.ErrorClass != decide.ErrAuth {
-		if obs.State != decide.Error && !t.hostEp().SessionDownSince.IsZero() {
-			t.hostEp().SessionDownSince = time.Time{}
+		if obs.State != decide.Error && !ep.SessionDownSince.IsZero() {
+			ep.SessionDownSince = time.Time{}
 			t.saveHostEpisode()
 			t.res.HostSession = "restored"
 		}
 		return d
 	}
+	signInHold := d.Action == decide.AwaitUser && d.Reason == "auth error"
+	blocked := signInHold
+	switch d.Action {
+	case decide.Wake, decide.Nudge, decide.Reprompt, decide.Handoff, decide.SwitchBack:
+		blocked = true
+	}
 	if !t.hostSessionAvailable() {
-		if t.hostEp().SessionDownSince.IsZero() {
-			t.hostEp().SessionDownSince = t.now
+		if ep.SessionDownSince.IsZero() {
+			ep.SessionDownSince = t.now
 			t.saveHostEpisode()
 		}
 		t.res.HostSession = "unavailable"
-		t.warn("%s; the provider's sign-in failure is not acted on, and nothing is sent or handed off until it is back", hostcheck.Message)
+		if t.now.Sub(ep.SessionDownSince) >= HostSessionBound {
+			if signInHold {
+				d.Reason = HostSessionLongReason
+			}
+			return d
+		}
+		if !blocked {
+			return d
+		}
+		t.warn("%s; the provider's sign-in failure is not acted on, and nothing is sent or handed off until it is back (at most %s)", hostcheck.Message, HostSessionBound)
 		return decide.Decision{Action: decide.None, Reason: HostSessionReason}
 	}
-	if t.hostEp().SessionDownSince.IsZero() {
+	if ep.SessionDownSince.IsZero() {
 		return d
 	}
-	t.hostEp().SessionDownSince = time.Time{}
+	ep.SessionDownSince = time.Time{}
 	t.saveHostEpisode()
 	t.res.HostSession = "restored"
+	if !signInHold && !blocked {
+		return d
+	}
 	in.Obs.ErrorClass = decide.ErrUnknown
 	return t.decide("host_session_restored", in)
 }
@@ -56,13 +88,40 @@ func (t *tick) gateHostSession(obs decide.Observation, in decide.Input, d decide
 // hostReaders reads this computer; tests replace it.
 var hostReaders = hostcheck.System
 
+// consoleSeen: this process has seen someone logged in at the console. A
+// console that belongs to root from the start (a headless computer, one
+// reached over ssh, one at the login window) is not an outage; one whose
+// user is gone since an earlier check is.
+var consoleSeen struct {
+	sync.Mutex
+	seen bool
+}
+
+// noteConsole remembers a console user seen at any check (a stat only).
+func noteConsole() {
+	if hostReaders.Console == nil {
+		return
+	}
+	if present, known := hostReaders.Console(); known && present {
+		consoleSeen.Lock()
+		consoleSeen.seen = true
+		consoleSeen.Unlock()
+	}
+}
+
 func (t *tick) hostSessionAvailable() bool {
 	ctx, cancel := context.WithTimeout(t.ctx, 3*hostcheck.Bound)
 	defer cancel()
 	if t.opts.HostSession != nil {
 		return t.opts.HostSession(ctx)
 	}
-	return hostReaders.ReadSession(ctx).Available
+	s := hostReaders.ReadSession(ctx)
+	consoleSeen.Lock()
+	defer consoleSeen.Unlock()
+	if s.Console == hostcheck.OK {
+		consoleSeen.seen = true
+	}
+	return s.Available && !(consoleSeen.seen && s.Console == hostcheck.Unavailable)
 }
 
 // hostOverloadObservation: whether to tell the session, once per episode,

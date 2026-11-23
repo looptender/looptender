@@ -6,7 +6,7 @@
 // session ends (a logout, or the window server restarting). It then cannot
 // reach the login keychain, and on some systems not the name service
 // either, so a provider CLI it runs says "not logged in" and a token reads
-// as invalid although nothing was signed out. Session tells that state
+// as invalid although no one signed out. Session tells that state
 // apart, so it is reported as what it is and nothing advises signing in.
 package hostcheck
 
@@ -30,20 +30,24 @@ const (
 // Session is whether this computer's login session is available to a
 // background process.
 type Session struct {
-	// Available is false only when a reading says it is not: the keychain
-	// cannot be reached, or no one is logged in at the console.
+	// Available is false only when the keychain cannot be reached. Who owns
+	// the console is reported, not judged here: a headless computer, one
+	// reached only over ssh, or one at the login window has no console user
+	// all the time. A caller that saw a console user before and sees none
+	// now may count that as the session ending.
 	Available bool `json:"available"`
 	// Keychain: the user's keychain can be reached.
 	Keychain string `json:"keychain"`
 	// DNS: a name resolves. On its own a failure is the network's, which
 	// the connectivity check reports; it is here to say which part failed.
 	DNS string `json:"dns"`
-	// Console: someone is logged in at the console.
+	// Console: someone is logged in at the console ("unavailable" when no
+	// one is: the console belongs to root).
 	Console string `json:"console"`
 }
 
 // Message is the one sentence for an unavailable session.
-const Message = "this computer's login session or network is unavailable to background processes (credentials were not read; nothing was signed out)"
+const Message = "this computer's login session or network is unavailable to background processes (looptender signed nothing out and read no credentials)"
 
 // Readers are the system calls Session and Load make; tests replace them.
 type Readers struct {
@@ -80,7 +84,7 @@ func (r Readers) ReadSession(ctx context.Context) Session {
 			s.Console = Unavailable
 		}
 	}
-	s.Available = s.Keychain != Unavailable && s.Console != Unavailable
+	s.Available = s.Keychain != Unavailable
 	return s
 }
 
@@ -118,7 +122,9 @@ type Load struct {
 	Load1   float64 `json:"load1"`
 	Cores   int     `json:"cores"`
 	PerCore float64 `json:"perCore"`
-	// MemoryFreePercent is -1 when it cannot be read cheaply here.
+	// MemoryFreePercent is -1 when it cannot be read cheaply here. On macOS
+	// it is the system's memory pressure level (100 none, 0 critical), not a
+	// count of free pages; on Linux the share of memory available.
 	MemoryFreePercent int `json:"memoryFreePercent"`
 }
 

@@ -43,7 +43,7 @@ var hostCache struct {
 func hostLoadSentence(l hostcheck.Load) string {
 	s := fmt.Sprintf("load %.1f on %d cores (%.1f per core)", l.Load1, l.Cores, l.PerCore)
 	if l.MemoryFreePercent >= 0 {
-		s += fmt.Sprintf(", %d%% of memory free", l.MemoryFreePercent)
+		s += fmt.Sprintf(", memory pressure level %d of 100 (lower is more pressure)", l.MemoryFreePercent)
 	}
 	return s
 }
@@ -54,8 +54,8 @@ func doctorHost(r *doctorReport, h hostStatus) {
 	parts := fmt.Sprintf("keychain %s, name service %s, console user %s", s.Keychain, s.DNS, s.Console)
 	switch {
 	case !s.Available:
-		r.add("host.session", "error", "This computer's login session or network is unavailable to background processes ("+parts+"). Credentials were not read and nothing was signed out; checks hold wakes and handoffs until it is back.",
-			"Log in at the computer's screen again, if no one is logged in; signing in to a provider again does not help while this lasts.")
+		r.add("host.session", "error", "This computer's login session or network is unavailable to background processes ("+parts+"). looptender signed nothing out and read no credentials; while a provider's sign-in fails in this state, checks send and hand off nothing, for up to 45 minutes.",
+			"Log in at the computer's screen again if no one is; signing in to a provider again does not help while this lasts.")
 	case s.DNS == hostcheck.Unavailable:
 		r.add("host.session", "warning", "Names do not resolve ("+parts+"). The connectivity check decides whether the network is down.", "")
 	default:
@@ -99,7 +99,7 @@ func hostNotices(h *hostStatus, now time.Time) []panelNotice {
 	var out []panelNotice
 	if !h.Session.Available {
 		out = append(out, panelNotice{ID: noticeID(noticeHost, "computer", time.Time{}, "session"), Kind: noticeHost, Severity: sevHigh, Since: now,
-			Text: "This computer's login session or network is unavailable to background processes; nothing was signed out, and checks wait for it.", Group: noticeHost + ".session",
+			Text: "This computer's login session or network is unavailable to background processes; looptender signed nothing out, and checks wait for it.", Group: noticeHost + ".session",
 			GroupText: "This computer's login session or network is unavailable to background processes."})
 	}
 	if h.Load.Level == hostcheck.LoadOverloaded {

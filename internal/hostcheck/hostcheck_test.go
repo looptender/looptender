@@ -28,8 +28,10 @@ func TestSessionIsUnavailableOnlyWhenAReadingSaysSo(t *testing.T) {
 		t.Fatalf("keychain: %+v", s)
 	}
 	r = readers()
+	// A console that belongs to root is reported, not taken as an outage:
+	// headless computers and the login window look like that all the time.
 	r.Console = func() (bool, bool) { return false, true }
-	if s := r.ReadSession(context.Background()); s.Available || s.Console != Unavailable {
+	if s := r.ReadSession(context.Background()); !s.Available || s.Console != Unavailable {
 		t.Fatalf("console: %+v", s)
 	}
 	// Names that do not resolve are the network's: the session is there.
