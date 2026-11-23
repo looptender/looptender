@@ -393,3 +393,13 @@ test("a failed command is reported as what happened: timed out, exited with a li
   assert.equal(firstErrorLine("warning: only a warning"), "");
   assert.equal(firstErrorLine(undefined), "");
 });
+
+test("an existing directory is 'exists'; 'files may already exist' is a possible write; the home directory is masked", async () => {
+  const target = { threadId: "thr_example", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: tmpdir(), provider: "codex" };
+  const input = { bin: "keepgoing", target, name: "example-loop", task: "Fictional private task", dryRun: false };
+  const run = (stderr: string): Execute => async () => ({ code: 1, data: null, stderr });
+  assert.deepEqual(await setupOnHost(input, undefined, run("init: mkdir /p/loops/example-loop: file exists")), { failed: { kind: "exists", line: "init: mkdir /p/loops/example-loop: file exists" } });
+  assert.deepEqual(await setupOnHost(input, undefined, run("init: could not write JSON result; setup files may already exist")), { failed: { kind: "written", line: "init: could not write JSON result; setup files may already exist" } });
+  const home = (await import("node:os")).homedir();
+  assert.equal(firstErrorLine(`warning: x\ninit: cannot read ${home}/private/task.md`), "init: cannot read ~/private/task.md");
+});

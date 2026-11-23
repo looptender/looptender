@@ -12,7 +12,7 @@ export function AttachPanel({ threadId, call, onChanged }: { threadId: string; c
   async function act(action: z.infer<typeof attachInput>["action"]) {
     setBusy(true);
     try {
-      const r = await call({ action, threadId, ...(action !== "list" ? { registryId: id } : {}), ...(action === "attach" ? { ticket: result?.ticket } : {}) });
+      const r = await call({ action, threadId, ...(action !== "list" ? { registryId: id } : {}), ...(action === "attach" && result?.ticket ? { ticket: result.ticket } : {}) });
       setResult(r);
       if (r.candidates) { setCandidates(r.candidates); setId(""); }
       if (r.attached) onChanged();

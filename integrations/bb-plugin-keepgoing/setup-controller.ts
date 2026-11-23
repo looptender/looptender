@@ -190,7 +190,9 @@ export function createSetupController(d: SetupDependencies) {
         try { return await handle(input, bounds); }
         catch (error) {
           // Dependency/SDK errors can contain paths, command arguments, or task
-          // input. Only our fixed policy messages are returned by safe wrappers.
+          // input, so only the error's name is used (see unexpectedMessage). A
+          // failed looptender command is not an error here: it comes back as a
+          // `failed` result carrying its status and one masked line of its output.
           return { ok: false, message: error instanceof SetupPolicyError ? error.message : unexpectedMessage(error, input.action) };
         }
       });
