@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/looptender/looptender/internal/config"
 )
 
 func TestBackgroundLaunchPerPlatform(t *testing.T) {
@@ -70,15 +72,35 @@ func TestLaunchedChildTakesItsEnvironmentOnce(t *testing.T) {
 }
 
 // A launched daemon gets only what it needs of the starting command's
-// environment: never a token or other secret, of the thread or of
-// looptender's own reporters.
+// environment: no token or other secret, of the thread or of looptender's
+// own reporters, except the variables this loop's own report names. The
+// looptender variables it drops are listed by name.
 func TestLaunchEnvironmentCarriesNoSecret(t *testing.T) {
-	got := launchEnvironment([]string{"PATH=/example/bin", "HOME=/example/home", "LANG=C.UTF-8", "LC_ALL=C", "CLAUDE_CONFIG_DIR=/example/claude",
+	got, dropped := launchEnvironment([]string{"PATH=/example/bin", "HOME=/example/home", "LANG=C.UTF-8", "LC_ALL=C", "CLAUDE_CONFIG_DIR=/example/claude",
 		"LOOPTENDER_SESSION_DIR=/example/sessions", "LOOPTENDER_NTFY_TOKEN=fictional-secret", "LOOPTENDER_WEBHOOK_SECRET=fictional-secret",
 		"LOOPTENDER_TELEGRAM_BOT_TOKEN=fictional-secret", "EXAMPLE_API_TOKEN=fictional-secret", "GITHUB_TOKEN=fictional-secret",
-		"BB_THREAD_ID=thr_example_launch", "BB_SESSION=fictional-secret", "AWS_SECRET_ACCESS_KEY=fictional-secret", "EDITOR=vi"})
-	want := []string{"PATH=/example/bin", "HOME=/example/home", "LANG=C.UTF-8", "LC_ALL=C", "CLAUDE_CONFIG_DIR=/example/claude", "LOOPTENDER_SESSION_DIR=/example/sessions"}
-	if !reflect.DeepEqual(got, want) {
+		"BB_THREAD_ID=thr_example_launch", "BB_SESSION=fictional-secret", "AWS_SECRET_ACCESS_KEY=fictional-secret", "EDITOR=vi"},
+		map[string]bool{"LOOPTENDER_NTFY_TOKEN": true})
+	want := []string{"PATH=/example/bin", "HOME=/example/home", "LANG=C.UTF-8", "LC_ALL=C", "CLAUDE_CONFIG_DIR=/example/claude", "LOOPTENDER_SESSION_DIR=/example/sessions", "LOOPTENDER_NTFY_TOKEN=fictional-secret"}
+	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(dropped, []string{"LOOPTENDER_WEBHOOK_SECRET", "LOOPTENDER_TELEGRAM_BOT_TOKEN"}) {
+		t.Fatalf("%v %v", got, dropped)
+	}
+}
+
+// The report's names are its url_env, secret_env and user_env, defaults
+// included, with each default's earlier KEEPGOING_ name.
+func TestReportEnvNamesAreTheReportsOwn(t *testing.T) {
+	cfg, err := config.Parse([]byte("version: 1\nloop:\n  name: example\n  state_dir: /example/state\n  adapter: bb\n  bb: {thread: thr_example}\n  prompt: Continue the fictional example.\n  report:\n    format: ntfy\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := reportEnvNames(cfg)
+	for _, n := range []string{"LOOPTENDER_NTFY_TOKEN", "KEEPGOING_NTFY_TOKEN", "LOOPTENDER_NTFY_URL"} {
+		if !got[n] {
+			t.Fatalf("%s missing: %v", n, got)
+		}
+	}
+	if got["LOOPTENDER_TELEGRAM_BOT_TOKEN"] || len(reportEnvNames(&config.Config{})) != 0 {
 		t.Fatalf("%v", got)
 	}
 }

@@ -14,6 +14,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/envvar"
 )
 
 // A background daemon started inside a BB thread is a child of that
@@ -85,7 +88,8 @@ func launchLabel(goos, stateDir string) string {
 // startLaunched starts the daemon through the service manager. ok is false
 // when the manager refused before anything started, so the caller falls
 // back; once the job is submitted, the result is final.
-func startLaunched(e env, executable, path, stateDir string, allowShare bool) (code int, ok bool) {
+func startLaunched(e env, executable, path string, cfg *config.Config, allowShare bool) (code int, ok bool) {
+	stateDir := cfg.Loop.StateDir
 	if os.Getenv("BB_THREAD_ID") == "" || os.Getenv(backgroundLaunchEnv) == "child" {
 		return 0, false
 	}
@@ -107,7 +111,8 @@ func startLaunched(e env, executable, path, stateDir string, allowShare bool) (c
 	// The daemon's environment goes in a private file it reads and removes,
 	// never in argv. Only what it needs is passed (launchEnvironment): the
 	// thread's tokens and other secrets stay behind.
-	b, _ := json.Marshal(launchEnvironment(os.Environ()))
+	vars, dropped := launchEnvironment(os.Environ(), reportEnvNames(cfg))
+	b, _ := json.Marshal(vars)
 	if os.WriteFile(envFile, b, 0o600) != nil {
 		return 0, false
 	}
@@ -138,7 +143,52 @@ func startLaunched(e env, executable, path, stateDir string, allowShare bool) (c
 		e.errf("start: invalid startup acknowledgement; its job was removed")
 		return exitFailed, true
 	}
+	if len(dropped) > 0 {
+		// Names only, never values.
+		e.errf("start: warning: the daemon does not get %s from this environment: they are named like credentials and this loop's report does not name them. Give a report its secret with secret_file in the configuration.", strings.Join(dropped, ", "))
+	}
+	if plan.Kind == "systemd" && !lingerOn() {
+		e.errf("start: warning: lingering is off for this user, so the user's systemd, and this daemon with it, stops at logout. Run loginctl enable-linger, or looptender service install.")
+	}
 	return reportStartedBy(e, reply, plan), true
+}
+
+// reportEnvNames are the environment variables this loop's own report
+// reads: its url_env, secret_env and user_env, defaults included, with the
+// earlier KEEPGOING_ name of each looptender default, which reports also
+// read. A launched daemon keeps exactly these of the credential-like names.
+func reportEnvNames(cfg *config.Config) map[string]bool {
+	out := map[string]bool{}
+	r := cfg.Loop.Report
+	if r == nil {
+		return out
+	}
+	for _, n := range []string{r.URLEnv, r.SecretEnv, r.UserEnv} {
+		if n == "" {
+			continue
+		}
+		out[n] = true
+		if rest, ok := strings.CutPrefix(n, envvar.Prefix); ok {
+			out[envvar.LegacyPrefix+rest] = true
+		}
+	}
+	return out
+}
+
+// lingerOn says whether the user's systemd keeps running after logout.
+// Unknown counts as on: no warning is given on a guess.
+func lingerOn() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	u := os.Getenv("USER")
+	if u == "" {
+		return true
+	}
+	out, err := exec.CommandContext(ctx, "loginctl", "show-user", u, "-p", "Linger").Output()
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(string(out)) != "Linger=no"
 }
 
 func removeLaunched(p launchPlan) {
@@ -249,24 +299,31 @@ func childLaunchWarning(e env) {
 
 // launchEnvironment is what a launched daemon gets of the starting
 // command's environment: the variables it needs to find its programs, its
-// files and the provider directories, and looptender's own settings, never
-// a secret. Like a service (service install), it carries no other variable.
-func launchEnvironment(env []string) []string {
+// files and the provider directories, looptender's own settings, and the
+// variables its own report names (report). No other variable named like a
+// credential is passed; dropped lists those of looptender's own (names
+// only), so start can say so. Like a service, it carries nothing else.
+func launchEnvironment(env []string, report map[string]bool) (out, dropped []string) {
 	keep := map[string]bool{"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "SHELL": true, "TMPDIR": true, "TZ": true, "LANG": true,
 		"XDG_CONFIG_HOME": true, "XDG_STATE_HOME": true, "XDG_DATA_HOME": true, "XDG_CACHE_HOME": true, "XDG_RUNTIME_DIR": true,
 		"CLAUDE_CONFIG_DIR": true, "CODEX_HOME": true}
-	out := []string{}
+	out = []string{}
 	for _, kv := range env {
 		k, _, ok := strings.Cut(kv, "=")
 		if !ok {
 			continue
 		}
-		own := (strings.HasPrefix(k, "LOOPTENDER_") || strings.HasPrefix(k, "KEEPGOING_")) && !launchSecretName(k)
-		if keep[k] || strings.HasPrefix(k, "LC_") || own {
+		ours := strings.HasPrefix(k, envvar.Prefix) || strings.HasPrefix(k, envvar.LegacyPrefix)
+		switch {
+		case keep[k] || strings.HasPrefix(k, "LC_") || report[k]:
 			out = append(out, kv)
+		case ours && !launchSecretName(k):
+			out = append(out, kv)
+		case ours:
+			dropped = append(dropped, k)
 		}
 	}
-	return out
+	return out, dropped
 }
 
 // launchSecretName: a variable named like a credential.
@@ -305,8 +362,33 @@ func recordLaunchJob(stateDir string) func() {
 }
 
 // readLaunchJob is the daemon's launch job, for status and doctor; nil when
-// it runs in none.
+// it runs in none, or when its service manager no longer has the job (a
+// daemon killed outright leaves its record behind).
 func readLaunchJob(stateDir string) *launchJob {
+	j := readLaunchJobRecord(stateDir)
+	if j == nil || !launchJobExists(*j) {
+		return nil
+	}
+	return j
+}
+
+// launchJobExists asks the service manager whether it still has the job.
+// It is a stand-in in tests.
+var launchJobExists = func(j launchJob) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	switch j.Kind {
+	case "launchd":
+		p, err := exec.LookPath("launchctl")
+		return err == nil && exec.CommandContext(ctx, p, "list", j.Label).Run() == nil
+	case "systemd":
+		p, err := exec.LookPath("systemctl")
+		return err == nil && exec.CommandContext(ctx, p, "--user", "is-active", "--quiet", j.Label+".service").Run() == nil
+	}
+	return false
+}
+
+func readLaunchJobRecord(stateDir string) *launchJob {
 	b, err := os.ReadFile(filepath.Join(stateDir, launchJobName))
 	if err != nil || len(b) > 4096 {
 		return nil

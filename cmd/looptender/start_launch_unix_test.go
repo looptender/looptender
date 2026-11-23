@@ -52,6 +52,10 @@ exit 0
 			t.Fatal(err)
 		}
 	}
+	// No lingering: the user's systemd stops at logout.
+	if err := os.WriteFile(filepath.Join(dir, "loginctl"), []byte("#!/bin/sh\necho Linger=no\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -85,6 +89,7 @@ loop:
     stop_command: [%[1]s, stop]
   prompt: Continue the fictional example.
   daemon: {interval: 1h, control_poll: 100ms}
+  report: {format: ntfy}
 `, quote("/bin/echo"))), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +104,7 @@ loop:
 		cmd := exec.CommandContext(ctx, bin, "start", "--background", "--json", "-c", cfg)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "BB_THREAD_ID=thr_example_launch", backgroundLaunchEnv+"=", "PATH="+fake+":"+os.Getenv("PATH"), "LAUNCH_RECORD="+record,
-			"EXAMPLE_API_TOKEN=fictional-secret")
+			"EXAMPLE_API_TOKEN=fictional-secret", "LOOPTENDER_TELEGRAM_BOT_TOKEN=fictional-secret", "LOOPTENDER_NTFY_URL=https://ntfy.example.com/example", "LOOPTENDER_NTFY_TOKEN=fictional-report-token")
 		cmd.Env = append(cmd.Env, extra...)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -155,12 +160,21 @@ loop:
 	if v["launch"] != kind || job == "" || strings.Contains(errs, "stops when BB quits") {
 		t.Fatalf("not handed to %s: %v %s", kind, v, errs)
 	}
+	if lingers := strings.Contains(errs, "lingering is off"); lingers != (runtime.GOOS == "linux") {
+		t.Fatalf("linger warning on %s: %s", runtime.GOOS, errs)
+	}
+	// The looptender variables it does not pass are named, never their values.
+	if !strings.Contains(errs, "does not get LOOPTENDER_TELEGRAM_BOT_TOKEN from this environment") || !strings.Contains(errs, "secret_file") || strings.Contains(errs, "fictional") {
+		t.Fatalf("dropped names: %s", errs)
+	}
 	// status says which job the daemon runs in.
 	var st struct {
 		LaunchJob *launchJob `json:"launchJob"`
 	}
 	for deadline := time.Now().Add(5 * time.Second); st.LaunchJob == nil && time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
-		out, _ := exec.Command(bin, "status", "--json", "-c", cfg).Output()
+		status := exec.Command(bin, "status", "--json", "-c", cfg)
+		status.Env = append(os.Environ(), "PATH="+fake+":"+os.Getenv("PATH")) // the stand-in has the job
+		out, _ := status.Output()
 		_ = json.Unmarshal(out, &st)
 	}
 	if st.LaunchJob == nil || st.LaunchJob.Label != job || st.LaunchJob.Kind != kind {
@@ -169,7 +183,8 @@ loop:
 	// The environment the daemon was given has what it needs and no token
 	// or thread ID of the starting command.
 	env, err := os.ReadFile(record + ".env")
-	if err != nil || strings.Contains(string(env), "fictional-secret") || strings.Contains(string(env), "thr_example_launch") || !strings.Contains(string(env), `"PATH=`) {
+	if err != nil || strings.Contains(string(env), "fictional-secret") || strings.Contains(string(env), "thr_example_launch") || !strings.Contains(string(env), `"PATH=`) ||
+		!strings.Contains(string(env), `"LOOPTENDER_NTFY_TOKEN=fictional-report-token"`) {
 		t.Fatalf("daemon environment: %v %s", err, env)
 	}
 	end(v)
@@ -219,5 +234,22 @@ func TestLaunchWrapperRemovesItsJobWhateverTheProgramDoes(t *testing.T) {
 	b, _ := os.ReadFile(record)
 	if strings.Count(string(b), "launchctl remove dev.looptender.loop.example") != 2 {
 		t.Fatalf("%q", b)
+	}
+}
+
+// A record left by a daemon killed outright is not shown as its job when
+// the service manager no longer has it.
+func TestStatusShowsALaunchJobOnlyWhileItExists(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, launchJobName), []byte(`{"kind":"launchd","label":"dev.looptender.loop.example","since":"2026-03-04T12:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	saved := launchJobExists
+	t.Cleanup(func() { launchJobExists = saved })
+	for _, exists := range []bool{true, false} {
+		launchJobExists = func(launchJob) bool { return exists }
+		if got := readLaunchJob(dir) != nil; got != exists {
+			t.Fatalf("job exists %v, shown %v", exists, got)
+		}
 	}
 }

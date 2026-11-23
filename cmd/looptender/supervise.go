@@ -313,7 +313,7 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 	defer recordLaunchJob(cfg.Loop.StateDir)() // removed after the stopped record below
 	defer enableDaemonShutdown(monitor, cfg, cfgPath, lease, cancel)()
 	started := state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "started"}
-	if j := readLaunchJob(cfg.Loop.StateDir); j != nil {
+	if j := readLaunchJobRecord(cfg.Loop.StateDir); j != nil {
 		started.Extra = map[string]any{"launch": j.Kind}
 	}
 	state.Append(cfg.Loop.StateDir, started)

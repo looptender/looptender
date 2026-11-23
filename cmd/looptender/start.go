@@ -131,7 +131,7 @@ func startResolved(e env, path string, background, allowShare bool, ready startR
 			e.errf("start: cannot locate the keepgoing executable")
 			return exitFailed
 		}
-		if code, ok := startLaunched(e, executable, abs, cfg.Loop.StateDir, allowShare); ok {
+		if code, ok := startLaunched(e, executable, abs, cfg, allowShare); ok {
 			return code
 		}
 		childLaunchWarning(e)
