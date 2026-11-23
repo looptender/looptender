@@ -396,7 +396,9 @@ type tick struct {
 	// handoffObs is the observation a handoff in this check was made on.
 	handoffObs decide.Observation
 	// waiting is the child picture this check observed, for the run graph.
-	waiting *graphWaiting
+	waiting        *graphWaiting
+	hostEpisode    *hostEpisode
+	hostEpisodeWas hostEpisode
 }
 
 func (t *tick) warn(format string, a ...any) {
@@ -2061,7 +2063,8 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 		t.childNoticeSent(childErrors, err)
 		t.usageWarningSent(usageCarried, err)
 		if d.HostOverloadWake && err == nil {
-			t.st.HostOverloadToldAt = t.now
+			t.hostEp().OverloadToldAt = t.now
+			t.saveHostEpisode()
 			t.res.HostOverloadTold = true
 		}
 		// The adapter was called: count the attempt whatever it returned, so a

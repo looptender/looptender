@@ -86,13 +86,6 @@ type File struct {
 	// the clock counts from the last Git change.
 	ActiveSince      time.Time `json:"activeSince,omitempty"`
 	NetworkDownSince time.Time `json:"networkDownSince,omitempty"`
-	// HostSessionDownSince is when a check first found a provider's sign-in
-	// failing while this computer's login session was unavailable to
-	// background processes; cleared on the check that finds it back.
-	HostSessionDownSince time.Time `json:"hostSessionDownSince,omitempty"`
-	// HostOverloadToldAt is when the session was told the computer is
-	// overloaded; cleared when the overload ends, which ends the episode.
-	HostOverloadToldAt time.Time `json:"hostOverloadToldAt,omitempty"`
 	// NetworkVerifiedAt is when the provider was last tested directly during
 	// that outage, NetworkVerifications how many times, and NetworkReportedAt
 	// when the outage was last reported.
