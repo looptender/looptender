@@ -49,7 +49,7 @@ test("SDK RPC resolves host metadata, persists references, and routes controls w
     assert.equal(wrong.ok, false); assert.ok(!operations.includes("resume"));
     await harness.behavior.callRpc("control", { configPath: created.record.configPath, managedId: created.record.id, action: "pause" });
     assert.ok(operations.includes("pause"));
-    // Neither the Resume button's RPC nor `bb keepgoing resume` resumes:
+    // Neither the Resume button's RPC nor `bb looptender resume` resumes:
     // the plugin cannot tell a person from the supervised session, so it
     // says where a person resumes and never runs the CLI.
     const clicked = await harness.behavior.callRpc("control", { configPath: created.record.configPath, managedId: created.record.id, action: "resume", expectedThreadId: thread.id }) as { ok: boolean; message: string };

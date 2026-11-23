@@ -174,16 +174,17 @@ func TestOnlyTheRecordedFileFollowsPolicyUpdates(t *testing.T) {
 	}
 }
 
-// Deleting a paragraph from a current prompt makes it read exactly like an
-// older wording. That is an edit: the removed guidance must not come back.
+// Deleting a paragraph from a current prompt can make it read like an older
+// wording, or like none. Either way it is an edit: the removed guidance must
+// not come back.
 func TestTrimmedCurrentPromptIsNotUpgraded(t *testing.T) {
 	current := GeneratedPrompt(unixPrefix, quotedCfg, fictionTask)
 	const delegation = "At the start of substantial work"
 	i := strings.Index(current, delegation)
 	j := strings.Index(current[i:], "\n\n")
 	trimmed := current[:i] + current[i+j+2:]
-	if m, ok := MatchPolicy(trimmed); !ok || m.Version == CurrentPolicyVersion() {
-		t.Fatalf("the trim no longer reads as an older wording: %+v %v", m, ok)
+	if m, ok := MatchPolicy(trimmed); ok && m.Version == CurrentPolicyVersion() {
+		t.Fatalf("the trim reads as the current wording: %+v", m)
 	}
 	for _, record := range []bool{false, true} {
 		loop := writePrompt(t, current, record)
@@ -226,5 +227,21 @@ func TestPolicyRecordIsStrict(t *testing.T) {
 	}
 	if info, err := os.Stat(PolicyRecordPath(file)); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("%v %v", info, err)
+	}
+}
+
+// Every wording setup has written is still recognised as itself, so a loop
+// whose prompt file an older build wrote is named and can follow updates.
+// The current wording calls the product by its current name only.
+func TestEveryEarlierWordingIsStillRecognised(t *testing.T) {
+	for v := 1; v <= CurrentPolicyVersion(); v++ {
+		text := GeneratedPromptVersion(v, unixPrefix, quotedCfg, fictionTask)
+		if m, ok := MatchPolicy(text); !ok || m.Version != v || m.Task != fictionTask {
+			t.Errorf("version %d: %+v %v", v, m, ok)
+		}
+	}
+	head := PolicyHead(unixPrefix, quotedCfg)
+	if !strings.Contains(head, "looptender owns this loop.") || strings.Contains(strings.ToLower(head), "keep"+"going") {
+		t.Fatalf("current wording:\n%s", head)
 	}
 }

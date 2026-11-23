@@ -533,3 +533,27 @@ func (a *Agent) resolvePaths(base string) {
 		a.Codex.CLI = resolveExec(base, a.Codex.CLI)
 	}
 }
+
+// RouteLabels are the labels a route carries that say which provider,
+// model, effort or account it uses: its provider, group and, for a BB
+// thread, model and reasoning. A display name leaves them out.
+func (a Agent) RouteLabels() []string {
+	out := []string{a.Provider, a.Group}
+	if a.BB != nil {
+		out = append(out, a.BB.Model, a.BB.Reasoning)
+	}
+	return out
+}
+
+// RouteLabels are the route labels of the loop's primary and of each of its
+// own fallbacks.
+func (c *Config) RouteLabels() []string {
+	out := c.Loop.Agent.RouteLabels()
+	if c.FallbackSet != nil {
+		for _, cand := range c.FallbackSet.Candidates {
+			out = append(out, cand.ID)
+			out = append(out, cand.Agent.RouteLabels()...)
+		}
+	}
+	return out
+}

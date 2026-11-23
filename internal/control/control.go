@@ -201,8 +201,12 @@ func updateCheckedValidated(stateDir string, maxBytes int64, validate func([]byt
 	if err != nil {
 		return f, err
 	}
+	before := f
 	if err := fn(&f); err != nil {
 		return f, err
+	}
+	if err := archiveGuard(stateDir, before, f); err != nil {
+		return before, err
 	}
 	return f, Save(stateDir, f)
 }
