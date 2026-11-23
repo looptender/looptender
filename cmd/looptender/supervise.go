@@ -236,6 +236,7 @@ func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, l
 	res, err := supervise.Tick(e.ctx, cfg, opts)
 	if res.Recorded && !dryRun {
 		clearStartRefused(cfg.Loop.StateDir) // a check ran: something supervises the loop
+		completeSuccession(e, cfg, time.Now())
 	}
 	out, _ := json.Marshal(res)
 	fmt.Fprintln(e.stdout, string(out))
@@ -627,6 +628,10 @@ type statusOut struct {
 	// cannot be read.
 	WakePolicy *wakePolicyStatus `json:"wakePolicy,omitempty"`
 	LimitWait  limitWaitStatus   `json:"limitWait"`
+	// UsageLimit is the provider usage limit on the active target: which
+	// window, until when, which account, what else is configured, and what
+	// a person can do (usage_limit_status.go).
+	UsageLimit *usageLimitStatus `json:"usageLimit,omitempty"`
 	TurnRetry  turnRetryStatus   `json:"turnRetry"`
 	// ContextWindow is the active target's latest context window reading.
 	ContextWindow contextStatus `json:"contextWindow"`
@@ -669,6 +674,10 @@ type statusOut struct {
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
 	// Naming is what a list needs to show a readable name (loop_naming.go).
 	Naming loopNaming `json:"naming"`
+	// ContinuedFrom is the loop this one continues (succession.go), and
+	// Lineage the whole chain of earlier loops, oldest first.
+	ContinuedFrom *continuedFromView `json:"continuedFrom,omitempty"`
+	Lineage       []lineageStep      `json:"lineage,omitempty"`
 	// Unreadable lists the records status could not read. The rest of the
 	// output is what it could; the command still exits 1.
 	Unreadable      []unreadableRecord `json:"unreadable,omitempty"`
@@ -866,6 +875,11 @@ type agentRef struct {
 	BBThread string `json:"bbThread,omitempty"`
 	Workdir  string `json:"workdir,omitempty"`
 	Model    string `json:"model,omitempty"`
+	// Session is a sessionpipe target's <harness>:<id>; Observed says the
+	// target is observed, never woken: looptender never sends to, wakes or
+	// stops it.
+	Session  string `json:"session,omitempty"`
+	Observed bool   `json:"observed,omitempty"`
 	// Account is the accounts-catalog entry the route names, as stated by
 	// a person, or the derived account context of one that names none. Only
 	// status sets it.
@@ -883,7 +897,10 @@ func refOf(a config.Agent) agentRef {
 		r.Workdir = a.Claude.Workdir
 	case a.Codex != nil:
 		r.Workdir = a.Codex.Workdir
+	case a.Sessionpipe != nil:
+		r.Session = a.Sessionpipe.Session
 	}
+	r.Observed = config.ObservedOnly(a.Adapter)
 	return r
 }
 
@@ -989,6 +1006,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	}
 	if !out.stateUnreadable {
 		printLimitWait(w, out.LimitWait)
+		printUsageLimit(w, out.UsageLimit, now)
 		printIdleSpacing(w, out.IdleSpacing, now)
 	}
 	fmt.Fprintf(w, "progress flag: %s\n", noProgressText(out.NoProgress, loopHeld(out.Control, out.controlUnreadable)))
@@ -1019,13 +1037,20 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if out.TaskFile != "" {
 		fmt.Fprintf(w, " (%s)", out.TaskFile)
 	}
-	fmt.Fprintln(w, "; task text withheld")
+	if out.TaskSource == "none" {
+		fmt.Fprintln(w, "; an observed target is sent nothing")
+	} else {
+		fmt.Fprintln(w, "; task text withheld")
+	}
 	fmt.Fprintf(w, "primary:   %s\n", out.Primary)
 	fmt.Fprintf(w, "target:    %s", out.Target)
 	if st.Handoffs > 0 {
 		fmt.Fprintf(w, " (%d handoffs, last %s)", st.Handoffs, when(st.LastHandoffAt))
 	}
 	fmt.Fprintln(w)
+	if out.TargetAgent.Observed {
+		fmt.Fprintln(w, "observed:  "+sessionpipeObservedNotice)
+	}
 	if s := out.TargetSession; s != nil {
 		fmt.Fprintf(w, "session:   %s", s.State)
 		if s.ID != "" {
@@ -1059,6 +1084,33 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	}
 	if a := out.Archived; a != nil {
 		fmt.Fprintf(w, "archived:  %s; listed apart, needs nobody, and checked by no daemon. Resume and enable are refused until `looptender unarchive -c %s`, which resumes nothing\n", archiveSince(a), shellQuote(cfg.Path()))
+	}
+	if c := out.ContinuedFrom; c != nil {
+		line := "continues: loop " + c.Loop
+		if c.Thread != "" {
+			line += " (" + c.Thread + ")"
+		}
+		switch {
+		case c.CancelledAt != nil:
+			line += ", cancelled " + when(*c.CancelledAt) + ": " + c.Cancelled
+		case c.ArchivedAt != nil:
+			line += ", archived " + when(*c.ArchivedAt) + " after this loop's first completed check"
+		case c.Waiting != "":
+			line += ", not archived yet: " + c.Waiting
+		default:
+			line += ", archived after this loop's first check that completes"
+		}
+		if n := len(out.Lineage); n > 1 {
+			line += fmt.Sprintf("; %d earlier loops in this line of work", n)
+		}
+		fmt.Fprintln(w, line)
+	}
+	if a := out.Archived; a != nil && a.ContinuedIn != nil {
+		line := "continued in: loop " + a.ContinuedIn.Loop
+		if a.ContinuedIn.Thread != "" {
+			line += " (" + a.ContinuedIn.Thread + ")"
+		}
+		fmt.Fprintln(w, line)
 	}
 	if a := out.ArchiveLapsed; a != nil {
 		fmt.Fprintf(w, "archive:   the record %s is ignored: the loop supervises again (resumed by a build from before archiving). `looptender unarchive -c %s` removes it\n", archiveSince(a), shellQuote(cfg.Path()))
@@ -1390,6 +1442,9 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		out.PromptSend.GoalCopy = st.GoalCopy
 	}
 	out.LimitWait = describeLimitWait(st.LimitWaitReport, l, loopHeld(ctl, out.controlUnreadable), now)
+	if u, err := state.LoadUsageLimit(l.StateDir); err == nil {
+		out.UsageLimit = describeUsageLimit(u, cfg, loopHeld(ctl, out.controlUnreadable), now)
+	}
 	out.IdleSpacing = describeIdleSpacing(st, l.Progress)
 	out.TurnRetry = describeTurnRetry(st.LastTurnRetry)
 	out.ContextWindow = describeContext(st.Context, st.Target(), activeBB(cfg, st.Target()) != nil, now)
@@ -1465,6 +1520,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		out.Archived, out.ArchiveLapsed = loopArchive(l.StateDir, out.Control)
 	}
 	out.Naming = namingOf(l, out.TargetAgent.BBThread)
+	out.Lineage, out.ContinuedFrom = lineageOf(l.StateDir)
 	out.NewThreads = newThreadStatus{Created: st.NewThreadsCreated, Max: l.Limits.MaxNewThreads, Pending: st.NewThreadIntent != nil}
 	out.SuccessorPlans = successorPlans(cfg)
 	if s := st.ChildSuccessors; s != nil || st.ChildSuccessorsCreated > 0 {
@@ -1487,6 +1543,9 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		out.NewThreads.Active = &created
 	}
 	out.TaskSource = "inline"
+	if config.ObservedOnly(l.Adapter) {
+		out.TaskSource = "none"
+	}
 	if l.PromptFile != "" {
 		out.TaskSource, out.TaskFile = "file", l.PromptFile
 	}

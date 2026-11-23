@@ -644,6 +644,9 @@ func doctorAgent(ctx context.Context, r *doctorReport, id string, a config.Agent
 		cli, workdir, env = a.Antigravity.CLI, a.Antigravity.Workdir, a.Antigravity.Env
 		r.add(prefix+".account", "unavailable", "Antigravity login is inherited from the environment; doctor does not verify account identity or query /usage. Use `looptender accounts usage` for model-free quota reads.", "")
 		r.add(prefix+".capabilities", "unavailable", "Antigravity runs as a standalone primary ACP loop (`agy acp --stdio`). Permission requests hold the loop for a person; chat-only questions without ACP elicitation cannot be distinguished from a returned turn, and fallbacks/switch-back are unavailable.", "Review docs/antigravity.md before running unattended loops.")
+	case a.Sessionpipe != nil:
+		doctorSessionpipe(ctx, r, prefix, a.Sessionpipe, offline, timeout, run)
+		return
 	case a.Custom != nil:
 		// A defined agent declares no version or login interface, and doctor
 		// runs nothing a definition does not declare: it resolves the

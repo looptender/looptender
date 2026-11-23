@@ -195,15 +195,15 @@ func TestQuotaMaximalWebAndNativeBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(raw) > dockMaxResponse*3/4 {
-		t.Fatalf("web response %d exceeds reserved-headroom threshold %d", len(raw), dockMaxResponse*3/4)
+	if sizeWithoutNotices(t, raw) > dockResponseMargin {
+		t.Fatalf("web response %d exceeds reserved-headroom threshold %d", len(raw), dockResponseMargin)
 	}
 	list := buildPanelList(r)
 	native, _ := json.Marshal(list)
 	if len(native) > 1<<20 || len(list.AccountQuotas.Accounts) != 16 || list.AccountQuotas.Omitted != 48 {
 		t.Fatalf("native%d bytes: %+v", len(native), list.AccountQuotas)
 	}
-	t.Logf("saved accounts %d/%d bytes; max registry +64 detailed quota selections: web%d/%d reserved-headroom threshold (%d hard ceiling); native%d/%d bytes", len(saved), dockMaxAccountsResponse, len(raw), dockMaxResponse*3/4, dockMaxResponse, len(native), 1<<20)
+	t.Logf("saved accounts %d/%d bytes; max registry +64 detailed quota selections: web%d/%d reserved-headroom threshold (%d hard ceiling); native%d/%d bytes", len(saved), dockMaxAccountsResponse, len(raw), dockResponseMargin, dockMaxResponse, len(native), 1<<20)
 }
 func TestAccountQuotaDetailsUnknownWindowKeepsRecognizedCredits(t *testing.T) {
 	d, reason := accountQuotaDetailsParse([]byte(`{"rateLimits":{"primary":{"future":7},"credits":{"hasCredits":true,"unlimited":false,"balance":"2.50"}}}`), nil)

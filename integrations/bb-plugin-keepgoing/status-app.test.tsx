@@ -4,7 +4,7 @@ import { JSDOM } from "jsdom";
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://example.com" });
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
-const { fireEvent, cleanup } = await import("@testing-library/react");
+const { fireEvent, cleanup, waitFor } = await import("@testing-library/react");
 const { loadPluginApp, renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
 const app = await loadPluginApp(() => import("./app.tsx"));
 const loop = { loop: "example", configPath: "/private/example/keepgoing.yaml", controlState: "completed", note: null, target: "primary", supervising: true, lastState: null, lastWakeAt: "0001-01-01T00:00:00Z", checkedAt: null, handoffs: 0, fallbacks: null,
@@ -204,4 +204,15 @@ test("the banner follows the same rule on a lane, and nothing about setup is dra
   try{ await bare.findByRole("button",{name:"looptender"}); assert.equal(bare.queryByText("Add to Looptender"),null); }finally{bare.lifecycle.unmount();cleanup();}
   const root=renderSlot({component:seg.summary},props("thr_banner_root"),{rpc:rpc(()=>({child:false}))});
   try{ await root.findByRole("button",{name:"Add to Looptender"}); }finally{root.lifecycle.unmount();cleanup();}
+});
+
+test("a failed lineage lookup is retried and then shows the cover; the first failure does not hide the entry for good",async()=>{
+  let calls=0;
+  const ui=renderSlot(app.threadContextCardRows[0]!,{threadId:"thr_retry",projectId:"proj_example",environment:null},{rpc:{forThread:()=>({loops:[],errors:[]}),transfer:()=>({ok:true,message:"n",choices:[]}),attachment:()=>({ok:true,candidates:[],message:"r"}),setup:()=>({ok:true,message:"No saved setup"}),newThread:()=>({ok:true,message:"",outcome:{state:"none",message:""}}),
+    lineage:()=>{calls++; if(calls===1)throw new Error("down"); return {child:true,coveredBy:{threadId:"thr_parent",loop:"example-coordinator"}};}}});
+  try{
+    await ui.findByRole("button",{name:"Add to Looptender"});
+    await waitFor(()=>assert.ok(ui.container.textContent?.includes("Covered by")),{timeout:15000});
+    assert.equal(ui.queryByRole("button",{name:"Add to Looptender"}),null); assert.ok(calls>=2);
+  }finally{ui.lifecycle.unmount();cleanup();}
 });

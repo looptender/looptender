@@ -206,7 +206,7 @@ func (a *Adapter) Observe(ctx context.Context) (decide.Observation, error) {
 		}
 	}
 	if obs.ErrorClass == decide.ErrRateLimit && sig.resetsAt.After(a.now()) {
-		obs.ResetsAt = sig.resetsAt
+		obs.ResetsAt, obs.LimitWindow = sig.resetsAt, sig.window
 	}
 	return obs, nil
 }
@@ -264,6 +264,7 @@ type signals struct {
 	retryUnknown bool
 	blocked      bool
 	resetsAt     time.Time
+	window       decide.LimitWindow
 	pending      bool
 	ok           bool
 	// turnStartedMs is BB's time of the latest turn start, or 0 when unknown.
@@ -281,7 +282,7 @@ type signals struct {
 // started count, so a stale error from an earlier turn is ignored.
 func (a *Adapter) signals(ctx context.Context) signals {
 	c, ok := a.scan(ctx)
-	s := signals{class: decide.ErrUnknown, ok: ok, blocked: c.Blocked, resetsAt: c.ResetsAt, pending: len(c.Pending) > 0, lastEventAt: c.LastEventAt, turnStartedMs: c.TurnStartedMs,
+	s := signals{class: decide.ErrUnknown, ok: ok, blocked: c.Blocked, resetsAt: c.ResetsAt, window: c.Window, pending: len(c.Pending) > 0, lastEventAt: c.LastEventAt, turnStartedMs: c.TurnStartedMs,
 		turnStartSeq: c.TurnStartSeq, toolsRunning: c.ToolsUncertain || len(c.OpenTools) > 0, fallbackSeq: c.FallbackSeq, childOutcome: c.ChildOutcomeSeq,
 		turnRequests: c.TurnRequests, turnStarts: c.TurnStarts}
 	if c.Error != nil {
@@ -297,28 +298,38 @@ func (a *Adapter) signals(ctx context.Context) signals {
 	return s
 }
 
-func rateLimits(raw json.RawMessage) (bool, time.Time) {
+// rateLimits reads a provider/rateLimits/updated event: whether the account
+// is blocked, when the latest blocked window resets, and which window that
+// is, with the provider's reason for reaching it.
+func rateLimits(raw json.RawMessage) (bool, time.Time, decide.LimitWindow) {
 	var d struct {
 		RateLimits struct {
-			Status  string `json:"status"`
-			Windows []struct {
-				Status     string `json:"status"`
-				ResetsAtMs int64  `json:"resetsAtMs"`
+			Status        string  `json:"status"`
+			ReachedReason *string `json:"reachedReason"`
+			Windows       []struct {
+				Status      string `json:"status"`
+				ResetsAtMs  int64  `json:"resetsAtMs"`
+				ProviderKey string `json:"providerKey"`
+				Label       string `json:"label"`
 			} `json:"windows"`
 		} `json:"rateLimits"`
 	}
 	if json.Unmarshal(raw, &d) != nil || d.RateLimits.Status != "blocked" {
-		return false, time.Time{}
+		return false, time.Time{}, decide.LimitWindow{}
 	}
 	var latest time.Time
+	key, label, reason := "", "", ""
+	if d.RateLimits.ReachedReason != nil {
+		reason = *d.RateLimits.ReachedReason
+	}
 	for _, w := range d.RateLimits.Windows {
 		if w.Status == "blocked" && w.ResetsAtMs > 0 {
 			if t := time.UnixMilli(w.ResetsAtMs); t.After(latest) {
-				latest = t
+				latest, key, label = t, w.ProviderKey, w.Label
 			}
 		}
 	}
-	return true, latest
+	return true, latest, decide.CleanLimitWindow(key, label, reason)
 }
 
 func httpCode(p *int) string {

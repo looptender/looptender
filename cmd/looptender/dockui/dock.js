@@ -310,10 +310,15 @@
     unreadable: { unknown: "Its records cannot be read" },
     unknown: { unknown: "What it waits for is not recorded" }
   };
+  // Own keys only: a kind or by that is the name of something every object has
+  // ("constructor", "toString", "__proto__") must not find it.
+  function own(o, key) {
+    return Object.prototype.hasOwnProperty.call(o, key) ? o[key] : undefined;
+  }
   function waitWords(kind, by) {
-    var k = WAIT_WORDS[kind];
+    var k = own(WAIT_WORDS, kind);
     if (!k) return "";
-    return k[by] || k.unknown || k.check || "";
+    return own(k, by) || own(k, "unknown") || own(k, "check") || "";
   }
   // The page's own span words, as the server says them (dockSpan).
   function spanWords(ms) {
