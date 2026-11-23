@@ -248,7 +248,7 @@ func dockVersionsOf(loops []dockLoop, clients *clientsFile, clientsErr error, no
 		for _, c := range clients.Clients {
 			name := dockClientTitles[c.Name]
 			bundled, update := bundledPluginVersion, "Update the plugin in BB with bb plugin update keepgoing, or install it again from the newest build's source."
-			cliUpdate := "Set the plugin's keepgoingPath to the newest build."
+			cliUpdate := "Set the plugin's looptenderPath to the newest build."
 			if c.Name == "macos-menu" {
 				bundled, update = bundledMenuVersion, "Build the menu again from the newest build's source with integrations/macos/scripts/make-app.sh, then reopen it."
 				cliUpdate = "Start the menu with --executable set to the newest build."

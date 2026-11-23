@@ -133,7 +133,7 @@ func TestScenarioMovedLoopWithNoSupervisorIsLoudUntilOneStarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	// status, and the status data the BB plugin reads (schedule.overdue and
-	// its message are what its card and `bb keepgoing status` show).
+	// its message are what its card and `bb looptender status` show).
 	v, text := status()
 	if !v.Schedule.Overdue || v.Schedule.Basis != "never_checked" || v.Schedule.Since == nil || !strings.Contains(v.Schedule.Message, "nothing has checked it") {
 		t.Fatalf("status --json: %+v", v.Schedule)

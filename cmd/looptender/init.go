@@ -31,6 +31,7 @@ type initOptions struct {
 	noProgressTimeout                              time.Duration
 	maxSends                                       int64
 	name, project, directory, task, taskFile       string
+	displayName                                    string // --display-name: the line of work's name every list shows
 	deadline                                       string
 	agent, thread, provider, account, group, model string
 	routes                                         string          // standard or own; "" is own
@@ -66,6 +67,7 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 	fs.SetOutput(e.stderr)
 	fs.StringVar(&o.name, "name", "", "loop name: lowercase letters, digits, hyphens")
 	fs.StringVar(&o.project, "project", "", "existing Git project with a commit (default: current directory)")
+	fs.StringVar(&o.displayName, "display-name", "", "the name every list shows for this line of work (default: the BB thread's title at the first check, else --name); never a provider or model")
 	fs.StringVar(&o.directory, "directory", "", "new private setup directory outside any checkout")
 	fs.StringVar(&o.task, "task", "", "task text (use --task-file to keep it out of shell history)")
 	fs.BoolVar(&o.withGoal, "with-goal", false, "record a goal referencing the private task snapshot and share its current revision in future prompts")
@@ -230,6 +232,11 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 		return exitFailed
 	}
 	cfgPath := filepath.Join(o.directory, config.FileName)
+	if o.displayName != "" {
+		if cfg, err := config.Load(cfgPath); err != nil || state.SaveDisplayName(cfg.Loop.StateDir, o.displayName, state.DisplayNameSet, time.Now()) != nil {
+			e.errf("init: warning: the display name could not be recorded; set it with looptender display-name -c %s", commandQuote(cfgPath))
+		}
+	}
 	if goal != nil {
 		printGoal(e, goal.Summary(), false)
 	}

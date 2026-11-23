@@ -1,6 +1,6 @@
 # looptender menu preview
 
-Unreleased source displays **looptender Menu** and **Open looptender Panel**. The development bundle/executable path remains `KeepgoingMenu.app`/`KeepgoingMenu`, with its existing bundle identifier and CLI contract; rebuilding source does not replace a running menu.
+Unreleased source displays **looptender Menu** and **Open looptender Panel**. The app is `LooptenderMenu.app`, with its existing bundle identifier and CLI contract; rebuilding source does not replace a running menu.
 
 An optional native macOS menu-bar item that opens the [looptender panel](../../docs/dock.md) and lists explicitly registered local loops. It can pause, stop and resume a loop, each only after a native confirmation that shows the panel's own review. This is a v0.2.0 **development preview**, built separately from the Go executable. It uses AppKit's native status item and menus. It is not installed by Homebrew or `keepgoing init`.
 
@@ -89,10 +89,14 @@ When a loop's [checks have stopped](../../docs/operations.md#external-schedulers
 
 ```sh
 integrations/macos/scripts/make-app.sh
-integrations/macos/.build/KeepgoingMenu.app/Contents/MacOS/KeepgoingMenu --executable /path/to/keepgoing
+integrations/macos/.build/LooptenderMenu.app/Contents/MacOS/LooptenderMenu --executable /path/to/keepgoing
 ```
 
-The script builds `integrations/macos/.build/KeepgoingMenu.app` (bundle identifier `local.keepgoing.menu-preview`, signed ad hoc for this computer) and does nothing else: it does not install, register, open or start it at login. Start it with the command above, with the same arguments as the bare executable. macOS asks once whether it may show notifications; if you decline, none are posted.
+The script builds `integrations/macos/.build/LooptenderMenu.app` (bundle identifier `local.keepgoing.menu-preview`, signed ad hoc for this computer), and beside it `KeepgoingMenu.app`, a link to it under the app's earlier name, and does nothing else: it does not install, register, open or start it at login.
+
+**Installing a build elsewhere.** Copy the app and the link together, for example `cp -R integrations/macos/.build/LooptenderMenu.app integrations/macos/.build/KeepgoingMenu.app <destination>/` (BSD `cp -R` and `ditto` copy the link as a link). A copy of the link alone points at nothing: a menu of an earlier build then reports that the build has no menu and does not relaunch, and a login item that names `KeepgoingMenu.app` there finds nothing.
+
+Start it with the command above, with the same arguments as the bare executable. macOS asks once whether it may show notifications; if you decline, none are posted.
 
 The menu's version is kept in one place, [`VERSION`](VERSION). The script writes it into the app as `CFBundleShortVersionString`, and the menu reports it with `--client macos-menu@VERSION` on its regular `panel list` read, for the panel's Versions view. A looptender too old to know the flag answers with a usage error and no output. The menu then reads again without it, and stops sending it to that executable only if that read succeeds; a timeout is never retried. An executable replaced in place (new size or modification time) is given the flag again. Run without the app bundle (`swift run`), the menu has no version and reports none.
 
@@ -101,7 +105,7 @@ The menu's version is kept in one place, [`VERSION`](VERSION). The script writes
 - **When.** After the reads the menu already makes: when it starts, when it is opened, and once a minute. In Low Power Mode there is no timed read, so a notification waits until the menu is opened.
 - **Kept in memory only.** The preview keeps nothing on disk, so quitting and starting it again during a gap that is still open posts that gap once more.
 - **Turning it off.** Start the menu with `--no-notifications`, or turn notifications off for keepgoing Menu in System Settings. Run as a bare executable (`.build/debug/KeepgoingMenu`), the menu never asks for or posts notifications and says so once on standard error.
-- **Removing it.** Quit the menu and delete the bundle: `rm -rf integrations/macos/.build/KeepgoingMenu.app`. System Settings may still list keepgoing Menu under Notifications.
+- **Removing it.** Quit the menu and delete the bundle: `rm -rf integrations/macos/.build/LooptenderMenu.app integrations/macos/.build/KeepgoingMenu.app`. System Settings may still list keepgoing Menu under Notifications.
 
 Covered by `NoticesTests` (the one-per-gap rule, its text and decoding) and `TestPanelListGivesTheLastCheckOfAnOverdueLoop`. Not verified: a notification shown on a real screen.
 

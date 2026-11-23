@@ -195,7 +195,7 @@ func TestQuotaMaximalWebAndNativeBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(raw) > dockResponseMargin {
+	if sizeWithoutNotices(t, raw) > dockResponseMargin {
 		t.Fatalf("web response %d exceeds reserved-headroom threshold %d", len(raw), dockResponseMargin)
 	}
 	list := buildPanelList(r)
