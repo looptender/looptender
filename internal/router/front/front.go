@@ -135,7 +135,8 @@ type Config struct {
 	// NoRouterPause is how long the front does not ask after ErrNoRouter.
 	NoRouterPause time.Duration
 	// ConnectWait, HeaderWait and IdleWait bound the provider: connecting,
-	// the first byte of the answer, and silence inside a stream.
+	// the first byte of the answer, and silence inside a stream. HeaderWait
+	// must not be shorter than the client's own request limit.
 	ConnectWait, HeaderWait, IdleWait time.Duration
 	// MaxDecisions caps the decisions kept for reuse.
 	MaxDecisions int
@@ -152,7 +153,9 @@ func (c *Config) defaults() {
 	def(&c.RetryWait, 2*time.Second)
 	def(&c.NoRouterPause, 5*time.Second)
 	def(&c.ConnectWait, 10*time.Second)
-	def(&c.HeaderWait, 5*time.Minute)
+	// Above a client's own request limit, so the front never gives up on a
+	// request its client would still have waited for.
+	def(&c.HeaderWait, 15*time.Minute)
 	def(&c.IdleWait, 2*time.Minute)
 	if c.MaxBody <= 0 {
 		c.MaxBody = 32 << 20
