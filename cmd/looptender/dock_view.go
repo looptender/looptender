@@ -85,7 +85,9 @@ type dockReport struct {
 	// Notify is the shared notification settings and whether the menu is
 	// notifying on this computer (notify_settings.go).
 	Notify *notifyState `json:"notify,omitempty"`
-	Loops  []dockLoop   `json:"loops"`
+	// Host is the computer's login session and load.
+	Host  *hostStatus `json:"host,omitempty"`
+	Loops []dockLoop  `json:"loops"`
 	// Archived counts the loops in Loops whose State is "archived"; they are
 	// listed last, need nobody and are left out of Worth.
 	Archived int `json:"archived"`
