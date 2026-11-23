@@ -278,6 +278,9 @@ type dockLoop struct {
 	// NoProgress is the no-progress flag, the same value status shows; nil
 	// when the loop's status could not be read. It is never a need.
 	NoProgress *noProgressView `json:"noProgress,omitempty"`
+	// UsageBurn is the usage watch's projection, the same value status
+	// shows; nil when it has none.
+	UsageBurn *usageBurnView `json:"usageBurn,omitempty"`
 	// MigrationReview describes historical declarations, never execution,
 	// current lane activity, permission or a reason to change supervision.
 	MigrationReview dockMigrationReview `json:"migrationReview"`
@@ -1449,7 +1452,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 		// A loop held for a person, or paused and still waiting for one, is
 		// under "Needs you" already.
 		lanesFailed := l.LanesFailed != "" && l.State != "waiting_for_you" && l.AlsoWaiting == ""
-		if quiet[l.State] && l.Away == nil && !flagged && !otherBuild && !lanesFailed {
+		if quiet[l.State] && l.Away == nil && !flagged && !otherBuild && !lanesFailed && l.UsageBurn == nil {
 			continue
 		}
 		t := txt()
@@ -1475,6 +1478,12 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 				t = txt(t, " ")
 			}
 			t = txt(t, l.NoProgress.Text)
+		}
+		if l.UsageBurn != nil {
+			if len(t) > 0 {
+				t = txt(t, " ")
+			}
+			t = txt(t, l.UsageBurn.Words)
 		}
 		if l.Build.Availability == "different" {
 			if len(t) > 0 {
@@ -1961,6 +1970,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		// the hold, not current.
 		np.Text = noProgressText(np, loopHeld(st.Control, st.controlUnreadable))
 		l.NoProgress = &np
+		l.UsageBurn = st.UsageBurn
 		if r := st.Refusals; r.Total > 0 || r.Question != "" {
 			l.Refusals = &r
 		}

@@ -102,6 +102,28 @@
           "type": "boolean",
           "description": "Explicitly include the latest private goal revision in automatic prompts and handoff briefs. Missing or invalid goals prevent sending."
         },
+        "usage_watch": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Opt-in: read the quota of the accounts catalog entry the loop's conversation uses and warn its agent once a window when the weekly window would run out before it resets. Never acts on lanes or routes.",
+          "required": [
+            "account"
+          ],
+          "properties": {
+            "account": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+            },
+            "every": {
+              "$ref": "#/$defs/duration",
+              "description": "Default 30m; 10m to 24h."
+            },
+            "warn_within": {
+              "$ref": "#/$defs/duration",
+              "description": "Default 12h; 1h to 168h."
+            }
+          }
+        },
         "pr_backlog": {
           "type": "object",
           "additionalProperties": false,

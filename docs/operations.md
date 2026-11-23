@@ -826,6 +826,15 @@ A question is the loop's record that it needs a person's decision. It is saved i
 
 `status` prints a `question:` line while one is open. The incident journal records `question_raised` and `question_withdrawn` control records, by ID only; `question_answered` is kept for the answer commands. A new question replaces an open one, which is recorded as withdrawn. A question whose situation has cleared, because the loop is running again, is withdrawn. Answering from the panel or with `client review|apply answer` is not built yet. Until it is, `keepgoing resume` withdraws the question and goes on: for `refused` the streak starts over and continuing starts again at 1 minute, and for `restricted` it is the one more try above.
 
+### Warning before the weekly window runs out
+
+Unreleased, opt-in (`loop.usage_watch`); **fixtures only**. A loop can name the [accounts catalog](accounts.md) entry its own conversation runs on (`account`). Its checks then read that entry's subscription quota with the catalog's quota read, which makes no model request, at most every `every` (default `30m`), and only on a check that observed the primary conversation (never on a dry run, a held check or a fallback). The reading is kept in `usage-watch.json` in the state directory, its own record, so no state format changes.
+
+- **The rate** is the weekly all-models window's use so far divided by the time since it began (its reset less a week). A model's or a client's weekly window (Claude's `seven_day_<x>`) is not used. Nothing is projected in the window's first hour or before anything is used.
+- **The words.** While, at that rate, the window runs out before it resets, from a reading no older than twice `every`, `status`, `status --json` (`usageBurn`) and the panel's row say "At this rate the weekly window is used up in about N h, before it resets."; `panel list` carries the sentence as `usageBurn`.
+- **One wake.** When the run-out is also within `warn_within` (default `12h`), the agent is told once per window: `[keepgoing:usage-burn window=weekly used=… exhausts=… resets=…]` with one notice. It rides on the ordinary wake of an idle session. A session idle on purpose while its children run gets it alone, once, under the same spacing as the child-error notice, and is told that it is not an instruction to continue. It is recorded as sent only when the send is accepted. A new window resets it.
+- **Never acts.** It reads no lane, messages, pauses or stops no child, and changes no route. A failed read is recorded (`reason`) and retried when next due.
+
 ### A long limit wait with no way out
 
 Released in v0.2.0; **offline fixtures only**. A provider limit with a reported reset is waited out without prompts when no handoff can happen: failover is off for that error class, or no fallback is confirmed. That wait can last days. When the reported reset is further away than `errors.report_wait_after` (default `6h`), looptender sends one `limit_wait` report for that wait, saying which target is waiting, when the limit resets and why no handoff is possible.

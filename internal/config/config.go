@@ -76,6 +76,8 @@ type Loop struct {
 	PromptGoalOnChange bool `yaml:"prompt_goal_on_change,omitempty"`
 	// PRBacklog is opt-in GitHub evidence on ordinary wakes, never a decision gate.
 	PRBacklog *PRBacklog `yaml:"pr_backlog,omitempty"`
+	// UsageWatch is the opt-in usage-burn warning (see UsageWatch).
+	UsageWatch *UsageWatch `yaml:"usage_watch,omitempty"`
 	// PromptContext appends the loop's supervision context (see
 	// internal/loopcontext) to wakes, re-prompts and handoff briefs, when it
 	// is new to the conversation or has changed. Off by default.
@@ -710,6 +712,9 @@ func (c *Config) applyDefaults() {
 	if l.PRBacklog != nil {
 		l.PRBacklog.defaults()
 	}
+	if l.UsageWatch != nil {
+		l.UsageWatch.defaults()
+	}
 	setDur(&l.Daemon.Interval, DefaultDaemonInterval)
 	l.tickTimeoutDefaulted = l.TickTimeout.Duration == 0
 	setDur(&l.TickTimeout, DefaultTickTimeout)
@@ -872,6 +877,9 @@ func (c *Config) Validate() error {
 		if err := l.PRBacklog.Policy().Validate(); err != nil {
 			add("loop.pr_backlog: %v", err)
 		}
+	}
+	if u := l.UsageWatch; u != nil && !u.valid() {
+		add("loop.usage_watch needs an accounts catalog ID in account, every between 10m and 24h, and warn_within between 1h and 168h")
 	}
 	if l.PromptGoalOnChange && !l.PromptGoal {
 		add("loop.prompt_goal_on_change needs loop.prompt_goal: true")

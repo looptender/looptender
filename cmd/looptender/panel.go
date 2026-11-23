@@ -1068,6 +1068,10 @@ type panelListLoop struct {
 	// NoProgress is the no-progress flag's sentence when it is raised, in
 	// the page's words; empty otherwise. It is never a need.
 	NoProgress string `json:"noProgress,omitempty"`
+	// UsageBurn is the usage watch's words while, at the weekly window's
+	// rate so far, it runs out before it resets: "At this rate the weekly
+	// window is used up in about N h, before it resets."
+	UsageBurn string `json:"usageBurn,omitempty"`
 	// Can is which changes fit the loop's control flags as read, as the
 	// page offers them: pause, stop and resume. Empty when the flags could
 	// not be read. client review and client apply take them.
@@ -1125,6 +1129,9 @@ func buildPanelList(r dockReport) panelList {
 		}
 		if np := l.NoProgress; np != nil && np.Availability == "flagged" {
 			row.NoProgress = np.Text
+		}
+		if u := l.UsageBurn; u != nil {
+			row.UsageBurn = u.Words
 		}
 		row.Reason, row.CheckedAt, row.Supervisor = l.Detail, l.LastCheck.At, l.Supervisor
 		if w := l.Waiting; w != nil {
