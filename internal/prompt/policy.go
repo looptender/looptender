@@ -55,6 +55,12 @@ func GeneratedPrompt(prefix, configPath, task string) string {
 	return PolicyHead(prefix, configPath) + task + "\n"
 }
 
+// GeneratedPromptVersion returns a prompt file as setup wrote it with the
+// given wording, 1 to CurrentPolicyVersion(): what an older build wrote.
+func GeneratedPromptVersion(version int, prefix, configPath, task string) string {
+	return renderHead(version, prefix, configPath) + task + "\n"
+}
+
 func renderHead(version int, prefix, configPath string) string {
 	return fmt.Sprintf(policyHeads[version-1], prefix, configPath, prefix, configPath)
 }

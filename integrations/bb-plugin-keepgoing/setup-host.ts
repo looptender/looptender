@@ -1,10 +1,10 @@
 import { publishReference } from "./registry-host.ts";
 import type { Publication } from "./registry-contract.ts";
-import { execFile } from "node:child_process";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { z } from "zod";
 import { refusesFlag, withClientFlag } from "./client-flag.ts";
+import { execProgram } from "./executable.ts";
 import { goalSummarySchema } from "./status-details.ts";
 import { planSchema, refusedReportSchema, type Refusal, type SetupTarget, type SetupRecord } from "./setup-contract.ts";
 import { durationMs, type Bounds } from "./new-thread-contract.ts";
@@ -14,17 +14,13 @@ import { durationMs, type Bounds } from "./new-thread-contract.ts";
 export type Execute = (bin: string, args: string[], input: string, threadId: string, signal?: AbortSignal) => Promise<{ code: number; data: unknown; emptyStdout?: boolean; timedOut?: boolean }>;
 // Bounded output and duration; task text travels only through stdin. Neither
 // command output nor child-process errors are logged or included in errors.
-export const execute: Execute = (bin, args, input, threadId, signal) => new Promise((resolve) => {
-  const child = execFile(bin, args, { timeout: 20_000, maxBuffer: 1 << 20, signal, env: { ...process.env, BB_THREAD_ID: threadId } }, (error, stdout) => {
+export const execute: Execute = (bin, args, input, threadId, signal) =>
+  execProgram(bin, args, { timeout: 20_000, maxBuffer: 1 << 20, signal, env: { ...process.env, BB_THREAD_ID: threadId }, input }).then(({ error, stdout }) => {
     let data: unknown = null;
-    try { data = JSON.parse(String(stdout)); } catch { /* text commands need no output */ }
-    const e = error as { code?: unknown; killed?: boolean } | null;
-    const code = e ? (typeof e.code === "number" && e.code !== 0 ? e.code : 1) : 0;
-    resolve({ code, data, emptyStdout: String(stdout) === "", timedOut: !!e && e.killed === true });
+    try { data = JSON.parse(stdout); } catch { /* text commands need no output */ }
+    const code = error ? (typeof error.code === "number" && error.code !== 0 ? error.code : 1) : 0;
+    return { code, data, emptyStdout: stdout === "", timedOut: !!error && error.killed === true };
   });
-  child.stdin?.on("error", () => { /* early exit/EPIPE is reported by callback */ });
-  child.stdin?.end(input);
-});
 const cliPlan = z.object({
   schemaVersion: z.literal(1), outcome: z.enum(["preview", "created"]),
   goal: z.unknown().optional(), taskPath: z.string().optional(),

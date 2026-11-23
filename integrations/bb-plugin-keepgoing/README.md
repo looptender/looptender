@@ -1,8 +1,8 @@
 # looptender for BB
 
-**The product is now looptender (formerly keepgoing).** From plugin v0.3.1 (on `main`, not yet in a release) BB shows this plugin as looptender, and its labels and messages say looptender. Everything you type is unchanged for now: the plugin id (`keepgoing`), the `bb keepgoing` command, the `keepgoingPath` setting and the `keepgoing` executable. Guided setup with a CLI from after v0.2.0 creates `looptender.yaml` in place of `keepgoing.yaml` (the plugin accepts either; existing loops keep their file). Updating keeps the plugin's settings, secrets and schedules, because BB keeps them under the plugin id. This guide calls the product looptender and keeps executable, command and configuration identifiers literal.
+Updating the plugin keeps its settings, secrets and schedules: BB keeps them under the plugin id, which does not change. Guided setup creates `looptender.yaml`; the plugin also reads a loop's existing configuration file under its earlier name.
 
-A thin [BB](https://getbb.app) plugin for [looptender](../../README.md). It shows looptender's state on every thread a loop supervises, with Pause controls, guided setup and explicit held transfers. It also adds a `bb keepgoing` command. All decisions stay in looptender; the plugin only runs the `keepgoing` CLI and renders its JSON.
+A thin [BB](https://getbb.app) plugin for [looptender](../../README.md). It shows looptender's state on every thread a loop supervises, with Pause controls, guided setup and explicit held transfers. It also adds a `bb looptender` command. All decisions stay in looptender; the plugin only runs the `keepgoing` CLI and renders its JSON.
 
 The plugin reports its version with `--client bb-plugin@VERSION` when it reads a loop's status, so the looptender panel's Versions view can say which plugin and which looptender build it runs. The version is a constant in `client-flag.ts`, kept equal to `package.json` by a test. A looptender too old to know the flag answers with a usage error. The plugin then asks again without it, and stops sending it to that executable only if that second call succeeds. It sends the flag again once the executable changes: a different path, size or modification time, as after an upgrade. A plugin reload also resets this.
 
@@ -12,7 +12,7 @@ Use **CLI v0.2.0 + plugin v0.3.0** (its labels say keepgoing). Verify that the [
 
 ```sh
 bb plugin install git:https://github.com/looptender/looptender.git@v0.2.0 --plugin keepgoing
-bb plugin config keepgoing set keepgoingPath /absolute/path/to/keepgoing
+bb plugin config keepgoing set looptenderPath /absolute/path/to/looptender
 ```
 
 Confirm BB's displayed source/tag before installation. The repository collection selects this package; BB installs production dependencies and builds its server/app/host entries. It needs Git and network access, but not a separate global npm install. The command does not install the looptender CLI, configure a loop or start supervision. New UI-created loops need no manual `configs` entry. Existing managed installs use `bb plugin outdated` and `bb plugin update`; a pinned tag remains pinned, so inspect the recorded source and update policy rather than expecting it to follow new tags. Local path development installs use the path/build workflow below. No live Git installation or installed-plugin acceptance is claimed yet.
@@ -24,7 +24,7 @@ cd integrations/bb-plugin-keepgoing
 npm install
 bb plugin build
 bb plugin install .
-bb plugin config keepgoing set keepgoingPath /absolute/path/to/keepgoing
+bb plugin config keepgoing set looptenderPath /absolute/path/to/looptender
 bb plugin config keepgoing set configs "/absolute/path/to/keepgoing.yaml"
 ```
 
@@ -42,7 +42,7 @@ Installing a local path for an id already installed from another path moves it a
 node stamp-build.mjs <looptender build label>   # package.json becomes <base>-build.<label>; build-label.ts records the label
 ```
 
-A stamped build is a distinct plugin version (`0.3.1-build.<label>`; labels that differ only in case, in `.` against `-`, or after their first 48 characters give the same version string, though the install path still differs), and `bb keepgoing status` ends with a line saying which looptender build the plugin was built from and the one it runs. When they differ it says only that they are different builds and that, if one was installed recently, BB may still be serving the plugin from before it; either side can be the newer one (after a rollback, or when `keepgoingPath` points at an older build), and the line never says which. The running build is printed only if it has the shape of a build label. A source build is not stamped and says so. `stamp-build.mjs` refuses to run inside a git work tree, so the repository's own copy cannot be stamped, and `client-flag.ts`'s `PLUGIN_VERSION` stays the base version. The tests run on the repository copy: in a stamped staged copy the version comparison in `client-flag.test.ts` uses the base version and the "not stamped" test skips itself, so run the tests before staging.
+A stamped build is a distinct plugin version (`0.3.1-build.<label>`; labels that differ only in case, in `.` against `-`, or after their first 48 characters give the same version string, though the install path still differs), and `bb looptender status` ends with a line saying which looptender build the plugin was built from and the one it runs. When they differ it says only that they are different builds and that, if one was installed recently, BB may still be serving the plugin from before it; either side can be the newer one (after a rollback, or when `keepgoingPath` points at an older build), and the line never says which. The running build is printed only if it has the shape of a build label. A source build is not stamped and says so. `stamp-build.mjs` refuses to run inside a git work tree, so the repository's own copy cannot be stamped, and `client-flag.ts`'s `PLUGIN_VERSION` stays the base version. The tests run on the repository copy: in a stamped staged copy the version comparison in `client-flag.test.ts` uses the base version and the "not stamped" test skips itself, so run the tests before staging.
 
 `configs` takes one existing server-local configuration file path per line (`looptender.yaml`, or `keepgoing.yaml` from releases up to v0.2.0). Those loops, setups created through the UI, and explicitly imported registry references (unreleased source) are shown and controlled. UI-created setups are registered separately with their host and configuration path in private plugin storage. A path sent from the browser is checked against this list, so the plugin never runs looptender against an arbitrary file. The plugin needs a looptender build whose `status --json` includes `primaryAgent` and `targetAgent`, which is any build after 0.1.0.
 
@@ -61,7 +61,7 @@ This flow is implemented on `main` and requires a looptender build containing `i
 3. Choose **Create disabled setup**. The host runs the shared `init` command, with task text on stdin. For goal setup, one private `task.md` snapshot is referenced by goal revision 1 while `prompt.md` holds stable wake instructions. Configuration and prompt files go into the CLI's new private setup directory outside the checkout. No agent, probe, scheduler, or account is started or created.
 4. Review the shared doctor results. **Start background supervision** appears only when the saved target matches, BB identity diagnostics pass without errors, no control hold prevents start, and no responding daemon was found. Clicking it calls the existing `start --background` command on the recorded host. It enables supervision with the thread's ownership identity; it does not take over another owner or clear holds. Subsequent ticks may prompt the agent normally.
 
-The **Setup** control / expanded banner can refresh diagnostics later. Pause/stop route to the recorded host. The plugin does not resume a loop (unreleased source): a Resume click, an agent's `bb plugin rpc call` and `bb keepgoing resume` all reach it the same way, so it cannot tell a person from the session the loop supervises, and supervision never clears its own hold. A held loop shows where a person resumes it instead, from an ordinary terminal: `keepgoing resume -c <config>`, or the looptender panel started there with `keepgoing panel --allow-changes`. A terminal BB opened on the loop's thread carries that thread's identity and is refused. Resume explicitly clears holds; it does not start a missing daemon. New disabled setups use the separate start action. Stop/completion behavior remains in looptender, with no separate loop skill required.
+The **Setup** control / expanded banner can refresh diagnostics later. Pause/stop route to the recorded host. The plugin does not resume a loop (unreleased source): a Resume click, an agent's `bb plugin rpc call` and `bb looptender resume` all reach it the same way, so it cannot tell a person from the session the loop supervises, and supervision never clears its own hold. A held loop shows where a person resumes it instead, from an ordinary terminal: `keepgoing resume -c <config>`, or the looptender panel started there with `keepgoing panel --allow-changes`. A terminal BB opened on the loop's thread carries that thread's identity and is refused. Resume explicitly clears holds; it does not start a missing daemon. New disabled setups use the separate start action. Stop/completion behavior remains in looptender, with no separate loop skill required.
 
 The setup service never spawns, forks, re-parents, sends to, or changes the provider/model of a BB thread. Preview tickets expire after five minutes or plugin reload, are bound to the task hash, goal choice, target metadata, binary selection and resolved plan, and permit one creation attempt. Task text is not persisted in plugin storage, logged, or put in subprocess arguments; it remains in private `task.md` for goal setup or `prompt.md` for task-only setup after creation. Task input is limited to 256 KiB in the UI flow. Paths and target references in private plugin storage are operational metadata.
 
@@ -75,7 +75,7 @@ Existing configured supervision or a failed status lookup blocks creating anothe
 - Creation and saving the plugin reference are not atomic. If reference persistence fails, the UI retains the created config path for recovery. Inspect that disabled setup using the CLI on its host; do not create or start another automatically. A command timeout or lost response can also leave a disabled directory; existing destinations are never overwritten.
 - A failed start response can mean startup was not confirmed, not that nothing started. Refresh diagnostics before retrying. A responsive daemon prevents another start; the CLI's daemon/tick locks and ownership checks provide the final guard.
 - Thread/config checks are point-in-time observations. Manual edits and external scheduling changes are not serialized by the plugin. Keep configurations unchanged while creating/starting a loop. Full model/account validation remains unimplemented; explicit transfers use the recovery protocol below.
-- The plugin retains at most 32 UI-created setup references. There is no UI deletion operation yet. Unreleased source adds the explicit registry attachment below; older plugin builds need the existing server-local setting for CLI-created configurations. Identical loop names on different hosts are ambiguous to `bb keepgoing <action> <name>` and are refused; use the thread's controls instead.
+- The plugin retains at most 32 UI-created setup references. There is no UI deletion operation yet. Unreleased source adds the explicit registry attachment below; older plugin builds need the existing server-local setting for CLI-created configurations. Identical loop names on different hosts are ambiguous to `bb looptender <action> <name>` and are refused; use the thread's controls instead.
 
 Verification uses SDK fake-host/RPC tests, local subprocess fixtures, controller tests, DOM interaction tests, typechecking, and plugin bundle builds. Tests cover host routing, preview changes/replay/concurrency, holds, failed diagnostics, reload, privacy, and the separate preview/create/start clicks. No live BB thread, remote host deployment, paid request, account handoff, or end-to-end install-to-completion walkthrough was exercised. The existing conversation timer was not changed.
 
@@ -128,7 +128,7 @@ Not verified: the fakes do not prove that BB delivers experimental_submission fo
 
 After a confirmed setup, start or supported move/recovery, the rebuilt host entry explicitly publishes a reference to the CLI registry. Setup still leaves supervision disabled; publication changes no controls or work allowances. The result distinguishes lifecycle success from `registered`/`repair_needed` publication evidence. Publication cannot verify a provider account or model. An older CLI, unavailable lock, changed binding, corrupt registry, lost publication reply or storage failure leaves explicit repair needed; never repeat setup/start/move just to populate the menu.
 
-Plugin settings/saved setups and CLI registry entries remain separate sets. Expanded status identifies the reference source and last publication outcome; `bb keepgoing status` explains its limited coverage. Reads do not import, publish, scan directories or prune. External CLI setup/moves and manually listed configurations need [explicit bound registry reconciliation](../../docs/local-clients.md#bound-bb-publication-and-repair-unreleased-source) on the host, under the saved owner or an ordinary person terminal. No caller identity workaround or takeover is part of repair. Existing superseded markers retain their historical/no-Resume behavior; paused-only predecessors are never inferred to be retired.
+Plugin settings/saved setups and CLI registry entries remain separate sets. Expanded status identifies the reference source and last publication outcome; `bb looptender status` explains its limited coverage. Reads do not import, publish, scan directories or prune. External CLI setup/moves and manually listed configurations need [explicit bound registry reconciliation](../../docs/local-clients.md#bound-bb-publication-and-repair-unreleased-source) on the host, under the saved owner or an ordinary person terminal. No caller identity workaround or takeover is part of repair. Existing superseded markers retain their historical/no-Resume behavior; paused-only predecessors are never inferred to be retired.
 
 The lifecycle operation, registry publication and plugin persistence are separate writes. A successful init can leave a disabled configuration and published CLI reference even if the plugin cannot save its reference; retain the reported identity/path privately and recover via attachment instead of recreating it. A lost move response uses the existing held-move inspection/recovery flow, which does not publish during reads. Explicit later reconciliation repairs menu visibility without replaying the move. Unrelated references survive. This source needs rebuilt app/host and a CLI with `registry reconcile`; no registry schema change, installation or live acceptance is implied.
 
@@ -202,10 +202,10 @@ These richer diagnostics are implemented after v0.1.3 and require rebuilt plugin
 ## Commands
 
 ```sh
-bb keepgoing status   # also says how many registered loops it does not show, and how to add one
-bb keepgoing pause <loop>
-bb keepgoing resume <loop>   # refused: prints where a person resumes the loop
-bb keepgoing stop <loop>
+bb looptender status   # also says how many registered loops it does not show, and how to add one
+bb looptender pause <loop>
+bb looptender resume <loop>   # refused: prints where a person resumes the loop
+bb looptender stop <loop>
 ```
 
 ## License
