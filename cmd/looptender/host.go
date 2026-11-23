@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/looptender/looptender/internal/hostcheck"
@@ -14,6 +15,9 @@ import (
 type hostStatus struct {
 	Session hostcheck.Session `json:"session"`
 	Load    hostcheck.Load    `json:"load"`
+	// Fixed: the readings are fixed by the test-only environment variable,
+	// so they say nothing about this computer.
+	Fixed string `json:"fixed,omitempty"`
 }
 
 // readHost reads the computer, at most once in hostCacheFor within one
@@ -23,6 +27,9 @@ func readHost(ctx context.Context) hostStatus {
 	defer hostCache.Unlock()
 	if hostCache.at.IsZero() || time.Since(hostCache.at) > hostCacheFor {
 		hostCache.h = hostStatus{Session: hostcheck.System.ReadSession(ctx), Load: hostcheck.System.ReadLoad()}
+		if hostFixedByEnv() {
+			hostCache.h.Fixed = hostcheck.FixedMessage
+		}
 		hostCache.at = time.Now()
 	}
 	return hostCache.h
@@ -45,8 +52,17 @@ func hostLoadSentence(l hostcheck.Load) string {
 	return s
 }
 
+// hostFixedByEnv: the test-only variable fixed this program's readings. A
+// test binary pins them on purpose and is not told.
+var hostFixedByEnv = func() bool { return hostcheck.FixedByEnv && !testing.Testing() }
+
 // doctorHost adds host.session and host.load.
 func doctorHost(r *doctorReport, h hostStatus) {
+	if h.Fixed != "" {
+		r.add("host.session", "warning", capitalize(h.Fixed)+".", "Unset "+hostcheck.FixedEnv+" in this program's environment.")
+		r.add("host.load", "warning", capitalize(h.Fixed)+".", "Unset "+hostcheck.FixedEnv+" in this program's environment.")
+		return
+	}
 	s := h.Session
 	parts := fmt.Sprintf("keychain %s, name service %s, console user %s", s.Keychain, s.DNS, s.Console)
 	switch {
@@ -74,6 +90,10 @@ func doctorHost(r *doctorReport, h hostStatus) {
 // printHost writes status's host lines, only when there is something to say.
 func printHost(w interface{ Write([]byte) (int, error) }, h *hostStatus) {
 	if h == nil {
+		return
+	}
+	if h.Fixed != "" {
+		fmt.Fprintf(w, "host:      %s\n", h.Fixed)
 		return
 	}
 	if !h.Session.Available {

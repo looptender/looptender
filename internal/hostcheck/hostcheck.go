@@ -75,7 +75,18 @@ var System = systemReaders()
 // computer's real load and session.
 const FixedEnv = "LOOPTENDER_TEST_FIXED_HOST"
 
-func init() { System = fromEnv(os.Getenv, System) }
+// FixedByEnv is true when FixedEnv was in effect when this program started:
+// its readings are fixed and detection is off, which status, doctor and the
+// daemon say.
+var FixedByEnv bool
+
+// FixedMessage says so.
+const FixedMessage = "host readings are fixed by " + FixedEnv + "; detection is off for this process"
+
+func init() {
+	System = fromEnv(os.Getenv, System)
+	FixedByEnv = os.Getenv(FixedEnv) == "1"
+}
 
 // fromEnv is Fixed when FixedEnv is 1, else sys.
 func fromEnv(get func(string) string, sys Readers) Readers {

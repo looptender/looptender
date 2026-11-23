@@ -23,6 +23,7 @@ import (
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/daemoninfo"
 	"github.com/looptender/looptender/internal/health"
+	"github.com/looptender/looptender/internal/hostcheck"
 	"github.com/looptender/looptender/internal/incident"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/report"
@@ -313,6 +314,9 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 	defer cancel()
 	defer enableDaemonShutdown(monitor, cfg, cfgPath, lease, cancel)()
 	state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "started"})
+	if hostFixedByEnv() {
+		state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "host_readings_fixed", Error: hostcheck.FixedMessage})
+	}
 	clearStartRefused(cfg.Loop.StateDir) // a supervisor is running now
 	monitor.SetAdoption(adopter.followMode(cfg))
 	adopter.watch(monitor)
