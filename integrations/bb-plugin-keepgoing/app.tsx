@@ -15,6 +15,7 @@ import {
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
 import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable } from "./status-details";
+import { lineageDue, type LineageEntry } from "./lineage";
 import { SetupPanel } from "./setup-panel";
 import { SetupStyles } from "./setup-style";
 import { AttachPanel } from "./attach-panel";
@@ -52,20 +53,33 @@ function fetchLoops(rpc: Rpc, threadId: string, force = false) {
     .finally(notify);
 }
 
-// Whether a thread is a child, and which ancestor's loop covers it. Asked once
-// per thread; a failure reads as "not a child", so setup is offered as before.
-const lineageCache = new Map<string, { child: boolean; coveredBy?: { threadId: string; loop: string } } | "pending">();
-function useLineage(threadId: string) {
+// Whether a thread is a child, and which ancestor's loop covers it. Cached per
+// thread, refreshed after a few minutes and whenever the thread's loop list
+// changes; a failed lookup is retried with backoff and meanwhile reads as "not
+// a child" (setup is offered as before).
+const lineageCache = new Map<string, LineageEntry>();
+function useLineage(threadId: string, loopsKey = "") {
   const rpc = useRpc<typeof rpcContract>();
   const [, bump] = useState(0);
   useEffect(() => {
-    if (lineageCache.has(threadId)) return;
-    lineageCache.set(threadId, "pending");
-    rpc.call("lineage", { threadId }).then(r => lineageCache.set(threadId, r)).catch(() => lineageCache.set(threadId, { child: false })).finally(() => bump(n => n + 1));
-  }, [rpc, threadId]);
-  const v = lineageCache.get(threadId);
-  // While the answer is pending nothing that depends on it is drawn, so the entry button never flashes in and out.
-  return v && v !== "pending" ? { ...v, pending: false } : { child: false as boolean, coveredBy: undefined, pending: v === "pending" || v === undefined };
+    const check = (force: boolean) => {
+      const entry = lineageCache.get(threadId);
+      if (!force && !lineageDue(entry, Date.now())) return;
+      if (entry?.inflight) return;
+      lineageCache.set(threadId, { ...(entry ?? { at: 0, failures: 0 }), inflight: true, key: loopsKey });
+      rpc.call("lineage", { threadId })
+        .then(value => lineageCache.set(threadId, { value, at: Date.now(), failures: 0, inflight: false, key: loopsKey }))
+        .catch(() => lineageCache.set(threadId, { value: entry?.value, at: Date.now(), failures: (entry?.failures ?? 0) + 1, inflight: false, key: loopsKey }))
+        .finally(() => bump(n => n + 1));
+    };
+    const known = lineageCache.get(threadId);
+    check(!!known && known.key !== loopsKey);
+    const timer = setInterval(() => check(false), 5_000);
+    return () => clearInterval(timer);
+  }, [rpc, threadId, loopsKey]);
+  const e = lineageCache.get(threadId);
+  // While the first answer is pending nothing that depends on it is drawn, so the entry button never flashes in and out.
+  return e?.value ? { ...e.value, pending: false } : { child: false as boolean, coveredBy: undefined, pending: !e || (e.inflight && e.failures === 0) };
 }
 
 function useLoops(threadId: string) {
@@ -275,7 +289,7 @@ function CardRow({ threadId }: { threadId: string }) {
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
   const [open, setOpen] = useState(false);
   const sharedResume = !failed && loops.filter(needsResume).length > 1;
-  const lineage = useLineage(threadId);
+  const lineage = useLineage(threadId, loops.map(l => `${loopKey(l)}:${l.controlState}`).join(","));
   const nav = useBbNavigate();
   // A lane is covered through its parent's loop, and a session has one loop: no
   // entry button, one quiet line, and setup kept in a collapsed "more" below.
@@ -311,7 +325,7 @@ function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; i
   const { outcome, loop } = useThreadOutcome(threadId, loops);
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
   const only = loops.length === 1 ? loops[0] : undefined;
-  const lineage = useLineage(threadId);
+  const lineage = useLineage(threadId, loops.map(l => `${loopKey(l)}:${l.controlState}`).join(","));
   const noLoop = loaded && !failed && !loops.length;
   // Nothing while the lineage is pending; on a child, no "Add to Looptender" entry.
   if (noLoop && lineage.pending) return null;
@@ -328,7 +342,7 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
   const { loops, references, refresh, failed, loaded } = useLoops(threadId);
   const { outcome, start, control, loop } = useThreadOutcome(threadId, loops);
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
-  const lineage = useLineage(threadId);
+  const lineage = useLineage(threadId, loops.map(l => `${loopKey(l)}:${l.controlState}`).join(","));
   const nav = useBbNavigate();
   if (!isExpanded) return null;
   const sharedResume = !failed && loops.filter(needsResume).length > 1;
