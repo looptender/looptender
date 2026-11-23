@@ -74,6 +74,15 @@ The menu compares the build it runs with the one installed now, from the file sy
 
 Before quitting, the menu checks the installed program: it must exist and be runnable and, in an app bundle, have a readable `Info.plist` that names that program and this app's bundle identifier, and pass `codesign --verify --deep --strict`. It then starts the new one with the same arguments, and quits only if that one is still running 1.5 seconds later. If a check fails, or the new menu does not stay up, this menu keeps running and says why in its last line (and in an alert when you chose the update). An automatic relaunch is tried once for each installed build, so a failing one never repeats; choosing the item yourself can be tried again. Open at Login is never read or changed: the relaunched menu is an ordinary start of the same program. Not testable without the real app: the relaunch itself, the notification's permission and click, and a login-item start; the decisions and the file checks are tested.
 
+## Notifications for events
+
+The CLI sends one list of events in `panel list --json` (`notices`; see [the dock guide](../../docs/dock.md)), the same one the panel page reads. The menu keeps the ids it has seen: its first read is a baseline and posts nothing, and a later read posts each new id once. Events that begin together and share a group are one notification (`5 loops stopped: usage limit until Fri 04:00.`); one event's notification opens that loop in the panel, a group's opens the panel. A read that was cut off, failed or came from an older CLI changes nothing.
+
+- **Pushed by default:** a loop needs you (an agent's question is the most urgent), a usage limit is hit, a supervisor stops answering. **Listed but quiet:** a failed lane, a hold set or lifted, an install adopted or refused, a low or critical disk, a deadline or send limit reached. **Notify me when…** turns each kind on or off, in the app's preferences.
+- **Recent** lists the last ten events, pushed or not, with their age. It is kept in memory: a restart starts empty.
+- The words come from the CLI and carry no note text, path, thread ID or account name. The count beside the icon is still the loops that need you, and only that.
+- Permission is the one the menu already asks for (when started from an app bundle); without it nothing is posted, nothing is asked again, and Recent still lists the events.
+
 ## Notifications when checks stop
 
 When a loop's [checks have stopped](../../docs/operations.md#external-schedulers-can-stop-on-their-own), its row says so and the count beside the icon includes it. The menu can also post a macOS notification, which stays in Notification Center until it is seen. macOS posts notifications only for an app bundle, so this needs the menu built as one:
