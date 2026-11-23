@@ -1026,6 +1026,9 @@ type panelList struct {
 	// InstalledBuild is the build answering this read, shortened for display;
 	// absent when it has no version (a dev build).
 	InstalledBuild string `json:"installedBuild,omitempty"`
+	// Freshness is the one line about how many supervisors run the installed
+	// build, as the page shows it; absent when no loop's build is known.
+	BuildFreshness *buildFreshnessSummary `json:"buildFreshness,omitempty"`
 	// EarlierBuildPanel: as in panel status.
 	EarlierBuildPanel string `json:"earlierBuildPanel,omitempty"`
 }
@@ -1057,6 +1060,9 @@ type panelListLoop struct {
 	// one answering this read; it never says which is newer.
 	RecordedBuild string `json:"recordedBuild,omitempty"`
 	BuildDiffers  bool   `json:"buildDiffers,omitempty"`
+	// Freshness is the loop's supervisor build against the installed one, in
+	// build_freshness.go's words; absent when nothing can be said.
+	BuildFreshness *buildFreshness `json:"buildFreshness,omitempty"`
 	// Provider and Model are the configured labels of the loop's current
 	// target, shown beside its name; absent when not configured. Moved is set
 	// while the loop has been moved to a new thread and not yet checked there.
@@ -1071,6 +1077,7 @@ func buildPanelList(r dockReport) panelList {
 	out.AccountQuotas = panelQuotaSummary(r)
 	out.Volumes = r.Volumes
 	out.InstalledBuild = shortBuildLabel(version)
+	out.BuildFreshness = r.BuildFreshness
 	needs := map[string]bool{}
 	overdue := map[string]*time.Time{}
 	for _, n := range r.NeedsYou {
@@ -1087,7 +1094,7 @@ func buildPanelList(r dockReport) panelList {
 			}
 		}
 		row := panelListLoop{Key: l.Key, Name: l.Name, DiskSpace: dockDiskLevel(l.DiskSpace), State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
-			BuildDiffers: l.Build.Availability == "different"}
+			BuildDiffers: l.Build.Availability == "different", BuildFreshness: l.BuildFreshness.public()}
 		// Lengthened with the installed label when the two would read the same.
 		var inst string
 		row.RecordedBuild, inst = shortBuildPair(l.Build.Recorded, version)
