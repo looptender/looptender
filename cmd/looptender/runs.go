@@ -229,7 +229,7 @@ var runsLimitations = []string{
 	"Everything here was recorded by an earlier check or control command; nothing is a live observation, and a session reference does not show that the conversation exists or can be resumed.",
 	"A session link is unavailable: no provider link format is validated yet.",
 	"A blocker is what the last check that observed child threads verified, and who owns the loop. It is not a live view of the other conversation, and showing it grants no control over it. Who holds the tick or daemon lock is not identified.",
-	"The saved active target is what the last check recorded. Target moves are in keepgoing timeline, not here.",
+	"The saved active target is what the last check recorded. Target moves are in looptender timeline, not here.",
 }
 
 func runsCommand(e env, args []string) int {
@@ -877,7 +877,7 @@ func printSupervised(w io.Writer, s runsSupervised) {
 		} else {
 			fmt.Fprintf(w, "  run unavailable (%s)", s.RunReason)
 		}
-		fmt.Fprintf(w, "\n      follow it with: keepgoing runs --registry-id %s\n", s.RegistrationID)
+		fmt.Fprintf(w, "\n      follow it with: looptender runs --registry-id %s\n", s.RegistrationID)
 	case "registry_not_consulted":
 		fmt.Fprintln(w, "      its loop: unavailable (no registry consulted; pass --directory or a registry selector)")
 	default:

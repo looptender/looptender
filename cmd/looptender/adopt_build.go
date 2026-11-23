@@ -129,6 +129,11 @@ type adoptProbe struct {
 	Protocol    int    `json:"protocol"`
 	StateFormat int    `json:"stateFormat"`
 	Version     string `json:"version"`
+	// ConfigArg: this build accepts the configuration path after the
+	// handover descriptor (`--handover-fd N -c PATH`), so a process list
+	// still names the loop after a switch. An earlier build answers without
+	// it and is handed only `--handover-fd N`, the one form it accepts.
+	ConfigArg bool `json:"configArg,omitempty"`
 }
 
 // adoptCandidate is the file now installed at the launch path, opened: the
@@ -184,6 +189,9 @@ type buildAdopter struct {
 	dirs func(dirs []string) string
 	// ready says why the loop cannot be handed to a new build now, or "".
 	ready func(lease *ownerLease) string
+	// monitor is the daemon's live diagnostics, whose start and last pass
+	// a switch hands on; nil when they are unavailable.
+	monitor *daemoninfo.Server
 	// lastMoment runs just before the last check of the file; tests only.
 	lastMoment func()
 	now        func() time.Time
@@ -428,13 +436,27 @@ type adoptPayload struct {
 	// Returning, when set, is why the build handing over could not start:
 	// this image is the earlier build, taking the daemon back.
 	Returning string `json:"returning,omitempty"`
+	// DaemonStartedAt is when the daemon process started, and
+	// DaemonLastPassStartedAt and DaemonLastPassAt when its last completed
+	// pass began and ended, as the build handing over knew them: the new
+	// build reports the process's start, not the switch, as its own.
+	// Absent from an earlier build's handover.
+	DaemonStartedAt         *time.Time `json:"daemonStartedAt,omitempty"`
+	DaemonLastPassStartedAt *time.Time `json:"daemonLastPassStartedAt,omitempty"`
+	DaemonLastPassAt        *time.Time `json:"daemonLastPassAt,omitempty"`
+	// ConfigArg: the build handing over accepts the configuration path in
+	// its arguments (see adoptProbe.ConfigArg), for a return to it.
+	ConfigArg bool `json:"configArg,omitempty"`
 }
 
 const adoptPayloadLimit = 32 << 10
 
 // handover execs path as argv0 with the payload on an inherited pipe. It
-// returns only when the image was not replaced.
-func handover(p adoptPayload, argv0 string, run func(argv []string, keep []*os.File) error) error {
+// returns only when the image was not replaced. withConfig adds the
+// configuration path after the descriptor, for the process list, when the
+// build receiving it accepts that; the payload stays what the new build
+// reads.
+func handover(p adoptPayload, argv0 string, withConfig bool, run func(argv []string, keep []*os.File) error) error {
 	b, err := json.Marshal(p)
 	if err != nil || len(b) > adoptPayloadLimit {
 		return errors.New("handover too large")
@@ -455,7 +477,11 @@ func handover(p adoptPayload, argv0 string, run func(argv []string, keep []*os.F
 	if err != nil {
 		return err
 	}
-	return run([]string{argv0, adoptCommandName, "--handover-fd", strconv.FormatUint(uint64(fd), 10)}, []*os.File{r})
+	argv := []string{argv0, adoptCommandName, "--handover-fd", strconv.FormatUint(uint64(fd), 10)}
+	if withConfig {
+		argv = append(argv, "-c", p.Config)
+	}
+	return run(argv, []*os.File{r})
 }
 
 // atSafePoint runs after a check has finished and been saved, before the
@@ -526,13 +552,13 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 	if ctx.Err() != nil {
 		return
 	}
-	var p adoptProbe
-	if err != nil || code != 0 || json.Unmarshal(out, &p) != nil || p.Protocol != adoptProtocol {
+	var probe adoptProbe
+	if err != nil || code != 0 || json.Unmarshal(out, &probe) != nil || probe.Protocol != adoptProtocol {
 		refuse("the installed build cannot take over a running daemon; restart supervision to use it")
 		return
 	}
-	to.Label = dockBuildLabel(p.Version)
-	if p.StateFormat < adoptStateFormat {
+	to.Label = dockBuildLabel(probe.Version)
+	if probe.StateFormat < adoptStateFormat {
 		refuse("the installed build is older than this loop's state format; going back needs the documented stop, restore and start")
 		return
 	}
@@ -567,9 +593,10 @@ func (a *buildAdopter) atSafePoint(ctx context.Context, cfg *config.Config, leas
 		thread, generation = lease.thread, lease.generation
 	}
 	payload := adoptPayload{Config: a.cfgPath, Loop: a.loop, StateDir: a.stateDir, Mode: a.mode, LockFD: uint64(fd), From: a.from, FromSHA: from.SHA256, FromLabel: from.Label,
-		ExpectSHA: c.sha, OwnerThread: thread, OwnerGeneration: generation, ExpectedStateDir: a.expectedStateDir}
+		ExpectSHA: c.sha, OwnerThread: thread, OwnerGeneration: generation, ExpectedStateDir: a.expectedStateDir, ConfigArg: true}
+	payload.DaemonStartedAt, payload.DaemonLastPassStartedAt, payload.DaemonLastPassAt = optionalTime(a.monitor.StartedAt()), optionalTime(a.monitor.LastPassStartedAt()), optionalTime(a.monitor.LastPassAt())
 	a.note(adoptRecord{Outcome: adoptSwitching, Mode: a.mode, From: from, To: to})
-	err = handover(payload, a.launch, func(argv []string, keep []*os.File) error {
+	err = handover(payload, a.launch, probe.ConfigArg, func(argv []string, keep []*os.File) error {
 		if a.lastMoment != nil {
 			a.lastMoment()
 		}
@@ -618,10 +645,12 @@ func noteAdoption(dir, loop string, r adoptRecord) {
 // build it came from, once.
 func adoptBuildCommand(e env, args []string) int {
 	if len(args) == 1 && args[0] == "--probe" {
-		_ = json.NewEncoder(e.stdout).Encode(adoptProbe{Protocol: adoptProtocol, StateFormat: adoptStateFormat, Version: version})
+		_ = json.NewEncoder(e.stdout).Encode(adoptProbe{Protocol: adoptProtocol, StateFormat: adoptStateFormat, Version: version, ConfigArg: true})
 		return exitOK
 	}
-	if len(args) != 2 || args[0] != "--handover-fd" {
+	// The configuration path after the descriptor is there for the process
+	// list only: what the build runs is the payload's.
+	if !(len(args) == 2 || len(args) == 4 && args[2] == "-c" && filepath.IsAbs(args[3])) || args[0] != "--handover-fd" {
 		return exitUsage
 	}
 	n, err := strconv.ParseUint(args[1], 10, 31)
@@ -713,6 +742,9 @@ func (p adoptPayload) run(e env) int {
 		e.errf("warning: live daemon diagnostics unavailable; supervision will continue")
 	} else {
 		defer monitor.Close()
+		// The same process goes on: its start and last pass are the
+		// earlier build's, not this switch.
+		monitor.Continue(timeOrZero(p.DaemonStartedAt), timeOrZero(p.DaemonLastPassStartedAt), timeOrZero(p.DaemonLastPassAt))
 	}
 	defer daemonLock.Release()
 	a := newBuildAdopter(p.Config, p.StateDir, p.Mode, p.ExpectedStateDir, daemonLock)
@@ -757,8 +789,8 @@ func (p adoptPayload) back(e env, reason string) int {
 		argv0 = os.Args[0] // the launch path, kept for the next install
 	}
 	r := p
-	r.From, r.FromSHA, r.FromLabel, r.ExpectSHA, r.Returning = self, p.ExpectSHA, version, p.FromSHA, reason
-	_ = handover(r, argv0, func(argv []string, keep []*os.File) error {
+	r.From, r.FromSHA, r.FromLabel, r.ExpectSHA, r.Returning, r.ConfigArg = self, p.ExpectSHA, version, p.FromSHA, reason, true
+	_ = handover(r, argv0, p.ConfigArg, func(argv []string, keep []*os.File) error {
 		return execAdoptCandidate(earlier, argv, os.Environ(), keep)
 	})
 	return p.giveUp(e, reason+"; returning to the earlier build failed")
@@ -846,5 +878,28 @@ func (a *buildAdopter) followMode(cfg *config.Config) string {
 		return "any_install"
 	default:
 		return "off"
+	}
+}
+
+func optionalTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	t = t.UTC()
+	return &t
+}
+
+func timeOrZero(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
+}
+
+// watch gives the adopter the daemon's live diagnostics, whose start and
+// last pass a switch hands on.
+func (a *buildAdopter) watch(m *daemoninfo.Server) {
+	if a != nil {
+		a.monitor = m
 	}
 }

@@ -156,7 +156,9 @@ func TestAdoptPayloadMustBeComplete(t *testing.T) {
 		}
 	}
 	var out bytes.Buffer
-	for _, args := range [][]string{nil, {"--handover-fd"}, {"--handover-fd", "x"}, {"-c", "/x"}} {
+	// The configuration path after the descriptor is optional; nothing else is.
+	for _, args := range [][]string{nil, {"--handover-fd"}, {"--handover-fd", "x"}, {"-c", "/x"}, {"--handover-fd", "x", "-c", "/x"},
+		{"-c", "/x", "--handover-fd", "5"}, {"--handover-fd", "5", "-c", "relative.yaml"}, {"--handover-fd", "5", "--config", "/x"}, {"--handover-fd", "5", "-c"}} {
 		if code := adoptBuildCommand(env{context.Background(), &out, &out}, args); code != exitUsage {
 			t.Errorf("%v: %d", args, code)
 		}

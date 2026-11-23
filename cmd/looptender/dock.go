@@ -74,7 +74,7 @@ func dockCommand(e env, args []string) int {
 	offline := fs.Bool("offline", false, "do not ask each loop's local daemon for its next check")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(e.stdout, "Usage: keepgoing dock [--port N] [--refresh 15s] [--stale-after 30m] [--directory private-registry] [--offline]")
+			fmt.Fprintln(e.stdout, "Usage: looptender dock [--port N] [--refresh 15s] [--stale-after 30m] [--directory private-registry] [--offline]")
 			fmt.Fprintln(e.stdout, "Serve a read-only page about every registered loop on 127.0.0.1 until interrupted. Supervision is not affected.")
 			fs.SetOutput(e.stdout)
 			fs.PrintDefaults()

@@ -176,9 +176,9 @@ func TestMissingConfigurationIsShownByStatusDoctorAndPanel(t *testing.T) {
 	// TestConfigurationReportIsBoundedAndSavedBeforeDelivery), so the diagnostic
 	// becomes visible while the webhook request is still in flight. Wait for the
 	// delivery; later steps assert that it is never repeated.
-	waitFor(t, func() bool { return strings.Contains(f.hooks.types(), "keepgoing.error") }, "configuration report delivery")
-	if strings.Count(f.hooks.types(), "keepgoing.error") != 1 {
-		t.Fatalf("configuration report: %s", f.hooks.types())
+	waitFor(t, func() bool { return configReports(f.hooks) > 0 }, "configuration report delivery")
+	if got := configReports(f.hooks); got != 1 {
+		t.Fatalf("configuration reports: %d of %s", got, f.hooks.types())
 	}
 	d := inspectDaemon(context.Background(), filepath.Join(f.dir, "state"), version, false)
 	if !strings.Contains(d.Message, "configuration file") || !strings.Contains(d.NextCheck, "configuration file") {
@@ -205,11 +205,11 @@ func TestMissingConfigurationIsShownByStatusDoctorAndPanel(t *testing.T) {
 	}
 	// Startup at the missing path fails, and cannot repeat the persisted report.
 	g.stop()
-	before := f.hooks.types()
+	before := configReports(f.hooks)
 	if code, _, _ := f.run("daemon"); code != exitUsage {
 		t.Fatalf("missing-path restart: %d", code)
 	}
-	if f.hooks.types() != before {
+	if configReports(f.hooks) != before {
 		t.Fatal("restart repeated the report")
 	}
 	// A restarted daemon with a restored, validated file clears its episode.
@@ -361,11 +361,27 @@ func TestDaemonRetriesDeferredConfigurationReportAtControlPoll(t *testing.T) {
 	waitFor(t, func() bool {
 		return inspectDaemon(context.Background(), filepath.Join(f.dir, "state"), version, false).ConfigUnavailableSince != nil
 	}, "diagnostic while the tick lock is held")
-	if f.hooks.types() != "" {
+	if configReports(f.hooks) != 0 {
 		t.Fatalf("reported while the tick lock was held: %s", f.hooks.types())
 	}
 	if err := held.Release(); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return strings.Count(f.hooks.types(), "keepgoing.error") == 1 }, "deferred report at the next control poll")
+	waitFor(t, func() bool { return configReports(f.hooks) == 1 }, "deferred report at the next control poll")
+}
+
+// configReports counts the configuration-unavailable reports only. A running
+// daemon also reports other errors of its own (a state volume with little free
+// space reports disk_space_low, and a machine below that threshold would
+// otherwise fail every test that counts "keepgoing.error" events).
+func configReports(h *hooks) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, e := range h.events {
+		if data, _ := e["data"].(map[string]any); e["type"] == "keepgoing.error" && data["cause"] == "configuration_unavailable" {
+			n++
+		}
+	}
+	return n
 }

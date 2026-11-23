@@ -112,7 +112,7 @@ func TestFallbacksByLoopName(t *testing.T) {
 	for _, sub := range [][]string{{"list"}, {"move", "third", "--to", "1", "--yes"}, {"add", "--non-interactive", "--agent", "claude", "--dry-run"}} {
 		args := append(append([]string{"fallbacks"}, sub...), "--loop", "example-loop", "--directory", reg)
 		code, out, errOut := call(args...)
-		if code != exitUsage || out != "" || !strings.Contains(errOut, "Loop example-loop's configuration cannot be loaded; inspect it with keepgoing validate.") || strings.Contains(errOut, f.destination) {
+		if code != exitUsage || out != "" || !strings.Contains(errOut, "Loop example-loop's configuration cannot be loaded; inspect it with looptender validate.") || strings.Contains(errOut, f.destination) {
 			t.Errorf("%v with a moved configuration: %d %q %q", sub, code, out, errOut)
 		}
 	}

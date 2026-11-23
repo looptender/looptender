@@ -49,6 +49,8 @@ private struct Daemon: Decodable {
     let state, binaryComparison: String
     let phase, observedAt, nextCheckAt: String?
     let dryRun: Bool
+    // "ticks" when no daemon answers and recent checks arrive by ticks.
+    let checkedBy, cadence: String?
 }
 
 public enum Contract {
@@ -178,8 +180,12 @@ public enum Contract {
         if daemon.state == "responsive" {
             lines.append("Daemon observed: \(stamp(daemon.observedAt))")
             lines.append("Next normal check: \(stamp(daemon.nextCheckAt))")
+        } else if daemon.checkedBy == "ticks" {
+            lines.append("Next normal check: not scheduled by a daemon")
         } else { lines.append("Next normal check: unknown") }
-        lines.append("External scheduler: not inspected")
+        if daemon.state != "responsive", daemon.checkedBy == "ticks" {
+            lines.append("Checked by: ticks without a daemon (an external scheduler or by hand), about every \(text(daemon.cadence ?? "unknown interval"))")
+        } else { lines.append("External scheduler: not inspected") }
         lines.append("Daemon response does not prove agent health")
         return lines
     }

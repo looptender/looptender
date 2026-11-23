@@ -36,7 +36,10 @@ var dockNoteIdentifiers = []dockNoteShape{
 	// Absolute and home paths (/a/b, ~/a, C:\a, \a\b), and the home directory
 	// of a named user (~name, ~name/a), starting a word or after an opening
 	// quote, bracket or "=".
-	{re: regexp.MustCompile(`(^|[\s"'` + "`" + `(\[{<=,;])(~?/[^\s"'` + "`" + `)\]}>]+|[A-Za-z]:\\[^\s"'` + "`" + `)\]}>]+|\\[A-Za-z0-9._-]+[\\/][^\s"'` + "`" + `)\]}>]+|~[A-Za-z_][A-Za-z0-9._-]*(?:[/\\][^\s"'` + "`" + `)\]}>]*)?)`), lead: true},
+	// Absolute and home paths, with their spaces: see dockNoteAbsolutePath.
+	{re: dockNoteAbsolutePath, lead: true},
+	// A percent-encoded path: a word with an encoded separator (%2F or %5C).
+	{re: regexp.MustCompile(`[^\s"'` + "`" + `)\]}>]*%(?:2[Ff]|5[Cc])[^\s"'` + "`" + `)\]}>]*`)},
 	// A relative path that reaches out (contains ..) or that names a home
 	// directory from its root without the leading slash (Users/, home/, root/).
 	// Other relative paths (docs/plan.md) are shown.
@@ -142,3 +145,22 @@ func dockNoteIPv6(m string) bool {
 	}
 	return true
 }
+
+// dockNoteAbsolutePath matches an absolute or home path, starting a word or
+// after an opening quote or bracket: /a/b, ~/a, C:\a and C:/a (a drive takes
+// either slash), \a\b, and ~name or ~name/a for another user's home. A path
+// with spaces continues through following words that start with a capital, a
+// digit or a bracket, up to two such words before a word that holds a
+// separator (C:\Program Files\App\x.exe, /home/u/My Documents/x); words of
+// ordinary prose after a path are not taken, so a lower-case word inside a
+// path ("Documents and Settings") ends it. Group 1 is the character before.
+var dockNoteAbsolutePath = func() *regexp.Regexp {
+	stop := "\\s\"'`)\\]}>"                                                 // characters that end a token
+	tok := "[^" + stop + "]+"                                               // the rest of a path word
+	word := "(?:[A-Z0-9][^" + stop + "/\\\\]*|\\([^" + stop + "/\\\\]*\\))" // a plain word that may continue a path
+	sepWord := "(?:[A-Z0-9]|\\([^" + stop + "]*\\))[^" + stop + "]*[/\\\\][^" + stop + "]*"
+	base := "~?/" + tok + "|[A-Za-z]:[\\\\/]" + tok + "|\\\\[A-Za-z0-9._-]+[\\\\/]" + tok
+	cont := "(?:(?: " + word + "){0,2} " + sepWord + ")*"
+	home := "~[A-Za-z_][A-Za-z0-9._-]*(?:[/\\\\][^" + stop + "]*)?"
+	return regexp.MustCompile("(^|[\\s\"'`(\\[{<=,;])((?:" + base + ")" + cont + "|" + home + ")")
+}()

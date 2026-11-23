@@ -1438,10 +1438,10 @@ func dockRoutesSummary(r dockReport) dockRoutesLine {
 // Such a loop is never left out of what needs a person.
 func dockUnreadable(issues []string) *dockNeed {
 	n := &dockNeed{Kind: "unreadable", Reason: "It could not be read, so whether it needs you is unknown.",
-		Action: "Look at it: run keepgoing status with its configuration.", Waited: "Could not be read"}
+		Action: "Look at it: run looptender status with its configuration.", Waited: "Could not be read"}
 	switch code := firstIssue(issues); code {
 	case "transfer_pending":
-		n.Reason, n.Action = "A move to another conversation is in progress, which holds it.", "Finish the move with keepgoing transfer recover."
+		n.Reason, n.Action = "A move to another conversation is in progress, which holds it.", "Finish the move with looptender transfer recover."
 	case "binding_unavailable", "binding_changed", "registration_changed", "registration_unavailable", "target_binding_mismatch", "control_unavailable", "state_unavailable", "cancelled":
 		n.Reason = dockIssue(code) + " Whether it needs you is unknown."
 	}
@@ -1461,6 +1461,8 @@ func dockTestingOf(state string, st *statusOut, chain *dockChainInput) dockTesti
 	switch state {
 	case "paused":
 		t.notWhile = "while the loop is paused"
+	case "paused_and_waiting":
+		t.notWhile = "while the loop is paused and held for a person"
 	case "waiting_for_you":
 		t.notWhile = "while the loop is held for a person"
 	case "finished":
@@ -1714,7 +1716,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	}
 	if st != nil && st.NewThreads.Pending && need == nil {
 		need = &dockNeed{Kind: "held", Reason: "A new conversation it tried to create for a move to another route could not be confirmed.",
-			Action: "Find that conversation in BB, then settle it with keepgoing retarget."}
+			Action: "Find that conversation in BB, then settle it with looptender retarget."}
 	}
 	// No check has run for longer than the overdue rule allows, on a loop
 	// that is neither disabled nor held: the computer may have slept or the
@@ -1765,7 +1767,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	}
 	use := dockUse(l, st)
 	l.Lanes = dockLaneList(in.Runs, in.RunsKnown, identifiers, use.Target != "", in.LaneTitles, now)
-	l.Chain = dockHandoffChain(in.Chain, use, dockTestingOf(l.State, st, in.Chain), l.Fallbacks, now, identifiers)
+	l.Chain = dockHandoffChain(in.Chain, use, dockTestingOf(dockNoteState(l), st, in.Chain), l.Fallbacks, now, identifiers)
 	l.Away = dockAwayOf(st, in.Chain, l.Chain.Entries, in.Timeline, now)
 	l.CheckedBy = dockCheckedByOf(snap, st, in.ServiceFile)
 	l.Build = dockBuildOf(dockLastBuild(st, in.Timeline), version)
@@ -1861,6 +1863,9 @@ func dockUse(l dockLoop, st *statusOut) dockRouteUse {
 		u.Phrase = "Current route, loop held"
 	case "paused":
 		u.Phrase = "Current route, loop paused"
+		if l.AlsoWaiting != "" {
+			u.Phrase = "Current route, loop paused and waiting for you"
+		}
 	case "stopped":
 		u.Phrase = "Current route, loop stopped"
 	case "finished":
@@ -1943,7 +1948,7 @@ const (
 
 // dockResumeCommand is the command a person runs to resume a held loop, as
 // operations.md gives it: resume takes the loop's configuration with -c.
-const dockResumeCommand = "keepgoing resume -c CONFIG"
+const dockResumeCommand = "looptender resume -c CONFIG"
 
 // dockHoldNeed explains an awaiting-user hold from the fixed cause recorded
 // when it started. Nothing is inferred from the note's text. The note is
@@ -1973,7 +1978,7 @@ func dockHoldNeed(st *statusOut, hold *dockHold, identifiers bool) *dockNeed {
 	case "stall_limit":
 		n.Reason, n.Action = "No progress after repeated nudges.", "See why, then resume or mark it finished."
 	case "refusal_ask":
-		n.Reason, n.Action = "The model or provider declined turn after turn, and a continue did not clear it.", "Look at the conversation, then decide how the loop goes on: keepgoing resume continues, keepgoing pause or stop ends it. Starting a fresh session from here is coming, not yet available."
+		n.Reason, n.Action = "The model or provider declined turn after turn, and a continue did not clear it.", "Look at the conversation, then decide how the loop goes on: looptender resume continues, looptender pause or stop ends it. Starting a fresh session from here is coming, not yet available."
 		if st != nil && st.Refusals.Streak > 0 {
 			n.Reason = fmt.Sprintf("The model or provider declined %d turns in a row, and a continue did not clear it.", st.Refusals.Streak)
 		}
@@ -2735,4 +2740,13 @@ func dockCheckedByOf(snap *clientSnapshot, st *statusOut, serviceFile string) do
 		return dockCheckedBy{"none", "Not checked yet."}
 	}
 	return dockCheckedBy{"none", "Nothing on record checks it."}
+}
+
+// dockNoteState is the state as the wording about tests and routes reads it: a
+// paused loop that is still waiting for a person is both.
+func dockNoteState(l dockLoop) string {
+	if l.State == "paused" && l.AlsoWaiting != "" {
+		return "paused_and_waiting"
+	}
+	return l.State
 }

@@ -23,6 +23,10 @@ export const scheduleSchema = z.object({
 export const daemonSchema = z.object({
   state: z.string(), phase: z.string().optional(), observedAt: z.string().optional(),
   nextCheckAt: z.string().optional(), dryRun: z.boolean().optional(), binaryComparison: z.string().optional(),
+  // Set by a looptender that found no daemon answering and recent checks
+  // arriving as ticks (an external scheduler or by hand), with how far apart
+  // recent ones were: past checks, not a forecast.
+  checkedBy: z.string().max(32).optional(), cadence: z.string().max(32).optional(),
 });
 // Set by a looptender that says a loop was moved to a new thread and has not
 // been checked there; `held` while the awaiting-user hold the move left is in
@@ -269,12 +273,14 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
   if (daemon?.state === "responsive") {
     lines.push(`Daemon answered: ${dateLabel(daemon.observedAt)} · ${daemon.phase ?? "phase unavailable"}${daemon.dryRun ? " · dry run" : ""} · build comparison ${daemon.binaryComparison ?? "unknown"}`);
     lines.push(`Next daemon check: ${daemon.nextCheckAt ? dateLabel(daemon.nextCheckAt) + " (expected, not guaranteed)" : "not scheduled yet"}`);
+  } else if (daemon?.checkedBy === "ticks") {
+    lines.push(`Daemon: ${daemon.state}; the loop is checked by ticks run without a daemon (an external scheduler or by hand), about every ${daemon.cadence ?? "unknown interval"}`);
   } else {
     lines.push(`Daemon: ${daemon?.state ?? "unavailable from this build"}; running supervisor not confirmed`);
   }
   if (d.schedule?.overdue) lines.push(`Schedule: ${d.schedule.message ?? "no check has run for longer than usual; the loop's scheduler may have stopped"}`);
   // Only a judged loop whose usual interval is known is said to be on time.
-  else if (d.schedule?.checkedBy === "ticks") lines.push(`Schedule: checked by ticks run without a daemon (an external scheduler or by hand), about every ${d.schedule.cadence ?? "unknown interval"}`);
+  else if (d.schedule?.checkedBy === "ticks" && daemon?.checkedBy !== "ticks") lines.push(`Schedule: checked by ticks run without a daemon (an external scheduler or by hand), about every ${d.schedule.cadence ?? "unknown interval"}`);
   else if (d.schedule?.judging && d.schedule.basis === "usual" && !d.schedule.slept) lines.push("Schedule: checks are running at their usual interval");
   else if (!d.schedule) lines.push("External scheduler health: not inspected; a daemon reply does not establish agent health");
   const wait = d.limitWait;
