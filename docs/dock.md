@@ -286,13 +286,22 @@ The page follows the browser's light or dark setting and text size, works with a
 
 Every loop in the report and in `panel list` says what it waits for at the data level, so a reader does not guess it from the words (`waiting`, absent while it waits on nothing):
 
-- **`asked`**: its own agent ran `await-user` (`by: agent`), or a check found it or one of its lanes waiting on a question. Its note says what for. The advice is to read the note and the conversation and do what it asks: resume the loop, or stop it if the note says its work is over.
-- **`held`**: a person (`by: person`, from a terminal, the panel or a client) or another BB thread (`by: other_thread`) held it with pause, stop or await-user, or its own thread paused or stopped it (`by: agent`).
+- **`asked`**: its own thread ran `await-user` (`by: owner_thread`), or a check found it or one of its lanes waiting on a question (`by: check`). Its note says what for. The advice is to read the note and the conversation and do what it asks: resume the loop, or stop it if the note says its work is over.
+- **`held`**: a hold saved by a control command: pause, stop or await-user from a terminal (`by: terminal`), a local client such as the menu (`client`), another BB thread (`other_thread`), or its own thread pausing or stopping it (`owner_thread`).
 - **`limit`**: a check stopped it at a deadline, the send limit, a no-progress limit, repeated refusals or a restricted account, or it waits out a provider usage limit (`by: check`).
-- **`checks`**: its checks have stopped or cannot be read (`by: check`).
-- **`unknown`**: the retained history does not show who set it.
+- **`checks`**: its checks have stopped, or its last check failed after the file that runs them was replaced (`by: check`).
+- **`unreadable`**: a record it needs cannot be read, so what it waits for is unknown (`by: unknown`).
+- **`unknown`**: the records do not say; for example, the hold started before the retained history.
 
-Who set a hold comes from the incident journal, which records the role of whoever saved each control change. A row's facts are as old as its loop's last check (`checkedAt`, and `lastCheck` with its age in the report). `supervisor` is what this read found: `answering` (a daemon answered a fresh challenge), `not_answering` (a daemon is recorded and did not answer), `none_recorded` (an external scheduler may run its checks) or `not_asked` (an offline read). A loop is not shown as "Supervising" while the daemon recorded for it does not answer: it reads "Supervisor not answering", with its last check's age.
+`by` is the role the incident journal records for whoever saved the control change, not proof of who: a person may drive the owning thread, and a client is any local program registered as one. A display should not print it as "you". `reason` is one sentence in fixed words; it never carries the hold's note, a scheduler's name or any other recorded text that can hold an identifier.
+
+A row's facts are as old as its loop's last check (`checkedAt`, and `lastCheck` with its age in the report). `supervisor` is what this read found:
+- `answering`: a daemon answered a fresh challenge;
+- `not_answering`: a daemon is recorded and did not answer when asked twice;
+- `none_recorded`: no daemon is recorded, and an external scheduler may run its checks;
+- `not_asked`: an offline read.
+
+A loop is not shown as "Supervising" while the daemon recorded for it does not answer: it reads "Supervisor did not answer just now", with its last check's age.
 
 ### The no-progress flag
 

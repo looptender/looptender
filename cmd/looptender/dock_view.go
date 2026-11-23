@@ -236,8 +236,11 @@ type dockLoop struct {
 	Detail      string `json:"detail"`
 	PickerState string `json:"pickerState"`
 	// Waiting is set while the loop waits on something other than its own
-	// work: a person's answer, a hold someone set, a limit or deadline, or
-	// checks that stopped. Nil while it is supervised, off or finished.
+	// work: a person's answer, a hold someone set, a limit or deadline,
+	// checks that stopped, or records that cannot be read. It is set from
+	// the loop's need when it has one, whatever its state (a superseded or
+	// moved loop's need included), else for a paused, stopped or
+	// limit-waiting loop; nil otherwise.
 	Waiting *dockWaiting `json:"waiting,omitempty"`
 	// Supervisor is what this read found running the loop's checks:
 	// answering (a daemon answered a fresh challenge), not_answering (a
@@ -1238,19 +1241,24 @@ type dockHold struct {
 // dockWaiting is what a loop waits for, with a fixed kind so a reader does
 // not guess it from the words:
 //
-//	asked   its agent, or one of its lanes, asked for a person: an answer,
-//	        a decision, or whatever its note says (By: agent)
-//	held    a person or another BB thread held it: pause, stop or
-//	        await-user from a terminal, the panel, a client or another thread
-//	        (By: person, other_thread; agent when its own thread paused or
-//	        stopped it)
-//	limit   a check stopped it at a limit or deadline: send limit, deadline,
-//	        no-progress limits, refusals or a restricted account, or a
-//	        provider usage limit it waits out (By: check)
-//	checks  its checks stopped or cannot be read (By: check)
-//	unknown the records do not say (By: unknown)
+//	asked      its own thread ran await-user (By: owner_thread), or a check
+//	           found it or one of its lanes waiting on a question (By: check)
+//	held       a hold saved by a control command: pause, stop or await-user
+//	           from a terminal, a local client, another BB thread, or its own
+//	           thread pausing or stopping it
+//	limit      a check stopped it at a limit or deadline: send limit,
+//	           deadline, no-progress limits, refusals or a restricted
+//	           account, or a provider usage limit it waits out (By: check)
+//	checks     its checks have stopped (By: check)
+//	unreadable a record it needs cannot be read (By: unknown)
+//	unknown    the records do not say (By: unknown)
 //
-// Reason is one sentence in fixed words, never the hold's note; Since is
+// By is the role the incident journal records for whoever saved the control
+// change (owner_thread, other_thread, terminal, client), or check, or
+// unknown. It is a role, not proof of who: a person may drive the owning
+// thread, and a client is any local program registered as one (the menu, on
+// a person's click). Reason is one sentence in fixed words, never the hold's
+// note or any other recorded text that can carry an identifier; Since is
 // when it started, with SinceEvidence as for dockNeed.
 type dockWaiting struct {
 	Kind          string     `json:"kind"`
@@ -1264,19 +1272,28 @@ type dockWaiting struct {
 // else from the hold or limit its state shows; nil while it waits on nothing.
 func dockWaitingOf(l dockLoop, need *dockNeed, st *statusOut, tl *timelineReport) *dockWaiting {
 	if need != nil {
-		return &dockWaiting{Kind: need.Waiting, By: need.By, Reason: need.Reason, Since: need.Since, SinceEvidence: need.SinceEvidence}
+		reason := need.Reason
+		if need.Kind == "overdue" {
+			// The need's own sentence names the scheduler (a BB automation's
+			// ID); the reason carries fixed words only.
+			reason = "Its checks have stopped: no check has run for longer than its schedule allows."
+			if l.Phrase == "Not supervised" {
+				reason = "Nothing is supervising it: nothing has checked it since it was enabled, resumed or moved."
+			}
+		}
+		return &dockWaiting{Kind: need.Waiting, By: need.By, Reason: reason, Since: need.Since, SinceEvidence: need.SinceEvidence}
 	}
 	w := &dockWaiting{Kind: "held", Since: l.Hold.Since, SinceEvidence: l.Hold.SinceEvidence}
 	switch l.State {
 	case "paused":
 		w.By = dockHeldBy(tl, func(c *incident.Controls) bool { return c.Paused })
-		w.Reason = map[string]string{"agent": "Its own thread paused it.", "person": "A person paused it.", "other_thread": "Another BB thread paused it."}[w.By]
+		w.Reason = map[string]string{"owner_thread": "Its own thread paused it.", "terminal": "It was paused from a terminal.", "client": "It was paused from a local client, such as the menu.", "other_thread": "Another BB thread paused it."}[w.By]
 		if w.Reason == "" {
 			w.Reason = "It is paused."
 		}
 	case "stopped":
 		w.By = dockHeldBy(tl, func(c *incident.Controls) bool { return c.Stop })
-		w.Reason = map[string]string{"agent": "Its own thread stopped it.", "person": "A person stopped it.", "other_thread": "Another BB thread stopped it."}[w.By]
+		w.Reason = map[string]string{"owner_thread": "Its own thread stopped it.", "terminal": "It was stopped from a terminal.", "client": "It was stopped from a local client, such as the menu.", "other_thread": "Another BB thread stopped it."}[w.By]
 		if w.Reason == "" {
 			w.Reason = "A stop is requested."
 		}
@@ -1291,15 +1308,11 @@ func dockWaitingOf(l dockLoop, need *dockNeed, st *statusOut, tl *timelineReport
 	return w
 }
 
-// dockBy maps the journal's caller role to who set a hold.
+// dockBy is the journal's caller role of whoever set a hold, or unknown.
 func dockBy(caller string) string {
 	switch caller {
-	case "owner_thread":
-		return "agent"
-	case "other_thread":
-		return "other_thread"
-	case "terminal", "client":
-		return "person"
+	case "owner_thread", "other_thread", "terminal", "client":
+		return caller
 	}
 	return "unknown"
 }
@@ -1823,8 +1836,8 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		case in.Daemon.State == "unavailable" && l.LastCheck.At != nil:
 			// A daemon is recorded for the loop and did not answer: a recent
 			// check is not a live supervisor, so it is not shown as one.
-			l.State, l.Phrase = "unknown", "Supervisor not answering"
-			l.Detail = "Its last check ran " + dockAgo(now, *l.LastCheck.At) + ", but the daemon recorded for it did not answer just now, so its checks may have stopped."
+			l.State, l.Phrase = "unknown", "Supervisor did not answer just now"
+			l.Detail = "Its last check ran " + dockAgo(now, *l.LastCheck.At) + ", but the daemon recorded for it did not answer when asked twice just now, so its checks may have stopped."
 		default:
 			l.State, l.Phrase, l.Detail = "supervising", "Supervising", "On, with a recent check."
 			if l.Children.Holding {
@@ -1841,7 +1854,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		} else {
 			l.Detail += " Its daemon cannot load the configuration file."
 		}
-		need = &dockNeed{Kind: "unreadable", Reason: "Its checks have stopped: the configuration file cannot be loaded.", Action: "Restore a readable, valid configuration file at the daemon's configured path. A saved stop may use the last configuration read.", Since: in.Daemon.ConfigUnavailableSince, SinceEvidence: "daemon_reported"}
+		need = &dockNeed{Kind: "unreadable", Waiting: "checks", By: "check", Reason: "Its checks have stopped: the configuration file cannot be loaded.", Action: "Restore a readable, valid configuration file at the daemon's configured path. A saved stop may use the last configuration read.", Since: in.Daemon.ConfigUnavailableSince, SinceEvidence: "daemon_reported"}
 	}
 	if st != nil && st.NewThreads.Pending && need == nil {
 		need = &dockNeed{Kind: "held", Reason: "A new conversation it tried to create for a move to another route could not be confirmed.",
@@ -1883,9 +1896,13 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 	}
 	if need != nil {
 		need.Key, need.Loop = l.Key, l.Name
-		if need.Kind != "held" {
-			need.Waiting, need.By = "checks", "check" // unreadable, overdue, build_replaced
-		} else if need.Waiting == "" {
+		switch {
+		case need.Waiting != "":
+		case need.Kind == "unreadable":
+			need.Waiting, need.By = "unreadable", "unknown"
+		case need.Kind == "overdue" || need.Kind == "build_replaced":
+			need.Waiting, need.By = "checks", "check"
+		default:
 			need.Waiting, need.By = "unknown", "unknown"
 		}
 		if need.Since != nil {
@@ -2097,14 +2114,16 @@ func dockHoldNeed(st *statusOut, hold *dockHold, identifiers bool) *dockNeed {
 		// Who ran await-user says what kind of wait it is: the loop's own
 		// agent asking, or a person or another thread holding it.
 		switch n.By = dockBy(hold.Caller); n.By {
-		case "agent":
-			n.Waiting, n.Reason = "asked", "Its agent asked for a person; its note says what for."
-		case "person":
-			n.Waiting, n.Reason = "held", "A person marked it as waiting."
+		case "owner_thread":
+			n.Waiting, n.Reason = "asked", "Its own thread asked for a person; its note says what for."
+		case "terminal":
+			n.Waiting, n.Reason = "held", "It was marked as waiting from a terminal."
+		case "client":
+			n.Waiting, n.Reason = "held", "It was marked as waiting from a local client, such as the menu."
 		case "other_thread":
 			n.Waiting, n.Reason = "held", "Another BB thread marked it as waiting for a person."
 		default:
-			n.Reason = "It was marked as waiting for a person."
+			n.Waiting, n.Reason = "held", "It was marked as waiting for a person."
 		}
 	case hold != nil:
 		cause = hold.Cause
@@ -2113,10 +2132,10 @@ func dockHoldNeed(st *statusOut, hold *dockHold, identifiers bool) *dockNeed {
 	}
 	switch cause {
 	case "child_input":
-		n.Waiting, n.By = "asked", "agent"
+		n.Waiting, n.By = "asked", "check"
 		n.Reason, n.Action = "A lane is waiting for an answer.", "Answer it in that conversation, then resume the loop."
 	case "input":
-		n.Waiting, n.By = "asked", "agent"
+		n.Waiting, n.By = "asked", "check"
 		n.Reason, n.Action = "The agent is waiting on a question or a permission request.", "Answer it in the conversation, then resume the loop."
 	case "deadline":
 		n.Waiting, n.By = "limit", "check"
