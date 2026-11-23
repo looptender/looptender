@@ -1033,6 +1033,16 @@ type panelList struct {
 	EarlierBuildPanel string `json:"earlierBuildPanel,omitempty"`
 }
 
+// panelWaiting is dockWaiting without its words: Reason is on the row.
+// AtLeast: Since is the last control change, not the hold's own start, so
+// the wait is at least that long.
+type panelWaiting struct {
+	Kind    string     `json:"kind"`
+	By      string     `json:"by"`
+	Since   *time.Time `json:"since,omitempty"`
+	AtLeast bool       `json:"atLeast,omitempty"`
+}
+
 type panelListLoop struct {
 	// Key is the loop's key on the page; panel --loop accepts it.
 	Key string `json:"key"`
@@ -1043,6 +1053,18 @@ type panelListLoop struct {
 	State     string `json:"state"`
 	Phrase    string `json:"phrase"`
 	NeedsYou  bool   `json:"needsYou"`
+	// Reason is the row's one line: what it waits for, in fixed words (never
+	// the hold's note), or the state's detail when it waits on nothing.
+	Reason string `json:"reason"`
+	// Waiting is what it waits for, set while it waits (dockWaiting): kind
+	// asked, held, limit, checks or unknown; by agent, person, other_thread,
+	// check or unknown; and since when.
+	Waiting *panelWaiting `json:"waiting,omitempty"`
+	// CheckedAt is when the loop's last check ran: the row's facts are as
+	// old as that. Absent when no check is recorded. Supervisor is what this
+	// read found running its checks (dockLoop.Supervisor).
+	CheckedAt  *time.Time `json:"checkedAt,omitempty"`
+	Supervisor string     `json:"supervisor"`
 	// NoProgress is the no-progress flag's sentence when it is raised, in
 	// the page's words; empty otherwise. It is never a need.
 	NoProgress string `json:"noProgress,omitempty"`
@@ -1103,6 +1125,11 @@ func buildPanelList(r dockReport) panelList {
 		}
 		if np := l.NoProgress; np != nil && np.Availability == "flagged" {
 			row.NoProgress = np.Text
+		}
+		row.Reason, row.CheckedAt, row.Supervisor = l.Detail, l.LastCheck.At, l.Supervisor
+		if w := l.Waiting; w != nil {
+			row.Reason = w.Reason
+			row.Waiting = &panelWaiting{Kind: w.Kind, By: w.By, Since: w.Since, AtLeast: w.SinceEvidence == "control_changed"}
 		}
 		out.Loops = append(out.Loops, row)
 	}

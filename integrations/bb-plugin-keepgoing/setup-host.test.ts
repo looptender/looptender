@@ -5,10 +5,17 @@ import { tmpdir } from "node:os";
 import { join, delimiter } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { setupOnHost, commandOnHost, standardRoutesOnHost, execute, type Execute } from "./setup-host.ts";
+import { firstErrorLine, setupOnHost, commandOnHost, standardRoutesOnHost, execute, type Execute } from "./setup-host.ts";
 
 // The plan from a setup that keepgoing did not refuse.
-function planned<T>(r: { plan: T } | { refused: unknown } | { noRoutes: true }): { plan: T } {
+// A result the plugin must not accept: setup rejects it, or reports that the command failed.
+async function failsClosed(p: Promise<unknown>, expect?: (r: unknown) => boolean): Promise<void> {
+  let r: unknown;
+  try { r = await p; } catch { return; }
+  assert.ok(typeof r === "object" && r !== null && "failed" in r, `accepted: ${JSON.stringify(r)}`);
+  if (expect) assert.ok(expect(r), `unexpected failure: ${JSON.stringify(r)}`);
+}
+function planned<T>(r: { plan: T } | { refused: unknown } | { noRoutes: true } | { failed: unknown }): { plan: T } {
   assert.ok("plan" in r, `refused: ${JSON.stringify(r)}`);
   return r;
 }
@@ -27,9 +34,9 @@ test("host setup uses stdin, fixed flags and verified CLI output", async () => {
     };
     const r = planned(await setupOnHost(input, undefined, run)); assert.equal(r.plan.threadId, target.threadId);
     reply.primary.agent.bbThread = "thr_wrong";
-    await assert.rejects(setupOnHost(input, undefined, run));
+    await failsClosed(setupOnHost(input, undefined, run));
     reply.primary.agent.bbThread = target.threadId; reply.schemaVersion = 99;
-    await assert.rejects(setupOnHost(input, undefined, run));
+    await failsClosed(setupOnHost(input, undefined, run));
     // A CLI that writes the configuration under its current name, and one
     // from before the rename, are both accepted; no other name is.
     reply.schemaVersion = 1;
@@ -39,7 +46,7 @@ test("host setup uses stdin, fixed flags and verified CLI output", async () => {
       assert.ok("plan" in r); assert.equal(r.plan.configPath, reply.configPath);
     }
     reply.configPath = join(root, "outside", "other.yaml");
-    await assert.rejects(setupOnHost(input, undefined, run));
+    await failsClosed(setupOnHost(input, undefined, run));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -91,7 +98,7 @@ test("keepgoing's structured refusal comes back as a code and a loop name, never
       { ...refusal, schemaVersion: 2 },
       null,
     ]) {
-      await assert.rejects(setupOnHost(input, undefined, async () => ({ code: 1, data })), (e: Error) => !e.message.includes("/private") && !e.message.includes("Other Loop"));
+      await failsClosed(setupOnHost(input, undefined, async () => ({ code: 1, data })), r => !JSON.stringify(r).includes("/private") && !JSON.stringify(r).includes("Other Loop"));
     }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -132,12 +139,12 @@ test("host commands route to the recorded file and set the owner; no shell or ta
 
 test("real local subprocess receives stdin and errors are withheld", async () => {
   const r = await execute(process.execPath, ["-e", "let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>process.stdout.write(JSON.stringify({bytes:input.length,thread:process.env.BB_THREAD_ID})))"], "Fictional task", "thr_example");
-  assert.deepEqual(r, { code: 0, data: { bytes: 14, thread: "thr_example" }, emptyStdout: false, timedOut: false });
+  assert.deepEqual(r, { code: 0, data: { bytes: 14, thread: "thr_example" }, emptyStdout: false, timedOut: false, stderr: "" });
   const bad = await execute(process.execPath, ["-e", "process.stderr.write('fictional-secret');process.exit(1)"], "", "thr_example");
-  assert.deepEqual(bad, { code: 1, data: null, emptyStdout: true, timedOut: false });
+  assert.deepEqual(bad, { code: 1, data: null, emptyStdout: true, timedOut: false, stderr: "fictional-secret" });
   // The real exit code, so a usage error (2) can be told from a failure (1).
   const usage = await execute(process.execPath, ["-e", "process.exit(2)"], "", "thr_example");
-  assert.deepEqual(usage, { code: 2, data: null, emptyStdout: true, timedOut: false });
+  assert.deepEqual(usage, { code: 2, data: null, emptyStdout: true, timedOut: false, stderr: "" });
   const large = await execute(process.execPath, ["-e", "process.stdout.write('x'.repeat(2**21))"], "", "thr_example");
   assert.equal(large.code, 1); assert.equal(large.data, null);
 });
@@ -160,14 +167,14 @@ test("goal setup requires an explicit flag and verified preview/create goal meta
     assert.ok(!JSON.stringify(preview).includes(input.task));
     for (const bad of [undefined, { ...goal, promptContext: false }, { ...goal, record: summary }]) {
       data = { ...base, goal: bad };
-      await assert.rejects(setupOnHost(input, undefined, run));
+      await failsClosed(setupOnHost(input, undefined, run));
     }
     data = { ...base, outcome: "created", goal: { ...goal, record: summary } };
     const created = planned(await setupOnHost({ ...input, dryRun: false }, undefined, run));
     assert.deepEqual(created.plan, preview.plan);
     data = { ...base, outcome: "created", goal };
-    await assert.rejects(setupOnHost({ ...input, dryRun: false }, undefined, run));
-    await assert.rejects(setupOnHost(input, undefined, async () => ({ code: 2, data: null })), /after v0.1.4/);
+    await failsClosed(setupOnHost({ ...input, dryRun: false }, undefined, run));
+    assert.deepEqual(await setupOnHost(input, undefined, async () => ({ code: 2, data: null })), { failed: { kind: "exit", code: 2 } });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -271,16 +278,16 @@ test("following the standard list passes --routes standard and keeps only id, mo
     assert.ok(!JSON.stringify(r.plan).includes("/private/fictional/workdir"), "no path crosses back");
     assert.ok(!JSON.stringify(r.plan).includes("explicit_directory"));
     // What was asked for must come back: routes, at least one, and handoff on.
-    await assert.rejects(setupOnHost(input, undefined, async () => ({ code: 0, data: { ...reply, routes: "none" } })));
-    await assert.rejects(setupOnHost(input, undefined, async () => ({ code: 0, data: { ...reply, limits: { ...(reply.limits as object), failoverOn: [] } } })));
+    await failsClosed(setupOnHost(input, undefined, async () => ({ code: 0, data: { ...reply, routes: "none" } })));
+    await failsClosed(setupOnHost(input, undefined, async () => ({ code: 0, data: { ...reply, limits: { ...(reply.limits as object), failoverOn: [] } } })));
     // None applies after all: said plainly, not as a failure.
     assert.deepEqual(await setupOnHost(input, undefined, async () => ({ code: 0, data: { ...reply, fallbacks: [] } })), { noRoutes: true });
     // A build that lists routes with `can` but has no init --routes refuses
     // the flag: the checked preview fails closed.
-    await assert.rejects(setupOnHost(input, undefined, async () => ({ code: 2, data: null })));
+    await failsClosed(setupOnHost(input, undefined, async () => ({ code: 2, data: null })));
     // And a setup that does not follow the list may not come back following it.
     const { followStandard: _f, ...plain } = input;
-    await assert.rejects(setupOnHost(plain, undefined, run));
+    await failsClosed(setupOnHost(plain, undefined, run));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -343,9 +350,9 @@ test("a takeover travels as provider and model flags and must come back in the C
     assert.deepEqual(seen.slice(at, at + 4), ["--new-thread-provider", "claude-code", "--new-thread-model", "example-claude-model"]);
     assert.equal(chosen.plan.takeover?.provider, "claude-code"); assert.match(chosen.plan.takeover?.text ?? "", /takes over/);
     // A report with another provider, or none at all, is refused.
-    await assert.rejects(setupOnHost({ ...input, takeover: { provider: "codex-other", model: "example-claude-model" } }, undefined, run));
+    await failsClosed(setupOnHost({ ...input, takeover: { provider: "codex-other", model: "example-claude-model" } }, undefined, run));
     reply = offered;
-    await assert.rejects(setupOnHost({ ...input, takeover: { provider: "claude-code", model: "example-claude-model" } }, undefined, run));
+    await failsClosed(setupOnHost({ ...input, takeover: { provider: "claude-code", model: "example-claude-model" } }, undefined, run));
     reply = { ...offered, newThreadOffer: undefined };
     planned(await setupOnHost({ ...input, takeover: "none" }, undefined, run));
     const n = seen.indexOf("--new-thread-provider");
@@ -366,7 +373,33 @@ test("detection is asked for with --detect-takeover, and an older CLI that refus
     // Any other failure is not taken for a refusal of the flag.
     seen.length = 0;
     const failing: Execute = async (_bin, args) => { seen.push(args); return { code: 1, data: null, emptyStdout: true, timedOut: false }; };
-    await assert.rejects(setupOnHost({ bin: "keepgoing", target, name: "example-loop", task: "Fictional private task", dryRun: true, takeover: "detect" }, undefined, failing));
+    await failsClosed(setupOnHost({ bin: "keepgoing", target, name: "example-loop", task: "Fictional private task", dryRun: true, takeover: "detect" }, undefined, failing));
     assert.equal(seen.length, 1);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a failed command is reported as what happened: timed out, exited with a line, already exists, or an answer not understood", async () => {
+  const target = { threadId: "thr_example", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: tmpdir(), provider: "codex" };
+  const input = { bin: "keepgoing", target, name: "example-loop", task: "Fictional private task", dryRun: true };
+  const run = (r: { code: number; data?: unknown; timedOut?: boolean; stderr?: string }): Execute => async () => ({ data: null, ...r });
+  assert.deepEqual(await setupOnHost(input, undefined, run({ code: 1, timedOut: true })), { failed: { kind: "timeout", seconds: 20 } });
+  // Warnings come first on stderr; the line that says why it failed is the first that is not one.
+  assert.deepEqual(await setupOnHost(input, undefined, run({ code: 1, stderr: "warning: loop other-loop (/p/other.yaml) is enabled\nwarning: single route\ninit: no usable provider\nmore" })), { failed: { kind: "exit", code: 1, line: "init: no usable provider" } });
+  assert.deepEqual(await setupOnHost(input, undefined, run({ code: 2, stderr: "" })), { failed: { kind: "exit", code: 2 } });
+  assert.deepEqual(await setupOnHost(input, undefined, run({ code: 1, stderr: "init: setup directory /p/example-loop already exists" })), { failed: { kind: "exists", line: "init: setup directory /p/example-loop already exists" } });
+  assert.deepEqual(await setupOnHost(input, undefined, run({ code: 0, data: { schemaVersion: 7 }, stderr: "" })), { failed: { kind: "output" } });
+  assert.equal(firstErrorLine("warning: a\nbad\u0007\u001b thing"), "bad   thing", "control characters become spaces");
+  assert.equal(firstErrorLine("x".repeat(500)).length, 200);
+  assert.equal(firstErrorLine("warning: only a warning"), "");
+  assert.equal(firstErrorLine(undefined), "");
+});
+
+test("an existing directory is 'exists'; 'files may already exist' is a possible write; the home directory is masked", async () => {
+  const target = { threadId: "thr_example", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: tmpdir(), provider: "codex" };
+  const input = { bin: "keepgoing", target, name: "example-loop", task: "Fictional private task", dryRun: false };
+  const run = (stderr: string): Execute => async () => ({ code: 1, data: null, stderr });
+  assert.deepEqual(await setupOnHost(input, undefined, run("init: mkdir /p/loops/example-loop: file exists")), { failed: { kind: "exists", line: "init: mkdir /p/loops/example-loop: file exists" } });
+  assert.deepEqual(await setupOnHost(input, undefined, run("init: could not write JSON result; setup files may already exist")), { failed: { kind: "written", line: "init: could not write JSON result; setup files may already exist" } });
+  const home = (await import("node:os")).homedir();
+  assert.equal(firstErrorLine(`warning: x\ninit: cannot read ${home}/private/task.md`), "init: cannot read ~/private/task.md");
 });
