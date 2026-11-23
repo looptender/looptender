@@ -133,6 +133,7 @@ final class UpdateFlowTests: XCTestCase {
         XCTAssertEqual(env.children.count, 0)
         XCTAssertFalse(flow.relaunching)
         flow.busy.end(work)
+        env.verifyFinishesLater = false
         flow.check()
         XCTAssertEqual(env.children.count, 1, "the build's attempt was given back")
     }
@@ -299,6 +300,7 @@ final class UpdateFlowTests: XCTestCase {
         XCTAssertTrue(oldUpdater.beginAttempt(next))
         oldUpdater.handOverPID(100)
         let newEnv = FakeEnvironment()
+        newEnv.processID = 200
         newEnv.alive = [100]
         let newFlow = UpdateFlow(updater: MenuUpdater(running: next, store: store), launchPath: next.path, env: newEnv)
         newFlow.confirmUpdateAfterStart()
