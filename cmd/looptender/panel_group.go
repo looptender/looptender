@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/registry"
 	"github.com/looptender/looptender/internal/session"
 	"github.com/looptender/looptender/internal/state"
@@ -112,6 +113,9 @@ func panelGroupReview(ctx context.Context, registryDir string, reader *dockReade
 			it.why = "busy"
 		case why != "":
 			it.why = "unreadable"
+		case panelGroupArchived(e.StateDir, ctl):
+			// Put out of the way by a person: a group change leaves it as is.
+			it.why = "archived"
 		case action == "pause" && ctl.Paused, action == "stop" && ctl.Stop:
 			it.why = "already"
 		default:
@@ -137,11 +141,13 @@ func panelGroupReview(ctx context.Context, registryDir string, reader *dockReade
 	if action == "stop" {
 		panelGroupStopChoices(ctx, f.Entries, items)
 	}
-	fits, already, cannot := 0, 0, 0
+	fits, already, cannot, archived := 0, 0, 0, 0
 	for _, it := range items {
 		switch {
 		case it.Fits:
 			fits++
+		case it.why == "archived":
+			archived++
 		case it.why == "already":
 			already++
 		default:
@@ -154,6 +160,9 @@ func panelGroupReview(ctx context.Context, registryDir string, reader *dockReade
 	}
 	if cannot > 0 {
 		rest = append(rest, fmt.Sprintf("%d cannot be reviewed now", cannot))
+	}
+	if archived > 0 {
+		rest = append(rest, fmt.Sprintf("%d %s archived and left as %s", archived, plural(archived, "is", "are"), plural(archived, "it is", "they are")))
 	}
 	if fits == 0 {
 		return panelGroupReviewed{}, &panelResult{Outcome: "refused", Text: "No loop can be " + panelDone[action] + " now: " + panelJoin(rest) + ". Nothing was changed.", Retry: cannot > 0}
@@ -223,6 +232,8 @@ func panelGroupItemLine(it panelGroupItem, phrase, action string) string {
 		return name + " will be " + done + "."
 	case it.why == "already":
 		return it.Name + " is already " + panelGroupHeld[action] + "."
+	case it.why == "archived":
+		return it.Name + " is archived and is left as it is."
 	case it.why == "busy":
 		return it.Name + " will not be " + done + ": looptender is in the middle of a check on it."
 	}
@@ -606,4 +617,11 @@ func panelGroupTotal(action string, out panelGroupResult) panelGroupResult {
 		out.Lines = append(out.Lines, l.Text)
 	}
 	return out
+}
+
+// panelGroupArchived reports whether a loop is archived, from the control
+// record just read and its archive record.
+func panelGroupArchived(stateDir string, ctl control.File) bool {
+	a, _ := loopArchive(stateDir, ctl)
+	return a != nil
 }

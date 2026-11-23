@@ -307,3 +307,19 @@ func TestNoticesNeverCarryAThreadIDInDisguise(t *testing.T) {
 		t.Errorf("%v", got)
 	}
 }
+
+func TestAnArchivedLoopHasNoNotices(t *testing.T) {
+	l := noticeLoop("l1", "example-api")
+	since := noticeNow.Add(-time.Hour)
+	l.Hold = dockHoldState{State: "held", Since: &since}
+	l.DiskSpace = &dockDiskSpace{Level: "low"}
+	l.Supervisor = "not_answering"
+	if len(reportNotices([]dockLoop{l}, nil, noticeNow)) == 0 {
+		t.Fatal("the loop has conditions before it is archived")
+	}
+	l.Archived = &archiveView{}
+	l.State = "archived"
+	if ns := reportNotices([]dockLoop{l}, nil, noticeNow); len(ns) != 0 {
+		t.Errorf("an archived loop is out of the way: %v", ns)
+	}
+}

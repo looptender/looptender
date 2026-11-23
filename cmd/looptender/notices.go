@@ -98,9 +98,9 @@ func noticeMid(name string) string {
 	return name
 }
 
-// archivedLoop says whether the loop is archived (dockLoop.Archived, once the
-// archive exists); a stub until then.
-func archivedLoop(l dockLoop) bool { return false }
+// archivedLoop says whether the loop is archived: it is out of the way and
+// nothing about it is news, whatever hold or disk reading it still has.
+func archivedLoop(l dockLoop) bool { return l.Archived != nil || l.State == "archived" }
 
 // noticesOf is the notices for one loop. needs says it is under Needs you.
 func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {

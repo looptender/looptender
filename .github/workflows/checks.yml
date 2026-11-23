@@ -29,9 +29,9 @@ on:
       base:
         description: >-
           Preview only. Decide what to run as if this ref were a pull request
-          against this commit. The macOS and Windows jobs then report under a
-          "Scope preview" name, so a preview can never stand in for a required
-          check. Leave empty for an ordinary manual run, which runs everything.
+          against this commit. The macOS jobs and the Build and test gates then
+          report under a "Scope preview" name, so a preview can never stand in
+          for a required check. Leave empty for an ordinary manual run, which runs everything.
         required: false
         default: ""
 
@@ -62,7 +62,8 @@ concurrency:
 
 jobs:
   # Decides, in seconds, which runners this run needs; see scripts/ci-plan.py.
-  # A draft pull request skips the macOS jobs (they run when it is marked
+  # A draft pull request skips the macOS jobs, except "Other checks" when it
+  # changes the Swift menu (they run when it is marked
   # ready, on later pushes and in the merge queue), and a push to main whose
   # commit already passed in the merge queue does no work. Any doubt runs
   # everything.
@@ -73,8 +74,10 @@ jobs:
     permissions:
       contents: read
       actions: read # reads the merge-queue run of the pushed commit
+      pull-requests: read # lists a draft pull request's changed files
     outputs:
       os: ${{ steps.plan.outputs.os }}
+      checks_os: ${{ steps.plan.outputs.checks_os }}
       duplicate: ${{ steps.plan.outputs.duplicate }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +87,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           DRAFT: ${{ github.event.pull_request.draft }}
+          PR: ${{ github.event.pull_request.number }}
           SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
@@ -132,7 +136,9 @@ jobs:
   # in docs/testing.md has the measurements behind the split and the limits.
   # Neither is a required check.
   windows-acl:
-    name: "${{ inputs.base && 'Scope preview - ' || '' }}Windows access diagnostics (storage and controls)"
+    # A static name: GitHub shows a skipped job's name unevaluated, so an
+    # expression here would appear raw on a duplicate push. Not required.
+    name: Windows access diagnostics (storage and controls)
     needs: plan
     if: needs.plan.outputs.duplicate != 'true'
     runs-on: windows-2022
@@ -269,7 +275,7 @@ jobs:
   # The tests that start and stop processes: the headless runners, the Cursor
   # command journeys and the detached start, repeated 20 times.
   windows-processes:
-    name: "${{ inputs.base && 'Scope preview - ' || '' }}Windows access diagnostics (processes)"
+    name: Windows access diagnostics (processes)
     needs: plan
     if: needs.plan.outputs.duplicate != 'true'
     runs-on: windows-2022
@@ -429,8 +435,9 @@ jobs:
     needs: plan
     if: needs.plan.outputs.duplicate != 'true'
     strategy:
+      fail-fast: false # a macOS failure must not cancel the Ubuntu leg and lose its results
       matrix:
-        os: ${{ fromJSON(needs.plan.outputs.os) }}
+        os: ${{ fromJSON(needs.plan.outputs.checks_os) }}
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
