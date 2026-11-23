@@ -6,7 +6,6 @@ Object.assign(globalThis, { window: dom.window, document: dom.window.document, H
 Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
 const { cleanup, within } = await import("@testing-library/react");
 const { loadPluginApp, renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
-const { noteSaysRetired } = await import("./status-details.ts");
 const app = await loadPluginApp(() => import("./app.tsx"));
 const base = { readAt: "2026-01-01T00:00:00Z", completed: false, targetThread: "thr_example", targetAdapter: "bb", targetConfigured: true, lastCheck: null };
 const dets = (over: object = {}, comparison = "match", running = "v0.2.0-dev.aaaaaaa", installed = "v0.2.0-dev.aaaaaaa") => ({ ...base, runtime: { state: "recent", source: "state", freshness: "recent", recordedBuild: running, installedBuild: installed, binaryComparison: comparison }, daemon: { state: "responsive", binaryComparison: comparison }, ...over });
@@ -20,7 +19,8 @@ test("looptender's freshness words are visible on the card as sent, the detail i
   const ui = card([loop({}, { buildFreshness: fresh({}) })]);
   try {
     assert.ok(await ui.findByText("Updated 2 h ago"));
-    assert.ok(within(ui.getByRole("list", { name: "Details" })).getByText("Build: Installed 23 Nov 09:00 · was v0.2.0-dev.1111111 · now v0.2.0-dev.aaaaaaa"));
+    assert.equal(within(ui.getByRole("list", { name: "Details" })).getAllByText(/^Build: /).length, 1, "one Build line");
+    assert.ok(within(ui.getByRole("list", { name: "Details" })).getByText(/^Build: .* · Installed 23 Nov 09:00 · was v0\.2\.0-dev\.1111111 · now v0\.2\.0-dev\.aaaaaaa$/));
     assert.equal(ui.queryByText(/\bnew\b/i), null); assert.equal(ui.queryByRole("button", { name: /restart|update|resume/i }), null);
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
@@ -67,7 +67,7 @@ test("Pause is a real target with the loop in its name, a focus ring, and its de
     assert.ok(pause.hasAttribute("data-kg"));
     const details = ui.container.querySelector("details")!;
     assert.equal(details.querySelector("summary")?.textContent, "Details");
-    assert.ok(within(details as HTMLElement).getByText("Last check state: error (as in bb keepgoing status)"));
+    assert.ok(within(details as HTMLElement).getByText("Last check state: error (the listing's last= field)"));
     assert.ok(within(details as HTMLElement).getByText(/^Last recorded action: none · succeeded/));
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
@@ -78,18 +78,17 @@ test("a raised no-progress flag is on the card, qualified for a held loop", asyn
   try { assert.ok(await ui.findByText(`${text} (recorded before the hold; the loop is held (paused), so this is not current)`)); } finally { ui.lifecycle.unmount(); cleanup(); }
 });
 
-test("a held loop whose note says it is retired shows no resume command; every other held loop keeps it", async () => {
-  assert.equal(noteSaysRetired({ controlState: "awaiting user", note: "Retired: do not resume this loop." }), true);
-  assert.equal(noteSaysRetired({ controlState: "awaiting user", note: "Needs a decision on the release." }), false);
-  assert.equal(noteSaysRetired({ controlState: "paused", note: "Retired." }), false, "only a hold for a person");
-  assert.equal(noteSaysRetired({ controlState: "awaiting user", note: null }), false);
-  const retired = card([loop({ controlState: "awaiting user", note: "This thread is retired; do not resume this loop." })]);
+test("a note never hides the resume command; an archived loop gets none and says how to use it again", async () => {
+  for (const note of ["This thread is retired; do not resume this loop.", "Needs a decision on whether to remove the retired endpoints", "This is NOT retired; please resume"]) {
+    const ui = card([loop({ controlState: "awaiting user", note })]);
+    try { await ui.findByText(/A person resumes this from an ordinary terminal/); assert.equal(ui.container.querySelectorAll("code").length, 1, note); } finally { ui.lifecycle.unmount(); cleanup(); }
+  }
+  const at = "2026-01-01T00:00:00Z";
+  const archived = card([loop({ controlState: "awaiting user", note: "continued elsewhere" }, { archived: { at, hold: "awaiting user" } })]);
   try {
-    assert.ok(await retired.findByText(/Its note says it is retired or not to be resumed, so no resume command is shown here/));
-    assert.equal(retired.container.querySelector("code"), null); assert.equal(retired.queryByText(/keepgoing resume/), null);
-    assert.ok(within(retired.getByRole("list", { name: "Why" })).getByText(/^Note: This thread is retired; do not resume this loop\.$/));
-  } finally { retired.lifecycle.unmount(); cleanup(); }
-  const ordinary = card([loop({ controlState: "awaiting user", note: "Needs a decision on the release." })]);
-  try { await ordinary.findByText(/A person resumes this from an ordinary terminal/); assert.equal(ordinary.container.querySelectorAll("code").length, 1); } finally { ordinary.lifecycle.unmount(); cleanup(); }
-
+    await archived.findByText("looptender: archived");
+    assert.ok(archived.getByText(new RegExp(`^Archived since .* · unarchive to use it again\\.$`)));
+    assert.equal(archived.container.querySelector("code"), null); assert.equal(archived.queryByText(/resumes this/), null);
+    assert.equal(archived.queryByRole("button", { name: /resume|unarchive/i }), null);
+  } finally { archived.lifecycle.unmount(); cleanup(); }
 });
