@@ -339,7 +339,9 @@ func (t *tick) tryLane(lr adapter.LaneRecoverer, rec *state.LaneRecovery, check 
 		check.NotRetried[laneOtherLoop]++
 		return true
 	}
-	verdict := decide.LaneVerdictFor(lr.InspectLane(ctx, id))
+	facts := lr.InspectLane(ctx, id)
+	t.noteLaneLimit(facts)
+	verdict := decide.LaneVerdictFor(facts)
 	if verdict != decide.LaneRetry {
 		r.Outcome, r.LookedAt = string(verdict), t.now
 		check.NotRetried[string(verdict)]++

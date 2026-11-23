@@ -91,7 +91,7 @@ var Adapters = []Adapter{
 	{ID: "bb", Title: "BB thread", Registered: true, Activator: true, WakePoller: true, TurnRetrier: true, LaneRecoverer: true, LaneStopper: true, SessionEvidence: true, ContextReader: true,
 		Files: []string{"internal/adapter/bb/bb.go", "internal/adapter/bb/children.go", "internal/adapter/bb/assignment.go", "internal/adapter/bb/cursor.go", "internal/adapter/bb/lanes.go", "internal/adapter/bb/wake.go"},
 		Inputs: []string{"ActiveChildIDs", "ActiveChildren", "AwaitingChildren", "AwaitingInput", "Background", "ChildOutcome", "ChildTitles", "ChildrenUnverified", "DirectChildren", "ErrorClass", "ErroredChildren", "Evidence",
-			"ErrorTurn", "Gone", "HealthyChildren", "ModelFallback", "Queued", "ResetsAt", "RetryDeclined", "RetryExpired", "RetryKnown", "RetryUnverified", "Retrying", "State", "Title", "Turn", "TurnUnknown", "Turns"}},
+			"ErrorTurn", "Gone", "HealthyChildren", "LimitWindow", "ModelFallback", "Queued", "ResetsAt", "RetryDeclined", "RetryExpired", "RetryKnown", "RetryUnverified", "Retrying", "State", "Title", "Turn", "TurnUnknown", "Turns"}},
 	{ID: "claude", Title: "Claude Code headless", Registered: true, SessionEvidence: true,
 		Files:  []string{"internal/adapter/runner/claude.go", "internal/adapter/runner/spec.go"},
 		Inputs: []string{"ErrorClass", "Evidence", "SessionLost", "State"}},
@@ -108,6 +108,10 @@ var Adapters = []Adapter{
 	{ID: "process", Title: "Generic process", Registered: true,
 		Files:  []string{"internal/adapter/process/process.go"},
 		Inputs: []string{"AwaitingInput", "Background", "ErrorClass", "Evidence", "Gone", "Queued", "State"}},
+	// An observed-only target: read, never sent to, woken or stopped.
+	{ID: "sessionpipe", Title: "Sessionpipe (observed)", Registered: true,
+		Files:  []string{"internal/adapter/sessionpipe/sessionpipe.go"},
+		Inputs: []string{"AwaitingInput", "Background", "ErrorClass", "ErrorTurn", "Evidence", "Gone", "State"}},
 	// An agent defined in configuration. Its Inputs are the most a
 	// definition can produce; a definition that declares less produces less.
 	{ID: "custom", Title: "Agent defined in configuration", Registered: true,
@@ -118,7 +122,7 @@ var Adapters = []Adapter{
 // ObservationFields is every field of decide.Observation. A new field must be
 // added here, and to the Inputs of each adapter that sets it.
 var ObservationFields = []string{"ActiveChildIDs", "ActiveChildren", "AwaitingChildren", "AwaitingInput", "Background", "ChildOutcome", "ChildTitles", "ChildrenUnverified", "DeferredInteraction", "DirectChildren", "ErrorClass",
-	"ErrorTurn", "ErroredChildren", "Evidence", "Gone", "HealthyChildren", "ModelFallback", "Queued", "ResetsAt", "RetryDeclined", "RetryExpired", "RetryKnown", "RetryUnverified", "Retrying", "SessionLost", "State", "Title", "Turn", "TurnUnknown", "Turns"}
+	"ErrorTurn", "ErroredChildren", "Evidence", "Gone", "HealthyChildren", "LimitWindow", "ModelFallback", "Queued", "ResetsAt", "RetryDeclined", "RetryExpired", "RetryKnown", "RetryUnverified", "Retrying", "SessionLost", "State", "Title", "Turn", "TurnUnknown", "Turns"}
 
 func t(path, test string) Ref { return Ref{Path: path, Test: test} }
 func d(path string) Ref       { return Ref{Path: path} }
@@ -321,7 +325,7 @@ var Matrix = []Behaviour{
 			"cursor":  {Missing, None, "Not a fallback candidate.", nil},
 			"process": {NA, None, "The resume command decides which conversation receives the brief.", nil},
 		})},
-	{ID: "run_graph", Title: "Run graph and keepgoing runs", What: "Record runs, sends and the conversation reference, and show them offline.",
+	{ID: "run_graph", Title: "Run graph and looptender runs", What: "Record runs, sends and the conversation reference, and show them offline.",
 		Cells: merge(map[string]Cell{
 			"bb": {Yes, Live, "The configured thread, labelled configured.", []Ref{d(runsLive), t(graphTest, "TestTickRecordsRunIntentBeforeSendSessionAndGoal")}},
 		}, same(Cell{Yes, Fixture, "The runner's saved resume ID, labelled observed.", []Ref{t(graphTest, "TestHeadlessTargetRecordsItsSavedSession")}}, headless...),
@@ -389,10 +393,47 @@ var customCells = map[string]Cell{
 	"permissions":           {Partial, Fixture, "With structured_waiting: a turn that ends on the declared waiting rule raises one awaiting-user hold. Nothing is approved or answered.", []Ref{t(definedTest, "TestDefinedAgentWaitingRaisesOneHold")}},
 }
 
+const (
+	spTest     = "internal/adapter/sessionpipe/sessionpipe_test.go"
+	spDoc      = "docs/sessionpipe.md#observed-sessions-in-unreleased"
+	spDecide   = "internal/decide/observed_test.go"
+	spConfig   = "internal/config/sessionpipe_test.go"
+	spObserved = "Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it."
+)
+
+// sessionpipeCells is the column for an observed sessionpipe target. A row
+// it does not name gets spNever.
+var (
+	spNever          = Cell{NA, None, spObserved, []Ref{d(spDoc)}}
+	spNoRoutes       = Cell{NA, None, spObserved + " Configuration refuses fallbacks, routes, switch-back and timing for it.", []Ref{t(spConfig, "TestSessionpipeTargetIsStandaloneAndPromptless")}}
+	sessionpipeCells = map[string]Cell{
+		"observe":          {Yes, Fixture, "A tier-0 sessionpipe file sink the person adds: the session's turn, heartbeat, attention and session events, from an allowlist of types and protocol words. A line above tier 0 makes the file unreadable until it is replaced. Silence past stale_after is unknown, never idle. Titles, folders and every other field are never kept.", []Ref{t(spTest, "TestObserveTierZeroLifecycle"), t(spTest, "TestObserveSilenceIsUnknown"), t(spTest, "TestObserveRefusesAboveTierZero"), t(spTest, "TestObserveKeepsNoText")}},
+		"error_classes":    {Missing, Fixture, "Tier 0 says that a turn ended in error, not why, so every error is unknown. sessionpipe sends the class only at tier 1.", []Ref{t(spTest, "TestErrorTurnHasNoClass")}},
+		"restricted":       {Missing, None, "Tier 0 carries no error class.", nil},
+		"reprompt":         {NA, None, spObserved + " An errored session is recorded and never re-prompted.", []Ref{t(spDecide, "TestObservedTargetIsNeverWoken")}},
+		"child_awareness":  {Partial, Fixture, "Only the count of background work a turn's end reports. Subagent events are tier 1 and are not read.", []Ref{t(spTest, "TestObserveTierZeroLifecycle")}},
+		"handoff_source":   spNoRoutes,
+		"handoff_target":   spNoRoutes,
+		"switch_back":      spNoRoutes,
+		"probes":           spNoRoutes,
+		"new_conversation": spNoRoutes,
+		"quota":            {Missing, None, "sessionpipe reports usage windows only at tier 1, which also carries words and paths, so none are read.", []Ref{d(spDoc)}},
+		"context":          {Missing, None, "sessionpipe reports no context window size.", nil},
+		"turn_usage":       {Missing, None, "sessionpipe reports no per-turn token counts at tier 0.", nil},
+		"stop":             {NA, None, "looptender never stops an observed session. A stop request ends checking; the session is not signalled.", []Ref{t(spDecide, "TestObservedTargetIsNeverWoken"), t(spTest, "TestSendAndStopAreUnsupported")}},
+		"permissions":      {Yes, Fixture, "attention.needed of kind permission, question or elicitation reads as waiting on a person until attention.cleared or the session's next turn event. Nothing is answered.", []Ref{t(spTest, "TestObserveWaitingOnPerson")}},
+	}
+)
+
 func init() {
 	for i := range Matrix {
 		if c, ok := customCells[Matrix[i].ID]; ok {
 			Matrix[i].Cells["custom"] = c
+		}
+		if c, ok := sessionpipeCells[Matrix[i].ID]; ok {
+			Matrix[i].Cells["sessionpipe"] = c
+		} else {
+			Matrix[i].Cells["sessionpipe"] = spNever
 		}
 	}
 }

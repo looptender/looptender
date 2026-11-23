@@ -20,6 +20,7 @@ import (
 	"github.com/looptender/looptender/internal/adapter/factory"
 	"github.com/looptender/looptender/internal/adapter/process"
 	"github.com/looptender/looptender/internal/adapter/runner"
+	"github.com/looptender/looptender/internal/adapter/sessionpipe"
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/decide"
 )
@@ -210,6 +211,7 @@ func TestOptionalInterfacesMatchTheAdapters(t *testing.T) {
 		"cursor":      runner.NewCursor(config.Cursor{CLI: "absent"}, dir),
 		"custom":      definedRunner(t, "", dir),
 		"process":     process.New(config.Process{}),
+		"sessionpipe": sessionpipe.New(config.Sessionpipe{Session: "claude-code:example", EventsFile: "absent"}, dir),
 	}
 	for _, a := range Adapters {
 		impl, ok := built[a.ID]

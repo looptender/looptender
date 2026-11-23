@@ -271,6 +271,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		now:         fs.String("now", "", "RFC 3339 time to use instead of the clock"),
 		reviewFile:  fs.String("review-file", "", "complete: bounded private whole-objective and assignment review JSON"),
 		note:        fs.String("note", "", "a short note stored in control.json"),
+		succeededBy: fs.String("succeeded-by", "", "archive: the configuration of the loop that continues this one; this loop is archived after its first completed check"),
 		id:          fs.String("id", "", "fallbacks check: only this candidate"),
 		exact:       fs.Bool("exact", false, "fallbacks check: probe the target model, not the cheap one"),
 		discard:     fs.Bool("discard-pending-thread", false, "retarget: give up on a BB thread creation whose outcome is unknown, after checking BB for the thread yourself"),
@@ -290,6 +291,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	positional = append(positional, fs.Args()...)
+	if *f.succeededBy != "" && cmd != "archive" {
+		e.errf("--succeeded-by is only supported by archive")
+		return exitUsage
+	}
 	if *f.reviewFile != "" && cmd != "complete" {
 		e.errf("--review-file is only supported by complete")
 		return exitUsage
@@ -422,9 +427,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "stop":
 		return stopCmd(e, cfg, *f.note, *f.lanes, *f.dropQueued, *f.immediately)
 	case "archive":
-		if len(positional) != 0 {
-			e.errf("usage: looptender archive [-c looptender.yaml] [--note TEXT] [--json]")
+		if len(positional) != 0 || (*f.succeededBy != "" && *f.note != "") {
+			e.errf("usage: looptender archive [-c looptender.yaml] [--note TEXT | --succeeded-by NEW_CONFIG] [--json]")
 			return exitUsage
+		}
+		if *f.succeededBy != "" {
+			return succeededByCmd(e, cfg, *f.succeededBy, now, *f.asJSON)
 		}
 		return archiveCmd(e, cfg, *f.note, now, *f.asJSON)
 	case "display-name":
@@ -497,7 +505,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 type cliFlags struct {
 	staleAfter                      *time.Duration
 	cfgPath, now, note, id, routine *string
-	reviewFile                      *string
+	reviewFile, succeededBy         *string
 	client                          *string
 	target                          *string
 	here                            *bool

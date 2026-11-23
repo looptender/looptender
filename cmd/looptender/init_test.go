@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	promptpkg "github.com/looptender/looptender/internal/prompt"
 	"io"
@@ -365,5 +366,45 @@ func TestInitCancellationWhileReading(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("wizard ignored cancellation")
+	}
+}
+
+// init --succeeds records the succession and the inherited name, in the
+// text and the JSON forms; JSON keeps stdout one object.
+func TestInitSucceedsRecordsTheSuccession(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		f := newSetupFixture(t)
+		if code, _, errOut := f.run(t, f.args(), ""); code != 0 {
+			t.Fatal(errOut)
+		}
+		pred := filepath.Join(f.destination, config.FileName)
+		dest := filepath.Join(f.root, "private", "example-next")
+		args := []string{"--non-interactive", "--name", "example-next", "--agent", "codex", "--project", f.project, "--directory", dest, "--task", "Continue the fictional example task.", "--succeeds", pred}
+		if asJSON {
+			args = append(args, "--json")
+		}
+		code, out, errOut := f.run(t, args, "")
+		if code != 0 {
+			t.Fatalf("%v: %s", asJSON, errOut)
+		}
+		if asJSON {
+			var v map[string]any
+			if err := json.Unmarshal([]byte(out), &v); err != nil {
+				t.Fatalf("stdout is not one JSON object: %v %s", err, out)
+			}
+		} else if !strings.Contains(out, "This loop continues loop example-loop") {
+			t.Fatalf("text: %s", out)
+		}
+		next, err := config.Load(filepath.Join(dest, config.FileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := control.LoadSuccession(next.Loop.StateDir)
+		if err != nil || s == nil || s.From.Loop != "example-loop" {
+			t.Fatalf("%v: record %+v %v", asJSON, s, err)
+		}
+		if n := namingOf(next.Loop, ""); n.DisplayName != "example-loop" || n.NameSource != "inherited" {
+			t.Fatalf("%v: name %+v", asJSON, n)
+		}
 	}
 }

@@ -10,6 +10,7 @@ import { hostContract } from "./host-contract.ts";
 import { targetOf, statusFollowsStandard, recordSchema, setupInput, setupResult, targetSchema } from "./setup-contract.ts";
 import { createTransferController } from "./transfer-controller.ts";
 import { transferInput, transferResult, moveIntentSchema } from "./transfer-contract.ts";
+import { walkLineage } from "./lineage.ts";
 import { createSetupController, MAX_SETUPS } from "./setup-controller.ts";
 import { createNewThreadController } from "./new-thread-controller.ts";
 import { newThreadInput, newThreadResult, startModeSchema, type Bounds } from "./new-thread-contract.ts";
@@ -139,6 +140,11 @@ export const rpcContract = defineRpcContract({
   forThread: {
     input: z.object({ threadId: z.string().min(1).max(200) }),
     output: z.object({ loops: z.array(loopSchema), errors: z.array(z.string()) }),
+  },
+  // Whether the thread is a child, and the nearest ancestor with a loop this plugin can see.
+  lineage: {
+    input: z.object({ threadId: z.string().min(1).max(200) }),
+    output: z.object({ child: z.boolean(), coveredBy: z.object({ threadId: z.string(), loop: z.string() }).optional() }),
   },
   control: {
     input: z.object({ configPath: z.string().min(1).max(1000), action: actionSchema, managedId: z.string().optional(), expectedThreadId: z.string().min(1).max(200).optional() }),
@@ -484,6 +490,13 @@ export default async function plugin(bb: BbPluginApi) {
     setup: input => setupCall(input),
     newThread: input => newThread.call(input),
     forThread: ({ threadId }) => allLoops(threadId),
+    // Thread metadata only (each thread's parent id), never another thread's content.
+    // A failed read throws, so the app retries instead of caching "not a child".
+    lineage: ({ threadId }) => walkLineage(
+      threadId,
+      async id => (await bb.sdk.threads.get({ threadId: id, signal: AbortSignal.timeout(10_000) })).parentThreadId ?? null,
+      async id => (await allLoops(id)).loops[0]?.loop,
+    ),
     control: ({ configPath, action, managedId, expectedThreadId }) => action === "resume" ? serialize(() => control(configPath, action, managedId, expectedThreadId)) : control(configPath, action, managedId, expectedThreadId),
   });
 

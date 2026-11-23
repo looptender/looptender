@@ -147,25 +147,48 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 		}
 		add(n)
 	}
-	if w := l.Waiting; w != nil && w.Kind == "limit" || l.State == "waiting_on_limit" {
-		cause := "a usage limit"
-		if lw := l.LimitWait; lw != nil && lw.ResetsAt != nil && !lw.Passed {
-			cause = "usage limit until " + noticeTime(lw.ResetsAt.In(now.Location()))
-		} else {
-			cause = "usage limit"
+	if w := l.Waiting; w != nil && w.Kind == "limit" || l.State == "waiting_on_limit" || l.UsageLimit != nil {
+		// When it resets, to the hour: a reset read a few seconds differently
+		// at the next check is the same limit, and loops on one window group.
+		var reset time.Time
+		window, words := "", "usage limit"
+		if u := l.UsageLimit; u != nil {
+			window = u.WindowKey
+			if window == "" {
+				window = u.Window
+			}
+			if w := strings.TrimSpace(u.Words); w != "" && len(w) <= 60 {
+				words = w
+			}
+			if !u.ResetPassed && !u.ResetsAt.IsZero() {
+				reset = u.ResetsAt
+			}
+		} else if lw := l.LimitWait; lw != nil && lw.ResetsAt != nil && !lw.Passed {
+			reset = *lw.ResetsAt
+		}
+		if !reset.IsZero() {
+			reset = reset.In(now.Location()).Truncate(time.Hour)
+		}
+		cause := words
+		if !reset.IsZero() {
+			cause += " until " + noticeTime(reset)
 		}
 		text := name + " stopped: " + cause + "."
-		if l.Away != nil {
+		moved := l.Away != nil
+		if moved {
 			text = name + " reached a usage limit and moved to its next route."
 			cause = "usage limit, moved on"
+		} else if u := l.UsageLimit; u != nil && len(u.Actions) > 0 && u.Actions[0].Text != "" && len(u.Actions[0].Text) <= 140 {
+			// What a person can do, in the record's own fixed words (never its command).
+			text += " " + strings.TrimSpace(u.Actions[0].Text)
 		}
-		// Keyed on the window the limit is in (when it resets), which holds for
-		// as long as the limit does; never on the last check, which moves.
-		window := time.Time{}
-		if lw := l.LimitWait; lw != nil && lw.ResetsAt != nil {
-			window = *lw.ResetsAt
+		// Keyed on the window and its reset hour, which hold for as long as the
+		// limit does; never on the last check, which moves.
+		what := window
+		if moved {
+			what += "moved"
 		}
-		add(panelNotice{Kind: noticeLimit, Severity: sevHigh, Since: checked, ID: noticeID(noticeLimit, l.Key, window, map[bool]string{true: "moved", false: ""}[l.Away != nil]),
+		add(panelNotice{Kind: noticeLimit, Severity: sevHigh, Since: checked, ID: noticeID(noticeLimit, l.Key, reset, what),
 			Text: text, Group: noticeLimit + "." + cause, GroupText: "{n} loops stopped: " + cause + "."})
 	}
 	if l.Supervisor == "not_answering" && l.State != "stopped" && l.State != "finished" && l.State != "off" && l.State != "paused" {

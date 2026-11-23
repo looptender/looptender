@@ -851,7 +851,7 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	if l.Prompt == "" && l.PromptFile == "" {
+	if l.Prompt == "" && l.PromptFile == "" && !ObservedOnly(l.Adapter) {
 		add("one of loop.prompt or loop.prompt_file is required")
 	}
 	if l.Prompt != "" && l.PromptFile != "" {
@@ -1012,6 +1012,17 @@ func (c *Config) Validate() error {
 	}
 	if l.Adapter == "antigravity" && (l.HasRouteList() || l.SwitchBack.Enabled) {
 		add("Antigravity currently supports standalone primary loops only; fallbacks and switch-back are unverified")
+	}
+	if ObservedOnly(l.Adapter) {
+		if l.HasRouteList() || l.SwitchBack.Enabled {
+			add("a sessionpipe target is observed, never woken: it cannot have fallbacks, routes or switch-back")
+		}
+		if l.TimingOn() {
+			add("loop.timing is not supported for an observed sessionpipe target")
+		}
+		if l.Prompt != "" || l.PromptFile != "" {
+			add("a sessionpipe target is observed, never woken: looptender sends it nothing, so loop.prompt and loop.prompt_file must not be set")
+		}
 	}
 	if l.SwitchBack.Enabled {
 		switch l.Probe.Kind {

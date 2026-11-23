@@ -29,6 +29,7 @@
             "codex",
             "cursor",
             "antigravity",
+            "sessionpipe",
             "custom"
           ]
         },
@@ -583,6 +584,9 @@
         "antigravity": {
           "$ref": "#/$defs/antigravity"
         },
+        "sessionpipe": {
+          "$ref": "#/$defs/sessionpipe"
+        },
         "custom": {
           "$ref": "#/$defs/custom"
         }
@@ -634,6 +638,42 @@
               "antigravity"
             ],
             "properties": {
+              "fallbacks": {
+                "const": ""
+              },
+              "switch_back": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              },
+              "timing": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapter": {
+                "const": "sessionpipe"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sessionpipe"
+            ],
+            "description": "an observed target: looptender never sends to, wakes or stops it",
+            "properties": {
+              "prompt": false,
+              "prompt_file": false,
               "fallbacks": {
                 "const": ""
               },
@@ -926,6 +966,36 @@
           "additionalProperties": {
             "type": "string"
           }
+        }
+      }
+    },
+    "sessionpipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session",
+        "events_file"
+      ],
+      "description": "an observed-only target read from a tier-0 sessionpipe file sink; never sent to, woken or stopped; unreleased source",
+      "properties": {
+        "session": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}:[A-Za-z0-9._:-]{1,128}$",
+          "description": "<harness>:<id> as sessionpipe names the session"
+        },
+        "events_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "the path given to sessionpipe sink add file:PATH --tier 0"
+        },
+        "stale_after": {
+          "$ref": "#/$defs/duration",
+          "default": "10m"
+        },
+        "cli": {
+          "type": "string",
+          "default": "sessionpipe",
+          "description": "run only by doctor, for its version and sink checks"
         }
       }
     },
