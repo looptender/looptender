@@ -156,7 +156,12 @@ type Control struct {
 
 // Input is everything Decide needs.
 type Input struct {
-	AssignmentReady   int // exact current typed readiness, evaluated by the supervisor
+	AssignmentReady int // exact current typed readiness, evaluated by the supervisor
+	// ObservedOnly: the target is observed, never woken (a sessionpipe
+	// target). No rule may send to it, re-prompt it, stop it or move it; the
+	// state is recorded, a gone target is held for a person, and nothing else
+	// is done.
+	ObservedOnly      bool
 	Obs               Observation
 	Control           Control
 	InWindow          bool
@@ -405,6 +410,32 @@ const (
 	HeldNudgesClause = " held back, not sent, because the turn looked hung"
 )
 
+// ObservedStopReason is recorded when a stop is asked for on an observed
+// target: looptender stops checking it and never stops the session itself.
+const ObservedStopReason = "stop requested; an observed session is never stopped by looptender, only no longer checked"
+
+// ObservedReasonSuffix ends every reason recorded for an observed target.
+const ObservedReasonSuffix = "; observed only: looptender never sends to, wakes or stops this session"
+
+func observedReason(o Observation) string {
+	var s string
+	switch {
+	case o.AwaitingInput:
+		s = "waiting on a person"
+	case o.State == Error:
+		s = "its last turn ended in error"
+	case o.State == Active:
+		s = "working"
+	case o.State == Idle && o.Background > 0:
+		s = "between turns, with background work running"
+	case o.State == Idle:
+		s = "between turns"
+	default:
+		s = "status unknown"
+	}
+	return s + ObservedReasonSuffix
+}
+
 // NetworkDownReason is recorded when recovery waits for connectivity.
 const NetworkDownReason = "network down; waiting for connectivity"
 
@@ -415,6 +446,9 @@ const HandoffDeferredReason = "handoff deferred: no fallback could be confirmed 
 func Decide(in Input) Decision {
 	c := in.Control
 	o := in.Obs
+	if c.Stop && in.ObservedOnly {
+		return none(ObservedStopReason)
+	}
 	if c.Stop {
 		if o.State == Active || o.State == Pending {
 			return Decision{Action: Stop, Reason: "stop requested"}
@@ -447,6 +481,9 @@ func Decide(in Input) Decision {
 	}
 	if o.SessionLost {
 		return Decision{Action: AwaitUser, Reason: SessionLostReason}
+	}
+	if in.ObservedOnly {
+		return none(observedReason(o))
 	}
 	if len(o.AwaitingChildren) > 0 {
 		return Decision{Action: AwaitUser, Reason: "children waiting on a person (pending interaction): " + strings.Join(o.AwaitingChildren, ", ")}

@@ -299,8 +299,15 @@ type dockLoop struct {
 	// Can is which changes fit the loop's control flags as read: pause when
 	// not paused, stop when no stop is requested, resume when any hold is
 	// set. Empty when the flags could not be read. A page offers them only
-	// when the server that serves it allows changes.
+	// when the server that serves it allows changes. For an observed target
+	// (Observed) it never holds stop: pause and resume change only whether
+	// looptender checks the session, and nothing stops the session itself.
 	Can []string `json:"can"`
+	// Observed is set when the loop's target is observed, never woken (a
+	// sessionpipe session): looptender never sends to, wakes, re-prompts or
+	// stops it. ObservedNote says so in a sentence for the page.
+	Observed     bool   `json:"observed,omitempty"`
+	ObservedNote string `json:"observedNote,omitempty"`
 	// LanesFailed is "1 lane failed" when the last check's current lane
 	// listing has lanes in error, from their structured status only; empty
 	// otherwise. A failed lane does not hold the loop, so it is never a need,
@@ -1520,6 +1527,12 @@ func dockLoopArg(name string) string {
 	return ""
 }
 
+// dockObserved reports whether the loop's current target is observed, never
+// woken, as its status says.
+func dockObserved(in dockInput) bool {
+	return in.Status != nil && in.Status.TargetConfigured && in.Status.TargetAgent.Observed
+}
+
 func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, identifiers bool) (dockLoop, *dockNeed) {
 	l := dockLoop{Key: dockKey(in.Entry.ID), Name: clip(in.Entry.Loop, dockMaxText), Evidence: in.Client.Outcome,
 		Limits: []dockLimit{}, Issues: []string{}, Can: []string{}, LoopArg: dockLoopArg(in.Entry.Loop)}
@@ -1528,7 +1541,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		if !c.Paused {
 			l.Can = append(l.Can, "pause")
 		}
-		if !c.Stop {
+		if !c.Stop && !dockObserved(in) {
 			l.Can = append(l.Can, "stop")
 		}
 		if snap.ControlState != "superseded" && (c.Paused || c.Stop || c.AwaitingUser || c.Completed) {
@@ -1557,6 +1570,9 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		a := st.TargetAgent
 		l.CurrentRoute = dockTarget{Availability: "known", Role: dockRole(st.Target), Tool: dockTool(a.Adapter),
 			Provider: clip(a.Provider, dockMaxText), Model: clip(a.Model, dockMaxText)}
+		if a.Observed {
+			l.Observed, l.ObservedNote = true, sessionpipeObservedNotice
+		}
 		if identifiers {
 			l.CurrentRoute.Name = clip(st.Target, dockMaxText)
 			if a.BBThread != "" && transferThreadID.MatchString(a.BBThread) {
@@ -1920,6 +1936,8 @@ func dockTool(adapter string) string {
 		return "Cursor"
 	case "antigravity":
 		return "Antigravity"
+	case "sessionpipe":
+		return "Sessionpipe (observed)"
 	case "process":
 		return "Custom command"
 	case "":

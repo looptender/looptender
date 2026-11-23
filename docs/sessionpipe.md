@@ -1,12 +1,137 @@
-# Sessionpipe reporting integration (unreleased)
+# Sessionpipe integration (unreleased)
 
-Source supports opt-in **OUT reporting** to a receiver the person runs. This is
-not a supervision adapter: `adapter: sessionpipe` is unsupported and configuration
-rejects it. It cannot observe, wake, send to, stop or own an agent session, answer
-a hold, or change routes. Supervision continues through the loop's existing
-adapter, controls, ownership and budgets. Delivery results never classify a
+Source has two separate sessionpipe integrations:
+
+- **IN, [observed sessions](#observed-sessions-in-unreleased):** `adapter: sessionpipe`
+  observes one agent session that sessionpipe reports, from a tier-0 file sink
+  the person adds. The session is observed, never woken: looptender never sends
+  to, wakes, re-prompts or stops it.
+- **OUT, reporting:** opt-in reports to a receiver the person runs, described
+  from [Setup](#setup) on. The report format is not a supervision adapter. It
+  cannot observe, wake, send to, stop or own an agent session, answer a hold, or
+  change routes. Supervision continues through the loop's existing adapter,
+  controls, ownership and budgets. Delivery results never classify a
 provider error or decide failover. Unknown, refused and restricted provider
 results retain their existing handling.
+
+## Observed sessions (IN, unreleased)
+
+A loop with `adapter: sessionpipe` watches one session of any agent sessionpipe
+hooks (Claude Code, Codex, Gemini CLI, Antigravity, Devin and the others its
+README lists), including an interactive session looptender did not start and
+cannot reach. It reads one file and runs nothing during a check.
+
+### Set up an observed session
+
+Requires sessionpipe 0.18.0 or later with its hooks installed for the agent
+(`sessionpipe install`). Add a tier-0 file sink once, at the computer's own
+terminal, with an absolute path in a folder only you can read:
+
+```sh
+sessionpipe sink add file:/home/example/.local/state/looptender-sessionpipe/events.jsonl --tier 0 --name looptender
+```
+
+On Windows use the same command with a Windows path. sessionpipe creates the
+file with the first event after the sink is added. Find the session's id with
+`sessionpipe tail --tier 0` while it runs, or in your receiver. Then:
+
+```yaml
+version: 1
+loop:
+  name: example-observed
+  state_dir: ~/.local/state/looptender/example-observed
+  adapter: sessionpipe
+  sessionpipe:
+    session: claude-code:8c132906-8c3f-4814-870a-afc3d05e1d2e
+    events_file: /home/example/.local/state/looptender-sessionpipe/events.jsonl
+    # stale_after: 10m
+```
+
+There is no `prompt`: nothing is ever sent. `doctor -c looptender.yaml` checks
+the setup (below); `tick` and `daemon` then supervise it like any loop.
+
+### What it reads
+
+The sink writes every session's events on this computer. looptender keeps the
+lines of the one configured session and, of those, only these:
+
+| Event (tier 0) | Reads as |
+| --- | --- |
+| `session.started` | idle |
+| `turn.started`, `session.heartbeat` | active (a heartbeat arrives at most once a minute while a turn runs) |
+| `turn.ended` with reason `stop` or `interrupt` | idle, with the `background` count it reports |
+| `turn.ended` with reason `error`, `attention.needed` of kind `error` | error, of class unknown |
+| `attention.needed` of kind `permission`, `question` or `elicitation` | waiting on a person, until `attention.cleared` or the session's next turn event |
+| `attention.needed` of kind `idle` | idle |
+| `session.ended`, `session.forgotten` | gone: the loop holds for a person |
+
+- **Silence is unknown, never idle.** A session that has said nothing for
+  `stale_after` reads unknown, so does one not yet seen, and so does the file
+  while a backlog over 4 MiB is being read over several checks. Four harnesses
+  never send `session.ended`.
+- **No text is kept.** Each line is decoded into a fixed set of fields:
+  protocol, type, time, tier, harness name, session id and sequence, and the
+  data keys `reason`, `kind`, `attention_id`, `background` and `turn_id`. Each
+  value must be one of the protocol's words or an id of its character set.
+  The session's title (by default the first prompt, cut short), folder,
+  repository, branch, model, account and every other key are never decoded,
+  stored, logged or shown. Unknown and extension event types are ignored.
+- **Tier 0 only.** Every line must say tier 0 and protocol 1. One that does not
+  makes the whole file unreadable for this loop until it is replaced: a higher
+  tier carries words and paths. A line over 64 KiB or that is not JSON is
+  skipped.
+- **Bounded and restartable.** A check reads at most 4 MiB. The reader keeps
+  its position, a hash of the file's first 256 bytes and the session's state in
+  `targets/<id>/sessionpipe-read.json` (owner-only), and reads a replaced or
+  truncated file again from its start. Sequence numbers already applied are not
+  applied again.
+- **Never the outbox, never a command.** looptender does not read sessionpipe's
+  outbox, which keeps every event at full detail, and runs no sessionpipe command
+  during a check.
+
+### Observed, never woken
+
+Every rule that would wake, nudge, re-prompt, stop, hand off or switch the loop
+records why it did not, and the reason ends "observed only: looptender never
+sends to, wakes or stops this session". A gone session holds for a person, as
+any gone target does. `status` prints an `observed:` line and reports `task:
+none`; its JSON marks `targetAgent.observed`. The dock and panel JSON set
+`observed` on the loop, and a loop's `can` never holds `stop` for an observed
+target: it holds `pause` when the loop is not paused and `resume` when a hold
+is set. Pause and resume change only whether looptender checks the session.
+`looptender stop` is still accepted: it ends the checks and leaves the session
+alone.
+
+### Doctor
+
+`doctor` runs only `sessionpipe --version` and `sessionpipe status --json`, and
+prints neither output, the events file's path, nor anything in it:
+
+| Check | Fails when |
+| --- | --- |
+| `agent.<id>.observed` | never: it says the target is observed, never woken |
+| `agent.<id>.events_file` | the file is missing or not a regular file, or other users can write it (warning when they can read it). Windows reports the DACL check instead of mode bits |
+| `agent.<id>.version` | sessionpipe is older than 0.18.0 |
+| `agent.<id>.hooks` | sessionpipe has no current hooks for the session's harness |
+| `agent.<id>.sink` | no file sink writes the events file, or it sends above tier 0 (warning when it is paused) |
+| `agent.<id>.limits` | never: it says usage and error classes are not read |
+
+Without the `sessionpipe` command, doctor warns and still checks the file.
+`--offline` runs nothing.
+
+### Not in this slice
+
+- **Error classes and usage.** sessionpipe sends a turn's error class and its
+  usage windows only at tier 1, which also carries tool names, file paths and
+  the attention message. So every error is unknown, and no limit or reset is
+  read. Reading them needs sessionpipe to offer those words or numbers at tier 0.
+- **Send, stop and takeover.** sessionpipe's `ask` can reach an existing session
+  and start a new one, but it waits for the answer and returns its text, has no
+  local cancel and takes no account or effort. None of it is used.
+- **Children, context window and per-turn usage.**
+- **Fallbacks, routes, switch-back and timing**, which configuration refuses.
+- **Live acceptance.** Every behaviour above is tested with fixture files and a
+  stand-in for the sessionpipe command, on no real session.
 
 ## Setup
 
@@ -190,7 +315,7 @@ remote-answer or coordinator-message authority.
 | Acknowledgements | Only 202; accepted+duplicates exactly two, zero rejected, valid tier; duplicate acknowledgement accepted | Invalid/oversized/missing/rejected/mismatched responses remain unverified; no automatic resend or cursor advance. |
 | Restart / concurrency | Fresh CLI processes retain identity and sequences; private two-sequence reservation under nonwaiting delivery lock; separate nonwaiting report gate serializes sends/resume; rejected/corrupt state refuses send | Contention can lose a best-effort report. No replay/outbox/indefinite retry, crash-before-POST recovery or power-loss guarantee. |
 | Evidence | Native macOS fictional Go receivers, race tests, optional local demo with actual built core schema/data/filter | Local reference receiver package is a placeholder. This is not upstream receiver/conformance certification, GUI/phone or live provider acceptance. |
-| IN | None exposed | F8 typed intake + observe-only ownership decision first; explicit filtered file sink only, silence unknown; usage limits unavailable at tier 0. |
+| IN | [Observed sessions](#observed-sessions-in-unreleased): one session from a person-added tier-0 file sink, allowlisted types and words, never woken | No error classes or usage (tier 1 only); no send, stop or takeover; no live acceptance. |
 | BACK | None exposed; #233 remains held | Needs owner authorization plus upstream non-harness control dispatch and a looptender-hold command/board support. Existing prompt/cancel commands cannot grant loop authority. |
 
 ## Repeatable local demo and upstream documentation preparation

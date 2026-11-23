@@ -361,6 +361,8 @@ See the [licensing guide](LICENSING.md) for examples, prior-version rights, and 
 
 In **unreleased source**, a person-started panel with changes allowed can replace a loop's own binary inside its configuration directory. Shared installations, agents, running daemons/services and Windows are refused. It retains the running source handle/hash, checks target identity, and keeps private backups. Undo lasts seven days and restores only the binary while record formats remain compatible. Existing loops on older builds need one manual binary replacement before executable identity is recorded. See [build replacement and manual recovery](docs/dock.md#changes-from-the-page-keepgoing-panel---allow-changes).
 
+Unreleased source can also observe one session that sessionpipe reports, as an [observed target](docs/sessionpipe.md#observed-sessions-in-unreleased) read from a tier-0 file sink you add: looptender never sends to, wakes or stops it.
+
 Unreleased source adds opt-in [Sessionpipe reporting](docs/sessionpipe.md): tier-0 loop events to a receiver you configure, with opaque identities, bounded best-effort delivery and a persistent report-only pause on HTTP 401 (`report resume` enables future reports without sending or clearing loop holds). This is fixture-tested OUT reporting only; it adds no supervision adapter, session intake, send/stop or hold-answer capability. Live receiver, board and phone acceptance remain open.
 
 Unreleased: an opted-in BB coordinator can keep [explicit assignment handoffs](docs/assignments.md),

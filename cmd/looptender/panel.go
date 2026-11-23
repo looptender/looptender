@@ -1047,6 +1047,10 @@ type panelListLoop struct {
 	// page offers them: pause, stop and resume. Empty when the flags could
 	// not be read. client review and client apply take them.
 	Can []string `json:"can"`
+	// Observed is set when the loop's target is observed, never woken (a
+	// sessionpipe session). Its Can never holds stop: pause and resume change
+	// only whether looptender checks it.
+	Observed bool `json:"observed,omitempty"`
 	// OverdueSince is set when the loop needs a person because its checks
 	// have stopped: the time of its last check. A new value is a new gap, so
 	// a client can tell people once per gap.
@@ -1086,7 +1090,7 @@ func buildPanelList(r dockReport) panelList {
 				out.CanAll = append(out.CanAll, a)
 			}
 		}
-		row := panelListLoop{Key: l.Key, Name: l.Name, DiskSpace: dockDiskLevel(l.DiskSpace), State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
+		row := panelListLoop{Key: l.Key, Name: l.Name, DiskSpace: dockDiskLevel(l.DiskSpace), State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, Observed: l.Observed, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
 			BuildDiffers: l.Build.Availability == "different"}
 		// Lengthened with the installed label when the two would read the same.
 		var inst string

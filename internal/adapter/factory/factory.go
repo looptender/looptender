@@ -9,6 +9,7 @@ import (
 	"github.com/looptender/looptender/internal/adapter/bb"
 	"github.com/looptender/looptender/internal/adapter/process"
 	"github.com/looptender/looptender/internal/adapter/runner"
+	"github.com/looptender/looptender/internal/adapter/sessionpipe"
 	"github.com/looptender/looptender/internal/config"
 )
 
@@ -23,6 +24,11 @@ func New(a config.Agent, stateDir, target string) (adapter.Adapter, error) {
 		return process.New(*a.Process), nil
 	case "cursor":
 		return runner.NewCursor(*a.Cursor, dir), nil
+	case "sessionpipe":
+		if a.Sessionpipe == nil {
+			return nil, fmt.Errorf("the sessionpipe adapter needs its sessionpipe settings, and the agent definition has none")
+		}
+		return sessionpipe.New(*a.Sessionpipe, dir), nil
 	case "antigravity":
 		cli := a.Antigravity.CLI
 		if cli == "" {

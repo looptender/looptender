@@ -183,6 +183,9 @@ func (f *Fallbacks) Validate() error {
 		if c.Adapter == "antigravity" {
 			add("%sAntigravity fallback candidates are not supported; exact account/model probes are unverified", where)
 		}
+		if ObservedOnly(c.Adapter) {
+			add("%sa sessionpipe target is observed, never woken, so it cannot be a fallback candidate", where)
+		}
 		switch c.Probe.Kind {
 		case "claude", "codex":
 		case CustomAdapter:
