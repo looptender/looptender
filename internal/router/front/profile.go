@@ -3,6 +3,8 @@ package front
 import (
 	"bytes"
 	"encoding/json"
+	"path"
+	"regexp"
 	"strings"
 )
 
@@ -33,14 +35,18 @@ type Profile struct {
 	// are reported to the router.
 	LimitPrefixes []string
 	// Body takes from a request body the model name and, where the body
-	// carries them, the conversation and the account it names. It keeps
-	// nothing else.
-	Body func(body []byte) (model, conversation, account string)
-	// RewriteBody says the account a body names must become the serving
-	// one. A request is then routed only when that can be done by replacing
-	// one value of the same length in place.
-	RewriteBody bool
+	// carries it, the conversation. It keeps nothing else.
+	Body func(body []byte) (model, conversation string)
+	// Rewrite, when set, makes a body name the serving account instead of
+	// its own, by replacing one value of the same length in place. ok is
+	// false, and the request is then not routed, whenever that cannot be
+	// done and checked.
+	Rewrite func(body []byte, to string) (out []byte, ok bool)
 }
+
+// accountID is the form of an account id the front will put into a request:
+// a UUID and nothing else.
+var accountID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // ClaudeCode is the profile for Claude Code, as its requests were seen
 // against a stand-in and the provider (docs/design/router.md, "What must be
@@ -50,13 +56,13 @@ func ClaudeCode() Profile {
 	return Profile{
 		Name:               "claude-code",
 		Forwarded:          []string{"/v1/", "/api/"},
-		Refused:            []string{"create_api_key", "/oauth/token", "/oauth/authorize", "billing", "payment", "prepaid"},
+		Refused:            []string{"create_api_key", "/oauth/token", "/oauth/authorize", "/auth/trusted_devices", "billing", "payment", "prepaid"},
 		Routed:             map[string]bool{"/v1/messages": true, "/v1/messages/count_tokens": true},
 		ConversationHeader: "X-Claude-Code-Session-Id",
 		DropWithLogin:      []string{"X-Api-Key"},
 		LimitPrefixes:      []string{"anthropic-ratelimit-"},
-		Body:               claudeBody,
-		RewriteBody:        true,
+		Body:               func(body []byte) (string, string) { m, c, _, _, _ := claudeBody(body); return m, c },
+		Rewrite:            claudeRewrite,
 	}
 }
 
@@ -72,24 +78,31 @@ func Codex() Profile {
 		ConversationHeader: "Session-Id",
 		AccountHeader:      "Chatgpt-Account-Id",
 		LimitPrefixes:      []string{"x-codex-"},
-		Body:               func(body []byte) (string, string, string) { return topString(body, "model"), "", "" },
+		Body:               func(body []byte) (string, string) { return topString(body, "model"), "" },
 	}
 }
 
-func (p Profile) forwards(path string) bool {
-	ok := false
-	for _, prefix := range p.Forwarded {
-		if path == prefix || strings.HasPrefix(path, strings.TrimSuffix(prefix, "/")+"/") {
-			ok = true
-		}
+// forwards reports whether a request path is forwarded at all. decoded is
+// the path with its escapes read. A path is judged in its plain form: one
+// that changes when cleaned (a dot segment, a doubled or trailing slash, in
+// whatever spelling), or that still holds an escape after decoding, is
+// refused, so no spelling of a refused path can pass as another.
+func (p Profile) forwards(decoded string) bool {
+	if decoded == "" || path.Clean(decoded) != decoded || strings.Contains(decoded, "%") {
+		return false
 	}
-	lower := strings.ToLower(path)
+	lower := strings.ToLower(decoded)
 	for _, part := range p.Refused {
 		if strings.Contains(lower, part) {
 			return false
 		}
 	}
-	return ok
+	for _, prefix := range p.Forwarded {
+		if decoded == prefix || strings.HasPrefix(decoded, strings.TrimSuffix(prefix, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (p Profile) limit(header string) bool {
@@ -129,11 +142,13 @@ func topString(body []byte, key string) string {
 
 // claudeBody reads a Claude Code request: the model, and from
 // metadata.user_id, which is a JSON object inside a string, the session and
-// the account.
-func claudeBody(body []byte) (model, conversation, account string) {
+// the account. from and to are where the user_id value lies in the body,
+// from the end of its key to the end of the value; both are zero when there
+// is none.
+func claudeBody(body []byte) (model, conversation, account string, from, to int64) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
-		return "", "", ""
+		return "", "", "", 0, 0
 	}
 	var user string
 	for dec.More() {
@@ -144,19 +159,16 @@ func claudeBody(body []byte) (model, conversation, account string) {
 		switch t {
 		case "model":
 			if dec.Decode(&model) != nil {
-				return "", "", ""
+				return "", "", "", 0, 0
 			}
 		case "metadata":
-			var m struct {
-				UserID string `json:"user_id"`
+			var ok bool
+			if user, from, to, ok = claudeUserID(dec); !ok {
+				return model, "", "", 0, 0
 			}
-			if dec.Decode(&m) != nil {
-				return model, "", ""
-			}
-			user = m.UserID
 		default:
 			if skip(dec) != nil {
-				return model, "", ""
+				return model, "", "", 0, 0
 			}
 		}
 	}
@@ -165,18 +177,68 @@ func claudeBody(body []byte) (model, conversation, account string) {
 		Session string `json:"session_id"`
 	}
 	if json.Unmarshal([]byte(user), &id) != nil {
-		return model, "", ""
+		return model, "", "", 0, 0
 	}
-	return model, id.Session, id.Account
+	return model, id.Session, id.Account, from, to
 }
 
-// replaceOnce puts another account id in place of the one a body names. It
-// succeeds only when the id occurs exactly once in the whole body and the
-// other has the same length; every other byte is then identical. The body
-// is never decoded and written out again.
-func replaceOnce(body []byte, from, to string) ([]byte, bool) {
-	if from == "" || to == "" || len(from) != len(to) || bytes.Count(body, []byte(from)) != 1 {
+// claudeUserID reads the metadata object the decoder stands before and
+// returns its user_id string with where its value lies in the input.
+func claudeUserID(dec *json.Decoder) (user string, from, to int64, ok bool) {
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return "", 0, 0, false
+	}
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return "", 0, 0, false
+		}
+		if t != "user_id" {
+			if skip(dec) != nil {
+				return "", 0, 0, false
+			}
+			continue
+		}
+		start := dec.InputOffset()
+		v, err := dec.Token()
+		s, isString := v.(string)
+		if err != nil || !isString || user != "" {
+			return "", 0, 0, false // not a string, or user_id given twice
+		}
+		user, from, to = s, start, dec.InputOffset()
+	}
+	if _, err := dec.Token(); err != nil {
+		return "", 0, 0, false
+	}
+	return user, from, to, user != ""
+}
+
+// claudeRewrite makes a Claude Code request name the account to instead of
+// its own. It replaces the account id where it is written inside the
+// user_id value, and nowhere else, with one of the same length; every other
+// byte stays. It refuses, changing nothing, unless all of this holds:
+//
+//   - both ids are UUIDs;
+//   - the request's own id occurs exactly once in the whole body, written
+//     plainly, and that occurrence lies inside the user_id value (an id
+//     written with an escape there, while the same id stands in a prompt,
+//     must never lead to the prompt's being replaced);
+//   - read again after the change, the body names the account to, and the
+//     same model and conversation as before.
+func claudeRewrite(body []byte, to string) ([]byte, bool) {
+	model, conversation, own, from, end := claudeBody(body)
+	if !accountID.MatchString(own) || !accountID.MatchString(to) || own == to {
 		return body, false
 	}
-	return bytes.Replace(body, []byte(from), []byte(to), 1), true
+	at := int64(bytes.Index(body, []byte(own)))
+	if bytes.Count(body, []byte(own)) != 1 || at < from || at+int64(len(own)) > end {
+		return body, false
+	}
+	out := make([]byte, len(body))
+	copy(out, body)
+	copy(out[at:], to)
+	if m, c, a, _, _ := claudeBody(out); m != model || c != conversation || a != to || bytes.Contains(out, []byte(own)) {
+		return body, false
+	}
+	return out, true
 }

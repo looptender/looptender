@@ -606,7 +606,13 @@ func TestGuards(t *testing.T) {
 		"exchanging a token":   {path: "/v1/oauth/token"},
 		"granting a token":     {path: "/api/oauth/authorize", method: http.MethodGet},
 		"making a key":         {path: "/api/oauth/claude_cli/create_api_key"},
-		"billing":              {path: "/api/billing/prepaid"},
+		"billing":              {path: "/api/billing/usage"},
+		"payment":              {path: "/api/payment_methods"},
+		"prepaid credit":       {path: "/api/prepaid/credits"},
+		"a device grant":       {path: "/api/auth/trusted_devices"},
+		"a dot segment":        {path: "/api/oauth/./token"},
+		"an escaped dot":       {path: "/api/oauth/%2e/token"},
+		"a doubled slash":      {path: "/api/oauth//token"},
 		"health, wrong host":   {path: front.HealthPath, method: http.MethodGet, host: "example.com"},
 		"not the provider API": {path: "/metrics"},
 		"nor its root":         {path: "/", method: http.MethodGet},
@@ -809,12 +815,14 @@ func TestRequestThatCannotBeRewrittenIsNotRouted(t *testing.T) {
 		body     string
 		decision front.Decision
 	}{
-		"no metadata":                     {body: `{"model":"model-large","messages":[]}`, decision: to("spare", spareLogin)},
-		"not JSON":                        {body: `model-large, please`, decision: to("spare", spareLogin)},
-		"user_id of another shape":        {body: `{"model":"model-large","metadata":{"user_id":"user_0123_account_` + ownAccount + `_session_` + convA + `"}}`, decision: to("spare", spareLogin)},
-		"the account id also in a prompt": {body: strings.Replace(usual, "a {nested}", ownAccount+" {nested}", 1), decision: to("spare", spareLogin)},
-		"no account id from the router":   {body: usual, decision: front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin}},
-		"an account id of another length": {body: usual, decision: front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin, Account: "short"}},
+		"no metadata":                                             {body: `{"model":"model-large","messages":[]}`, decision: to("spare", spareLogin)},
+		"not JSON":                                                {body: `model-large, please`, decision: to("spare", spareLogin)},
+		"user_id of another shape":                                {body: `{"model":"model-large","metadata":{"user_id":"user_0123_account_` + ownAccount + `_session_` + convA + `"}}`, decision: to("spare", spareLogin)},
+		"the account id also in a prompt":                         {body: strings.Replace(usual, "a {nested}", ownAccount+" {nested}", 1), decision: to("spare", spareLogin)},
+		"no account id from the router":                           {body: usual, decision: front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin}},
+		"an account id of another length":                         {body: usual, decision: front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin, Account: "short"}},
+		"an account id that is no UUID":                           {body: usual, decision: front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin, Account: strings.Repeat("z", len(spareAccount))}},
+		"the account id escaped in user_id and plain in a prompt": {body: strings.Replace(strings.Replace(usual, `account_uuid\":\"9`, `account_uuid\":\"\u0039`, 1), "a {nested}", ownAccount+" {nested}", 1), decision: to("spare", spareLogin)},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -908,6 +916,14 @@ func TestCodexProfile(t *testing.T) {
 	if _, sent := g.sent(); sent[0].Get("Authorization") != "Bearer "+ownLogin || g.front.Counts().Unroutable != 1 {
 		t.Fatal("a request was routed without the serving account's id")
 	}
+	// Nor with something that is not an account id: what goes into the
+	// account header is a UUID or nothing.
+	g = start(t, func(c *front.Config) { c.Profile = front.Codex() })
+	g.router.set(always(front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin, Account: "x\r\nX-Injected: 1"}))
+	g.ok(call{path: "/responses", body: body, header: headers})
+	if _, sent := g.sent(); sent[0].Get("Authorization") != "Bearer "+ownLogin || sent[0].Get("Chatgpt-Account-Id") != ownAccount || sent[0].Get("X-Injected") != "" {
+		t.Fatal("a request was routed with an account id that is not one")
+	}
 }
 
 // Limit headers are reported by the profile's prefixes.
@@ -918,5 +934,43 @@ func TestLimitHeadersByProfile(t *testing.T) {
 	g.ok(call{path: "/responses", body: `{"model":"model-small"}`})
 	if o := g.router.outcome(t); o.Limits["x-codex-primary-used-percent"] != "40" || len(o.Limits) != 1 {
 		t.Fatalf("limits %v", o.Limits)
+	}
+}
+
+// A sender of one byte at a time, each inside the silence bound, is cut off
+// by the bound on the whole upload.
+func TestTrickledUploadIsCutByTheTotalBound(t *testing.T) {
+	g := start(t, func(c *front.Config) { c.BodyWait, c.BodyTotal = 300*time.Millisecond, 600*time.Millisecond })
+	conn, err := net.Dial("tcp4", g.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "POST /v1/messages HTTP/1.1\r\nHost: %s\r\n%s: %s\r\nContent-Length: 1000\r\n\r\n", g.addr, front.SecretHeader, secret)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(100 * time.Millisecond):
+				if _, err := io.WriteString(conn, "x"); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	began := time.Now()
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err == nil {
+		t.Fatalf("a trickled request was answered with %d", resp.StatusCode)
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) || time.Since(began) > 5*time.Second {
+		t.Fatalf("the front kept a trickled upload open for %v", time.Since(began))
+	}
+	if bodies, _ := g.sent(); len(bodies) != 0 {
+		t.Fatal("a trickled request reached the provider")
 	}
 }

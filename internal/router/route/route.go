@@ -87,8 +87,13 @@ func Defaults() Settings {
 type Window struct {
 	Name        string
 	UsedPercent float64
-	// ResetsAt is zero when the reading named no reset.
+	// ResetsAt is zero when the reading named no reset that could be
+	// believed.
 	ResetsAt time.Time
+	// At is when the window was read. A window with no reset stops
+	// counting MaxHold after it: nothing may stay shut for ever on a
+	// reading that says no more.
+	At time.Time
 	// Model is empty for a window that counts every model, else the model
 	// family it counts ("opus" matches "claude-opus-…").
 	Model string
@@ -185,9 +190,14 @@ const (
 	shut              // cannot serve this request
 )
 
-// counts reports whether window w limits a request for model at now.
-func counts(w Window, model string, now time.Time) bool {
+// counts reports whether window w limits a request for model at now. A
+// window whose reset has passed does not; nor does one that named no reset
+// and was read longer ago than MaxHold.
+func counts(w Window, model string, now time.Time, set Settings) bool {
 	if !w.ResetsAt.IsZero() && !w.ResetsAt.After(now) {
+		return false
+	}
+	if w.ResetsAt.IsZero() && now.Sub(w.At) > set.MaxHold {
 		return false
 	}
 	return w.Model == "" || strings.Contains(strings.ToLower(model), strings.ToLower(w.Model))
@@ -234,7 +244,7 @@ func levelOf(s Subscription, set Settings, rq Request, placed bool) level {
 		lv = soft
 	}
 	for _, w := range s.Windows {
-		if !counts(w, rq.Model, rq.Now) {
+		if !counts(w, rq.Model, rq.Now, set) {
 			continue
 		}
 		used := w.UsedPercent
@@ -260,7 +270,7 @@ func roomAt(s Subscription, set Settings, rq Request) time.Time {
 	}
 	at := holdEnd(s, set, rq.Now)
 	for _, w := range s.Windows {
-		if counts(w, rq.Model, rq.Now) && w.UsedPercent >= set.Hard && w.ResetsAt.After(at) {
+		if counts(w, rq.Model, rq.Now, set) && w.UsedPercent >= set.Hard && w.ResetsAt.After(at) {
 			at = w.ResetsAt
 		}
 	}
@@ -350,7 +360,7 @@ func uncertain(s Subscription, set Settings, rq Request) bool {
 		return true
 	}
 	for _, w := range s.Windows {
-		if counts(w, rq.Model, rq.Now) && w.UsedPercent+set.Near >= set.Soft {
+		if counts(w, rq.Model, rq.Now, set) && w.UsedPercent+set.Near >= set.Soft {
 			return true
 		}
 	}
@@ -468,8 +478,11 @@ func Expire(st *State, set Settings, now time.Time) {
 func merge(known, read []Window, at time.Time) []Window {
 	out := make([]Window, 0, len(known)+len(read))
 	named := map[string]bool{}
-	for _, w := range read {
+	for i, w := range read {
 		named[w.Name] = true
+		if w.At.IsZero() {
+			read[i].At = at
+		}
 	}
 	for _, w := range known {
 		if !named[w.Name] && (w.ResetsAt.IsZero() || w.ResetsAt.After(at)) {

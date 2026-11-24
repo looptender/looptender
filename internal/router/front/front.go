@@ -141,8 +141,10 @@ type Config struct {
 	// NoRouterPause is how long the front does not ask after ErrNoRouter.
 	NoRouterPause time.Duration
 	// BodyWait bounds silence while a request's body is read from the
-	// session: a bound on a stalled upload, not on a long one.
-	BodyWait time.Duration
+	// session: a bound on a stalled upload, not on a long one. BodyTotal
+	// bounds the whole upload, so a sender of one byte per interval does
+	// not hold a request open for ever.
+	BodyWait, BodyTotal time.Duration
 	// ConnectWait, HeaderWait and IdleWait bound the provider: connecting,
 	// the first byte of the answer, and silence inside a stream. HeaderWait
 	// must not be shorter than the client's own request limit. IdleWait is
@@ -164,6 +166,7 @@ func (c *Config) defaults() {
 	def(&c.RetryWait, 2*time.Second)
 	def(&c.NoRouterPause, 5*time.Second)
 	def(&c.BodyWait, 2*time.Minute)
+	def(&c.BodyTotal, 15*time.Minute)
 	def(&c.ConnectWait, 10*time.Second)
 	// Above a client's own request limit, so the front never gives up on a
 	// request its client would still have waited for.
@@ -453,7 +456,14 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A session that stops sending its body does not keep a request open;
 	// one that is still sending is given all the time it needs.
 	reading := http.NewResponseController(w)
-	body, whole, err := readUpTo(r.Body, f.cfg.MaxBody, func() { reading.SetReadDeadline(time.Now().Add(f.cfg.BodyWait)) })
+	latest := time.Now().Add(f.cfg.BodyTotal)
+	body, whole, err := readUpTo(r.Body, f.cfg.MaxBody, func() {
+		until := time.Now().Add(f.cfg.BodyWait)
+		if until.After(latest) {
+			until = latest
+		}
+		reading.SetReadDeadline(until)
+	})
 	if err != nil {
 		// The session went away or stalled mid-body. There is nothing to
 		// answer, and returning would send an empty 200.
@@ -465,9 +475,9 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.finish(w, r, rest, r.ContentLength, Outcome{Client: client}, own)
 		return
 	}
-	var model, conversation, account string
+	var model, conversation string
 	if p.Body != nil {
-		model, conversation, account = p.Body(body)
+		model, conversation = p.Body(body)
 	}
 	if h := r.Header.Get(p.ConversationHeader); p.ConversationHeader != "" && h != "" {
 		conversation = h
@@ -479,7 +489,7 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		d = f.ask(r.Context(), a, f.wait())
 	}
-	sent, d := f.shaped(body, account, d)
+	sent, d := f.shaped(body, d)
 	resp, err := f.send(r.Context(), r, bytes.NewReader(sent), int64(len(sent)), d)
 	if err != nil {
 		f.failed(w, r, o, d, err)
@@ -503,7 +513,7 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.report(o, d, resp, "")
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 			resp.Body.Close()
-			sent, d = f.shaped(body, account, next)
+			sent, d = f.shaped(body, next)
 			if resp, err = f.send(r.Context(), r, bytes.NewReader(sent), int64(len(sent)), d); err != nil {
 				f.failed(w, r, o, d, err)
 				return
@@ -518,22 +528,22 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // shaped returns the body to send for decision d, and d. When d names
 // another subscription but the request cannot be made to name that
-// subscription's account, by one same-length replacement in place, the
-// request is not routed: the body comes back unchanged with the decision
-// "your own login".
-func (f *Front) shaped(body []byte, account string, d Decision) ([]byte, Decision) {
+// subscription's account and nothing else, the request is not routed: the
+// body comes back unchanged with the decision "your own login".
+func (f *Front) shaped(body []byte, d Decision) ([]byte, Decision) {
 	p := f.cfg.Profile
-	if d.Own || (!p.RewriteBody && p.AccountHeader == "") {
+	if d.Own || (p.Rewrite == nil && p.AccountHeader == "") {
 		return body, d
 	}
-	if d.Account == "" {
+	// What goes into a request as an account id is a UUID or nothing.
+	if !accountID.MatchString(d.Account) {
 		f.unroutable.Add(1)
 		return body, own
 	}
-	if !p.RewriteBody {
+	if p.Rewrite == nil {
 		return body, d
 	}
-	changed, ok := replaceOnce(body, account, d.Account)
+	changed, ok := p.Rewrite(body, d.Account)
 	if !ok {
 		f.unroutable.Add(1)
 		return body, own

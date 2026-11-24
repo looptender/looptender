@@ -348,7 +348,7 @@ func TestStaleReadingSpreadsNewConversations(t *testing.T) {
 func TestLatchWithoutANamedTime(t *testing.T) {
 	set := Defaults()
 	s := sub("main", 93)
-	s.Windows[0].ResetsAt = time.Time{}
+	s.Windows[0].ResetsAt, s.Windows[0].At = time.Time{}, t0
 	st := state(pinned("main", 10*time.Minute), s, sub("spare", 10))
 	d := Choose(st, set, Request{Conversation: "c1", Now: t0})
 	Served(&st, set, "c1", d.Subscription, d.Reason, t0)
@@ -413,5 +413,29 @@ func TestReadingMergesIntoWhatIsKnown(t *testing.T) {
 	Observe(&st, set, "main", Observation{Kind: Reading, At: t0, Windows: []Window{{Name: "seven_day", UsedPercent: 40, ResetsAt: t0.Add(72 * time.Hour)}}})
 	if st.Order[0].LatchUntil.IsZero() {
 		t.Fatal("a reading of another window released the latch")
+	}
+}
+
+// A window that is full and names no reset shuts a subscription for an hour
+// from when it was read, not for ever.
+func TestFullWindowWithNoResetReopens(t *testing.T) {
+	set := Defaults()
+	st := state(nil, Subscription{ID: "main"})
+	Observe(&st, set, "main", Observation{Kind: Reading, At: t0, Windows: []Window{{Name: "seven_day", UsedPercent: 100}}})
+	rq := Request{Conversation: "c1", Model: "m"}
+	rq.Now = t0.Add(59 * time.Minute)
+	if d := Choose(st, set, rq); d.Reason != NoRoom {
+		t.Fatalf("within the hour: %+v", d)
+	}
+	rq.Now = t0.Add(61 * time.Minute)
+	if d := Choose(st, set, rq); d.Subscription != "main" {
+		t.Fatalf("after the hour it is still shut: %+v", d)
+	}
+	// With a reset named it stays shut until then, however long.
+	st = state(nil, Subscription{ID: "main"})
+	Observe(&st, set, "main", Observation{Kind: Reading, At: t0, Windows: []Window{{Name: "seven_day", UsedPercent: 100, ResetsAt: t0.Add(72 * time.Hour)}}})
+	rq.Now = t0.Add(48 * time.Hour)
+	if d := Choose(st, set, rq); d.Reason != NoRoom || !d.RoomAt.Equal(t0.Add(72*time.Hour)) {
+		t.Fatalf("a window with a reset reopened early: %+v", d)
 	}
 }
