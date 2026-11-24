@@ -323,3 +323,85 @@ func TestAccountsConnectThroughTheCommand(t *testing.T) {
 		}
 	}
 }
+
+// The new login is compared with the ones already connected by the
+// catalog's login fingerprints. The same account under a second label is
+// not added.
+func TestAccountsConnectSameAccountCheck(t *testing.T) {
+	// logins maps a label to the fingerprint its check records; "" records
+	// none, as a check that could not read the login.
+	withLogins := func(g *connectRig, logins map[string]string) *[]string {
+		checked := []string{}
+		g.deps.check = func(_ context.Context, dir, id string) error {
+			f, err := accounts.Load(dir)
+			if err != nil {
+				return err
+			}
+			e := accounts.Find(&f, id)
+			checked = append(checked, e.Label)
+			if fp := logins[e.Label]; fp != "" {
+				return accounts.RecordLogin(dir, id, fp, time.Now().UTC())
+			}
+			return nil
+		}
+		return &checked
+	}
+	opts := accountConnectOptions{provider: "claude-code", label: "Example spare"}
+
+	t.Run("the same account", func(t *testing.T) {
+		g := newConnectRig(t, "claude-code")
+		checked := withLogins(g, map[string]string{"Example workshop": "aaaa", "Example spare": "aaaa"})
+		if code := g.connect(opts); code != exitFailed {
+			t.Fatalf("exit %d: %s", code, g.out.String())
+		}
+		said := g.err.String()
+		if !strings.Contains(said, `the same account as "Example workshop", so it adds no second quota. It was not added.`) || !strings.Contains(said, "was kept: "+g.dir) {
+			t.Fatalf("said %q", said)
+		}
+		if es := g.entries(t); len(es) != 1 || es[0].Label != "Example workshop" {
+			t.Fatalf("entries %+v", es)
+		}
+		if !slices.Equal(*checked, []string{"Example spare", "Example workshop"}) {
+			t.Fatalf("checked %v: the new entry, then the one with no fingerprint yet", *checked)
+		}
+	})
+	t.Run("the same account, as JSON", func(t *testing.T) {
+		g := newConnectRig(t, "claude-code")
+		withLogins(g, map[string]string{"Example workshop": "aaaa", "Example spare": "aaaa"})
+		o := opts
+		o.asJSON = true
+		g.connect(o)
+		var got accountConnectResult
+		if err := json.Unmarshal(g.out.Bytes(), &got); err != nil || got.State != "same_account" || got.SameAccount != "same" || got.ID != "" || !slices.Equal(got.SameAs, []string{"Example workshop"}) {
+			t.Fatalf("%v %+v", err, got)
+		}
+	})
+	t.Run("a different account", func(t *testing.T) {
+		g := newConnectRig(t, "claude-code")
+		withLogins(g, map[string]string{"Example workshop": "aaaa", "Example spare": "bbbb"})
+		if code := g.connect(opts); code != exitOK || len(g.entries(t)) != 2 || !strings.Contains(g.out.String(), "A different account from the other claude-code logins connected.") {
+			t.Fatalf("exit %d, %d entries: %s%s", code, len(g.entries(t)), g.out.String(), g.err.String())
+		}
+	})
+	t.Run("another login could not be checked", func(t *testing.T) {
+		g := newConnectRig(t, "claude-code")
+		withLogins(g, map[string]string{"Example spare": "bbbb"})
+		if code := g.connect(opts); code != exitOK || !strings.Contains(g.out.String(), "that could be checked; 1 could not be.") {
+			t.Fatalf("exit %d: %s", code, g.out.String())
+		}
+	})
+	t.Run("the new login could not be checked", func(t *testing.T) {
+		g := newConnectRig(t, "claude-code")
+		withLogins(g, map[string]string{"Example workshop": "aaaa"})
+		if code := g.connect(opts); code != exitOK || len(g.entries(t)) != 2 || !strings.Contains(g.out.String(), accountConnectIdentityNote) {
+			t.Fatalf("exit %d: %s", code, g.out.String())
+		}
+	})
+	t.Run("Codex names no account to compare", func(t *testing.T) {
+		g := newConnectRig(t, "codex")
+		checked := withLogins(g, map[string]string{"Example workshop": "aaaa", "Example spare": "aaaa"})
+		if code := g.connect(accountConnectOptions{provider: "codex", label: "Example spare"}); code != exitOK || len(*checked) != 0 || !strings.Contains(g.out.String(), accountConnectIdentityNote) {
+			t.Fatalf("exit %d, checked %v: %s", code, *checked, g.out.String())
+		}
+	})
+}

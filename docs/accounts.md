@@ -856,9 +856,16 @@ What it does, in order:
     and says how to sign in yourself and use `accounts add` instead.
 - **Antigravity:** a second account cannot be connected. Antigravity keeps one
   login per computer, and the command says so.
-- **Not checked yet:** whether the new login is a different account from the
-  ones already connected. Signing in twice with the same account gives two
-  entries for one quota. The command says this every time.
+- **The same account twice:** for Claude Code, the command then compares the
+  new login with the Claude Code logins already connected, by the catalog's
+  keyed login fingerprint (never the identity itself). If it is the same
+  account as one of them, it says which, says that it adds no second quota,
+  and takes the new entry out again; the signed-in directory is kept and
+  named. To compare, it runs the catalog's own check (`claude auth status`) on
+  the new entry and on any other Claude Code entry not checked before.
+- **Not compared:** Codex logins, because Codex's status names no account,
+  and any login whose check fails. The command then says "Not checked", and
+  two entries may be one quota.
 - **If the sign-in fails, is cancelled or takes longer than ten minutes:**
   nothing is added. The private directory is kept, because the provider may
   have written into it, and the message says where it is.

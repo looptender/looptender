@@ -28,8 +28,9 @@ import (
 // account.
 const accountConnectAntigravity = "Antigravity keeps one login per computer, so a second account cannot be connected beside the first."
 
-// accountConnectIdentityNote is said after every connect until the catalog
-// can compare logins.
+// accountConnectIdentityNote is said when the new login could not be
+// compared with the ones already connected: Codex reports nothing to compare,
+// and a Claude Code check can fail.
 const accountConnectIdentityNote = "Not checked: whether this is a different account from the ones already connected."
 
 // accountConnectDeps are the parts of a connect a test replaces.
@@ -38,8 +39,11 @@ type accountConnectDeps struct {
 	admit     accountConnectAdmit
 	stage     func(ctx context.Context, path, digest string) (string, func(), error)
 	run       accountConnectRun
-	environ   []string
-	now       func() time.Time
+	// check runs the catalog's own check of one entry, which records its
+	// login fingerprint where the provider reports an identity.
+	check   func(ctx context.Context, dir, id string) error
+	environ []string
+	now     func() time.Time
 }
 
 func accountConnectDefaults() accountConnectDeps {
@@ -48,8 +52,11 @@ func accountConnectDefaults() accountConnectDeps {
 		admit:     accountConnectDigest,
 		stage:     accountClaudeQuotaStage,
 		run:       accountConnectProvider,
-		environ:   os.Environ(),
-		now:       func() time.Time { return time.Now().UTC() },
+		check: func(ctx context.Context, dir, id string) error {
+			return accountCheck(ctx, dir, id, os.Getenv("BB_THREAD_ID"), accountExec, time.Now().UTC())
+		},
+		environ: os.Environ(),
+		now:     func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -68,8 +75,10 @@ type accountConnectResult struct {
 	ID            string `json:"id,omitempty"`
 	Label         string `json:"label,omitempty"`
 	Provider      string `json:"provider,omitempty"`
-	// SameAccount is "not_checked" until logins can be compared.
-	SameAccount string `json:"sameAccount,omitempty"`
+	// SameAccount is "different", "same" or "not_checked". SameAs are the
+	// labels of the entries with the same login.
+	SameAccount string   `json:"sameAccount,omitempty"`
+	SameAs      []string `json:"sameAs,omitempty"`
 }
 
 // accountConnectTemplate finds the executable and working directory for the
@@ -244,8 +253,91 @@ func accountsConnect(e env, dir string, o accountConnectOptions, d accountConnec
 		out.State, out.Reason = "failed", "catalog_changed"
 		return finish(exitFailed, "You are signed in, but the catalog or the label changed meanwhile, so the account was not added."+kept)
 	}
-	out.State, out.Reason, out.ID, out.SameAccount = "connected", "", entry.ID, "not_checked"
-	return finish(exitOK, fmt.Sprintf("Connected %q (%s) as account %s.\n%s\nNo route or loop was changed.", o.label, o.provider, entry.ID, accountConnectIdentityNote))
+	out.State, out.Reason, out.ID = "connected", "", entry.ID
+	same, unchecked, compared := accountConnectCompare(e.ctx, dir, entry, d)
+	note := accountConnectIdentityNote
+	switch {
+	case len(same) > 0:
+		// The same account under a second label is one quota, not two: the
+		// entry is taken out again. Its directory stays, signed in.
+		removeErr := accounts.Update(dir, func(f *accounts.File) error {
+			for i, x := range f.Entries {
+				if x.ID == entry.ID {
+					f.Entries = append(f.Entries[:i:i], f.Entries[i+1:]...)
+					return nil
+				}
+			}
+			return nil
+		})
+		out.State, out.Reason, out.SameAccount, out.SameAs = "same_account", "same_account", "same", same
+		if removeErr != nil {
+			return finish(exitFailed, fmt.Sprintf("This is the same account as %s, so it adds no second quota, but its entry %s could not be taken out again; remove it with `looptender accounts disconnect --id %s`.", quotedList(same), entry.ID, entry.ID))
+		}
+		out.ID = ""
+		return finish(exitFailed, fmt.Sprintf("This is the same account as %s, so it adds no second quota. It was not added.%s", quotedList(same), kept))
+	case compared && unchecked == 0:
+		out.SameAccount = "different"
+		note = "A different account from the other " + o.provider + " logins connected."
+	case compared:
+		out.SameAccount = "different"
+		note = fmt.Sprintf("A different account from the %s logins that could be checked; %d could not be.", o.provider, unchecked)
+	default:
+		out.SameAccount = "not_checked"
+	}
+	return finish(exitOK, fmt.Sprintf("Connected %q (%s) as account %s.\n%s\nNo route or loop was changed.", o.label, o.provider, entry.ID, note))
+}
+
+// accountConnectCompare says whether the new entry's login is one already
+// connected, by the catalog's keyed login fingerprints: it never sees an
+// identity. It checks the new entry, and any other entry of the provider
+// that has no fingerprint yet, with the catalog's own check. same are the
+// labels with the same login; unchecked counts the other entries that could
+// not be compared; compared is false when the new entry has no fingerprint.
+func accountConnectCompare(ctx context.Context, dir string, added accounts.Entry, d accountConnectDeps) (same []string, unchecked int, compared bool) {
+	if d.check == nil || added.Provider != "claude-code" {
+		// Only Claude Code's status names an account to fingerprint.
+		return nil, 0, false
+	}
+	_ = d.check(ctx, dir, added.ID)
+	f, err := accounts.Load(dir)
+	if err != nil {
+		return nil, 0, false
+	}
+	logins, _ := accounts.LoadLogins(dir)
+	mine := logins[added.ID].Last.Fingerprint
+	if mine == "" {
+		return nil, 0, false
+	}
+	for _, other := range f.Entries {
+		if other.ID == added.ID || other.Provider != added.Provider {
+			continue
+		}
+		if logins[other.ID].Last.Fingerprint == "" {
+			_ = d.check(ctx, dir, other.ID)
+			if again, err := accounts.LoadLogins(dir); err == nil {
+				logins = again
+			}
+		}
+		switch logins[other.ID].Last.Fingerprint {
+		case "":
+			unchecked++
+		case mine:
+			same = append(same, other.Label)
+		}
+	}
+	return same, unchecked, true
+}
+
+// quotedList writes labels as "a", "b" and "c".
+func quotedList(labels []string) string {
+	q := make([]string, len(labels))
+	for i, l := range labels {
+		q[i] = fmt.Sprintf("%q", l)
+	}
+	if len(q) < 2 {
+		return strings.Join(q, "")
+	}
+	return strings.Join(q[:len(q)-1], ", ") + " and " + q[len(q)-1]
 }
 
 // accountsDisconnect takes one entry out of the catalog. It signs nothing
