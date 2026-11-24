@@ -186,6 +186,7 @@ func doctor(e env, args []string, run doctorRun) int {
 	doctorFile(&r, "state.directory", cfg.Loop.StateDir, true)
 	doctorStateAccess(&r, cfg.Loop.StateDir, doctorOSAccess)
 	doctorDiskSpace(&r, cfg.Loop.StateDir)
+	doctorHost(&r, readHost(context.Background()))
 	for _, name := range []string{control.FileName, state.FileName, "health.json", state.LogName, daemoninfo.FileName, report.DeliveryFile, "delivery.lock", report.SessionpipeGateFile, report.SessionpipeLock + ".lock"} {
 		p := filepath.Join(cfg.Loop.StateDir, name)
 		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {

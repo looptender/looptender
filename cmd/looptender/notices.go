@@ -31,7 +31,7 @@ const (
 
 // noticeKinds is every kind, for settings. Kinds a person is pushed by
 // default are in noticeDefaultOn; the rest are listed but quiet.
-var noticeKinds = []string{noticeNeedsYou, noticeLimit, noticeSupervisor, noticeLane, noticeHold, noticeInstall, noticeDisk, noticeBound}
+var noticeKinds = []string{noticeNeedsYou, noticeLimit, noticeSupervisor, noticeLane, noticeHold, noticeInstall, noticeDisk, noticeBound, noticeHost}
 var noticeDefaultOn = map[string]bool{noticeNeedsYou: true, noticeLimit: true, noticeSupervisor: true}
 
 // Severities: urgent (an agent asked a question), high, normal, info.

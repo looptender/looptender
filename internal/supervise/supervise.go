@@ -86,6 +86,12 @@ type Options struct {
 	// Online reports connectivity once. Nil uses the loop's network settings;
 	// a loop with the check off is never checked.
 	Online func(ctx context.Context) bool
+	// HostLoad reads this computer's load level (hostcheck levels). Nil
+	// reads it (hostcheck.System).
+	HostLoad func() string
+	// HostSession reports whether this computer's login session is available
+	// to background processes. Nil reads it (hostcheck.System).
+	HostSession func(ctx context.Context) bool
 	// Clock reads wall time for the check's time budget. Now is the logical
 	// check time and may be fixed; Clock always advances.
 	Clock func() time.Time
@@ -215,8 +221,16 @@ type Result struct {
 	// that needs the network was not attempted, "down_untrusted" when it
 	// failed but is not believed, and "restored" when it passed after an
 	// outage, with NetworkDownFor saying how long the check had failed.
-	Network        string `json:"network,omitempty"`
-	NetworkDownFor string `json:"networkDownFor,omitempty"`
+	Network string `json:"network,omitempty"`
+	// HostSession is "unavailable" when a provider's sign-in failed while
+	// this computer's login session was unavailable to background processes,
+	// so nothing was sent and no hold raised, and "restored" on the check
+	// that finds it back.
+	HostSession string `json:"hostSession,omitempty"`
+	// HostOverloadTold: this check told the session the computer is
+	// overloaded while its children run (once per overload).
+	HostOverloadTold bool   `json:"hostOverloadTold,omitempty"`
+	NetworkDownFor   string `json:"networkDownFor,omitempty"`
 	// MissingWorktrees counts registered Git worktrees left out of the
 	// progress fingerprint because their directories are gone.
 	MissingWorktrees int `json:"missingWorktrees,omitempty"`
@@ -382,7 +396,9 @@ type tick struct {
 	// handoffObs is the observation a handoff in this check was made on.
 	handoffObs decide.Observation
 	// waiting is the child picture this check observed, for the run graph.
-	waiting *graphWaiting
+	waiting        *graphWaiting
+	hostEpisode    *hostEpisode
+	hostEpisodeWas hostEpisode
 }
 
 func (t *tick) warn(format string, a ...any) {
@@ -1076,6 +1092,7 @@ func (t *tick) run() error {
 	}
 	in.AssignmentReady = t.assignmentObservation(a, obs)
 	in.UsageWarning = t.usageWatchObservation()
+	in.HostOverload = t.hostOverloadObservation(obs)
 	in.IdleSpacing = t.idleSpacingInput(obs, ctl)
 	// A loop held for a restricted turn runs no check until a person resumes
 	// it. Reaching this point with that same turn still showing therefore
@@ -1169,6 +1186,7 @@ func (t *tick) run() error {
 		t.decisionInput = in
 		d = t.decide("network_down", in)
 	}
+	d = t.gateHostSession(obs, in, d)
 	if t.st.SkipHandoffOnce && !t.opts.DryRun {
 		t.st.SkipHandoffOnce = false
 		if d.Action == decide.Handoff || d.Action == decide.SwitchBack {
@@ -2002,6 +2020,9 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 			}
 		}
 		text, usageCarried := t.usageWarningText(d, text)
+		if d.HostOverloadWake {
+			text = prompt.HostOverloadOnly(t.decisionInput.Obs.ActiveChildren)
+		}
 		var backlogNotice *backlogDelivery
 		if d.Action == decide.Wake && !d.AssignmentWake && !text.NoticeOnly && loop.PRBacklog != nil {
 			var allowed bool
@@ -2041,6 +2062,11 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 		}
 		t.childNoticeSent(childErrors, err)
 		t.usageWarningSent(usageCarried, err)
+		if d.HostOverloadWake && err == nil {
+			t.hostEp().OverloadToldAt = t.now
+			t.saveHostEpisode()
+			t.res.HostOverloadTold = true
+		}
 		// The adapter was called: count the attempt whatever it returned, so a
 		// failing or unsupported send cannot repeat on every check outside the
 		// per-episode caps and spacing.

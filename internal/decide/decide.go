@@ -168,6 +168,10 @@ type Input struct {
 	// far). It rides on an ordinary wake, or wakes an idle session that
 	// waits on its children once.
 	UsageWarning bool
+	// HostOverload: this computer is overloaded while the loop's children
+	// run, and the session has not been told in this episode. It wakes an
+	// idle session that waits on its children once, with a count only.
+	HostOverload bool
 	// ObservedOnly: the target is observed, never woken (a sessionpipe
 	// target). No rule may send to it, re-prompt it, stop it or move it; the
 	// state is recorded, a gone target is held for a person, and nothing else
@@ -378,6 +382,8 @@ type Decision struct {
 	// UsageWarningWake is set only when the usage warning caused this wake
 	// by itself, while children run: the session gets the notice alone.
 	UsageWarningWake bool
+	// HostOverloadWake is set only when the overload caused this wake.
+	HostOverloadWake bool
 	AssignmentWake   bool
 	// DeferredInteraction is set only when the deferred-interaction rule itself
 	// produced an AwaitUser, so a caller never matches on Reason text.
@@ -523,6 +529,9 @@ func Decide(in Input) Decision {
 			}
 			if usageWarningWake(in) {
 				return Decision{Action: Wake, Reason: UsageWarningWakeReason, UsageWarningWake: true}
+			}
+			if hostOverloadWake(in) {
+				return Decision{Action: Wake, Reason: HostOverloadWakeReason, HostOverloadWake: true}
 			}
 			if in.AssignmentReady <= 0 || o.State != Idle || o.ChildrenUnverified {
 				return none("child work running")
@@ -915,6 +924,20 @@ const UsageWarningWakeReason = "usage window running out while children run"
 func usageWarningWake(in Input) bool {
 	o := in.Obs
 	return in.UsageWarning &&
+		o.State == Idle && in.InWindow && !o.ChildrenUnverified &&
+		!o.RetryUnverified && !o.Retrying && o.Queued == 0 && o.Background == 0 &&
+		in.SinceWake >= in.MinWakeInterval
+}
+
+// HostOverloadWakeReason is the reason of the one wake an overloaded
+// computer causes while children run.
+const HostOverloadWakeReason = "host overloaded while children run"
+
+// hostOverloadWake: the same conditions as the child-error wake's, for an
+// overload the session has not been told about.
+func hostOverloadWake(in Input) bool {
+	o := in.Obs
+	return in.HostOverload &&
 		o.State == Idle && in.InWindow && !o.ChildrenUnverified &&
 		!o.RetryUnverified && !o.Retrying && o.Queued == 0 && o.Background == 0 &&
 		in.SinceWake >= in.MinWakeInterval
