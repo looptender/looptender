@@ -182,6 +182,10 @@ type Result struct {
 	// Recovery says how a re-prompt was carried out: turn_retry re-ran the
 	// failed turn by reference with no new text, prompt sent the wake text.
 	Recovery string `json:"recovery,omitempty"`
+	// ModelStep is stepped_down when this check moved the conversation to a
+	// weaker model at a model-specific limit, stepped_back when it moved it
+	// back after that window reset (modelstep.go).
+	ModelStep string `json:"modelStep,omitempty"`
 	// Lanes is the lane work this check did under bb.children.retry_errored:
 	// counts only. Absent when it did none.
 	Lanes *state.LaneCheck `json:"lanes,omitempty"`
@@ -962,6 +966,9 @@ func (t *tick) run() error {
 		return err
 	}
 	res.Window = why
+	if done, err := t.modelStep(a, target, obs, inWindow); done {
+		return t.record(err)
+	}
 
 	// Fallback health: scheduled probes, then the redundancy picture.
 	var summary health.Summary
@@ -2029,6 +2036,8 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 		if d.HostOverloadWake {
 			text = prompt.HostOverloadOnly(t.decisionInput.Obs.ActiveChildren)
 		}
+		var stepCarried bool
+		text.Text, stepCarried = t.withModelStepNote(text.Text)
 		var backlogNotice *backlogDelivery
 		if d.Action == decide.Wake && !d.AssignmentWake && !text.NoticeOnly && loop.PRBacklog != nil {
 			var allowed bool
@@ -2073,6 +2082,7 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 			t.saveHostEpisode()
 			t.res.HostOverloadTold = true
 		}
+		t.modelStepNoteSent(stepCarried, err)
 		// The adapter was called: count the attempt whatever it returned, so a
 		// failing or unsupported send cannot repeat on every check outside the
 		// per-episode caps and spacing.

@@ -112,6 +112,11 @@ type Observation struct {
 	// LimitWindow, when known, is which usage window is blocked: the one
 	// that lifts at ResetsAt (LimitWindow).
 	LimitWindow LimitWindow
+	// TurnModel is the model the conversation's latest turn request ran with,
+	// when the adapter can tell (BB's client/turn/requested execution.model);
+	// empty otherwise. Only the model step-down reads it, to step back only
+	// a conversation still on the model it was stepped down to.
+	TurnModel string
 	// AwaitingInput means the session is blocked on a person: a pending
 	// permission prompt, question, or form, reported by the provider.
 	AwaitingInput bool

@@ -914,6 +914,30 @@ Unreleased, opt-in; **fixtures only**.
 - **One wake.** When the run-out is also within `--warn-within` (default `12h`, 1h to 168h), the agent is told once per window: `[keepgoing:usage-burn window=weekly used=… exhausts=… resets=…]` with one notice. It rides on the ordinary wake of an idle session. A session idle on purpose while its children run gets it alone, once, under the same spacing as the child-error notice, and is told that it is not an instruction to continue. It is recorded as sent only when the send is accepted. A reading whose reset is within an hour of the warned one is the same window, however the reported reset drifts between reads; a new window warns again.
 - **Never acts.** It reads no lane, messages, pauses or stops no child, and changes no route. A failed read is recorded (`reason`) and retried when next due.
 
+### Stepping down a model at one model's weekly limit
+
+Unreleased, opt-in; **fixtures only**. This is the BB-thread version that works today. The account router is meant to supersede or absorb it as a routing decision; its setting (an ordered list of models) would carry over as that router's step-down order.
+
+- **The setting.** `looptender model-step -c CONFIG --models <strongest>,<next>[,…]` (2 to 6 model names, strongest first, at most one of each weekly-limit family: not two opus models) turns it on.
+  - `--off` turns it off and cancels a pending step back: the conversation stays on the model it is on, and the command says so. With no flags, the command shows the setting.
+  - The setting is a record in the state directory (`model-step-setting.json`), not a configuration key. `status` shows it.
+  - It changes the owner's live conversation, so it takes the same owner check as the other controls, and is refused from the supervised conversation and anything its supervisor started, as resume is.
+- **When.** A check finds the loop's own BB conversation at a usage limit whose window is one model's (Claude's `seven_day_<model>`, from BB's rate-limit event; see [which limit](#which-limit-which-account-and-what-you-can-do)), with its reset ahead. That window, not the all-models one, is what blocked it, so the same account still has the other models.
+  - **Matching:** the window's model is matched exactly to each order entry's family, the first part of its name after the provider's (`claude-opus-5-5` is `opus`).
+  - **The step:** if a weaker model follows it, the step is recorded first (`model-step.json`), then the conversation's model is changed (`bb thread update --model`: the same thread, account, settings and hooks). Only then is a send reserved and the failed turn retried by reference, with no text sent. The check makes no other decision.
+  - **Takeover:** at such a limit the step-down runs before any takeover.
+- **When the change fails** (a model not available to that provider, BB refusing it), no send is spent. The failure is recorded and shown in `status`, and a `model_step` notice says so. It is not tried again until that window resets; the usual limit handling goes on.
+- **Telling people and the agent.**
+  - A step down produces a `model_step` notice (info) for the menu and the panel, which ends when the step does.
+  - The agent's next message carries one line: `[keepgoing:model-step to=… from=… resets=…]` and a looptender notice of which model it is on and why. A step back is said the same way.
+- **Not when.** Never for the all-models or 5-hour window, a model not in the order or the last one, a dry run, a fallback target, or a loop that is off, paused, stopped, waiting for a person or finished. With no weaker model left, the loop waits for the reset as before.
+- **Stepping back.** At the first check after the recorded reset that finds the conversation between turns, the model is changed back, but only if the latest turn ran on the weaker model and step-down is still on. BB's turn requests carry their model. Models are compared by weekly-limit family, so an order naming `sonnet` matches BB's `claude-sonnet-…`.
+  - **BB reports no model** for the latest turn: nothing changes and the record is kept, because it cannot be confirmed. The check warns so.
+  - **Already on the stronger model** (a person or the agent moved it): the record is cleared.
+  - **On another model, or step-down off:** it stands down. The model is left as it is; the record, `status` and a `model_step` notice say the conversation stays on that model. The next step-down or `model-step --off` clears it.
+  - A second step-down keeps the first step's model and reset.
+- **Never acts on lanes**, routes or accounts.
+
 ### Which limit, which account, and what you can do
 
 Unreleased. When a check finds the loop's active target at a provider usage limit, it records which window the provider says is blocked and when it resets (`usage-limit.json` in the state directory, its own record rather than a field of `state.json`, so no state format changes and a build without it neither reads nor rewrites it; after a rollback to such a build the record stays as it was, unread, until a newer build's next check replaces or removes it), and `status` says it:

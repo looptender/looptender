@@ -633,6 +633,9 @@ type statusOut struct {
 	// LaunchJob is the service-manager job the daemon runs in when it was
 	// started from a BB thread (start_launch.go); nil otherwise.
 	LaunchJob *launchJob `json:"launchJob,omitempty"`
+	// ModelStep is the model step-down setting and any step in force
+	// (looptender model-step); nil while it is off and nothing is in force.
+	ModelStep *modelStepView `json:"modelStep,omitempty"`
 	// SharedWith lists, in words, other enabled loops that share this loop's
 	// session, a fallback's session, its working directory or a repository.
 	SharedWith []string `json:"sharedWith,omitempty"`
@@ -1035,6 +1038,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	}
 	fmt.Fprintf(w, "progress flag: %s\n", noProgressText(out.NoProgress, loopHeld(out.Control, out.controlUnreadable)))
 	printUsageWatch(w, out.UsageWatch)
+	printModelStep(w, out.ModelStep)
 	printUsageBurn(w, out.UsageBurn)
 	if j := out.LaunchJob; j != nil {
 		fmt.Fprintf(w, "daemon job: %s %s, since %s (end it with %s)\n", j.Kind, j.Label, j.Since.Format(time.RFC3339), launchStopCommand(j.Kind, j.Label, j.Target))
@@ -1445,6 +1449,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.UsageBurn = describeUsageBurn(l.StateDir, now)
 	out.UsageWatch = describeUsageWatch(l.StateDir)
 	out.LaunchJob = readLaunchJob(l.StateDir)
+	out.ModelStep = describeModelStep(l.StateDir)
 	if file := unreadableFile(out); file != "" {
 		// The flag needs both records; computed from an empty one it would
 		// say the loop is off, or that no check has run.
