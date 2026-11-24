@@ -23,9 +23,9 @@ const (
 	telegramPollerLastErrorFile = "poller-last-error.txt"
 	telegramRestartFile         = "telegram-restart.json"
 	telegramMinBackoff          = time.Second
-	telegramMaxBackoff     = 30 * time.Second
-	telegramMaxRetryAfter  = 60 * time.Second
-	telegramDefaultPollSec = 25 * time.Second
+	telegramMaxBackoff          = 30 * time.Second
+	telegramMaxRetryAfter       = 60 * time.Second
+	telegramDefaultPollSec      = 25 * time.Second
 )
 
 type telegramPollConfig struct {
