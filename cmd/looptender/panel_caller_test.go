@@ -61,18 +61,21 @@ func TestPanelCallerResumeOwnershipThroughHTTP(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := controlOf(t, e)
-			// A later agent opening cannot replace the startup thread. Its socket
-			// request is allowed by the unchanged same-class opening rule.
-			if tc.caller != "" {
-				t.Setenv("BB_THREAD_ID", "thr_example_later")
-				w.page, w.cookie = panelSession(t, w.dir, w.rec)
-				_, body := dockRequest(t, http.MethodGet, w.page+dockServerPath, withCookie(w.cookie))
-				var served dockServed
-				if err := json.Unmarshal([]byte(body), &served); err != nil {
-					t.Fatal(err)
+			// A later agent, or a person, is not given an opening to a panel
+			// that changes loops as another caller: it would act as them.
+			for _, later := range []string{"thr_example_later", ""} {
+				if later == tc.caller {
+					continue
 				}
-				w.form = served.Form
+				t.Setenv("BB_THREAD_ID", later)
+				if address, err := panelRequestOpening(context.Background(), w.dir, w.rec, "", false); err == nil || address != "" {
+					t.Fatalf("caller %q opened a panel started by %q: %s %v", later, tc.caller, address, err)
+				}
+				if reply, err := panelControl(context.Background(), w.dir, panelRequest{Op: "open", CallerKind: panelCallerKind(), Caller: panelCallerHash()}); err == nil || reply.Address != "" {
+					t.Fatalf("caller %q opened the server directly: %+v %v", later, reply, err)
+				}
 			}
+			t.Setenv("BB_THREAD_ID", tc.caller)
 			_, p := w.post(t, dockKey(e.ID), "prepare", w.form, `{"action":"resume"}`, nil)
 			if !tc.allowed {
 				if p.Preview != nil || p.Result == nil || p.Result.Outcome != "refused" {
@@ -214,7 +217,8 @@ func TestPanelCallerGroupStopOrdersOwnLoopLast(t *testing.T) {
 }
 
 // Exercise the CLI-spawned background process, not only an in-process handler:
-// the exact startup thread survives the allowlisted environment and later reuse.
+// the exact startup thread survives the allowlisted environment, and no other
+// conversation is given an opening to act as it.
 func TestPanelCallerSubprocessRetainsOriginalThreadAcrossReuse(t *testing.T) {
 	t.Setenv("BB_THREAD_ID", "thr_example_startup")
 	proc := newPanelProcessWorld(t)
@@ -247,14 +251,17 @@ func TestPanelCallerSubprocessRetainsOriginalThreadAcrossReuse(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Another conversation is refused: the panel acts as its startup thread.
 	proc.env = append(proc.env, "BB_THREAD_ID=thr_example_later")
-	if code, out, errs := proc.open("--allow-changes", "--no-open"); code != exitOK {
-		t.Fatalf("reuse: %d %s %s", code, out, errs)
+	for _, mode := range [][]string{{"--allow-changes", "--no-open"}, {"--no-open"}} {
+		if code, out, errs := proc.open(mode...); code != exitFailed || !strings.Contains(errs, "caller authority differs") {
+			t.Fatalf("reuse by another conversation: %d %s %s", code, out, errs)
+		}
 	}
 	if proc.record() != rec {
-		t.Fatal("same-class reuse replaced process")
+		t.Fatal("a refused opening replaced the process")
 	}
-	t.Setenv("BB_THREAD_ID", "thr_example_later")
+	t.Setenv("BB_THREAD_ID", "thr_example_startup")
 	page, cookie := panelSession(t, proc.dir, rec)
 	_, body := dockRequest(t, http.MethodGet, page+dockServerPath, withCookie(cookie))
 	var served dockServed

@@ -158,7 +158,7 @@ export const NOT_THIS_THREAD = "This loop does not belong to this thread (it is 
 // What the plugin says instead of resuming: where a person resumes the loop.
 export const resumeByPerson = (configPath: string) =>
   "looptender does not resume a loop from this plugin, because it cannot tell a person's click from the supervised session. " +
-  `From an ordinary terminal, not one BB opened on this loop's thread, run looptender resume -c ${JSON.stringify(configPath)}, or start the looptender panel there with looptender panel --allow-changes.`;
+  `From an ordinary terminal, not one BB opened on this loop's thread, run looptender resume -c ${JSON.stringify(configPath)}, or open the looptender panel there with looptender panel and resume it from the loop's page.`;
 
 export const rpcContract = defineRpcContract({
   attachment: { input: attachInput, output: attachResult },

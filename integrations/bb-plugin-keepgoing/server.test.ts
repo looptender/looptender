@@ -54,7 +54,7 @@ test("SDK RPC resolves host metadata, persists references, and routes controls w
     // says where a person resumes and never runs the CLI.
     const clicked = await harness.behavior.callRpc("control", { configPath: created.record.configPath, managedId: created.record.id, action: "resume", expectedThreadId: thread.id }) as { ok: boolean; message: string };
     assert.equal(clicked.ok, false); assert.equal(clicked.message, resumeByPerson(created.record.configPath));
-    assert.match(clicked.message, /looptender panel --allow-changes/); assert.match(clicked.message, /looptender resume -c /);
+    assert.match(clicked.message, /with looptender panel and resume it from the loop's page/); assert.match(clicked.message, /looptender resume -c /);
     const listed = await harness.behavior.callRpc("control", { configPath: "/private/listed/keepgoing.yaml", action: "resume" }) as { ok: boolean; message: string };
     assert.equal(listed.ok, false); assert.equal(listed.message, resumeByPerson("/private/listed/keepgoing.yaml"));
     const typed = await harness.behavior.runCli(["resume", "example-loop"]);

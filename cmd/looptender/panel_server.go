@@ -430,6 +430,10 @@ func (h *panelHandler) served(w http.ResponseWriter) func(session string) {
 		if h.changes == nil {
 			out.Changes = "off"
 			out.ChangesText = txt("Read-only: this page cannot pause, resume, stop or start anything.")
+		} else if h.changes.controlsOnly {
+			since := h.changes.since
+			out.Changes, out.ChangesSince, out.Form = "on", &since, h.changes.prepareValue(session)
+			out.ChangesText = txt("Pause, stop and resume allowed for "+dockSpan(now.Sub(since))+", each after a review: started at ", tm(since, "clock"), ". "+panelControlsExposure+" looptender panel --read-only opens a panel that cannot.")
 		} else {
 			out.RouteChanges = "person"
 			if h.changes.caller != "" {
@@ -507,8 +511,10 @@ func panelControlServe(l net.Listener, state *panelState, record func() panelRec
 			switch req.Op {
 			case "open":
 				rec := record()
-				if rec.Changes && !panelBuildReuseAllowed(rec, req.CallerKind) {
-					reply.Error = "panel build authority differs or is unknown; explicitly stop and restart the panel"
+				// A panel that changes loops acts as the caller that started
+				// it: it opens only for that same caller.
+				if rec.mode() > panelReadOnly && (!panelBuildReuseAllowed(rec, req.CallerKind) || rec.Caller != req.Caller) {
+					reply.Error = "caller authority differs: this panel can change loops for whoever started it, and that is not this caller; explicitly stop and restart the panel"
 					break
 				}
 
@@ -575,11 +581,13 @@ type panelServerConfig struct {
 	refresh    time.Duration
 	staleAfter time.Duration
 	offline    bool
-	// changes: started with --allow-changes, so the page may pause, stop and
-	// resume loops. It never changes while the server runs.
-	changes bool
-	now     func() time.Time
-	ticks   <-chan time.Time
+	// changes: started with --allow-changes, so the page may make every
+	// change it offers; controls: pause, stop and resume only. Neither
+	// changes while the server runs.
+	changes  bool
+	controls bool
+	now      func() time.Time
+	ticks    <-chan time.Time
 }
 
 // panelServerCommand is the background server, run by keepgoing panel as
@@ -594,6 +602,7 @@ func panelServerCommand(e env, args []string) int {
 	staleAfter := fs.Duration("stale-after", defaultStaleAfter, "")
 	offline := fs.Bool("offline", false, "")
 	changes := fs.Bool("allow-changes", false, "")
+	controls := fs.Bool("controls", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *panelDir == "" || *idle <= 0 || *idle > panelMaxIdle || *refresh < dockMinRefresh || *refresh > dockMaxRefresh || *staleAfter <= 0 || !panelSupported() {
 		return exitUsage
 	}
@@ -601,7 +610,7 @@ func panelServerCommand(e env, args []string) int {
 	if err != nil {
 		return exitUsage
 	}
-	return runPanelServer(e.ctx, panelServerConfig{dir: dir, registry: *directory, idle: *idle, refresh: *refresh, staleAfter: *staleAfter, offline: *offline, changes: *changes, now: time.Now})
+	return runPanelServer(e.ctx, panelServerConfig{dir: dir, registry: *directory, idle: *idle, refresh: *refresh, staleAfter: *staleAfter, offline: *offline, changes: *changes, controls: *controls && !*changes, now: time.Now})
 }
 
 func runPanelServer(parent context.Context, c panelServerConfig) int {
@@ -685,11 +694,12 @@ func runPanelServer(parent context.Context, c panelServerConfig) int {
 	}
 	handler := &panelHandler{state: state, guard: newDockGuard(port), page: page, notifySecret: []byte(nsecret), notifyDir: c.dir}
 	rec := panelRecord{SchemaVersion: 1, PID: os.Getpid(), Port: port, StartedAt: c.now().UTC().Truncate(time.Second), IdleSeconds: int(c.idle / time.Second),
-		Instance: state.instance, Registry: registryDir, Version: version, Changes: c.changes, BuildAuthority: panelCallerKind()}
-	if c.changes {
+		Instance: state.instance, Registry: registryDir, Version: version, Changes: c.changes, Controls: c.controls, BuildAuthority: panelCallerKind(), Caller: panelCallerHash()}
+	if c.changes || c.controls {
 		if handler.changes, err = newPanelChanges(ctx, c.registry, reader, rec.StartedAt, c.now); err != nil {
 			return exitFailed
 		}
+		handler.changes.controlsOnly = !c.changes
 		defer handler.changes.closeAccountConnect()
 	}
 	if rec.IdleSeconds < 1 {

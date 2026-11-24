@@ -132,9 +132,32 @@ func TestPanelChangesExistOnlyWhenAllowed(t *testing.T) {
 }
 
 // Every check on a change request: each spoiled request is refused, and only
-// the request the page sends is answered.
+// the request the page sends is answered. The same on the default panel
+// (pause, stop and resume) as on one started with --allow-changes: making
+// controls the default loosens none of the page's guards.
 func TestPanelChangeRequestsPassEveryCheck(t *testing.T) {
-	w := newPanelChangeWorld(t, true)
+	t.Run("all changes", func(t *testing.T) { panelChangeRequestsPassEveryCheck(t, newPanelChangeWorld(t, true)) })
+	t.Run("default controls", func(t *testing.T) { panelChangeRequestsPassEveryCheck(t, newPanelControlsWorld(t)) })
+}
+
+// newPanelControlsWorld is a panel served in this process in the default
+// mode: pause, stop and resume only.
+func newPanelControlsWorld(t *testing.T) panelChangeWorld {
+	t.Helper()
+	dir, rec, root := panelServeInProcessMode(t, time.Hour, false, true)
+	page, c := panelSession(t, dir, rec)
+	w := panelChangeWorld{dir: dir, root: root, page: page, rec: rec, cookie: c, origin: "http://127.0.0.1:" + strconv.Itoa(rec.Port)}
+	_, body := dockRequest(t, http.MethodGet, page+dockServerPath, withCookie(c))
+	var served dockServed
+	if err := json.Unmarshal([]byte(body), &served); err != nil {
+		t.Fatal(err)
+	}
+	w.form = served.Form
+	return w
+}
+
+func panelChangeRequestsPassEveryCheck(t *testing.T, w panelChangeWorld) {
+	t.Helper()
 	e := w.entry(t, "docs-site-refresh")
 	key := dockKey(e.ID)
 	if w.form == "" || len(w.form) != 64 {
@@ -376,14 +399,21 @@ func TestPanelChangesRetainCallerAndRetryNothing(t *testing.T) {
 	}
 }
 
-// The command never changes a running server's mode, and status says how
-// long changes have been allowed and how to turn them off.
+// A panel that allows every change is opened as it is by the default
+// command (which needs only pause, stop and resume); --read-only against it
+// is refused, never a silent weakening; status says how long changes have
+// been allowed and how to turn them off.
 func TestPanelModeIsFixedAndStatusSaysIt(t *testing.T) {
 	w := newPanelChangeWorld(t, true)
 	var out, errs bytes.Buffer
 	args := []string{"--no-open", "--panel-directory", w.dir, "--directory", filepath.Join(w.root, "registry")}
-	if code := panelCommand(env{context.Background(), &out, &errs}, args); code != exitFailed || !strings.Contains(errs.String(), "the running panel allows changes") {
+	if code := panelCommand(env{context.Background(), &out, &errs}, append([]string{"--read-only"}, args...)); code != exitFailed || !strings.Contains(errs.String(), "run looptender panel stop first to open a read-only one") {
 		t.Fatalf("%d %s", code, errs.String())
+	}
+	out.Reset()
+	errs.Reset()
+	if code := panelCommand(env{context.Background(), &out, &errs}, args); code != exitOK || !strings.Contains(out.String(), "Changes are allowed from the page") {
+		t.Fatalf("default open: %d %s %s", code, out.String(), errs.String())
 	}
 	out.Reset()
 	errs.Reset()
@@ -404,12 +434,6 @@ func TestPanelModeIsFixedAndStatusSaysIt(t *testing.T) {
 		!strings.HasPrefix(served.ChangesText.render(time.Now()), "Changes allowed for under a minute: started with looptender panel --allow-changes at ") ||
 		!strings.HasSuffix(served.ChangesText.render(time.Now()), ". looptender panel stop turns them off.") {
 		t.Fatalf("%s", body)
-	}
-	// And a read-only server refuses to be reused as one that allows changes.
-	ro := newPanelChangeWorld(t, false)
-	errs.Reset()
-	if code := panelCommand(env{context.Background(), &out, &errs}, []string{"--allow-changes", "--no-open", "--panel-directory", ro.dir, "--directory", filepath.Join(ro.root, "registry")}); code != exitFailed || !strings.Contains(errs.String(), "a read-only panel is already running") {
-		t.Fatalf("%d %s", code, errs.String())
 	}
 }
 
