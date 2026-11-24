@@ -13,7 +13,10 @@ import (
 
 	"github.com/looptender/looptender/internal/accounts"
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/envvar"
+	"github.com/looptender/looptender/internal/registry"
 	"github.com/looptender/looptender/internal/snapshot"
+	"github.com/looptender/looptender/internal/state"
 )
 
 // accounts connect and accounts disconnect: connecting a subscription in one
@@ -33,6 +36,77 @@ const accountConnectAntigravity = "Antigravity keeps one login per computer, so 
 // and a Claude Code check can fail.
 const accountConnectIdentityNote = "Not checked: whether this is a different account from the ones already connected."
 
+// accountConnectPerson is the whole answer when no person is at a terminal.
+const accountConnectPerson = "Run this yourself in a terminal: it opens a sign-in on your screen, which an agent's session or a script cannot finish."
+
+// accountConnectAgentVariables mark a shell as an agent's or a supervised
+// session's, beyond envvar.SupervisorSession: Codex's own markers.
+var accountConnectAgentVariables = []string{"CODEX_SANDBOX", "CODEX_TOOL_CALL_ID", "CODEX_THREAD_ID"}
+
+// accountConnectInSession reports whether environ is an agent's or a
+// supervised session's: the variables looptender already treats as "inside a
+// session", Codex's markers, and anything Claude Code sets for its own
+// sessions.
+func accountConnectInSession(environ []string) bool {
+	for _, pair := range environ {
+		k, v, _ := strings.Cut(pair, "=")
+		if v == "" {
+			continue
+		}
+		if envvar.IsSupervisorSession(k) || strings.HasPrefix(strings.ToUpper(k), "CLAUDE_CODE_") {
+			return true
+		}
+		for _, name := range accountConnectAgentVariables {
+			if strings.EqualFold(k, name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isTerminal reports whether f is a terminal: a character device that is
+// not the null device.
+func isTerminal(f *os.File) bool {
+	st, err := f.Stat()
+	if err != nil || st.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	null, err := os.Stat(os.DevNull)
+	return err != nil || !os.SameFile(st, null)
+}
+
+// accountConnectPassed are the variables the provider's tool is given, and
+// no others: where it lives and writes, who and where the person is, what
+// opening a browser needs, and how this network is reached. Proxy and
+// certificate variables are passed on purpose: the sign-in has to reach the
+// provider from this network, as the same tool does when the person runs it
+// by hand. No token of any kind is on the list.
+var accountConnectPassed = []string{
+	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TMP", "TEMP",
+	"DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "BROWSER",
+	"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+}
+
+// accountConnectEnvironment keeps of environ only what accountConnectPassed
+// names, in either letter case for the proxy variables, plus LC_* and XDG_*.
+func accountConnectEnvironment(environ []string) []string {
+	var out []string
+	for _, pair := range environ {
+		k, _, _ := strings.Cut(pair, "=")
+		keep := strings.HasPrefix(k, "LC_") || strings.HasPrefix(k, "XDG_")
+		for _, name := range accountConnectPassed {
+			if k == name || (strings.HasSuffix(name, "_PROXY") && k == strings.ToLower(name)) {
+				keep = true
+			}
+		}
+		if keep {
+			out = append(out, pair)
+		}
+	}
+	return out
+}
+
 // accountConnectDeps are the parts of a connect a test replaces.
 type accountConnectDeps struct {
 	supported func(provider string) bool
@@ -43,7 +117,10 @@ type accountConnectDeps struct {
 	// login fingerprint where the provider reports an identity.
 	check   func(ctx context.Context, dir, id string) error
 	environ []string
-	now     func() time.Time
+	// terminal says whether a person is at this terminal: standard input,
+	// and standard output unless the output is JSON for a program.
+	terminal func(asJSON bool) bool
+	now      func() time.Time
 }
 
 func accountConnectDefaults() accountConnectDeps {
@@ -56,7 +133,10 @@ func accountConnectDefaults() accountConnectDeps {
 			return accountCheck(ctx, dir, id, os.Getenv("BB_THREAD_ID"), accountExec, time.Now().UTC())
 		},
 		environ: os.Environ(),
-		now:     func() time.Time { return time.Now().UTC() },
+		terminal: func(asJSON bool) bool {
+			return isTerminal(os.Stdin) && (asJSON || isTerminal(os.Stdout))
+		},
+		now: func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -79,6 +159,9 @@ type accountConnectResult struct {
 	// labels of the entries with the same login.
 	SameAccount string   `json:"sameAccount,omitempty"`
 	SameAs      []string `json:"sameAs,omitempty"`
+	// DirectoryKept says a private directory made for this attempt was left
+	// in place, possibly signed in. The text output names it.
+	DirectoryKept bool `json:"directoryKept,omitempty"`
 }
 
 // accountConnectTemplate finds the executable and working directory for the
@@ -88,7 +171,7 @@ func accountConnectTemplate(f accounts.File, o accountConnectOptions) (accounts.
 	if o.like != "" {
 		e := accounts.Find(&f, o.like)
 		if e == nil || e.Provider != o.provider || e.CLI == "" {
-			return accounts.Entry{}, errors.New("the entry named by --id is not a " + o.provider + " entry with an executable")
+			return accounts.Entry{}, errors.New("the entry named by --like is not a " + o.provider + " entry with an executable")
 		}
 		return *e, nil
 	}
@@ -159,6 +242,10 @@ func accountsConnect(e env, dir string, o accountConnectOptions, d accountConnec
 	default:
 		return refuse("unsupported_provider", "Choose --provider claude-code or --provider codex.")
 	}
+	if accountConnectInSession(d.environ) || d.terminal == nil || !d.terminal(o.asJSON) {
+		out.Reason = "not_a_person"
+		return finish(exitFailed, accountConnectPerson)
+	}
 	if !d.supported(o.provider) {
 		return refuse("unsupported_platform", "Connecting "+o.provider+" is not supported on this system yet.")
 	}
@@ -169,8 +256,13 @@ func accountsConnect(e env, dir string, o accountConnectOptions, d accountConnec
 	if err != nil {
 		return refuse("catalog", "The account catalog could not be read.")
 	}
-	if !accountConnectLabelAvailable(catalog, o.label) {
-		return refuse("label", "Give the subscription a --label that no other account has.")
+	switch {
+	case !accounts.Text(o.label, 120) || strings.TrimSpace(o.label) != o.label:
+		return refuse("label_invalid", "Give the subscription a --label: plain text of at most 120 characters, with no space at either end.")
+	case len(catalog.Entries) >= accounts.MaxEntries:
+		return refuse("catalog_full", "The account catalog is full.")
+	case !accountConnectLabelAvailable(catalog, o.label):
+		return refuse("label_taken", fmt.Sprintf("Another account is already labelled %q. Choose another --label.", o.label))
 	}
 	entry, err := accountConnectTemplate(catalog, o)
 	if err != nil {
@@ -211,8 +303,13 @@ func accountsConnect(e env, dir string, o accountConnectOptions, d accountConnec
 	defer cancel()
 	if !o.asJSON {
 		fmt.Fprintf(e.stdout, "Starting the provider's own sign-in for %q. Finish it in your browser; looptender does not see or copy the login.\n", o.label)
+		if o.provider == "claude-code" {
+			// Claude Code's sign-in output is not read, so its address
+			// cannot be shown here as Codex's is.
+			fmt.Fprintf(e.stdout, "If no browser opens within a minute, press Ctrl-C and sign in by hand instead:\n  %s=%s claude auth login\nthen add it with: looptender accounts add --provider claude-code --selection explicit_directory --account-dir %s --label %s\n", accountDirectoryVariable(o.provider), shellQuote(contextDir), shellQuote(contextDir), shellQuote(o.label))
+		}
 	}
-	err = d.run(ctx, running, accountQuotaExecutionEnvironment(running, d.environ), func(address string) {
+	err = d.run(ctx, running, accountQuotaExecutionEnvironment(running, accountConnectEnvironment(d.environ)), func(address string) {
 		// The provider's own address for this one sign-in: shown to the
 		// person who started it, and kept nowhere.
 		if !o.asJSON {
@@ -222,7 +319,13 @@ func accountsConnect(e env, dir string, o accountConnectOptions, d accountConnec
 	// From here the provider may have written a login into the directory, so
 	// it is kept whatever happened: a person can inspect or remove it.
 	kept := " The private directory made for it was kept: " + contextDir
+	out.DirectoryKept = true
 	if err != nil || ctx.Err() != nil {
+		// Nothing was written into it: it goes. Remove fails on anything
+		// but an empty directory, which is the point.
+		if os.Remove(contextDir) == nil {
+			kept, out.DirectoryKept = "", false
+		}
 		out.State, out.Reason = "failed", "sign_in_unavailable"
 		text := "The sign-in did not complete, so nothing was added."
 		switch {
@@ -245,7 +348,7 @@ func accountsConnect(e env, dir string, o accountConnectOptions, d accountConnec
 		if !accountConnectLabelAvailable(*f, o.label) {
 			return accounts.ErrChanged
 		}
-		entry = accounts.NewEntry(*f, entry, os.Getenv("BB_THREAD_ID"), d.now(), d.environ)
+		entry = accounts.NewEntry(*f, entry, "", d.now(), d.environ)
 		f.Entries = append(f.Entries, entry)
 		return nil
 	})
@@ -253,7 +356,7 @@ func accountsConnect(e env, dir string, o accountConnectOptions, d accountConnec
 		out.State, out.Reason = "failed", "catalog_changed"
 		return finish(exitFailed, "You are signed in, but the catalog or the label changed meanwhile, so the account was not added."+kept)
 	}
-	out.State, out.Reason, out.ID = "connected", "", entry.ID
+	out.State, out.Reason, out.ID, out.DirectoryKept = "connected", "", entry.ID, false
 	same, unchecked, compared := accountConnectCompare(e.ctx, dir, entry, d)
 	note := accountConnectIdentityNote
 	switch {
@@ -269,9 +372,10 @@ func accountsConnect(e env, dir string, o accountConnectOptions, d accountConnec
 			}
 			return nil
 		})
-		out.State, out.Reason, out.SameAccount, out.SameAs = "same_account", "same_account", "same", same
+		out.State, out.Reason, out.SameAccount, out.SameAs, out.DirectoryKept = "same_account", "same_account", "same", same, true
+		kept += "\nIt is still signed in. To sign it out: " + accountSignOutCommand(entry)
 		if removeErr != nil {
-			return finish(exitFailed, fmt.Sprintf("This is the same account as %s, so it adds no second quota, but its entry %s could not be taken out again; remove it with `looptender accounts disconnect --id %s`.", quotedList(same), entry.ID, entry.ID))
+			return finish(exitFailed, fmt.Sprintf("This is the same account as %s, so it adds no second quota, but its entry %s could not be taken out again; remove it with `looptender accounts disconnect --id %s`.%s", quotedList(same), entry.ID, entry.ID, kept))
 		}
 		out.ID = ""
 		return finish(exitFailed, fmt.Sprintf("This is the same account as %s, so it adds no second quota. It was not added.%s", quotedList(same), kept))
@@ -340,33 +444,99 @@ func quotedList(labels []string) string {
 	return strings.Join(q[:len(q)-1], ", ") + " and " + q[len(q)-1]
 }
 
+// accountUses lists what names the account with this id: each registered
+// loop whose routes or usage watch name it. complete is false when a loop
+// could not be read, so "nothing uses it" is not established.
+func accountUses(catalogDir, id string) (uses []string, complete bool) {
+	dir, err := registryDirectory("")
+	if err != nil {
+		return nil, false
+	}
+	return accountUsesIn(dir, catalogDir, id)
+}
+
+// accountUsesIn is accountUses for the loops registered in dir.
+func accountUsesIn(dir, catalogDir, id string) (uses []string, complete bool) {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil, true // no loop was ever registered
+	}
+	reg, err := registry.Load(dir)
+	if err != nil {
+		return nil, false
+	}
+	complete = true
+	for _, loop := range reg.Entries {
+		cfg, err := config.Load(loop.ConfigPath)
+		if err != nil {
+			complete = false
+			continue
+		}
+		results, _ := routeAccountChecks(cfg, catalogDir)
+		for _, r := range results {
+			if r.Account == id {
+				uses = append(uses, fmt.Sprintf("loop %s, route %s", loop.Loop, r.ID))
+			}
+		}
+		if w, err := state.LoadUsageWatchSetting(loop.StateDir); err == nil && w != nil && w.Account == id {
+			uses = append(uses, fmt.Sprintf("loop %s, usage watch", loop.Loop))
+		}
+	}
+	return uses, complete
+}
+
 // accountsDisconnect takes one entry out of the catalog. It signs nothing
-// out and deletes nothing: it prints the provider's own command for that.
-func accountsDisconnect(e env, dir, id, label string, asJSON bool) int {
+// out and deletes nothing. It refuses an account that a loop names, or
+// whose use could not be read, unless forced.
+func accountsDisconnect(e env, dir, id, label string, force, asJSON bool, uses func(catalogDir, id string) ([]string, bool)) int {
 	if (id == "") == (label == "") {
 		e.errf("accounts disconnect: name the account with --id or with --label")
 		return exitUsage
 	}
-	var removed accounts.Entry
-	err := accounts.Update(dir, func(f *accounts.File) error {
+	find := func(f *accounts.File) int {
 		at := -1
 		for i, x := range f.Entries {
 			if x.ID == id || (label != "" && strings.EqualFold(x.Label, label)) {
 				if at >= 0 {
-					return accounts.ErrInvalid
+					return -1
 				}
 				at = i
 			}
 		}
-		if at < 0 {
-			return accounts.ErrInvalid
+		return at
+	}
+	catalog, err := accounts.Load(dir)
+	at := -1
+	if err == nil {
+		at = find(&catalog)
+	}
+	if at < 0 {
+		e.errf("accounts disconnect: no single account has that id or label; nothing was changed")
+		return exitFailed
+	}
+	target := catalog.Entries[at]
+	if !force {
+		used, complete := uses(dir, target.ID)
+		if len(used) > 0 {
+			e.errf("accounts disconnect: %q is used by %s. Nothing was changed. Change those first, or pass --force to disconnect it anyway.", target.Label, strings.Join(used, "; "))
+			return exitFailed
+		}
+		if !complete {
+			e.errf("accounts disconnect: could not read every loop to see whether one uses %q. Nothing was changed. Pass --force to disconnect it anyway.", target.Label)
+			return exitFailed
+		}
+	}
+	var removed accounts.Entry
+	err = accounts.Update(dir, func(f *accounts.File) error {
+		at := find(f)
+		if at < 0 || f.Entries[at].ID != target.ID {
+			return accounts.ErrChanged
 		}
 		removed = f.Entries[at]
 		f.Entries = append(f.Entries[:at:at], f.Entries[at+1:]...)
 		return nil
 	})
 	if err != nil {
-		e.errf("accounts disconnect: no single account has that id or label; nothing was changed")
+		e.errf("accounts disconnect: the catalog changed meanwhile; nothing was changed")
 		return exitFailed
 	}
 	if asJSON {
@@ -377,15 +547,22 @@ func accountsDisconnect(e env, dir, id, label string, asJSON bool) int {
 		return exitOK
 	}
 	fmt.Fprintf(e.stdout, "Disconnected %q (%s). looptender no longer lists or uses it.\n", removed.Label, removed.Provider)
-	if signOut := accountSignOutCommand(removed); signOut != "" {
+	switch signOut := accountSignOutCommand(removed); {
+	case removed.Mode != "explicit_directory":
+		fmt.Fprintln(e.stdout, "It was this computer's own login for that provider, which other sessions use. It is still signed in, and no sign-out command is shown: signing it out would sign those sessions out too.")
+	case signOut != "":
 		fmt.Fprintf(e.stdout, "Its login was not signed out and its directory was not removed. To sign it out yourself:\n  %s\n", signOut)
 	}
-	fmt.Fprintln(e.stdout, "A route that names this account still names it; `looptender doctor` reports such a route.")
+	if force {
+		fmt.Fprintln(e.stdout, "A loop that names this account still names it; `looptender doctor` reports such a route.")
+	}
 	return exitOK
 }
 
 // accountSignOutCommand is the provider's own sign-out for an entry's login,
-// as a person would type it. Empty when looptender knows none.
+// as a person would type it. Empty when looptender knows none, and for an
+// entry that is the computer's own login: that command would sign out every
+// session using it.
 func accountSignOutCommand(e accounts.Entry) string {
 	variable, command := "", ""
 	switch e.Provider {
@@ -397,7 +574,7 @@ func accountSignOutCommand(e accounts.Entry) string {
 		return ""
 	}
 	if e.Mode != "explicit_directory" || e.Directory == "" {
-		return command
+		return ""
 	}
 	return variable + "=" + shellQuote(e.Directory) + " " + command
 }

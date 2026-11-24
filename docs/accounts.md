@@ -843,12 +843,17 @@ What it does, in order:
 4. It adds the directory to the catalog under your label, as an
    `explicit_directory` entry.
 
+- **Run it yourself, in a terminal.** It opens a sign-in on your screen. It
+  refuses in an agent's session, under a supervisor, or when its input or
+  output is not a terminal (with `--json`, only its input must be one).
 - **Where the executable comes from:** the first entry of that provider already
-  in the catalog supplies the executable and working directory; `--id` names
+  in the catalog supplies the executable and working directory; `--like` names
   another entry to take them from, and `--cli` and `--workdir` name them
   directly, which is how the first entry of a provider is connected.
 - **It refuses, before any sign-in:**
-  - a label another account has;
+  - a label that is empty, has a space at either end, a control character or
+    more than 120 characters, and, with its own message, a label another
+    account has;
   - a shell that sets a provider's authentication variable (run it from a plain
     terminal);
   - a provider executable it cannot admit. For Claude Code that is any build
@@ -866,9 +871,22 @@ What it does, in order:
 - **Not compared:** Codex logins, because Codex's status names no account,
   and any login whose check fails. The command then says "Not checked", and
   two entries may be one quota.
+- **What the provider's tool is given:** a short list of variables and no
+  others: where it lives and writes (`PATH`, `HOME`, the temporary and `XDG_`
+  directories), who and where you are (user, locale, time zone), what opening
+  a browser needs, and the proxy and certificate variables, on purpose, since
+  the sign-in has to reach the provider from your network. No token variable
+  is passed.
+- **If no browser opens:** for Codex the command prints the provider's sign-in
+  address. For Claude Code it does not read the tool's output, so it tells you
+  at the start to press Ctrl-C after a minute and gives the two commands to
+  sign in by hand in the same directory and add it.
 - **If the sign-in fails, is cancelled or takes longer than ten minutes:**
-  nothing is added. The private directory is kept, because the provider may
-  have written into it, and the message says where it is.
+  nothing is added. If the provider wrote anything into the private directory
+  it is kept, and the message says where it is (`--json` says
+  `directoryKept`); an untouched one is removed. When a login turns out to be
+  an account already connected, its directory is kept signed in and the
+  message gives the command to sign it out.
 - **Platforms:** as for the panel's Connect: Codex on macOS and Linux, Claude
   Code on macOS arm64. Not Windows.
 
@@ -878,10 +896,16 @@ To take a subscription out of the list:
 looptender accounts disconnect --label "spare"
 ```
 
-This removes the entry from the catalog and nothing else. It does not sign the
-login out and does not delete its directory: it prints the provider's own
-sign-out command for that directory, for you to run. A route that still names
-the account is reported by `looptender doctor`.
+This removes the entry from the catalog and nothing else.
+
+- It refuses when a registered loop uses the account, in a route or in its
+  usage watch, and names each one. It also refuses when it could not read
+  every loop to find out. `--force` disconnects anyway; `looptender doctor`
+  then reports the route that names a missing account.
+- It does not sign the login out and does not delete its directory. For a
+  directory of its own it prints the provider's sign-out command, for you to
+  run. For this computer's own login (an `inherited` entry) it prints none,
+  because that would sign out every session using it, and says so.
 
 `looptender accounts list` shows each entry with its provider, label and the
 last reported login state; `accounts check` refreshes that state and `accounts
