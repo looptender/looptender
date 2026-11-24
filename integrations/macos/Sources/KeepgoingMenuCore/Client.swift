@@ -108,12 +108,14 @@ public struct LocalClient {
     /// Nothing but the fixed arguments and a validated page key is passed.
     public func open(_ command: MenuCommand) throws {
         switch command {
-        case .openPanel, .openAccount, .openAccountWithChanges, .openLoop, .openPanelWithChanges, .stopPanel: break
+        case .openPanel, .openAccount, .openAccountWithChanges, .openLoop, .openPanelWithChanges, .stopPanel, .notifySet, .notifyHeartbeat: break
         default: throw ClientFailure.unavailable
         }
         guard var arguments = MenuBuilder.arguments(command) else { throw ClientFailure.unavailable }
         if let panelDirectory { arguments += ["--panel-directory", panelDirectory] }
-        let (_, code) = try run(arguments, timeout: 20, registry: command != .stopPanel)
+        var takesRegistry = command != .stopPanel
+        switch command { case .notifySet, .notifyHeartbeat: takesRegistry = false; default: break }
+        let (_, code) = try run(arguments, timeout: 20, registry: takesRegistry)
         guard code == 0 else { throw ClientFailure.unavailable }
     }
     /// The review of one change, read by `keepgoing client review`, which
