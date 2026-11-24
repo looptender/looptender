@@ -426,3 +426,42 @@ test("a CLI that offers no takeover is asked nothing more", async () => {
   }
   assert.deepEqual(seen, ["detect", "detect"], "only asked what is usable: no provider or model flags");
 });
+
+test("continuationCandidates and threadTitle are surfaced on inspect; succeeds is validated and bound to preview", async () => {
+  const f = fixture();
+  const candidates = [
+    { configPath: "/private/example-prev/looptender.yaml", loop: "example-prev", displayName: "Example Work", project: "example", sameProject: true, controlState: "paused", archived: false },
+  ];
+  f.d.threadTitle = async () => "Fix token refresh (Claude 4)";
+  f.d.continuationCandidates = async () => candidates;
+  let seenSucceeds: string | undefined;
+  const baseInit = f.d.init;
+  f.d.init = async (bin, target, name, task, dry, goal, bounds, follow, choice, succeeds) => {
+    seenSucceeds = succeeds;
+    const res = await baseInit(bin, target, name, task, dry, goal, bounds, follow, choice, succeeds);
+    if ("plan" in res && !dry) return { ...res, warnings: ["init: warning: example non-fatal notice"] };
+    return res;
+  };
+  const inspected = await f.controller.call({ action: "inspect", threadId: "thr_example" });
+  assert.equal(inspected.threadTitle, "Fix token refresh (Claude 4)");
+  assert.deepEqual(inspected.continuationCandidates, candidates);
+
+  // Arbitrary browser-supplied configPath not in continuationCandidates is refused.
+  const bad = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", succeeds: "/private/unknown/looptender.yaml" });
+  assert.equal(bad.ok, false);
+  assert.match(bad.message, /not registered or configured/);
+
+  const p = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", succeeds: candidates[0]!.configPath });
+  assert.equal(p.ok, true, p.message);
+  assert.equal(seenSucceeds, candidates[0]!.configPath);
+  assert.deepEqual(p.plan?.succeeds, { configPath: candidates[0]!.configPath, loop: "example-prev", displayName: "Example Work" });
+
+  // Changing or dropping succeeds invalidates the preview ticket.
+  const mismatched = await f.controller.call({ action: "create", threadId: "thr_example", ticket: p.ticket, task: "Fictional private task" });
+  assert.equal(mismatched.ok, false);
+
+  const p2 = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", succeeds: candidates[0]!.configPath });
+  const created = await f.controller.call({ action: "create", threadId: "thr_example", ticket: p2.ticket, task: "Fictional private task", succeeds: candidates[0]!.configPath });
+  assert.equal(created.ok, true, created.message);
+  assert.deepEqual(created.warnings, ["init: warning: example non-fatal notice"]);
+});
