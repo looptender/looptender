@@ -51,8 +51,8 @@ import (
 const (
 	panelRecordName = "panel.json"
 	panelSocketName = "panel.sock"
-	// Both are listed in migrateLockNames (migrate.go); so must any new
-	// lock file in the panel directory.
+	// Both are listed in migrateLockNames (migrate.go), and so is notifyMenuLock
+	// (notify_settings.go); so must any new lock file in the panel directory.
 	panelOpenLock    = "panel-open"
 	panelServerLock  = "panel-server"
 	panelDefaultIdle = 30 * time.Minute

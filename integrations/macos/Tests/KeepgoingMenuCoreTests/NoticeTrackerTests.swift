@@ -178,4 +178,14 @@ final class NoticeTrackerTests: XCTestCase {
         XCTAssertFalse(HeartbeatPolicy.notifying(running: true, canPost: false, permission: .authorized))
         XCTAssertFalse(HeartbeatPolicy.notifying(running: false, canPost: true, permission: .authorized))
     }
+
+    func testAHeartbeatThatCannotBeSavedIsSaidOnceAndAgainAfterARecovery() {
+        var said = SaidOnce()
+        XCTAssertFalse(said.shouldLog(failed: false))
+        XCTAssertTrue(said.shouldLog(failed: true), "the first failure is said")
+        XCTAssertFalse(said.shouldLog(failed: true), "not again every minute")
+        XCTAssertFalse(said.shouldLog(failed: true))
+        XCTAssertFalse(said.shouldLog(failed: false))
+        XCTAssertTrue(said.shouldLog(failed: true), "a failure after a success is a new one")
+    }
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"github.com/looptender/looptender/internal/lock"
 	"io"
 	"net/http"
 	"os"
@@ -28,6 +29,10 @@ const (
 	// minute (five when reads fail) and beats after each.
 	notifyMenuFresh = 6 * time.Minute
 	notifyPath      = "api/v1/notify"
+	// notifyMenuLock is the lock file around the heartbeat's ownership check
+	// and write. It is listed in migrateLockNames (migrate.go), as every lock
+	// file in the panel directory must be.
+	notifyMenuLock = "menu-notifying"
 )
 
 type notifySettings struct {
@@ -147,7 +152,31 @@ func setNotify(dir, kind string, browser *bool, on bool, now time.Time) error {
 	return notifyWrite(dir, notifySettingsFile, s)
 }
 
+// notifyBeatLock is held around reading the heartbeat's writer and writing it,
+// so a new menu's first beat cannot land between a quitting menu's ownership
+// check and its write. It waits briefly for another writer, and gives up (the
+// beat is not written, and the caller is told) rather than write unguarded.
+func notifyBeatLock(dir string) (*lock.Lock, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	var err error
+	for i := 0; i < 100; i++ {
+		var l *lock.Lock
+		if l, err = lock.AcquireNamed(dir, notifyMenuLock); err == nil {
+			return l, nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return nil, err
+}
+
 func notifyBeat(dir string, notifying bool, pid int, now time.Time) error {
+	l, err := notifyBeatLock(dir)
+	if err != nil {
+		return err
+	}
+	defer l.Release()
 	if !notifying && pid > 0 {
 		var cur notifyMenuBeat
 		if notifyRead(dir, notifyMenuFile, &cur) && cur.PID != 0 && cur.PID != pid {
