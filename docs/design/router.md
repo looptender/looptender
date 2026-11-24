@@ -1,6 +1,6 @@
 # The account router (design)
 
-Status: design, not built. Nothing described here exists in looptender yet. Code that reads a real credential does not merge before the owner has approved this document.
+Status: design, approved by the owner on 2026-11-24 (see [Decisions](#decisions)). The first slice (the routing decision and the forwarding front, against stand-ins) is built and used by nothing. Everything else waits for the verification of the provider assumptions.
 
 ## Why
 
@@ -67,14 +67,134 @@ Rules that also do not bend:
 - `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>` (`https` only where the loopback certificate is verified to work): a fixed address with no secret in it. A base URL is configuration that a client may show in its status screen, error texts, debug logs and reports that leave the machine, so it must not carry anything secret.
 - The client secret in a custom header, through the client's variable for extra request headers [unverified, V2]. The front removes that header before forwarding.
 - Where it works, the entry that makes the client trust the front's own loopback certificate (see the security review) [unverified and probably not settable here, V11].
-- Whatever the client needs to keep behaving as it does against the provider's own address. sessionpipe's pool sets `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1` for this ([source]); see V3.
+- `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1`, the setting sessionpipe's pool uses to keep the client behaving as it does against the provider's own address ([source]); see V3.
 - **No token.** The router does not set `ANTHROPIC_AUTH_TOKEN`, so Claude Code keeps using its own login and sends it with every request [unverified, V1]. This is the difference from sessionpipe's pool that makes rule 2 possible: every request already carries a credential that works without us.
 
 They are separate processes of the same `looptender` binary: `looptender router front` and `looptender router run`.
 
+## Decisions
+
+Recorded 2026-11-24. The owner's answers are quoted exactly; where the owner delegated, the decision is the coordinator's.
+
+| # | Question | Decision | By |
+|---|---|---|---|
+| D1 | May the router read each subscription's access token? | Yes: read-only from the official tool's store, kept in memory only, as designed. The owner: "You decide. Lets copy sessionpipe?" | Owner delegated; coordinator decided |
+| D2 | How far to follow sessionpipe's pool | As direction, not as code: where its mechanism is known to work, use the same mechanism instead of an unverified alternative; keep what makes ours different. None of its source text is copied: its licence is not established. See [What is taken from sessionpipe's pool](#what-is-taken-from-sessionpipes-pool). | Coordinator, from the owner's words in D1 |
+| D3 | Plan terms: the wording shown at `router on` and in the docs, and the stated risk of an account being restricted | Accepted as written. The owner: "Fine. I dont think we have legal liability here." looptender still gives no opinion of its own. | Owner |
+| D4 | The verification | No sitting is scheduled. The owner logs each spare subscription in to a directory of its own, and the checks are run against directories made for the test. The owner: "i have all my subscriptions we can connect." The real requests of part C are approved, at most four, only after part A shows the approach works, stopping at the first rejection or warning. | Owner; limits by the coordinator |
+| D5 | The AGENTS.md sentence (open question 4) | Accepted; it lands with the first code that reads a login. | Coordinator |
+| D6 | Another program taking the port (9) | Ship with the fixed port, the held socket and the pointer check; state the window; add the loopback certificate where verification shows it works. | Coordinator |
+| D7 | Defaults (6) | Soft 90%, hard 98%, release under 85%, automatic switch-back at cold points. | Coordinator |
+| D8 | Scope of the pointer (7) | Only the directory BB uses at first; others one at a time, by a person's command. | Coordinator |
+| D9 | The front's last act (8) | Yes: when the front finds its own program gone, it removes the pointer before it stops. | Coordinator |
+| D10 | Windows (10) | After the first release; `router on` refuses a multi-user machine there without a flag naming the risk. | Coordinator |
+| D11 | A notice on every switch (11) | Off by default. | Coordinator |
+| D12 | Which providers | Codex and Antigravity too, not only Claude Code. The owner: "also codex! and antigravity". Order: Claude Code, then Codex, then Antigravity; see [Providers](#providers) for what each allows. | Owner |
+| D13 | What a person operates | One switch, not a set of modes. The owner: "we should integrate where it does the thing where it switches between subs when you hit limits etc behavior you can turn on or off to keep going". See [What the person sees](#what-the-person-sees). | Owner |
+| D14 | Connecting a subscription | One easy step for every provider. The owner: "lmk when we ready to log into our subs easily". See [Connecting a subscription](#connecting-a-subscription). | Owner |
+| Open | Idle subscriptions (2): a long-lived token held by looptender, or a spare that sometimes needs a person | Undecided until verification says whether it is needed (V7). It becomes necessary if V1 is false; see [If the session's own login does not reach the front](#if-the-sessions-own-login-does-not-reach-the-front). | |
+
+## What is taken from sessionpipe's pool
+
+The pool's mechanism is in use and was exercised in the lab, so where this design needs the same thing it does it the same way. "Lab" means observed with the pool 0.18.2 between a scripted client and a stand-in upstream; "source" means read, and relied on by the pool's users, but not seen with Claude Code itself.
+
+| What | The pool's mechanism | Basis | Here |
+|---|---|---|---|
+| Pointing Claude Code at a local address | `ANTHROPIC_BASE_URL` in the `env` block of `settings.json`, read at session start | source | The same. |
+| Keeping the client's first-party behaviour behind a custom address | `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1` in the same block | source | The same setting is part of the pointer, instead of hoping none is needed (V3 then checks that nothing else differs). |
+| Using another subscription for one request | Replace the request's `Authorization` with that subscription's access token | lab | The same. |
+| Saying which account a request is for | Rewrite the account part of the body's `metadata.user_id` to the serving account, keeping the session part | lab | **Adopted, replacing the earlier "the front never changes a body".** With another subscription's token and the home account's id, a request names two accounts; the rewrite makes it name the one that serves it. It is the only change the front makes to a body, it is made only on a routed request, and the account id is read with the token and kept in memory only. The catalog still stores no identity. |
+| Knowing a subscription's room | The `anthropic-ratelimit-unified-*` headers of each answer, passed through to the client | lab | The same, as the first source. |
+| Stickiness | The session id in `metadata.user_id` | lab | The same. |
+| A limit answer before the first byte | One retry on the next account; none after the first byte | lab | The same, plus a visible count when the retry also fails. |
+| Refusing dangerous paths | No key-making, sign-in or billing paths through the proxy | source | The same idea, narrowed to paths that mint a credential (V16). |
+
+**What stays different, because it is the point:**
+
+- The session's own login is not replaced: the pointer sets no token, so every request can go on unchanged when anything of ours fails. This rests on V1.
+- The front and the router are separate; the front fails open and holds the streams.
+- looptender does not refresh, store or import logins. The pool holds every account's refresh token.
+- A server error never moves a conversation; a move at the soft threshold waits for a cold point.
+
+## If the session's own login does not reach the front
+
+This is the design if V1 is false: Claude Code, pointed at a custom address with no token set, does not send its subscription login there. Then the pointer has to be the pool's, and the first rule has to change. It is written now so that a "false" does not stop the work.
+
+**The pointer** becomes: the base URL, the first-party setting, and `ANTHROPIC_AUTH_TOKEN` set to the client secret. The secret then travels as the request's bearer (no custom header is needed), and the client stops using its own login for requests, as under the pool.
+
+**What follows from that:**
+
+- Every request needs a credential from us, including one for the session's home subscription. "Forward unchanged" no longer exists.
+- Nobody refreshes the home subscription's login any more, because the client has stopped using it. The idle-subscription problem then applies to every subscription, so reading the official store is not enough. Each subscription needs a long-lived token made by the official tool and kept by looptender in the system's secret store (the option left open in D-Open). That is a decision for the owner at that point, since looptender would hold credentials.
+- The front must be able to serve without the router. At start, and again before expiry, it is given each client's home token and keeps it in memory; if the router has never answered, it reads its own clients' home tokens from the secret store itself. That one read-only reader is the only addition to the front.
+
+**What replaces the first rule:** "A pointed session survives everything that stops sessionpipe's pool except the loss of the front itself." Concretely:
+
+| Situation | Session |
+|---|---|
+| Router down, crashed mid-stream, restarting, state lost | Nothing visible: the front serves every request on the client's home subscription with the token it holds. |
+| The front cannot get a home token (secret store unreadable, token revoked) | A 503 the client retries, never a 401, and the pointer check removes the pointer after 30 s so new sessions use their own login again. The person is told which subscription and why. |
+| Front down | As in the main design: the held socket, the restart, then the pointer check. |
+| All subscriptions full | The provider's own answer for the home subscription. |
+
+**What is lost compared with the main design**, and said to the person at `router on`:
+
+- A pointed session depends on the front holding a valid token; its own login is no longer a fallback.
+- Whatever the client does only with its own login behaves as it does under the pool.
+- looptender holds long-lived tokens.
+
+Everything else is unchanged: two processes, streams held by the front, the routing rules, the modes, the pointer check, the surfaces. In the code, the front's "own" decision becomes "the home token" and the secret is read from the bearer instead of a header.
+
+## What the person sees
+
+To a person this is one switch: **switch subscriptions at a limit, on or off**. It is off until turned on.
+
+- **On:** `looptender router on`. **Off:** `looptender router off`. The same switch is in the panel and the menu (later slices).
+- **What "on" needs first:** at least two connected subscriptions of one provider ([Connecting a subscription](#connecting-a-subscription)), and the background service. If either is missing, `router on` says which and the one command for it, and changes nothing.
+- **How it is done is chosen once, in setup, not each time.** The three mechanisms below (looptender's own router, sessionpipe's pool, or nothing) stay underneath. `router on` uses looptender's own unless setup recorded the pool.
+- **When it takes effect:**
+  - A session started after `router on` is covered.
+  - A session that was already running is not: Claude Code reads the setting when a session starts (V15 checks this). `router on` says so in plain words, with the count: "3 running sessions started before this and will switch only after they are restarted."
+  - `router off` takes effect at once for every session: the front stops routing and forwards everything on the session's own login, then the pointer is removed, so sessions started later do not touch looptender at all. No restart is needed to turn it off.
+- **One line everywhere.** `status`, the panel and the menu each say, in one line: whether switching is on, which subscription this loop is on, and the last switch with its reason. For example: "Subscription switching: on. This loop: spare. Last switch 11:45, main to spare: weekly limit on main, back after Friday 04:00."
+
+**What happens at a limit, in order.** The switch covers the first step. The later steps already exist and each keeps its own opt-in; the switch does not turn them on.
+
+| Step | When | What happens | What the person is told |
+|---|---|---|---|
+| 1 | A usage window is full on the subscription a conversation is on, and another subscription of the same provider has room | The conversation continues on that one (this design) | "Moved to <label>: <which limit> on <label>, back after <time>." |
+| 2 | Every subscription of that provider is full for the model in use, and model step-down is turned on for the loop (#512) | The conversation steps down to the next model, on the subscription with room for it | "All subscriptions are at the <model> limit. Stepped down to <model> until <time>." If step-down is off: "Step-down is off; `looptender model-step` turns it on." |
+| 3 | Nothing of that provider can serve, and a takeover to another provider is armed | A new conversation on the other provider takes over, with a brief | The existing takeover text, plus "every <provider> subscription is at its limit until <time>". If none is armed: the command that arms one. |
+| 4 | None of the above | The loop waits for the earliest reset | "All <n> subscriptions are at a limit; the first to have room is <label> at <time>." |
+
+A refusal or a restriction is not a limit and starts none of these steps.
+
+## Connecting a subscription
+
+The switch is only as useful as it is easy to give it a second subscription. Today that takes a person knowing which variable to set for which tool. This part reads no token and does not depend on the router; it is useful by itself for the manual switch.
+
+**What exists and is built on:** the accounts catalog (`looptender accounts add|list|check|usage`), and the panel's unreleased **Connect another Claude account** and **Connect another Codex account**, which already make a private directory and run the provider's own sign-in in it.
+
+**One command**, and later one button:
+
+```
+looptender accounts connect --provider claude-code --label spare
+```
+
+1. It makes a new private directory for that login (mode `0700`, under looptender's own configuration directory, never one a session already uses).
+2. It runs the provider's **official** sign-in for that directory. The person signs in in their browser. looptender never sees, asks for or copies the credential.
+3. It asks the official tool whether the sign-in worked.
+4. It checks that the new login is not one already connected, by comparing the keyed login fingerprint from PR #498 (never the identity itself). If it is the same account, it says so plainly: "This is the same account as <label>, so it adds no second quota. Kept nothing." and removes the entry it was about to add.
+5. It adds the entry to the catalog under the label, and to the router's set if switching is on.
+
+- **`looptender accounts disconnect --label spare`** takes the entry out of the catalog and the router's set and prints the official tool's own sign-out command for that directory. It does not sign out or delete the directory by itself.
+- **`looptender accounts list`** shows, per subscription: provider, label, whether the login still works, and its usage windows with their age.
+- **Per provider:** Claude Code and Codex each allow a login directory of their own (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), so both can be connected this way. Antigravity documents no separate login directory, so a second Antigravity account cannot be connected beside the first; `connect` says so instead of pretending (see [Providers](#providers)).
+- **The engineering rule** that looptender never logs in stands as it does for the panel's Connect: looptender starts the official tool at a person's explicit command, and the person signs in.
+
 ## Three modes, chosen per machine
 
-The owner's requirement: looptender must be able to turn its own router off and use sessionpipe's pool instead. So subscription switching has one setting per machine with three values, set with `looptender router mode <own|sessionpipe|off>` and shown first in `status` and `doctor`.
+These are how the one switch is carried out, not something a person operates day to day. The owner's requirement: looptender must be able to turn its own router off and use sessionpipe's pool instead. So there is one setting per machine with three values, chosen once in setup (`looptender router mode <own|sessionpipe|off>`) and shown in `status` and `doctor`. `router on` and `router off` move between the chosen mechanism and `off`.
 
 | Mode | Who switches subscriptions | What looptender does |
 |---|---|---|
@@ -149,7 +269,7 @@ Two inputs: its source, and an isolated lab that ran version 0.18.2 against a st
 | S20 | The next account's plan lacks the model in use | The upstream's error passes through; the pin stays | [source] | R19. |
 | S21 | A switch at 98% happens on the next request, mid-turn | No extra latency, but a full-price prompt on the new account [unverified: not observable with a stand-in] | [observed] timing | Soft threshold and cold points. |
 | S22 | Config directories outside the home directory's `.claude*` names are not found | BB's directory is not pooled unless the person runs the command with a variable set | [source] | Directories come from the accounts catalog, never from scanning. |
-| S23 | Request metadata is rewritten to name the serving account | The body is changed in transit | [observed] | The front never changes a body (V5). |
+| S23 | Request metadata is rewritten to name the serving account | Nothing visible; the request names the account that serves it | [observed] | Not a failure: adopted (D2). |
 
 ### How ours could fail, what the session experiences, and what the person is told
 
@@ -293,7 +413,7 @@ A subscription nobody is running sessions in has nobody refreshing its token. Ac
 - Nothing of a request or response is logged or stored. The only per-request facts that leave the front are: conversation key, model name, status code, `Retry-After`, rate-limit header values. On disk the conversation id is kept only as a keyed hash.
 - Another subscription's token is attached only to the provider's message paths (an allowlist). Only the provider's API paths are forwarded at all (an allowlist of prefixes); on those, every path that is not a message path goes through unchanged on the session's own login. Paths that mint a credential (making a key, exchanging or granting a token), and billing paths, are always refused. The refusal is by what a path does, not by a name it contains: Claude Code also makes read-only calls with the session's own login under the provider's sign-in prefix (account settings, roles, file upload) [unverified which, V16], and refusing those would leave a pointed session worse off than without the router.
 - No credential is copied between stores. No token appears in `status`, `doctor`, a notice, the panel, the timeline or a report.
-- The front never changes a request's body. It does not rewrite the model, the metadata or the prompt.
+- The front changes one thing in a body and nothing else: on a routed request, the account named in `metadata.user_id` becomes the serving subscription's (see [What is taken from sessionpipe's pool](#what-is-taken-from-sessionpipes-pool)). It never rewrites the model or the prompt, and never changes a request that goes on the session's own login.
 
 ## Routing
 
@@ -368,10 +488,74 @@ PR #512 adds an opt-in step-down: at one model's weekly limit, the loop changes 
 
 ## Providers
 
-- **Claude Code first.** Everything above.
-- **Codex subscriptions** would need: a second front profile (a different API shape, limit signals and login store under its own home directory), confirmation that its CLI can be pointed at a loopback base URL while keeping its own login [unverified], and its own conversation key. The decision function, state, pointer check and surfaces are shared.
-- **Gemini subscriptions** would need the same three facts established; nothing is known yet.
-- **Between providers stays a takeover.** A conversation cannot be continued by another provider's model through a header swap. Moving from Claude to Codex remains the new-conversation takeover with a brief. The router and the takeover meet in one place: the takeover is considered only when the router reports no room on any subscription of the provider.
+The owner wants switching for Codex and Antigravity subscriptions as well as Claude Code (D12). What follows for the two others comes from their public documentation and, for Codex, its public source, read on 2026-11-24. None of it has been run here, and every line of it is [unverified] until a stand-in check shows it.
+
+### What is the same for every provider
+
+- the decision (`internal/router/route`): order, pins, soft and hard thresholds, cold points, holds, the latch, spreading;
+- the front's core (`internal/router/front`): the bounded wait for a decision, forwarding unchanged on any failure, holding the stream, one retry before the first byte, bounds, draining;
+- state, the pointer check, the three mechanisms, the one switch, the surfaces, connecting a subscription.
+
+### What each provider brings as its own adapter
+
+A provider is described to the front and the router by a profile:
+
+| A profile says | Claude Code | Codex | Antigravity |
+|---|---|---|---|
+| **How the agent is pointed at a local address** | `ANTHROPIC_BASE_URL` in the `env` block of `settings.json`, with the first-party setting | `openai_base_url` in the user-level `config.toml` of the Codex home, or a custom model provider with `requires_openai_auth = true`, which keeps the ChatGPT sign-in and can carry static headers (the client secret) | **No documented way.** The only endpoint override is for API-key use, not for the Google-account subscription. |
+| **Whether the session's own login reaches the front** | V1, unverified | The source reads as if the bearer and the account id are sent to whatever base URL is set; if so, rule 2 holds for Codex without the doubt Claude Code has | Does not apply |
+| **The real upstream** | the provider's API host, message paths | `chatgpt.com/backend-api/codex`, path `/responses`, as a streamed POST and also as a WebSocket | Not documented |
+| **Where the login lives** | per configuration directory: a keychain item on macOS, a credentials file elsewhere | per Codex home: `auth.json`, or the system keyring, by the `cli_auth_credentials_store` setting | the system keyring, as profiles shared by its app, CLI and editor extensions |
+| **Who refreshes it** | Claude Code | the Codex CLI, shortly before expiry and at least about weekly; its documentation warns that a second user of the same login can invalidate the first one's refresh | Not documented |
+| **Reading it without copying** | the access token and expiry, read-only, memory only | the same from `auth.json` or the keyring; the expiry is inside the token | Not possible in a supported way |
+| **A login directory chosen at launch** | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` | None documented: fixed paths under the home directory |
+| **Naming the account in a request** | the account part of `metadata.user_id` in the body | the `chatgpt-account-id` header, which must change with the token; no body change | Not documented |
+| **Identifying a conversation** | the session part of `metadata.user_id` (or a header) | the `session-id` and `thread-id` headers; no body is read | a conversation id in its own output, not on the wire as far as documented |
+| **Room and resets** | `anthropic-ratelimit-unified-*` headers | `x-codex-primary-*` and `x-codex-secondary-*` headers (used percent, window minutes, reset time); a usage call on the ChatGPT backend | its own `/usage` command, which the catalog already reads; five-hour and weekly windows |
+| **A limit answer** | 429 with the limit headers | 429 with error type `usage_limit_reached` and a reset time | Not documented |
+| **A long-lived token from the official tool** | exists | only for business and enterprise workspaces | none for a subscription login |
+
+### Codex
+
+Codex fits the same shape, and on paper more easily than Claude Code: it keeps its own sign-in behind a custom base URL, names the conversation and the account in headers, and reports its windows in headers, so the front needs to read no body for it. Open points, its own list:
+
+- X1: the ChatGPT bearer and account id are really sent to a custom base URL.
+- X2: whether a custom base URL still uses the WebSocket form of the request, which the front does not forward today.
+- X3: which other calls (usage, sign-in refresh) go to other hosts and so never pass the front.
+- X4: the provider accepts a request whose bearer and `chatgpt-account-id` were both changed to another subscription's.
+- X5: what a switch costs: whether the prompt cache key is per account.
+- X6: the exact header names and the limit answer, against a real response.
+- X7: that reading `auth.json` or the keyring from another program works without a prompt.
+
+### Antigravity
+
+Antigravity does not fit the proxy shape, and the design does not force it to.
+
+- Its subscription traffic cannot be pointed at a local address in any documented way, so there is nothing for a front to forward.
+- It documents no way to choose a login at launch either: one login, kept in the system keyring and shared by its app, CLI and extensions. The accounts catalog reflects this already: it accepts only the `inherited` selection for Antigravity, so two Antigravity entries are two labels for one login, not two subscriptions.
+- **What switching means there, then:** a person signs out and in with the official tool (`/logout`, then sign in), and looptender's part is everything around that: it shows each window's use and reset from the usage command the catalog already reads, warns before a window runs out, names the moment and the exact command, and at the limit goes on to the later steps of the order in [What the person sees](#what-the-person-sees) (a smaller model, then a takeover to another provider). looptender does not sign out or in.
+- If Antigravity later documents a login directory or profile chosen at launch, it becomes a catalog `explicit_directory` provider and gains switching **at launch** (a headless route starting on the subscription with room), which the catalog and routes already model. Switching inside a running conversation would still need an endpoint override.
+- Its own list: A1, any supported way to select a login per launch; A2, any endpoint override for the subscription login; A3, what its limit answer looks like through `agy`.
+
+### Order
+
+Claude Code first, because it is the owner's daily limit and its first slice exists. Then Codex: the reading suggests it is cheaper than Claude Code was, as a second profile on the same front, provided X1 and X2 hold; its stand-in check can run as soon as a second Codex login exists. Antigravity last, and as the smaller job described above, not as a router provider.
+
+### Between providers
+
+Moving a conversation from one provider to another stays a takeover with a brief. A header swap cannot continue a conversation on another provider's model. The router and the takeover meet in one place: the takeover is considered only when the router reports no room on any subscription of the provider (step 3 of the order).
+
+### What in the first slice is Claude-specific
+
+The routing decision carries nothing of a provider. The front's types are neutral (`Ask`, `Decision`, `Outcome`, `Decider`), but its behaviour has Claude Code's facts written into it. These move behind a profile in the next slice:
+
+- the paths a login may be attached to (`/v1/messages`, `/v1/messages/count_tokens`) and the forwarded prefixes (`/v1/`, `/api/`);
+- the refused paths;
+- the conversation header name and reading the model and conversation from a JSON body;
+- the limit header prefix reported to the router (`anthropic-ratelimit-`);
+- removing `X-Api-Key` when another login is attached, and which headers name the account;
+- which statuses mean "the provider did not run this request" (429, and 401 on a routed login);
+- in the test stand-in, the credential prefixes used to tell a kind.
 
 ## Security review of the local listener
 
@@ -381,6 +565,7 @@ PR #512 adds an opt-in step-down: at one model's weekly limit, the loop changes 
 | Another local program of the same user | It could already read that user's logins; the listener gives it nothing new. The client secret still stops accidental use. |
 | Another user on the machine connecting to the port | Without a valid client secret a request is never given another subscription's token. It is forwarded unchanged or refused, which gives the caller nothing it did not bring. |
 | Any other program holding the port when the front is not (observed with sessionpipe's pool, S6) | The serious one: sessions would send their own login to it. **Expected defence until V11 is verified:** the port is fixed per user, outside the ephemeral range, and never moves under running sessions (R25); the system holds the socket from login where it can (D); the pointer check removes the pointer at once when the port is held by something that is not our front. That leaves a window before the check runs, which is a stated residual risk. On a system that cannot hold the socket (Windows, or anywhere the service is not loaded), `router on` refuses on a machine with more than one interactive user unless the person passes a flag that names the risk. **Wanted, if it can be made to work:** the front speaks TLS on loopback with its own certificate, so a program without the key cannot complete the handshake and the login is never sent. See [The loopback certificate](#the-loopback-certificate) for why this may not be reachable from settings. |
+| What the listener must never become, restated for the metadata rewrite | The rewrite makes a routed request name the account whose token it carries. It is never used to make a request name an account other than the one serving it. |
 | The client secret leaking | It travels in a request header, never in the URL, so it does not appear where a client shows or reports its base URL. The front removes the header before forwarding, so the provider never receives it. The settings file is made `0600` when the pointer is written; a directory others can write is refused. The secret only selects routing; it is not a provider credential and cannot mint one. `router rotate` issues a new one; the old stays valid until its sessions end. |
 | Using the listener to reach other hosts or sensitive paths | One fixed upstream host per provider profile; a path allowlist; credential-minting and billing paths refused (V16). |
 | Request smuggling and header leaks through the front | Ordinary reverse-proxy hygiene, each with a test: hop-by-hop and `Proxy-*` headers are removed; a request whose length is stated twice with different values is refused; one with both a chunked body and a stated length is read as chunked, as the standard says, and sent on as one request with one framing, so the provider can never read it two ways (the Go standard library drops the stated length before a handler can see it, so refusing it would mean parsing connections by hand in the one process that must stay dull); the upstream `Host` is fixed, never taken from the request; header size and count are capped; a session that goes silent while sending a request body is cut off after two minutes of silence, a bound on silence and not on the whole upload, so a large body on a slow connection is not cut; the client secret's header is never forwarded; nothing from the provider's answer is used to choose where to connect (no redirects followed); a proxy named in the environment is used only for an `https` upstream, where it carries an encrypted tunnel and sees no header (never using one would cut the front off on a network that requires it, where the session alone would still work). |
@@ -435,7 +620,7 @@ None of these has been tested; no login, account switch or settings change was m
 | V2 | Claude Code adds headers named in a settings variable to every request it sends to the base URL | The client secret has no safe carrier; the front then treats every caller as one client (no per-client order), and a path secret is the worse fallback. |
 | V3 | With the pointer's settings, a session has the same context window, models, features and usage display as against the provider's own address. sessionpipe's pool needs an extra, undocumented-looking setting for this, so the plain assumption is probably false without it. | Any difference that remains is a "worse off than without the router" case while the router is healthy, which breaks the first rule. Mode `own` does not ship until the difference is zero or the owner accepts a named one. |
 | V4 | The conversation id is readable from a header or from `metadata.user_id` | Stickiness falls back to per client. |
-| V5 | The provider accepts a request whose metadata names one account while the token is another's | The front would have to change the body, which this design forbids; the owner decides. |
+| V5 | The provider accepts a routed request whose `metadata.user_id` was rewritten to the serving account, as sessionpipe's pool sends it | The router stops and the owner decides; an unrewritten request is not tried instead, since it is the less consistent of the two. |
 | V6 | What Claude Code does when a stream is cut, and when a connection is refused (retries, how many, how long) | R4 and the Windows restart gap are worse than stated. |
 | V7 | An invocation of the official tool refreshes a directory's login without a model request | Idle-subscription option 1 falls; see credentials. |
 | V8 | Where the login is stored on Linux and Windows today; and that a background job with nobody at the screen can read the macOS keychain item Claude Code wrote, without a prompt (the item's access list may name only the program that wrote it, and a prompt cannot be answered at the login window) | Phase 6's readers change. If a prompt is needed, reading from the official store works only while someone is logged in at the screen, which pushes the idle-subscription choice towards option 2. |
@@ -459,7 +644,10 @@ None of these has been tested; no login, account switch or settings change was m
 
 Everything can be prepared beforehand. Only the first row runs without the owner.
 
-## Open questions for the owner
+## Questions that were put to the owner
+
+Answered on 2026-11-24; see [Decisions](#decisions). Kept as asked, for the record. Question 2 is still open.
+
 
 1. **Reading logins.** May the router read each opted-in subscription's access token from the official tool's own store, read-only, kept in memory only? This is the first time looptender would read a credential.
 2. **Idle subscriptions.** If no free refresh by the official tool exists (V7): a long-lived token held by looptender in the system's secret store, or a spare subscription that sometimes needs a person to wake it?
