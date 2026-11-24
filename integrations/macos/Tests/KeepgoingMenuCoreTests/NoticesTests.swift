@@ -68,7 +68,7 @@ final class NoticesTests: XCTestCase {
         var rule = OverdueNotices()
         let long = "example-a-very-long-loop-name-that-goes-on\u{0007}"
         let told = rule.next(read([loop(1, long, overdueSince: "2030-01-01T09:00:00Z")]), format: format)
-        XCTAssertEqual(told.first?.title, "Checks have stopped: example-a-very…-that-goes-on")
+        XCTAssertEqual(told.first?.title, "Checks have stopped: example-a-very-long-loop-name-t…")
         XCTAssertFalse(told.first?.body.contains("\u{0007}") ?? true)
     }
 
