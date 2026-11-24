@@ -24,6 +24,9 @@ const (
 	Daemon  = "daemon"
 	Control = "control"
 	Service = "service"
+	// Launch is held by start --background from a BB thread around its
+	// clean-up of earlier launches, the launch and its acknowledgement.
+	Launch = "launch"
 )
 
 // Lock is a held lock.
