@@ -73,6 +73,10 @@ type ModelStep struct {
 	// the window resets; Failure says why, in fixed words.
 	Failed  bool   `json:"failed,omitempty"`
 	Failure string `json:"failure,omitempty"`
+	// StoodDown: after the reset the conversation was not on the weaker
+	// model (or step-down was off), so it was not moved back; it stays on
+	// the model it is on. Cleared by the next step-down or model-step --off.
+	StoodDown bool `json:"stoodDown,omitempty"`
 }
 
 // ModelStepNoteName holds the one line the agent is told with its next

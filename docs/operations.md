@@ -888,8 +888,10 @@ Unreleased, opt-in; **fixtures only**. This is the BB-thread version that works 
   - A step down produces a `model_step` notice (info) for the menu and the panel, which ends when the step does.
   - The agent's next message carries one line: `[keepgoing:model-step to=… from=… resets=…]` and a looptender notice of which model it is on and why. A step back is said the same way.
 - **Not when.** Never for the all-models or 5-hour window, a model not in the order or the last one, a dry run, a fallback target, or a loop that is off, paused, stopped, waiting for a person or finished. With no weaker model left, the loop waits for the reset as before.
-- **Stepping back.** At the first check after the recorded reset that finds the conversation between turns, the model is changed back, but only if the latest turn ran on the model it was stepped down to (BB's turn requests carry their model) and step-down is still on.
-  - Otherwise the record is cleared and the model is left as a person or the agent set it; the check's reason says so.
+- **Stepping back.** At the first check after the recorded reset that finds the conversation between turns, the model is changed back, but only if the latest turn ran on the weaker model and step-down is still on. BB's turn requests carry their model. Models are compared by weekly-limit family, so an order naming `sonnet` matches BB's `claude-sonnet-…`.
+  - **BB reports no model** for the latest turn: nothing changes and the record is kept, because it cannot be confirmed. The check warns so.
+  - **Already on the stronger model** (a person or the agent moved it): the record is cleared.
+  - **On another model, or step-down off:** it stands down. The model is left as it is; the record, `status` and a `model_step` notice say the conversation stays on that model. The next step-down or `model-step --off` clears it.
   - A second step-down keeps the first step's model and reset.
 - **Never acts on lanes**, routes or accounts.
 

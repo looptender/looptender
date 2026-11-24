@@ -159,11 +159,12 @@ func TestModelStepBackStandsDownForAPersonsChoice(t *testing.T) {
 			t.Fatal(err)
 		}
 		res := stepTick(t, w, s, reset.Add(time.Minute))
-		if res.ModelStep != "stood_down" || len(s.models) != 0 {
+		if res.ModelStep != "stood_down" || len(s.models) != 0 || !strings.Contains(strings.Join(res.Warnings, " "), "stays on the model it is on") {
 			t.Fatalf("%s: %+v %v", name, res, s.models)
 		}
-		if rec, _ := state.LoadModelStep(w.dir); rec != nil {
-			t.Fatalf("%s: record kept", name)
+		// The record says it stayed, for status and the notice.
+		if rec, _ := state.LoadModelStep(w.dir); rec == nil || !rec.StoodDown {
+			t.Fatalf("%s: %+v", name, rec)
 		}
 	}
 }
@@ -206,5 +207,33 @@ func TestModelStepOrderHasOneModelPerFamily(t *testing.T) {
 	}
 	if state.ModelFamily("claude-opus-5-5") != "opus" || state.ModelFamily("sonnet-4") != "sonnet" {
 		t.Fatal("family")
+	}
+}
+
+// The order may name a model by its family ("sonnet") where BB reports the
+// full id: they are compared by family. When BB reports no model, nothing
+// is changed and the record is kept until it can be confirmed.
+func TestModelStepBackComparesFamiliesAndWaitsWhenUnknown(t *testing.T) {
+	reset := t0.Add(30 * time.Hour)
+	for name, c := range map[string]struct {
+		model string
+		want  string
+		back  bool
+	}{
+		"family name against a full BB id": {"claude-sonnet-5-5", "stepped_back", true},
+		"no model reported":                {"", "step_back_unconfirmed", false},
+	} {
+		w, s := steppingWorld(t, decide.Observation{State: decide.Idle, TurnModel: c.model})
+		if err := state.SaveModelStepSetting(w.dir, &state.ModelStepSetting{Models: []string{"opus", "sonnet"}, SetAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.SaveModelStep(w.dir, &state.ModelStep{From: "opus", To: "sonnet", Window: "seven_day_opus", ResetsAt: reset}); err != nil {
+			t.Fatal(err)
+		}
+		res := stepTick(t, w, s, reset.Add(time.Minute))
+		rec, _ := state.LoadModelStep(w.dir)
+		if res.ModelStep != c.want || (len(s.models) == 1) != c.back || (rec == nil) != c.back || (rec != nil && rec.StoodDown) {
+			t.Fatalf("%s: %+v models %v record %+v", name, res, s.models, rec)
+		}
 	}
 }

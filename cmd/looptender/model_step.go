@@ -151,7 +151,9 @@ func printModelStep(w io.Writer, v *modelStepView) {
 	default:
 		fmt.Fprintln(w, "model step-down: off")
 	}
-	if s := v.InForce; s != nil && s.Failed {
+	if s := v.InForce; s != nil && s.StoodDown {
+		fmt.Fprintf(w, "  not moved back from %s to %s after %s: it was no longer on %s, or step-down is off; it stays on the model it is on\n", s.To, s.From, s.ResetsAt.Format(time.RFC3339), s.To)
+	} else if s != nil && s.Failed {
 		fmt.Fprintf(w, "  could not step down from %s to %s (%s): %s; not tried again until %s\n", s.From, s.To, s.Window, s.Failure, s.ResetsAt.Format(time.RFC3339))
 	} else if s != nil {
 		fmt.Fprintf(w, "  stepped down from %s to %s (%s); steps back after %s, between turns, if it is still on %s\n", s.From, s.To, s.Window, s.ResetsAt.Format(time.RFC3339), s.To)

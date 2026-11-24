@@ -76,6 +76,9 @@ func (t *tick) modelStep(a adapter.Adapter, target string, obs decide.Observatio
 			break
 		}
 	}
+	if rec != nil && rec.StoodDown {
+		rec = nil // a new limit starts a new step
+	}
 	switch {
 	case rec != nil && rec.Failed:
 		return false, nil // tried and failed in this window: wait for the reset
@@ -131,14 +134,39 @@ func (t *tick) modelStep(a adapter.Adapter, target string, obs decide.Observatio
 }
 
 // stepBack changes the model back once the window has reset, only while the
-// conversation is still on the model it was stepped down to and the setting
-// is on. Otherwise it stands down: the record is cleared and the model left
-// as a person or the agent set it.
+// conversation's latest turn ran on the weaker model's family and the
+// setting is on. Models are compared by weekly-limit family: the order may
+// name a model as "sonnet" where BB reports "claude-sonnet-…".
+//   - BB reported no model: it cannot be confirmed, so nothing changes and
+//     the record is kept for a later check.
+//   - On the stronger model's family already: the record is cleared.
+//   - On another model, or step-down off: it stands down, leaving the model
+//     as a person or the agent set it; the record says so, and the notice
+//     says the conversation stays on that model.
 func (t *tick) stepBack(ms adapter.ModelSetter, rec state.ModelStep, obs decide.Observation, setting *state.ModelStepSetting) error {
-	if setting == nil || obs.TurnModel != rec.To {
-		t.clearModelStep()
+	now := state.ModelFamily(obs.TurnModel)
+	if rec.StoodDown {
+		if now != "" && now == state.ModelFamily(rec.From) {
+			t.clearModelStep() // back on the stronger model after all
+		}
+		return nil
+	}
+	switch {
+	case setting != nil && obs.TurnModel == "":
+		t.res.ModelStep = "step_back_unconfirmed"
+		// Said as a warning: the check's own decision follows and sets the reason.
+		t.warn("model step-down: not moved back to %s yet: BB reports no model for the latest turn, so it cannot be confirmed that the conversation is still on %s", rec.From, rec.To)
+		return nil
+	case now != "" && now == state.ModelFamily(rec.From):
+		t.clearModelStep() // already back, by a person or the agent
+		return nil
+	case setting == nil || now != state.ModelFamily(rec.To):
+		rec.StoodDown = true
+		if err := state.SaveModelStep(t.loop.StateDir, &rec); err != nil {
+			t.warn("the model step-down record could not be saved: %v", err)
+		}
 		t.res.ModelStep = "stood_down"
-		t.res.Reason = fmt.Sprintf("model step-down: not moved back to %s: the conversation is no longer on %s, or step-down is off", rec.From, rec.To)
+		t.warn("model step-down: not moved back to %s: the conversation is no longer on %s, or step-down is off; it stays on the model it is on", rec.From, rec.To)
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(t.ctx, min(modelStepTimeout, t.left()))
