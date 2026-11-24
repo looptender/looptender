@@ -111,7 +111,7 @@ function label(loop: LoopView): string {
 function stateLabel(loop: LoopView): string {
   // status exits 1 and says which record it could not read; the control state beside it cannot be trusted.
   if (recordsUnreadable(loop.details)) return "looptender: records unreadable";
-  if (loop.details?.archived) return "looptender: archived";
+  if (loop.details?.archived) return loop.details.archived.unreadable || !loop.details.archived.at ? "looptender: archive record unreadable" : "looptender: archived";
   if (loop.imported && loop.controlState === "enabled" && ((loop.details?.failedChecks ?? 0) > 0 || ["failed", "error"].includes(loop.details?.lastCheck?.outcome ?? ""))) return "looptender: checks failing";
   if (loop.imported && loop.controlState === "enabled" && !loop.details?.lastCheck) return "looptender: no check recorded";
   if (loop.controlState === "enabled" && loop.details?.schedule?.overdue) return "looptender: checks have stopped";
@@ -124,7 +124,7 @@ const sameBuild = (a: string, b: string) => a.startsWith(b) || b.startsWith(a);
 
 function describe(loop: LoopView): string[] {
   return [
-    `Loop ${loop.loop}`,
+    `Loop ${nameOf(loop)}${loop.displayName ? ` (${loop.loop})` : ""}`,
     loop.referenceSource === "plugin_setting" ? "Reference: plugin setting; CLI menu registration checked separately" : loop.referenceSource === "registry_attachment" ? "Reference: explicitly attached from CLI registry" : loop.referenceSource === "plugin_setup" ? "Reference: saved BB setup" : "Reference source: unavailable",
     loop.publication?.state === "registered" ? "Last explicit CLI menu publication: registered; current health checked separately" : loop.referenceSource === "plugin_setup" ? "CLI menu publication: unverified; use explicit registry reconcile on the host" : null,
     // One Build line: status's, with looptender's freshness detail joined to it.
@@ -220,14 +220,14 @@ function ToggleButton({ loop, threadId, onDone, compactResume = false }: { loop:
     {paused
       ? <ResumeNote loop={loop} compact={compactResume} />
       : askFirst && confirming
-        ? <span role="group" aria-label={`Confirm pausing ${loop.loop}`} style={{ display: "grid", gap: 8 }}>
-            <span>Pause loop {loop.loop}? {!watching ? "A person resumes it from a terminal." : loop.details?.targetThread ? `It supervises ${loop.details.targetThread}, not this thread.` : `Its current target is ${loop.details?.targetAdapter ?? loop.target}, not this thread.`}</span>
+        ? <span role="group" aria-label={`Confirm pausing ${nameOf(loop)}`} style={{ display: "grid", gap: 8 }}>
+            <span>Pause loop {nameOf(loop)}? {!watching ? "A person resumes it from a terminal." : loop.details?.targetThread ? `It supervises ${loop.details.targetThread}, not this thread.` : `Its current target is ${loop.details?.targetAdapter ?? loop.target}, not this thread.`}</span>
             <span className="kg-actions" style={actionsStyle}>
-              <button type="button" {...kg} disabled={busy} onClick={act} style={buttonStyle}>Pause loop {loop.loop}</button>
+              <button type="button" {...kg} disabled={busy} onClick={act} style={buttonStyle}>Pause loop {nameOf(loop)}</button>
               <button type="button" {...kg} disabled={busy} onClick={() => setConfirming(false)} style={buttonStyle}>Cancel</button>
             </span>
           </span>
-        : <button type="button" {...kg} aria-label={`${askFirst ? "Pause…" : "Pause"} ${loop.loop}`} disabled={busy} onClick={askFirst ? () => setConfirming(true) : act} style={buttonStyle}>{askFirst ? "Pause…" : "Pause"}</button>}
+        : <button type="button" {...kg} aria-label={`${askFirst ? "Pause…" : "Pause"} ${nameOf(loop)}`} disabled={busy} onClick={askFirst ? () => setConfirming(true) : act} style={buttonStyle}>{askFirst ? "Pause…" : "Pause"}</button>}
     {error && <span role="alert">{error}</span>}
   </>;
 }
@@ -299,12 +299,20 @@ const KEEPING_GOING = "looptender: keeping this going";
 // when a status refresh changes order or removes another reference.
 function loopKey(loop: LoopView) { return JSON.stringify([loop.configPath, loop.managedId ?? null]); }
 
+// The name the card shows: looptender's display name when it has one, else the slug.
+const nameOf = (l: LoopView) => l.displayName ?? l.loop;
+
 function referenceName(loop: LoopView, loops: LoopView[], references: Map<string, number>) {
-  return loops.filter(l => l.loop === loop.loop).length > 1 ? `${loop.loop} · reference ${references.get(loopKey(loop))}` : loop.loop;
+  return loops.filter(l => nameOf(l) === nameOf(loop)).length > 1 ? `${nameOf(loop)} · reference ${references.get(loopKey(loop))}` : nameOf(loop);
+}
+
+// The slug, as secondary text beside a display name.
+function Slug({ loop }: { loop: LoopView }) {
+  return loop.displayName ? <span style={{ opacity: 0.7 }}> ({loop.loop})</span> : null;
 }
 
 function ReferenceDetails({ loop, name }: { loop: LoopView; name: string }) {
-  return name === loop.loop ? null : <details><summary {...kg}>Configuration reference</summary><code>{loop.configPath}</code><div>Reference numbers identify rows in this plugin session; they are not loop IDs.</div></details>;
+  return name === nameOf(loop) ? null : <details><summary {...kg}>Configuration reference</summary><code>{loop.configPath}</code><div>Reference numbers identify rows in this plugin session; they are not loop IDs.</div></details>;
 }
 
 // What the reasons already say is not said again in the details.
@@ -342,7 +350,7 @@ function LoopDetails({ lines, padding = "0 12px 6px" }: { lines: string[]; paddi
 
 function CardLoop({ loop, name, threadId, refresh, failed, created, showName, compactResume }: { loop: LoopView; name: string; threadId: string; refresh(): void; failed: boolean; created: string | null; showName: boolean; compactResume: boolean }) {
   return <section aria-label={`Loop ${name}`} style={{ overflowWrap: "anywhere", minWidth: 0 }}>
-    {showName && <strong style={{ fontSize: 12 }}>{name}</strong>}
+    {(showName || loop.displayName) && <strong style={{ fontSize: 12 }}>{name}<Slug loop={loop} /></strong>}
     <ReferenceDetails loop={loop} name={name} />
     <ContextRow icon="Repeat" label={failed ? "looptender: status unavailable (previous snapshot)" : created ?? label(loop)}
       title={boundedTitle(describe(loop).filter(line => !line.startsWith("Note: ")).join("\n"), 800)} trailing={loop.handoffs > 0 ? `${loop.handoffs} handoffs` : undefined}
@@ -465,7 +473,7 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
       return <section key={loopKey(l)} aria-label={`Loop ${name}`} style={{ display: "grid", gap: 8, padding: "4px 12px 8px", fontSize: 12, overflowWrap: "anywhere", minWidth: 0 }}>
         <div className="kg-t" style={{ minWidth: 0, opacity: 0.9 }}>
           {failed && <div>Previous snapshot</div>}
-          <div><strong>Loop {name}</strong>: {l === loop ? created ?? label(l) : label(l)}</div>
+          <div><strong>Loop {name}</strong><Slug loop={l} />: {l === loop ? created ?? label(l) : label(l)}</div>
           <ReferenceDetails loop={l} name={name} />
           <BuildFreshness loop={l} />
           {reasons.length > 0 && <ul aria-label="Why" style={{ ...plainList, paddingTop: 4 }}>{reasons.map((line, i) => <li key={i}>{line}</li>)}</ul>}

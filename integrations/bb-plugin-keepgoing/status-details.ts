@@ -84,7 +84,11 @@ export const detailsSchema = z.object({
   // status --json buildFreshness (looptender's own words, shared with the dock and the menu): how this
   // loop's supervisor build compares with the installed one. Absent from a looptender that does not send it.
   // status --json archived (from a looptender that can archive a loop): when, and the hold it had. Absent otherwise.
-  archived: z.object({ at: z.string().max(40), note: z.string().max(300).optional(), hold: z.string().max(40).optional(), unreadable: z.boolean().optional() }).optional(),
+  // `at` is absent (and `unreadable` set) when the record could not be read or has no usable date: then it is shown as unreadable, never as a date.
+  // The archive note is not carried: status sends it only with --private and the card never shows it.
+  archived: z.object({ at: z.string().max(40).optional(), hold: z.string().max(40).optional(), unreadable: z.boolean().optional() }).optional(),
+  // A record left on a loop that supervises again (status --json archiveLapsed); it has no effect.
+  archiveLapsed: z.object({ at: z.string().max(40).optional() }).optional(),
   buildFreshness: z.object({ state: z.string().max(24), text: z.string().max(200), detail: z.string().max(600).optional(), command: z.string().max(400).optional(), action: z.string().max(300).optional() }).optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
@@ -174,7 +178,11 @@ const resetAfterDeadline = (d: StatusDetails | undefined): boolean => {
 const sendsText = (s: NonNullable<StatusDetails["sends"]>) => s.unavailable || s.used === undefined || s.remaining === undefined ? `${s.max} allowed; the count is unavailable` : `${s.used}/${s.max} attempts reserved; ${s.remaining} remaining`;
 
 /** "Archived since <date> · unarchive to use it again", as looptender words an archived loop: no resume applies. */
-export const archivedLine = (a: NonNullable<StatusDetails["archived"]>): string => `Archived since ${dateLabel(a.at)} · unarchive to use it again`;
+export const archivedLine = (a: NonNullable<StatusDetails["archived"]>): string =>
+  a.unreadable || !a.at || dateLabel(a.at) === "unavailable" ? ARCHIVE_UNREADABLE : `Archived since ${dateLabel(a.at)} · unarchive to use it again`;
+export const ARCHIVE_UNREADABLE = "The archive record could not be read, so no resume command is shown; run looptender status for this loop";
+export const archiveLapsedLine = (l: NonNullable<StatusDetails["archiveLapsed"]>): string =>
+  `An earlier archive record${l.at && dateLabel(l.at) !== "unavailable" ? ` (${dateLabel(l.at)})` : ""} is left on this loop, which supervises again; it has no effect`;
 
 /** What status calls a hold, in the sentence it puts after a no-progress flag recorded before the hold. */
 const HELD_WORD: Record<string, string> = { "stop requested": "stopped", completed: "completed", "awaiting user": "awaiting a person", paused: "paused", disabled: "disabled" };
@@ -239,6 +247,7 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
     ...(d.targetProvider ? [`Provider: ${d.targetProvider}${d.targetModel ? ` · model ${d.targetModel}` : ""} (configured)`] : []),
     ...(d.moved ? [`Moved: ${d.moved.text}`] : []),
     ...(d.archived ? [archivedLine(d.archived)] : []),
+    ...(d.archiveLapsed ? [archiveLapsedLine(d.archiveLapsed)] : []),
     // The words `looptender status` prints, with the successor when it names one.
     ...(d.supersededBy !== undefined ? [`Superseded: successor reference is recorded${d.supersededBy ? ` (${d.supersededBy})` : ""}; resume and takeover are refused`] : []),
     d.runtime ? `Check evidence: ${d.runtime.state} · ${d.runtime.freshness} · source ${d.runtime.source}` : "Check evidence: unavailable from this build",
