@@ -286,11 +286,18 @@ final class MenuTests: XCTestCase {
         XCTAssertEqual(model.rows.first { $0.title == "All 100 Loops in the Panel" }?.command, .openPanel)
         XCTAssertNil(MenuBuilder.build(.read(list(Array(loops.prefix(25))), at: now), now: now).rows.first { $0.title.hasPrefix("All ") })
         XCTAssertEqual(MenuBuilder.build(.read(list(Array(loops.prefix(10)), omitted: 30), at: now), now: now).rows.first { $0.title.hasPrefix("All ") }?.title, "All 40 Loops in the Panel")
-        // Cut at the end, never in the middle: the beginning is what is read and what the panel shows.
+        // Non-colliding long names are cut at the end; colliding ones keep a distinguishing tail.
+        let singleLong = MenuBuilder.build(.read(list([loop(1, long, "supervising", "Supervising")]), at: now), now: now).rows.first { $0.kind == .loop }!
+        XCTAssertEqual(singleLong.title.count, MenuBuilder.maxName)
+        XCTAssertTrue(singleLong.title.hasSuffix("…"))
+        XCTAssertTrue(singleLong.title.hasPrefix("example-monorepo-migration-"))
+        XCTAssertFalse(singleLong.title.contains("phase"), "the end is what is cut")
         XCTAssertEqual(rows[0].title.count, MenuBuilder.maxName)
-        XCTAssertTrue(rows[0].title.hasSuffix("…"))
-        XCTAssertTrue(rows[0].title.hasPrefix("example-monorepo-migration-"))
-        XCTAssertFalse(rows[0].title.contains("phase"), "the end is what is cut")
+        XCTAssertEqual(rows[1].title.count, MenuBuilder.maxName)
+        XCTAssertNotEqual(rows[0].title, rows[1].title)
+        XCTAssertTrue(rows[0].title.hasPrefix("example-monorepo-migrati"))
+        XCTAssertTrue(rows[0].title.hasSuffix("one"))
+        XCTAssertTrue(rows[1].title.hasSuffix("two"))
         XCTAssertEqual(rows[0].toolTip, long, "the full name is still reachable")
         XCTAssertEqual(rows[1].toolTip, sibling)
         XCTAssertEqual(rows[0].accessibilityLabel, long + ", Working")
