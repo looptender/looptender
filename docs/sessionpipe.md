@@ -203,7 +203,9 @@ loop:
     counts as not sent, and none of sessionpipe's words are kept.
   - **Still running then:** the wake is a delivery under way.
   - **Failed without a refusal code:** whether it reached the session is
-    unknown, and it is not retried.
+    unknown. Send does not retry it, but the next check sends another wake
+    while the session still reads idle; this was seen live, and a fix is
+    pending.
 - **One wake at a time.** While the previous wake's command is still running
   (that is, the agent is still answering), the next is not sent.
   - The record, `targets/<id>/sessionpipe-ask.json`, holds the process ID and
@@ -267,8 +269,14 @@ Without the `sessionpipe` command, doctor warns and still checks the file.
   session are not done.
 - **Children, context window and per-turn usage.**
 - **Fallbacks, routes, switch-back and timing**, which configuration refuses.
-- **Live acceptance.** Every behaviour above is tested with fixture files and a
-  stand-in for the sessionpipe command, on no real session.
+- **Live acceptance.** Observing was run once against one real headless Claude
+  Code session in an isolated lab ([evidence](testing.md#sessionpipe-observed-sessions-first-live-run-2026-11-24)):
+  started, working and ended read as expected, and doctor's steps matched.
+  No wake has been delivered to a real session yet. Everything else is
+  tested with fixture files and a stand-in for the sessionpipe command.
+- **Headless sessions end with their turn.** A `claude -p` session sends
+  `session.ended` with its last turn, so it reads as gone. Only a session that
+  stays open can be woken.
 
 ## Setup
 
@@ -452,7 +460,7 @@ remote-answer or coordinator-message authority.
 | Acknowledgements | Only 202; accepted+duplicates exactly two, zero rejected, valid tier; duplicate acknowledgement accepted | Invalid/oversized/missing/rejected/mismatched responses remain unverified; no automatic resend or cursor advance. |
 | Restart / concurrency | Fresh CLI processes retain identity and sequences; private two-sequence reservation under nonwaiting delivery lock; separate nonwaiting report gate serializes sends/resume; rejected/corrupt state refuses send | Contention can lose a best-effort report. No replay/outbox/indefinite retry, crash-before-POST recovery or power-loss guarantee. |
 | Evidence | Native macOS fictional Go receivers, race tests, optional local demo with actual built core schema/data/filter | Local reference receiver package is a placeholder. This is not upstream receiver/conformance certification, GUI/phone or live provider acceptance. |
-| IN | [Observed sessions](#observed-sessions-in-unreleased): one session from a person-added tier-0 file sink, allowlisted types and words; [opt-in idle wakes](#waking-an-observed-session-opt-in-unreleased) through `sessionpipe ask` | No error classes or usage (tier 1 only); no stop, nudge, re-prompt or takeover; no live acceptance. |
+| IN | [Observed sessions](#observed-sessions-in-unreleased): one session from a person-added tier-0 file sink, allowlisted types and words; [opt-in idle wakes](#waking-an-observed-session-opt-in-unreleased) through `sessionpipe ask` | No error classes or usage (tier 1 only); no stop, nudge, re-prompt or takeover; observing checked live once, no wake delivered live yet. |
 | BACK | None exposed; #233 remains held | Needs owner authorization plus upstream non-harness control dispatch and a looptender-hold command/board support. Existing prompt/cancel commands cannot grant loop authority. |
 
 ## Repeatable local demo and upstream documentation preparation
