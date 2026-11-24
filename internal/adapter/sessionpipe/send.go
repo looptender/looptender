@@ -285,7 +285,9 @@ func WakeHold(dir string, now time.Time, interval time.Duration) (held bool, out
 		return false, "", "", time.Time{}
 	}
 	until = r.StartedAt.Add(interval)
-	if !now.Before(until) {
+	// A wake recorded in the future (the clock was set back) holds nothing:
+	// otherwise it could hold an idle session far past the interval.
+	if r.StartedAt.After(now) || !now.Before(until) {
 		return false, "", "", time.Time{}
 	}
 	if s := a.load(); s.LastTurnAt.After(r.StartedAt) {

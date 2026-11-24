@@ -318,3 +318,16 @@ func TestObserveKeepsTheLastTurnTime(t *testing.T) {
 		t.Fatalf("last turn %s", s.LastTurnAt)
 	}
 }
+
+// A wake recorded after now (the clock was set back) holds nothing.
+func TestWakeHoldIgnoresAWakeRecordedInTheFuture(t *testing.T) {
+	dir := t.TempDir()
+	a := &Adapter{dir: dir}
+	now := time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)
+	if err := a.saveAsk(askRecord{StartedAt: now.Add(3 * time.Hour), Outcome: "refused", Code: "folder"}); err != nil {
+		t.Fatal(err)
+	}
+	if held, _, _, _ := WakeHold(dir, now, time.Hour); held {
+		t.Fatal("a wake recorded in the future holds the next")
+	}
+}

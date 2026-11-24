@@ -661,7 +661,7 @@ Capability/documentation review covers README, configuration, adapter reference,
 - Each looptender command ran with its own `HOME`, so nothing was registered in the person's per-user directories.
 
 **Observing (held).**
-- `init --agent sessionpipe --session claude-code:<id>` with no `--name` named the loop `observed-claude-code-10aad1c6`. Before the session's first event, `doctor` walked the checks: the command, version 0.18.2, current hooks and a tier-0 sink were ok, and the events file was a warning that said to send the session one message.
+- `init --agent sessionpipe --session claude-code:<id>` with no `--name` named the loop `observed-claude-code-<hash>`. Before the session's first event, `doctor` walked the checks: the command, version 0.18.2, current hooks and a tier-0 sink were ok, and the events file was a warning that said to send the session one message.
 - A headless `claude -p` turn, checked once a second, read in order:
   - unknown (no file yet);
   - idle (`session.started`);

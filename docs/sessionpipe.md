@@ -215,9 +215,10 @@ loop:
     after <time> or the session's next turn", and nothing is run. `status`
     prints it on its `wake:` line (`sessionpipeWake.held` in JSON), and
     doctor's `wake` check warns with what to change.
-  - Every attempt, refused and failed ones included, counts against
-    `loop.limits.max_sends` like any send: the send is reserved before
-    sessionpipe is run.
+  - A failed attempt, or one of unknown outcome, counts against
+    `loop.limits.max_sends` like any send. A refused one does not: the send
+    is reserved before sessionpipe runs and given back when sessionpipe
+    refuses, since nothing reached the agent.
 - **One wake at a time.** While the previous wake's command is still running
   (that is, the agent is still answering), the next is not sent.
   - The record, `targets/<id>/sessionpipe-ask.json`, holds the process ID and
