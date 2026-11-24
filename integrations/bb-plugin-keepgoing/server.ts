@@ -52,13 +52,15 @@ const statusSchema = z.object({
   targetAgent: agentRef.optional(),
   // Fields status adds later. Each is checked on its own in `lenient`: one that is
   // malformed is named in details.unparsed, never taken for "nothing to say".
-  archived: z.unknown().optional(), buildFreshness: z.unknown().optional(), noProgress: z.unknown().optional(),
+  archived: z.unknown().optional(), archiveLapsed: z.unknown().optional(), naming: z.unknown().optional(), buildFreshness: z.unknown().optional(), noProgress: z.unknown().optional(),
   deadline: z.unknown().optional(), deadlineReached: z.unknown().optional(), sendAllowance: z.unknown().optional(), sendRecord: z.unknown().optional(), diskSpace: z.unknown().optional(), unreadable: z.unknown().optional(),
 });
 
 const loopSchema = z.object({
   details: detailsSchema.optional(),
   loop: z.string(),
+  // naming.displayName from status --json: shown where the card shows a name; the slug stays as secondary text.
+  displayName: z.string().max(120).optional(),
   configPath: z.string(),
   imported: z.boolean().optional(),
   referenceSource: z.enum(["plugin_setting", "plugin_setup", "registry_attachment"]).optional(),
@@ -82,7 +84,7 @@ export type LoopView = z.infer<typeof loopSchema>;
 const sendAllowanceShape = z.object({ max: z.number(), used: z.number().optional(), remaining: z.number().optional(), reached: z.boolean(), error: z.string().optional() });
 const unreadableShape = z.object({ file: z.string(), problem: z.string(), offset: z.number().optional(), remedy: z.string() });
 const noProgressShape = z.object({ availability: z.string(), text: z.string() });
-const archivedShape = z.object({ at: z.string(), note: z.string().optional(), hold: z.string().optional(), unreadable: z.boolean().optional() });
+const archivedShape = z.object({ at: z.string().optional(), hold: z.string().optional(), unreadable: z.boolean().optional() }).passthrough();
 const freshnessShape = z.object({ state: z.string(), text: z.string(), detail: z.string().optional(), command: z.string().optional(), action: z.string().optional() });
 const diskShape = z.object({ level: z.string(), message: z.string().optional() });
 
@@ -91,7 +93,7 @@ const diskShape = z.object({ level: z.string(), message: z.string().optional() }
  * and named in `unparsed`, so the card says it could not be read; it is never
  * dropped as though there were nothing to say, and never costs the loop.
  */
-function lenient(s: { archived?: unknown; buildFreshness?: unknown; noProgress?: unknown; control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown }) {
+function lenient(s: { archived?: unknown; archiveLapsed?: unknown; buildFreshness?: unknown; noProgress?: unknown; control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown }) {
   const unparsed: string[] = [];
   const pick = <T>(name: string, schema: z.ZodType<T>, raw: unknown): T | undefined => {
     if (raw === undefined) return undefined;
@@ -100,7 +102,16 @@ function lenient(s: { archived?: unknown; buildFreshness?: unknown; noProgress?:
     unparsed.push(name);
     return undefined;
   };
-  const archived = pick("archived", archivedShape, s.archived);
+  // An archive record that is malformed, flagged unreadable or has no usable date fails safe: it is kept as
+  // "unreadable", so the card offers no resume command and never prints an empty date.
+  let archived: { at?: string; hold?: string; unreadable?: boolean } | undefined;
+  if (s.archived !== undefined && s.archived !== null) {
+    const a = archivedShape.safeParse(s.archived);
+    const dated = a.success && !a.data.unreadable && !!a.data.at && !Number.isNaN(Date.parse(a.data.at)) && !a.data.at.startsWith("0001-");
+    if (a.success && dated) archived = { at: a.data.at, ...(a.data.hold ? { hold: a.data.hold } : {}) };
+    else { archived = { unreadable: true }; if (!a.success) unparsed.push("archived"); }
+  }
+  const archiveLapsed = pick("archiveLapsed", z.object({ at: z.string().optional() }).passthrough(), s.archiveLapsed);
   const freshness = pick("buildFreshness", freshnessShape, s.buildFreshness);
   const noProgress = pick("noProgress", noProgressShape, s.noProgress);
   const supersededBy = pick("supersededBy", z.string(), s.control?.supersededBy);
@@ -119,7 +130,15 @@ function lenient(s: { archived?: unknown; buildFreshness?: unknown; noProgress?:
       if (unreadable.length !== s.unreadable.length) unparsed.push("unreadable");
     }
   }
-  return { archived, freshness, noProgress, supersededBy, deadline, deadlineReached, sends, sendRecord, disk, unreadable, unparsed };
+  return { archived, archiveLapsed, freshness, noProgress, supersededBy, deadline, deadlineReached, sends, sendRecord, disk, unreadable, unparsed };
+}
+
+/** The loop's display name from status --json naming.displayName, when it is a readable name that differs from the slug. */
+function displayName(naming: unknown, slug: string): string | undefined {
+  const n = typeof naming === "object" && naming !== null ? Reflect.get(naming, "displayName") : undefined;
+  if (typeof n !== "string") return undefined;
+  const clean = n.replace(/\s+/g, " ").trim().slice(0, 120);
+  return clean && clean !== slug ? clean : undefined;
 }
 
 const actionSchema = z.enum(["pause", "resume", "stop"]);
@@ -281,11 +300,13 @@ export default async function plugin(bb: BbPluginApi) {
       ...(f.unreadable.length ? { unreadable: f.unreadable.slice(0, 8).map(u => ({ file: u.file.slice(0, 64), problem: u.problem.slice(0, 40), ...(u.offset !== undefined ? { offset: u.offset } : {}), remedy: u.remedy.slice(0, 1200) })) } : {}),
       ...(f.unparsed.length ? { unparsed: f.unparsed.slice(0, 8) } : {}),
       ...(f.noProgress?.availability === "flagged" ? { noProgress: { text: f.noProgress.text.slice(0, 400) } } : {}),
-      ...(f.archived ? { archived: { at: f.archived.at.slice(0, 40), ...(f.archived.note ? { note: f.archived.note.slice(0, 300) } : {}), ...(f.archived.hold ? { hold: f.archived.hold.slice(0, 40) } : {}), ...(f.archived.unreadable ? { unreadable: true } : {}) } } : {}),
+      ...(f.archived ? { archived: { ...(f.archived.at ? { at: f.archived.at.slice(0, 40) } : {}), ...(f.archived.hold ? { hold: f.archived.hold.slice(0, 40) } : {}), ...(f.archived.unreadable ? { unreadable: true } : {}) } } : {}),
+      ...(f.archiveLapsed ? { archiveLapsed: { ...(f.archiveLapsed.at ? { at: f.archiveLapsed.at.slice(0, 40) } : {}) } } : {}),
       ...(f.freshness ? { buildFreshness: { state: f.freshness.state.slice(0, 24), text: f.freshness.text.slice(0, 200), ...(f.freshness.detail ? { detail: f.freshness.detail.slice(0, 600) } : {}), ...(f.freshness.command ? { command: f.freshness.command.slice(0, 400) } : {}), ...(f.freshness.action ? { action: f.freshness.action.slice(0, 300) } : {}) } } : {}),
     },
     ...(BUILD_LABEL && isBuildLabel(BUILD_LABEL) ? { pluginBuild: BUILD_LABEL } : {}),
     loop: s.loop,
+    ...(displayName(s.naming, s.loop) ? { displayName: displayName(s.naming, s.loop) } : {}),
     configPath,
     controlState: s.controlState,
     note: control.note ?? null,
