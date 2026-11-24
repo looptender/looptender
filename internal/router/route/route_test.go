@@ -204,12 +204,12 @@ func TestServedLatchesTheSubscriptionLeft(t *testing.T) {
 
 	later := t0.Add(time.Hour)
 	// A reading that dropped a little (noise) does not bring it back.
-	Observe(&st, set, "main", Observation{Kind: Reading, At: later, Windows: []Window{{UsedPercent: 88, ResetsAt: t0.Add(48 * time.Hour)}}})
+	Observe(&st, set, "main", Observation{Kind: Reading, At: later, Windows: []Window{{Name: "seven_day", UsedPercent: 88, ResetsAt: t0.Add(48 * time.Hour)}}})
 	if got := Choose(st, set, Request{Conversation: "c1", Now: later}); got.Subscription != "spare" {
 		t.Fatalf("traded back on a reading above the release level: %+v", got)
 	}
 	// One under the release level does.
-	Observe(&st, set, "main", Observation{Kind: Reading, At: later, Windows: []Window{{UsedPercent: 40, ResetsAt: t0.Add(48 * time.Hour)}}})
+	Observe(&st, set, "main", Observation{Kind: Reading, At: later, Windows: []Window{{Name: "seven_day", UsedPercent: 40, ResetsAt: t0.Add(48 * time.Hour)}}})
 	if got := Choose(st, set, Request{Conversation: "c1", Now: later}); got.Subscription != "main" || got.Reason != SwitchBack {
 		t.Fatalf("no switch back after a fresh low reading: %+v", got)
 	}
@@ -241,7 +241,7 @@ func TestPlacementsSpreadBeforeTheNextReading(t *testing.T) {
 		t.Fatalf("placed %v, want 3 on main (87, 88, 89) and the rest on spare", on)
 	}
 	// A reading replaces the estimate.
-	Observe(&st, set, "main", Observation{Kind: Reading, At: t0, Windows: []Window{{UsedPercent: 87.2, ResetsAt: t0.Add(time.Hour)}}})
+	Observe(&st, set, "main", Observation{Kind: Reading, At: t0, Windows: []Window{{Name: "seven_day", UsedPercent: 87.2, ResetsAt: t0.Add(time.Hour)}}})
 	if st.Order[0].Placed != 0 {
 		t.Fatalf("reading kept the estimate: %+v", st.Order[0])
 	}
@@ -332,7 +332,7 @@ func TestStaleReadingSpreadsNewConversations(t *testing.T) {
 		t.Fatalf("placed %v, want two on each", on)
 	}
 	// With a fresh reading far from the threshold, the person's order rules.
-	Observe(&st, set, "main", Observation{Kind: Reading, At: t0, Windows: []Window{{UsedPercent: 60, ResetsAt: t0.Add(time.Hour)}}})
+	Observe(&st, set, "main", Observation{Kind: Reading, At: t0, Windows: []Window{{Name: "seven_day", UsedPercent: 60, ResetsAt: t0.Add(time.Hour)}}})
 	for i := 4; i < 7; i++ {
 		c := fmt.Sprintf("c%d", i)
 		if d := Choose(st, set, Request{Conversation: c, Now: t0}); d.Subscription != "main" {
@@ -371,5 +371,47 @@ func TestExpireByAge(t *testing.T) {
 	}
 	if !st.Pins["future"].LastUsed.Equal(t0) {
 		t.Fatalf("a pin from the future kept its time: %v", st.Pins["future"])
+	}
+}
+
+// An answer that names only some windows does not erase the others: the
+// provider's ordinary answers carry the weekly window and leave the
+// five-hour one out.
+func TestReadingMergesIntoWhatIsKnown(t *testing.T) {
+	set := Defaults()
+	st := state(nil, Subscription{ID: "main"}, sub("spare", 10))
+	Observe(&st, set, "main", Observation{Kind: Reading, At: t0, Windows: []Window{
+		{Name: "five_hour", UsedPercent: 99, ResetsAt: t0.Add(2 * time.Hour)},
+		{Name: "seven_day", UsedPercent: 40, ResetsAt: t0.Add(72 * time.Hour)},
+	}})
+	Observe(&st, set, "main", Observation{Kind: Reading, At: t0.Add(time.Minute), Windows: []Window{
+		{Name: "seven_day", UsedPercent: 41, ResetsAt: t0.Add(72 * time.Hour)},
+	}})
+	if got := st.Order[0].Windows; len(got) != 2 {
+		t.Fatalf("windows %+v: the five-hour window was forgotten", got)
+	}
+	if d := Choose(st, set, Request{Conversation: "c1", Now: t0.Add(time.Minute)}); d.Subscription != "spare" {
+		t.Fatalf("a full five-hour window no answer named again was ignored: %+v", d)
+	}
+	for _, w := range st.Order[0].Windows {
+		if w.Name == "seven_day" && w.UsedPercent != 41 {
+			t.Fatalf("the named window was not replaced: %+v", w)
+		}
+	}
+	// A window whose reset has passed is dropped at the next reading.
+	Observe(&st, set, "main", Observation{Kind: Reading, At: t0.Add(3 * time.Hour), Windows: []Window{
+		{Name: "seven_day", UsedPercent: 42, ResetsAt: t0.Add(72 * time.Hour)},
+	}})
+	if got := st.Order[0].Windows; len(got) != 1 || got[0].Name != "seven_day" {
+		t.Fatalf("windows %+v", got)
+	}
+	// A subscription latched as full is not released by a reading that
+	// names only a window that was never the full one.
+	st = state(nil, sub("main", 10))
+	st.Order[0].Windows = []Window{{Name: "five_hour", UsedPercent: 95, ResetsAt: t0.Add(2 * time.Hour)}}
+	st.Order[0].LatchUntil = t0.Add(2 * time.Hour)
+	Observe(&st, set, "main", Observation{Kind: Reading, At: t0, Windows: []Window{{Name: "seven_day", UsedPercent: 40, ResetsAt: t0.Add(72 * time.Hour)}}})
+	if st.Order[0].LatchUntil.IsZero() {
+		t.Fatal("a reading of another window released the latch")
 	}
 }

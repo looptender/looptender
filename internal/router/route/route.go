@@ -463,6 +463,22 @@ func Expire(st *State, set Settings, now time.Time) {
 	}
 }
 
+// merge puts a reading's windows into what is known, by name. A known
+// window the reading does not name is kept until its own reset has passed.
+func merge(known, read []Window, at time.Time) []Window {
+	out := make([]Window, 0, len(known)+len(read))
+	named := map[string]bool{}
+	for _, w := range read {
+		named[w.Name] = true
+	}
+	for _, w := range known {
+		if !named[w.Name] && (w.ResetsAt.IsZero() || w.ResetsAt.After(at)) {
+			out = append(out, w)
+		}
+	}
+	return append(out, read...)
+}
+
 // Kind is what an answer said about the subscription that gave it.
 type Kind int
 
@@ -507,12 +523,14 @@ func Observe(st *State, set Settings, id string, o Observation) {
 		if len(o.Windows) == 0 {
 			return
 		}
-		s.Windows, s.ReadAt, s.Placed = o.Windows, o.At, 0
+		// An answer does not carry every window every time: what it names
+		// replaces what was known of those windows, and the others stay.
+		s.Windows, s.ReadAt, s.Placed = merge(s.Windows, o.Windows, o.At), o.At, 0
 		if !s.HoldUntil.After(o.At) {
 			s.HoldUntil, s.HoldSetAt = time.Time{}, time.Time{}
 		}
 		under := true
-		for _, w := range o.Windows {
+		for _, w := range s.Windows {
 			if w.UsedPercent >= set.Release && (w.ResetsAt.IsZero() || w.ResetsAt.After(o.At)) {
 				under = false
 			}
