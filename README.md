@@ -64,7 +64,7 @@ Agent tools have their own loops, retries and background agents, and each of the
 | Antigravity CLI, as the first route only | in source |
 | Observing a sessionpipe session; Telegram, Slack, Discord, ntfy and Pushover alerts | in source |
 | macOS menu | in source (developer build) |
-| Loops across devices; sending through sessionpipe | planned |
+| Loops across devices; waking an observed sessionpipe session | planned |
 
 What has been verified for each, and what is still open, is in [availability](docs/availability.md).
 
