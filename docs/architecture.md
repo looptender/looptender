@@ -59,6 +59,9 @@ internal/ciwait             wait for CI on an exact commit
 internal/router/route       the account router's decision, pure: which subscription serves a request of a conversation; nothing uses it yet (design/router.md)
 internal/router/front       the account router's forwarding front: one fixed upstream, a bounded wait for a decision, unchanged pass-through on any failure; what it knows of a provider is a Profile (Claude Code, and Codex on paper); standard library only, reads and writes no file; nothing starts it yet
 internal/router/limits      a provider's limit headers, as the front reports them, read into the routing decision's windows; pure
+internal/router/core        the account router's deciding process without the outside: the routing decision, what the front reports, and an interface for logins that nothing here implements
+internal/router/channel     the private channel between the front and the router: a Unix socket in a directory closed to everyone else, the peer checked to be the same user; Unix only
+internal/router/loopcert    the front's loopback certificate: a self-signed leaf that cannot sign others, valid for loopback names only
 internal/router/standin     test-only stand-in for a provider's API that records header names and the shape of a credential, never a value
 ```
 

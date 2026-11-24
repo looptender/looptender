@@ -21,6 +21,7 @@ package front
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -221,6 +222,10 @@ type Counts struct {
 	// that went on their own login instead, because the account they name
 	// could not be changed safely.
 	Unroutable int64
+	// Handshakes and HandshakesFailed count TLS connections that completed
+	// their handshake and that did not. Failures with no successes mean
+	// clients are pointed at the front and do not trust its certificate.
+	Handshakes, HandshakesFailed int64
 }
 
 // Front is one running front.
@@ -230,6 +235,7 @@ type Front struct {
 	srv *http.Server
 
 	open, missed, skipped, unroutable atomic.Int64
+	handshakes, handshakesFailed      atomic.Int64
 
 	mu         sync.Mutex
 	decisions  map[string]Decision
@@ -264,6 +270,67 @@ func (f *Front) Serve(ln net.Listener) error {
 	return nil
 }
 
+// ServeTLS answers requests on ln over TLS with cert, the front's own
+// loopback certificate, until Stop. It counts the handshakes that complete
+// and those that fail.
+func (f *Front) ServeTLS(ln net.Listener, cert tls.Certificate) error {
+	return f.Serve(&handshaking{
+		Listener: ln,
+		front:    f,
+		config:   &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
+		ready:    make(chan net.Conn),
+		done:     make(chan struct{}),
+	})
+}
+
+// handshaking is a listener that completes the TLS handshake itself, so it
+// can count the ones that fail, and hands on only connections that
+// completed it.
+type handshaking struct {
+	net.Listener
+	front  *Front
+	config *tls.Config
+	once   sync.Once
+	ready  chan net.Conn
+	done   chan struct{}
+}
+
+func (h *handshaking) Accept() (net.Conn, error) {
+	h.once.Do(func() { go h.accept() })
+	select {
+	case c := <-h.ready:
+		return c, nil
+	case <-h.done:
+		return nil, net.ErrClosed
+	}
+}
+
+func (h *handshaking) accept() {
+	for {
+		c, err := h.Listener.Accept()
+		if err != nil {
+			close(h.done)
+			return
+		}
+		go func() {
+			t := tls.Server(c, h.config)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := t.HandshakeContext(ctx); err != nil {
+				h.front.handshakesFailed.Add(1)
+				c.Close()
+				return
+			}
+			h.front.handshakes.Add(1)
+			select {
+			case h.ready <- t:
+			case <-h.done:
+				t.Close()
+			}
+		}()
+	}
+}
+
 // Stop stops accepting and lets open requests finish until ctx ends. It
 // returns how many were open when it was called and how many it cut.
 func (f *Front) Stop(ctx context.Context) (open, cut int) {
@@ -277,7 +344,7 @@ func (f *Front) Stop(ctx context.Context) (open, cut int) {
 
 // Counts returns the front's tallies.
 func (f *Front) Counts() Counts {
-	return Counts{Open: f.open.Load(), Missed: f.missed.Load(), Skipped: f.skipped.Load(), Unroutable: f.unroutable.Load()}
+	return Counts{Open: f.open.Load(), Missed: f.missed.Load(), Skipped: f.skipped.Load(), Unroutable: f.unroutable.Load(), Handshakes: f.handshakes.Load(), HandshakesFailed: f.handshakesFailed.Load()}
 }
 
 // Replace gives the front a new decision for a conversation, when the

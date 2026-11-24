@@ -3,6 +3,8 @@ package front_test
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"go/parser"
@@ -21,6 +23,7 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/router/front"
+	"github.com/looptender/looptender/internal/router/loopcert"
 	"github.com/looptender/looptender/internal/router/standin"
 )
 
@@ -972,5 +975,71 @@ func TestTrickledUploadIsCutByTheTotalBound(t *testing.T) {
 	}
 	if bodies, _ := g.sent(); len(bodies) != 0 {
 		t.Fatal("a trickled request reached the provider")
+	}
+}
+
+// Over TLS with its own loopback certificate, the front counts the
+// handshakes that complete and those that fail. A client that does not
+// trust the certificate never gets as far as sending a request, or a login.
+func TestServeTLSCountsHandshakes(t *testing.T) {
+	up := &standin.Upstream{}
+	provider := httptest.NewServer(up)
+	defer provider.Close()
+	u, _ := url.Parse(provider.URL)
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := front.New(front.Config{Upstream: u, Port: ln.Addr().(*net.TCPAddr).Port}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, certPEM, err := loopcert.New(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	go f.ServeTLS(ln, cert)
+	defer f.Stop(context.Background())
+
+	get := func(roots *x509.CertPool) error {
+		client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, TLSClientConfig: &tls.Config{RootCAs: roots}}, Timeout: 10 * time.Second}
+		req, _ := http.NewRequest(http.MethodPost, "https://"+ln.Addr().String()+"/v1/messages", strings.NewReader("{}"))
+		req.Header.Set("Authorization", "Bearer "+ownLogin)
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("status %d", resp.StatusCode)
+		}
+		return nil
+	}
+	trusting := x509.NewCertPool()
+	if !trusting.AppendCertsFromPEM(certPEM) {
+		t.Fatal("the certificate's PEM could not be read")
+	}
+	if err := get(trusting); err != nil {
+		t.Fatalf("a client that trusts the certificate: %v", err)
+	}
+	if err := get(x509.NewCertPool()); err == nil {
+		t.Fatal("a client that does not trust the certificate was served")
+	}
+	// Something that is not TLS at all.
+	if conn, err := net.Dial("tcp4", ln.Addr().String()); err == nil {
+		fmt.Fprintf(conn, "GET /v1/messages HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\n\r\n", ln.Addr().String(), ownLogin)
+		io.Copy(io.Discard, conn)
+		conn.Close()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for f.Counts().HandshakesFailed < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if c := f.Counts(); c.Handshakes != 1 || c.HandshakesFailed != 2 {
+		t.Fatalf("counts %+v", c)
+	}
+	if n := len(up.Records()); n != 1 {
+		t.Fatalf("%d requests reached the provider, want the one from the trusting client", n)
 	}
 }
