@@ -10,6 +10,13 @@ $GITHUB_OUTPUT, and a line to the job summary saying why.
     on every push to a ready pull request, and always in the merge queue, so
     nothing reaches main without a full run. Drafts that are pushed many times
     no longer take macOS runners.
+  - A ready (non-draft) pull request run takes one macOS job, "Other checks"
+    (Swift build and tests, the macOS-only checks), and not the three macOS race
+    partitions. The race partitions run on macOS only in the merge queue (and
+    on a manual full run), which is the enforced proof before anything lands.
+    GitHub gives this organisation about five concurrent macOS jobs, and a full
+    run takes four. Only an explicit non-draft pull request is reduced: an
+    unknown draft flag is doubt and runs everything.
   - The exception: a draft that changes files only the macOS "Other checks"
     job exercises (the Swift menu under integrations/macos: `swift build`,
     `swift test` and the contract smoke check) also runs that one job on macOS,
@@ -62,6 +69,9 @@ def plan(event, draft, passed_merge_group, changed_files=None):
                                         'They run when it is marked ready, on later pushes and in the merge queue.'), FULL
         return UBUNTU_ONLY, False, ('Draft pull request: macOS jobs are skipped. They run when it is marked ready, '
                                     'on later pushes to it, and in the merge queue.'), UBUNTU_ONLY
+    if event == 'pull_request' and draft == 'false':
+        return UBUNTU_ONLY, False, ('Ready pull request: the macOS "Other checks" job runs; the macOS race partitions '
+                                    'run in the merge queue, which always runs everything.'), FULL
     if event == 'push':
         try:
             run = passed_merge_group()

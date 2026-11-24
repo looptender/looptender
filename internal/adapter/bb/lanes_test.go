@@ -305,7 +305,7 @@ func TestDecodedFieldsAreAnAllowlist(t *testing.T) {
 		rateLimits resetsAt resetsAtMs retries retryOfRequestId retrySchema scannedAt seq status systemMessageKind
 		systemMessageSubject thread threadId turnSeq turnStartedMs type willRetry windows childOutcomeSeq blocked key lanes answeringRequest
 		evidence at class retryKnown activeBackgroundAgentCount turnStartSeq openTools toolsUncertain fallbackSeq turnRequests turnStarts
-		title label providerKey reachedReason window`)
+		title label providerKey reachedReason window execution model`)
 	want := map[string]bool{}
 	for _, tag := range allowed {
 		want[tag] = true

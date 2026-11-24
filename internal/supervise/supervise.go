@@ -77,15 +77,26 @@ type Options struct {
 	BacklogQuery prbacklog.Query // nil uses fixed read-only gh query when opted in
 	// UsageRead reads an account's quota for the loop's usage watch; nil
 	// reads nothing, so the watch never warns.
-	UsageRead   UsageReadFunc
-	Fingerprint func([]string) (string, error)
-	NewAdapter  factory.Func
-	Probe       ProbeFunc
-	Reporter    report.Reporter
-	Busy        func(ctx context.Context, y config.Yield) (bool, error)
+	UsageRead UsageReadFunc
+	// AccountCheck runs the accounts catalog's own login check (the CLI's
+	// version and auth status: no model request) of an entry, so its login
+	// fingerprint is current. Called when the active target is at a usage
+	// limit and its route states the entry; nil checks nothing.
+	AccountCheck func(ctx context.Context, account string)
+	Fingerprint  func([]string) (string, error)
+	NewAdapter   factory.Func
+	Probe        ProbeFunc
+	Reporter     report.Reporter
+	Busy         func(ctx context.Context, y config.Yield) (bool, error)
 	// Online reports connectivity once. Nil uses the loop's network settings;
 	// a loop with the check off is never checked.
 	Online func(ctx context.Context) bool
+	// HostLoad reads this computer's load level (hostcheck levels). Nil
+	// reads it (hostcheck.System).
+	HostLoad func() string
+	// HostSession reports whether this computer's login session is available
+	// to background processes. Nil reads it (hostcheck.System).
+	HostSession func(ctx context.Context) bool
 	// Clock reads wall time for the check's time budget. Now is the logical
 	// check time and may be fixed; Clock always advances.
 	Clock func() time.Time
@@ -171,6 +182,10 @@ type Result struct {
 	// Recovery says how a re-prompt was carried out: turn_retry re-ran the
 	// failed turn by reference with no new text, prompt sent the wake text.
 	Recovery string `json:"recovery,omitempty"`
+	// ModelStep is stepped_down when this check moved the conversation to a
+	// weaker model at a model-specific limit, stepped_back when it moved it
+	// back after that window reset (modelstep.go).
+	ModelStep string `json:"modelStep,omitempty"`
 	// Lanes is the lane work this check did under bb.children.retry_errored:
 	// counts only. Absent when it did none.
 	Lanes *state.LaneCheck `json:"lanes,omitempty"`
@@ -215,8 +230,16 @@ type Result struct {
 	// that needs the network was not attempted, "down_untrusted" when it
 	// failed but is not believed, and "restored" when it passed after an
 	// outage, with NetworkDownFor saying how long the check had failed.
-	Network        string `json:"network,omitempty"`
-	NetworkDownFor string `json:"networkDownFor,omitempty"`
+	Network string `json:"network,omitempty"`
+	// HostSession is "unavailable" when a provider's sign-in failed while
+	// this computer's login session was unavailable to background processes,
+	// so nothing was sent and no hold raised, and "restored" on the check
+	// that finds it back.
+	HostSession string `json:"hostSession,omitempty"`
+	// HostOverloadTold: this check told the session the computer is
+	// overloaded while its children run (once per overload).
+	HostOverloadTold bool   `json:"hostOverloadTold,omitempty"`
+	NetworkDownFor   string `json:"networkDownFor,omitempty"`
 	// MissingWorktrees counts registered Git worktrees left out of the
 	// progress fingerprint because their directories are gone.
 	MissingWorktrees int `json:"missingWorktrees,omitempty"`
@@ -382,7 +405,9 @@ type tick struct {
 	// handoffObs is the observation a handoff in this check was made on.
 	handoffObs decide.Observation
 	// waiting is the child picture this check observed, for the run graph.
-	waiting *graphWaiting
+	waiting        *graphWaiting
+	hostEpisode    *hostEpisode
+	hostEpisodeWas hostEpisode
 }
 
 func (t *tick) warn(format string, a ...any) {
@@ -935,11 +960,15 @@ func (t *tick) run() error {
 		res.ResetsAt = &r
 	}
 	t.noteUsageLimit(target, agent, obs)
+	t.limitAccountCheck(agent, obs)
 	inWindow, why, err := window.Inside(loop.Window, t.now)
 	if err != nil {
 		return err
 	}
 	res.Window = why
+	if done, err := t.modelStep(a, target, obs, inWindow); done {
+		return t.record(err)
+	}
 
 	// Fallback health: scheduled probes, then the redundancy picture.
 	var summary health.Summary
@@ -1073,9 +1102,11 @@ func (t *tick) run() error {
 		// recovery, the hung-turn rule, the check's own) treats an observed
 		// target as never woken, not only the ones made through t.decide.
 		ObservedOnly: t.observedOnly(),
+		ObservedWake: t.observedWake(),
 	}
 	in.AssignmentReady = t.assignmentObservation(a, obs)
 	in.UsageWarning = t.usageWatchObservation()
+	in.HostOverload = t.hostOverloadObservation(obs)
 	in.IdleSpacing = t.idleSpacingInput(obs, ctl)
 	// A loop held for a restricted turn runs no check until a person resumes
 	// it. Reaching this point with that same turn still showing therefore
@@ -1169,6 +1200,8 @@ func (t *tick) run() error {
 		t.decisionInput = in
 		d = t.decide("network_down", in)
 	}
+	d = t.gateHostSession(obs, in, d)
+	d = t.gateObservedWake(d)
 	if t.st.SkipHandoffOnce && !t.opts.DryRun {
 		t.st.SkipHandoffOnce = false
 		if d.Action == decide.Handoff || d.Action == decide.SwitchBack {
@@ -2002,6 +2035,11 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 			}
 		}
 		text, usageCarried := t.usageWarningText(d, text)
+		if d.HostOverloadWake {
+			text = prompt.HostOverloadOnly(t.decisionInput.Obs.ActiveChildren)
+		}
+		var stepCarried bool
+		text.Text, stepCarried = t.withModelStepNote(text.Text)
 		var backlogNotice *backlogDelivery
 		if d.Action == decide.Wake && !d.AssignmentWake && !text.NoticeOnly && loop.PRBacklog != nil {
 			var allowed bool
@@ -2041,6 +2079,12 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 		}
 		t.childNoticeSent(childErrors, err)
 		t.usageWarningSent(usageCarried, err)
+		if d.HostOverloadWake && err == nil {
+			t.hostEp().OverloadToldAt = t.now
+			t.saveHostEpisode()
+			t.res.HostOverloadTold = true
+		}
+		t.modelStepNoteSent(stepCarried, err)
 		// The adapter was called: count the attempt whatever it returned, so a
 		// failing or unsupported send cannot repeat on every check outside the
 		// per-episode caps and spacing.

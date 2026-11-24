@@ -220,6 +220,20 @@ card has more than one ("opus-example: Five-hour allowance was out when read
 newest reading, or that no reading is recorded.
 Being out is information, not a warning.
 
+### Which login: a fingerprint, never the identity
+
+Unreleased.
+- **What is kept.** For a Claude entry, `accounts check` also keeps a fingerprint of the login that `claude auth status --json` reports: the account's email address and organisation, keyed with the catalog's own salt (HMAC-SHA256, 128 bits). The identity is never stored, printed or sent. The fingerprint means nothing outside this catalog. It is kept in `account-logins.json` beside the catalog, a record older builds never read, with the check that saw it and the different fingerprint before it, if the login changed.
+- **What it says.** Each account card (`accounts list --json`, the panel's Accounts) gains `login`:
+  - `same_as`: "Same login as <other label>." when another entry of that provider has the same fingerprint, so two entries are one subscription;
+  - `changed`: "A different login than when checked on <date>." when the entry's directory was logged in to another account since its previous check, so its label may name the old login;
+  - `checked` otherwise.
+- **When it is checked.**
+  - Each `accounts check`.
+  - Automatically when a check finds the loop's active target at a usage limit and its route states the entry (`account`). That runs the same cheap check (the CLI's `--version` and `auth status`, with no model request), at most once an hour per entry, and never on a dry run.
+  - A route that states no account is not checked, because which login it uses is not known.
+- **Codex** reports no identity in `login status`, so its entries have no fingerprint.
+
 ### Routes with unknown accounts
 
 Only catalog entries count as selected accounts in the Accounts page and
@@ -807,6 +821,100 @@ registry/route-list plus 64 detailed quota fixture requires the existing main
 6 MiB regression threshold; all quota rows remain obtainable in the separate
 1 MiB response. Native remains bounded to 1 MiB.
 
+
+## Connect a subscription from a terminal (unreleased)
+
+One command connects another subscription of a provider you already use:
+
+```sh
+looptender accounts connect --provider claude-code --label "spare"
+looptender accounts connect --provider codex --label "spare"
+```
+
+What it does, in order:
+
+1. It makes a new private directory for the login inside the account catalog's
+   directory. It never uses a directory a session already runs in.
+2. It runs the provider's own sign-in in that directory (`claude auth login`,
+   or Codex's sign-in). You finish it in your browser. looptender does not see,
+   ask for or copy the login. For Codex it prints the provider's sign-in
+   address in case no browser opens.
+3. It asks the provider's tool whether the sign-in worked.
+4. It adds the directory to the catalog under your label, as an
+   `explicit_directory` entry.
+
+- **Run it yourself, in a terminal.** It opens a sign-in on your screen. It
+  refuses in an agent's session, under a supervisor, or when its input or
+  output is not a terminal (with `--json`, only its input must be one).
+- **Where the executable comes from:** the first entry of that provider already
+  in the catalog supplies the executable and working directory; `--like` names
+  another entry to take them from, and `--cli` and `--workdir` name them
+  directly, which is how the first entry of a provider is connected.
+- **It refuses, before any sign-in:**
+  - a label that is empty, has a space at either end, a control character or
+    more than 120 characters, and, with its own message, a label another
+    account has;
+  - a shell that sets a provider's authentication variable (run it from a plain
+    terminal);
+  - a provider executable it cannot admit. For Claude Code that is any build
+    other than the one this release was checked against; the message names it
+    and says how to sign in yourself and use `accounts add` instead.
+- **Antigravity:** a second account cannot be connected. Antigravity keeps one
+  login per computer, and the command says so.
+- **The same account twice:** for Claude Code, the command then compares the
+  new login with the Claude Code logins already connected, by the catalog's
+  keyed login fingerprint (never the identity itself). If it is the same
+  account as one of them, it says which, says that it adds no second quota,
+  and takes the new entry out again; the signed-in directory is kept and
+  named. To compare, it runs the catalog's own check (`claude auth status`) on
+  the new entry and on any other Claude Code entry not checked before.
+- **Not compared:** Codex logins, because Codex's status names no account,
+  and any login whose check fails. The command then says "Not checked", and
+  two entries may be one quota.
+- **What the provider's tool is given:** a short list of variables and no
+  others: where it lives and writes (`PATH`, `HOME`, the temporary and `XDG_`
+  directories), who and where you are (user, locale, time zone), what opening
+  a browser needs, and the proxy and certificate variables, on purpose, since
+  the sign-in has to reach the provider from your network. No token variable
+  is passed.
+- **If no browser opens:** for Codex the command prints the provider's sign-in
+  address. For Claude Code it does not read the tool's output, so it tells you
+  at the start to press Ctrl-C after a minute. It then keeps the private
+  directory and prints the two commands that finish by hand: the provider's
+  sign-in in that directory, and `accounts add` for it.
+- **If the sign-in fails, is cancelled or takes longer than ten minutes:**
+  nothing is added. If the provider wrote anything into the private directory
+  it is kept, and the message says where it is (`--json` says
+  `directoryKept`); an untouched one is removed, together with the one
+  configuration file looptender writes for Codex. When a login turns out to be
+  an account already connected, its directory is kept signed in and the
+  message gives the command to sign it out.
+- **Platforms:** as for the panel's Connect: Codex on macOS and Linux, Claude
+  Code on macOS arm64. Not Windows.
+
+To take a subscription out of the list:
+
+```sh
+looptender accounts disconnect --label "spare"
+```
+
+This removes the entry from the catalog and nothing else.
+
+- It refuses when a loop registered on this computer uses the account, in a
+  route or in its usage watch, and names each one. A loop that is not
+  registered here is not seen. It also refuses when it could not read
+  every loop to find out. `--force` disconnects anyway; `looptender doctor`
+  then reports the route that names a missing account.
+- It does not sign the login out and does not delete its directory. For a
+  directory of its own it prints the provider's sign-out command, for you to
+  run. For this computer's own login (an `inherited` entry) it prints none,
+  because that would sign out every session using it, and says so.
+
+`looptender accounts list` shows each entry with its provider, label and the
+last reported login state; `accounts check` refreshes that state and `accounts
+usage` reads a subscription's usage windows.
+
+Tested with stand-ins only. No real sign-in was run for this change.
 
 ## Connect an account in the panel (unreleased)
 

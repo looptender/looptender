@@ -139,7 +139,7 @@ func TestNoticesGroupManyLoopsStoppedByOneLimit(t *testing.T) {
 			t.Errorf("one cause, one group: %q %q", n.Group, ns[0].Group)
 		}
 	}
-	if got := noticeGroupSentence(ns[0].GroupText, 5); got != "5 loops stopped: usage limit until Sat 04:00." {
+	if got := noticeGroupSentence(ns[0].GroupText, 5); got != "5 loops stopped: usage limit." {
 		t.Errorf("%q", got)
 	}
 	// A loop that moved on to its next route is not stopped, and is not grouped with them.
@@ -357,7 +357,7 @@ func TestTheLimitIDHoldsForTheSameWindowAndChangesWithANewOne(t *testing.T) {
 	first := func(l dockLoop) panelNotice { return reportNotices([]dockLoop{l}, nil, noticeNow)[0] }
 	a := first(mk(base, "seven_day"))
 	// The text tells the real minute, not the hour it falls in.
-	if a.Text != "example-api stopped: weekly usage limit until Sat 04:55." || a.GroupText != "{n} loops stopped: weekly usage limit until Sat 04:55." {
+	if a.Text != "example-api stopped: weekly usage limit until Sat 04:55." || a.GroupText != "{n} loops stopped: weekly usage limit." {
 		t.Errorf("%q / %q", a.Text, a.GroupText)
 	}
 	// A reset read differently by seconds or minutes, even across the top of an hour, is the same limit.
@@ -381,8 +381,13 @@ func TestTheLimitIDHoldsForTheSameWindowAndChangesWithANewOne(t *testing.T) {
 	// The action is said in short fixed words by kind, which the record keeps; never its command.
 	l := mk(base, "seven_day")
 	l.UsageLimit.Actions = []usageAction{{Kind: "login_bb_directory", Command: "claude auth login --secret"}}
+	// Said only when the catalog has another account; with none there is nothing to offer.
+	if got := first(l).Text; got != "example-api stopped: weekly usage limit until Sat 04:55." {
+		t.Errorf("no other account, no offer: %q", got)
+	}
+	l.UsageLimit.OtherAccounts = 1
 	n := first(l)
-	if !strings.HasSuffix(n.Text, "Another Claude account can take over; see the panel.") || strings.Contains(n.Text, "secret") || len(n.Text) > 140 {
+	if !strings.HasSuffix(n.Text, "Another configured account may have quota; see the panel.") || strings.Contains(n.Text, "secret") || len(n.Text) > 140 {
 		t.Errorf("%q", n.Text)
 	}
 	l.UsageLimit.Actions = []usageAction{{Kind: "a kind added later"}}

@@ -50,6 +50,32 @@ Foreground startup prints the control state, then tick results; Ctrl-C ends the 
 
 The background daemon disconnects from terminal input/output. Tick decisions and outcomes remain in private `state.json` and `runs.jsonl`; raw daemon stdout/stderr is discarded. Use `status`, `doctor`, and, when troubleshooting raw command errors, foreground mode. `pause`, `complete`, `await-user`, and `disable` hold future work while the daemon stays alive. `stop` stops the agent on a check and holds future prompts; it does not exit the daemon. To end the daemon itself, terminate the printed PID (SIGTERM on Unix, `Stop-Process -Id <PID>` in PowerShell). Ending it does not stop the agent.
 
+**Started inside a BB thread.** Unreleased. That it survives a BB restart is supported by how it is launched and by tests with stand-in service managers, not by a real BB restart: none has been exercised. A background daemon started from a BB thread (`BB_THREAD_ID` set) used to be that thread's child, so quitting or restarting BB ended it. It is now handed to the user's own service manager as a one-off job outside BB:
+- **macOS:** the job goes in the per-user background domain, `launchctl bootstrap user/<uid> <plist>`, with a property list (`launch-<label>.plist`, label `dev.looptender.loop.<hash>.<random>`) and the script it runs (`launch-<label>.sh`), both in the loop's state directory.
+  - It is not put in the GUI login domain, where `launchctl submit` from a thread would put it: that domain is torn down at logout or when the window server crashes, and a submitted job has no property list to bring it back.
+  - The property list says `LimitLoadToSessionType Background` (without it bootstrap refuses the job), `RunAtLoad`, and no `KeepAlive`.
+  - The script runs the daemon by its launch path (the link it was run by), then, however the daemon ended (a crash, a refusal, an adopted older build, a launch path that no longer exists), removes its two files and boots its job out (`launchctl bootout user/<uid>/<label>`).
+  - When bootstrap is refused, the daemon starts as before, detached, with the warning.
+  - The installed services (`org.keepgoing.loop.*`) are never touched.
+  - **Not verified:** that a real logout leaves the job running, and that the login keychain and DNS stay usable for it while no one is logged in. A throwaway job in this domain ran, reported the Background manager, saw the login keychain and resolved names while the user was logged in; nothing was tried logged out.
+- **Linux:** `systemd-run --user --unit looptender-<hash>-<random> --collect -- …`, a transient user unit with no restart. It lasts as long as the user's systemd manager, which without lingering ends at logout; `start` warns when `loginctl show-user` says lingering is off.
+- **How it starts.**
+  - The daemon gets only what it needs of the starting command's environment: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TZ`, `LANG` and `LC_*`, the `XDG_*` directories, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and looptender's own `LOOPTENDER_*` and `KEEPGOING_*` settings, except test switches (`LOOPTENDER_TEST_*`, `KEEPGOING_TEST_*`), which are never passed.
+  - It also gets exactly the variables the loop's own report names (`url_env`, `secret_env`, `user_env`, defaults included, with each default's earlier `KEEPGOING_` name).
+  - It never gets the thread's ID or any other variable named like a credential (`TOKEN`, `SECRET`, `KEY`, `PASSWORD`, `WEBHOOK`, `AUTH` and the like). `start` lists, by name and never by value, any `LOOPTENDER_*` or `KEEPGOING_*` variable it did not pass, and points to `secret_file`.
+  - The variables reach the daemon through a private file in the state directory, which the daemon reads and removes. They are never put in arguments.
+  - Startup is acknowledged through a second private file. `start` prints the job's name and how to end it (`launchctl bootout user/<uid>/<label>` or `systemctl --user stop ….service`), and `--json` gives `launch` and `job`.
+  - While it runs, `launch-job.json` in the state directory names the job, and `status` (`launchJob`) and `doctor` (`daemon.launch_job`) show it, once the service manager confirms the job is running: on macOS `launchctl print user/<uid>/<label>` must show a process (`pid = …`), on Linux `systemctl --user is-active`. A record left by a daemon killed outright, or a job whose script was killed, is not shown.
+  - If the job's script itself is killed before its last lines (SIGKILL, power loss), its property list and script stay in the state directory and launchd keeps the job with no process. The next `start` clears that first, under the loop's launch lock, which one start holds from its clean-up to its daemon's acknowledgement. It touches only what is certainly stale:
+    - nothing while the loop's daemon lock is held, whatever launchctl says;
+    - only labels of the loop's own shape, `dev.looptender.loop.<12 hex>.<6 hex>`, whose hash is that of its own state directory;
+    - only files directly in the state directory, and none younger than the acknowledgement wait.
+  - Such a job is booted out only when `launchctl print` positively says `state = not running`. Unclear output leaves it alone. Its two files and its `launch-job.json` are then removed.
+  - `daemon-shutdown`, a signal and an archive end the daemon, and the job with it. `stop` stops the agent and leaves the daemon, and so its job, running.
+- **When the manager is missing or refuses.** The daemon starts as before, as the thread's child, with a warning that it stops when BB quits and the advice to run `looptender service install`. `LOOPTENDER_BACKGROUND_LAUNCH=child` asks for that start.
+- **Windows** is not handled. Whether a detached process survives BB quitting there is not established, so `start` says that and suggests starting it from a terminal outside BB.
+- **Which signal ended it.** The daemon's `stopped` record in `runs.jsonl` now carries `extra.signal` (`SIGTERM`, `SIGINT` or `SIGHUP`) when a signal ended it. SIGHUP now ends a daemon cleanly, with that record, instead of killing it. A SIGKILL leaves no record.
+
 Background mode survives the launching terminal closing. It does not install a user service, restart after crashes or reboots, or guarantee survival across OS logout/session cleanup. It cannot execute while the host sleeps or is off. After wake, the next available check applies current controls; there is no catch-up queue of missed ticks. Network errors retain the normal structured-error policy; in v0.2.0, recovery [waits while the connectivity check fails](#network-outages). macOS and Linux user-service management are available separately through [`service install|status|remove`](services.md); live service lifecycle verification remains roadmap work. Windows service support is still planned; see the [Task Scheduler investigation](windows-services.md). Offline fixtures exercise detached startup, parent exit, duplicate refusal, status, holds, and stop with a local process adapter; no live model call or multi-account handoff is part of these checks.
 
 ### How a wake reads in a BB thread
@@ -794,6 +820,28 @@ If recording history fails after the session is reset, the command reports failu
 
 The reset is recorded. `runs.jsonl` gets a `session_reset` event with the target, whether a session was saved, the `--note` text, and who ran it: `by` is `thread` with the BB thread ID, or `terminal` when no thread identity was present. `timeline` shows it in words (`session reset by a BB thread` or `session reset from a terminal or scheduler`) without any identity or session identifier, and keeps it among the records of who had the loop. A build older than this change shows that record's operation as `unavailable`. `--json` prints a `session_reset` object with `target`, `hadSession`, `by` and the holds still in force.
 
+## A wait that ends by itself
+
+`looptender wait -c CONFIG --until CONDITION [--note TEXT] [--for DURATION]` is for a session that cannot go on until something outside it changes, which the supervisor can check by itself without trusting the session:
+
+- `host-session`: this computer's login session is back (the keychain can be reached and someone is logged in at the console);
+- `network`: the loop's connectivity check passes;
+- `time:RFC3339`: that time has come;
+- `limit-reset`: the usage-limit reset recorded for the loop has come (refused when none is recorded).
+
+Any other condition is refused. While the condition does not hold the loop sends nothing, and when it holds the loop carries on by itself at its next check, with no resume: the control record becomes exactly what it was before the wait. A wait is saved as an ordinary await-user hold, so a build without waits sends nothing either and shows it as waiting for a person; this build records the condition in `wait.json` and shows it as a wait: `status` prints `waiting:   waiting for … since …`, `status --json` and `client status` carry `wait` (`until`, `untilTime`, `since`, `expiresAt`, `text`; the note only with `--private`), `doctor` adds `loop.wait`, and the panel and the dock report give the state `waiting_on_condition` with `waiting.kind` `condition`, which needs nobody. After `--for` (default 24 hours, at most 7 days) a wait whose condition never held becomes an ordinary await-user with its reason kept ("waited … for host-session, which did not come"). A stop, a pause, the deadline and the send limits still apply. A wait is refused on a loop that is already held, stopped, paused, finished or off: it ends only its own hold, so it could not end that one. Any change to the control record by anyone while it waits (a person's pause, resume or await-user) ends it as a wait: the record is left as that change made it. When it runs out, the note from before the wait is kept and the reason goes beside it. A `wait.json` the history does not show as made by `wait` (the journal's last control change must be the wait) ends nothing. Waiting on an archived loop is refused.
+
+### Withdrawing the session's own question
+
+A hold set by a person, a terminal, a client or another thread, a stop and a pause are lifted only by a person, as before. The one exception: the loop's owner thread may take back an await-user it set itself, with `looptender await-user --withdraw -c CONFIG --note WHY`, only when
+
+- the await-user was saved by the owner thread (the journal's caller `owner_thread`), with the same owner and generation as now;
+- it is the last control change in the journal, so a hold older than the retained history, or one whose setter the journal does not show, cannot be withdrawn;
+- nothing changed the control record since, by anyone;
+- the loop is not archived.
+
+The withdrawal restores exactly the control record from before that await-user: a person's hold underneath (an await-user, a pause, a stop) stays, so re-running await-user on top of a person's hold and withdrawing it changes nothing a person set. It is journalled as `await-user_withdrawn` by the owner thread, never as a person's resume, and `status` says `question:  the session withdrew its own question: WHY` until the next await-user. It can be done once per await-user.
+
 ## Situations that need a person
 
 - **The agent is waiting on a person.** A pending interaction is reported once as `await_user`, and nothing is sent until it is answered. `keepgoing await-user --note` reports at once and holds the loop until `keepgoing resume`.
@@ -871,6 +919,30 @@ Unreleased, opt-in; **fixtures only**.
 - **One wake.** When the run-out is also within `--warn-within` (default `12h`, 1h to 168h), the agent is told once per window: `[keepgoing:usage-burn window=weekly used=… exhausts=… resets=…]` with one notice. It rides on the ordinary wake of an idle session. A session idle on purpose while its children run gets it alone, once, under the same spacing as the child-error notice, and is told that it is not an instruction to continue. It is recorded as sent only when the send is accepted. A reading whose reset is within an hour of the warned one is the same window, however the reported reset drifts between reads; a new window warns again.
 - **Never acts.** It reads no lane, messages, pauses or stops no child, and changes no route. A failed read is recorded (`reason`) and retried when next due.
 
+### Stepping down a model at one model's weekly limit
+
+Unreleased, opt-in; **fixtures only**. This is the BB-thread version that works today. The account router is meant to supersede or absorb it as a routing decision; its setting (an ordered list of models) would carry over as that router's step-down order.
+
+- **The setting.** `looptender model-step -c CONFIG --models <strongest>,<next>[,…]` (2 to 6 model names, strongest first, at most one of each weekly-limit family: not two opus models) turns it on.
+  - `--off` turns it off and cancels a pending step back: the conversation stays on the model it is on, and the command says so. With no flags, the command shows the setting.
+  - The setting is a record in the state directory (`model-step-setting.json`), not a configuration key. `status` shows it.
+  - It changes the owner's live conversation, so it takes the same owner check as the other controls, and is refused from the supervised conversation and anything its supervisor started, as resume is.
+- **When.** A check finds the loop's own BB conversation at a usage limit whose window is one model's (Claude's `seven_day_<model>`, from BB's rate-limit event; see [which limit](#which-limit-which-account-and-what-you-can-do)), with its reset ahead. That window, not the all-models one, is what blocked it, so the same account still has the other models.
+  - **Matching:** the window's model is matched exactly to each order entry's family, the first part of its name after the provider's (`claude-opus-5-5` is `opus`).
+  - **The step:** if a weaker model follows it, the step is recorded first (`model-step.json`), then the conversation's model is changed (`bb thread update --model`: the same thread, account, settings and hooks). Only then is a send reserved and the failed turn retried by reference, with no text sent. The check makes no other decision.
+  - **Takeover:** at such a limit the step-down runs before any takeover.
+- **When the change fails** (a model not available to that provider, BB refusing it), no send is spent. The failure is recorded and shown in `status`, and a `model_step` notice says so. It is not tried again until that window resets; the usual limit handling goes on.
+- **Telling people and the agent.**
+  - A step down produces a `model_step` notice (info) for the menu and the panel, which ends when the step does.
+  - The agent's next message carries one line: `[keepgoing:model-step to=… from=… resets=…]` and a looptender notice of which model it is on and why. A step back is said the same way.
+- **Not when.** Never for the all-models or 5-hour window, a model not in the order or the last one, a dry run, a fallback target, or a loop that is off, paused, stopped, waiting for a person or finished. With no weaker model left, the loop waits for the reset as before.
+- **Stepping back.** At the first check after the recorded reset that finds the conversation between turns, the model is changed back, but only if the latest turn ran on the weaker model and step-down is still on. BB's turn requests carry their model. Models are compared by weekly-limit family, so an order naming `sonnet` matches BB's `claude-sonnet-…`.
+  - **BB reports no model** for the latest turn: nothing changes and the record is kept, because it cannot be confirmed. The check warns so.
+  - **Already on the stronger model** (a person or the agent moved it): the record is cleared.
+  - **On another model, or step-down off:** it stands down. The model is left as it is; the record, `status` and a `model_step` notice say the conversation stays on that model. The next step-down or `model-step --off` clears it.
+  - A second step-down keeps the first step's model and reset.
+- **Never acts on lanes**, routes or accounts.
+
 ### Which limit, which account, and what you can do
 
 Unreleased. When a check finds the loop's active target at a provider usage limit, it records which window the provider says is blocked and when it resets (`usage-limit.json` in the state directory, its own record rather than a field of `state.json`, so no state format changes and a build without it neither reads nor rewrites it; after a rollback to such a build the record stays as it was, unread, until a newer build's next check replaces or removes it), and `status` says it:
@@ -925,6 +997,16 @@ keepgoing ci-wait --repo example-org/example-app --sha <40-char sha> --branch cb
 ```
 
 This waits until the newest run of every workflow on the exact commit has finished. It looks at the 50 most recent runs on the branch, and it pins the pull request's head commit when it starts. A failed run makes it exit 1. When a run is replaced, for example cancelled by a pull request edit, the newer run of the same workflow is followed. Then it prints each run's jobs. It uses the `gh` CLI, so authentication stays with `gh`. Every `gh` call goes through the network retry below.
+
+## This computer's login session and load
+
+A supervisor keeps running when the login session it was started from ends: a logout, or the window server restarting after it stopped responding. It then cannot reach the login keychain, and may not resolve names, so a provider's command-line tool says it is not logged in and a tool's token reads as invalid, although looptender signed nothing out.
+
+**What a check does then.** When a session is in error with a sign-in failure, the check reads whether this computer's login session is available to background processes: the session is gone when the user's keychain cannot be listed, or when someone was logged in at the console at an earlier check of the same daemon and no one is now (macOS; elsewhere there is no such session to lose). A console that belongs to root all along, as on a headless computer or one at the login window, is not an outage. If the session is gone, the check sends nothing and hands nothing off (no wake, re-prompt, handoff or new thread) and does not raise the sign-in hold; deadlines, send limits, stops and every other hold still apply. It says why: "this computer's login session or network is unavailable to background processes (looptender signed nothing out and read no credentials); waiting for it, nothing sent" (`hostSession: "unavailable"` in the check's record). It never advises signing in again. This lasts at most 45 minutes: after that the sign-in failure is handled as usual (held for a person and reported), with the reason "the login session has been unavailable for 45 min, or the account is signed out". On the first check that finds the session back, the error is taken as the outage's and re-prompted within the usual limits (`hostSession: "restored"`); a sign-in failure after that is a real one and is held for a person as before. Wakes of a healthy session are not checked this way: a wake sent during such an outage fails, and the check after it waits as above.
+
+**Where it shows.** `doctor` reports `host.session` (each part: keychain, name service, console user, each read within two seconds) and `host.load`; `status` adds a `host:` line while the session is unavailable and a `load:` line while the computer is busy, and `status --json`, the dock report and `panel list --json` carry `host`. The notices list has a `host` notice for each.
+
+**Load.** `host.load` compares the one-minute load average with the number of cores: busy (`high`) from 2 per core, or under 10 on the memory reading (on macOS the system's memory pressure level, 100 for none; on Linux the share of memory available); `overloaded` from 4 per core. While a session that is waiting on its children is idle and the computer is overloaded, it is woken once in that overload with a count only: "[keepgoing:host-load lanes=N] looptender notice: the host is overloaded: N lanes running; consider pausing new heavy work". looptender itself never pauses, stops or messages a lane for it. The overload ends when the load falls below that level; the next one is told again.
 
 ## Network outages
 

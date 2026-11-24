@@ -83,7 +83,7 @@ Separately opt in to current goal/review-bound attestation and completed acknowl
 - **Cursor headless:** n/a. Requires a BB primary and explicit assignment lifecycle.
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** n/a. Requires a BB primary and explicit assignment lifecycle.
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
 - **Agent defined in configuration:** n/a. Requires a BB primary and explicit assignment lifecycle.
 
 ### Observe state
@@ -135,7 +135,7 @@ Stop honouring a provider's "retrying" notice when nothing fresh stands behind i
 - **Cursor headless:** n/a. A headless turn is one process that is running, finished or gone. The CLI retries inside that process and reports no retry notice that could go stale.
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** n/a. The status contract has no retry notice.
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
 - **Agent defined in configuration:** n/a. A turn is one process that is running, finished or gone, as for the built-in headless agents.
 
 ### Recover a failed turn: re-prompt
@@ -148,7 +148,7 @@ After an error, send the task prompt again, with backoff, up to errors.max_repro
 - **Cursor headless:** yes, evidence live. A failed turn is re-prompted in its verified session. Live once after a usage-limit failure and after a stop; connection loss is fixture-only. [cursor.md](cursor.md) [`TestCursorRecoversInitializedSessionAfterWrapperCrash`](../internal/adapter/runner/cursor_recovery_test.go) [`TestCursorConnectionLossKeepsSessionAndStaysUnknown`](../internal/adapter/runner/cursor_test.go)
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** yes, evidence fixture. The decision is the same for every adapter and is tested with a fake adapter, not with this one. [`TestErrorRepromptsThenAwaitsUser`](../internal/supervise/supervise_test.go)
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. An errored session is recorded and never re-prompted. [`TestObservedTargetIsNeverWoken`](../internal/decide/observed_test.go)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). An errored session is recorded and never re-prompted. [`TestObservedTargetIsNeverWoken`](../internal/decide/observed_test.go)
 - **Agent defined in configuration:** yes, evidence fixture. Run end to end with a stand-in agent. [`TestDefinedAgentJourney`](../internal/scenario/defined_agent_test.go)
 
 ### Recover a failed turn: exact session resume
@@ -161,7 +161,7 @@ Continue the same conversation by its saved identifier, never "the most recent".
 - **Cursor headless:** yes, evidence live. --resume with the saved session ID, live once across three turns. A new conversation is refused when the previous turn's identity is unverified, unless that turn exited 1 having written nothing on a CLI version whose start order is verified. [cursor.md](cursor.md) [`TestCursorSessionSafety`](../internal/adapter/runner/cursor_test.go) [`TestCursorFreshStartNeedsExactShapeAndVerifiedVersion`](../internal/adapter/runner/cursor_test.go)
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** n/a. The resume command owns session identity.
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
 - **Agent defined in configuration:** partial, evidence fixture. With exact_resume: the resume command with the saved session identifier, read from a declared field or file. An unusable saved identifier, or in unreleased source a finished/crashed attempt with no identifier, holds the loop for a person; no new conversation is started in its place until someone runs looptender session reset. Without exact_resume every turn starts a new session. [`TestDefinedAgentTurnLifecycle`](../internal/adapter/runner/definition_unix_test.go) [`TestDefinedAgentLostSessionHoldsInsteadOfStartingAnother`](../internal/adapter/runner/definition_unix_test.go) [`TestDefinitionSessionFile`](../internal/adapter/runner/definition_test.go)
 
 ### Recover a failed turn: retry the turn
@@ -174,7 +174,7 @@ Ask the provider to retry the failed turn itself, instead of sending a new promp
 - **Cursor headless:** missing, evidence none. A re-prompt is always a new turn in the resumed session.
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** missing, evidence none. The contract has a resume command only.
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
 - **Agent defined in configuration:** missing, evidence none. A re-prompt is always a new turn.
 
 ### Connection loss and the network check
@@ -187,7 +187,7 @@ Tell an outage from a provider failure, wait it out without spending re-prompts 
 - **Cursor headless:** yes, evidence fixture. The decision is the same for every adapter and is tested with a fake adapter, not with this one. [`TestOutageDoesNotSpendRepromptsOrProbes`](../internal/supervise/network_test.go) [operations.md#network-outages](operations.md#network-outages)
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** yes, evidence fixture. The decision is the same for every adapter and is tested with a fake adapter, not with this one. [`TestOutageDoesNotSpendRepromptsOrProbes`](../internal/supervise/network_test.go) [operations.md#network-outages](operations.md#network-outages)
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
 - **Agent defined in configuration:** yes, evidence fixture. As for the built-in headless agents. The turn that ran into the outage is spent; nothing else is sent and no hold is raised until the network returns. Run end to end with a stand-in agent. [`TestDefinedAgentOutage`](../internal/scenario/defined_agent_test.go) [operations.md#network-outages](operations.md#network-outages)
 
 ### Child-work awareness
@@ -213,7 +213,7 @@ Permit one existing coordinator wake alongside healthy busy direct children, onl
 - **Cursor headless:** n/a. This BB direct-child assignment contract is not supported by this adapter.
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** n/a. This BB direct-child assignment contract is not supported by this adapter.
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
 - **Agent defined in configuration:** n/a. This BB direct-child assignment contract is not supported by this adapter.
 
 ### Child failure notice and report
@@ -226,7 +226,7 @@ Tell the parent conversation, and optionally the owner, when a child fails.
 - **Cursor headless:** n/a. No child conversations.
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** n/a. No child identities are reported.
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
 - **Agent defined in configuration:** n/a. No child conversations.
 
 ### Lane recovery: retry a failed child's turn
@@ -239,7 +239,7 @@ Ask the provider to retry the failed turn of a lane (a direct child conversation
 - **Cursor headless:** missing, evidence none. No child conversations to recover.
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** missing, evidence none. No child identities are reported.
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
 - **Agent defined in configuration:** missing, evidence none. A defined agent reports no child conversations to recover.
 
 ### Handoff away from it
@@ -252,7 +252,7 @@ When it is the active target and hits a configured error class, move the loop to
 - **Cursor headless:** missing, evidence none. Configuration refuses fallbacks for a Cursor loop, and every Cursor failure is unknown, which never fails over. [cursor.md](cursor.md)
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** yes, evidence fixture. The decision is the same for every adapter and is tested with a fake adapter, not with this one. [`TestHandoffToFirstCandidatePassingExactProbe`](../internal/supervise/supervise_test.go)
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. Configuration refuses fallbacks, routes, switch-back and timing for it. [`TestSessionpipeTargetIsStandaloneAndPromptless`](../internal/config/sessionpipe_test.go)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). Configuration refuses fallbacks, routes, switch-back and timing for it. [`TestSessionpipeTargetIsStandaloneAndPromptless`](../internal/config/sessionpipe_test.go)
 - **Agent defined in configuration:** yes, evidence fixture. The decision is the same for every adapter and is tested with a fake adapter, not with this one. [`TestHandoffToFirstCandidatePassingExactProbe`](../internal/supervise/supervise_test.go)
 
 ### Handoff to it
@@ -265,7 +265,7 @@ Be a fallback candidate that takes the work over after an exact probe.
 - **Cursor headless:** missing, evidence none. Cursor fallback candidates are refused: there is no account and model probe contract. [cursor.md](cursor.md)
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** yes, evidence fixture. The decision is the same for every adapter and is tested with a fake adapter, not with this one. [`TestHandoffToFirstCandidatePassingExactProbe`](../internal/supervise/supervise_test.go)
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. Configuration refuses fallbacks, routes, switch-back and timing for it. [`TestSessionpipeTargetIsStandaloneAndPromptless`](../internal/config/sessionpipe_test.go)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). Configuration refuses fallbacks, routes, switch-back and timing for it. [`TestSessionpipeTargetIsStandaloneAndPromptless`](../internal/config/sessionpipe_test.go)
 - **Agent defined in configuration:** partial, evidence fixture. With a probe in the definition, or a command probe. Guided setup does not create it; the candidate is written by hand. [`TestCustomAgentDefinition`](../internal/config/custom_test.go) [configuration.md#an-agent-defined-in-configuration](configuration.md#an-agent-defined-in-configuration)
 
 ### Switch-back
@@ -278,7 +278,7 @@ Return to the primary once its limit has lifted, when enabled.
 - **Cursor headless:** missing, evidence none. Refused with fallbacks. [cursor.md](cursor.md)
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** yes, evidence fixture. The decision is the same for every adapter and is tested with a fake adapter, not with this one. [`TestSwitchBackAfterThePrimaryResets`](../internal/supervise/supervise_test.go)
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. Configuration refuses fallbacks, routes, switch-back and timing for it. [`TestSessionpipeTargetIsStandaloneAndPromptless`](../internal/config/sessionpipe_test.go)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). Configuration refuses fallbacks, routes, switch-back and timing for it. [`TestSessionpipeTargetIsStandaloneAndPromptless`](../internal/config/sessionpipe_test.go)
 - **Agent defined in configuration:** yes, evidence fixture. The decision is the same for every adapter and is tested with a fake adapter, not with this one. [`TestSwitchBackAfterThePrimaryResets`](../internal/supervise/supervise_test.go)
 
 ### Probes
@@ -291,7 +291,7 @@ Check a candidate's account and model with a small real request before relying o
 - **Cursor headless:** missing, evidence none. No probe contract. [cursor.md](cursor.md)
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** yes, evidence fixture. A command probe. [`TestCommandProbe`](../internal/probe/probe_test.go)
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. Configuration refuses fallbacks, routes, switch-back and timing for it. [`TestSessionpipeTargetIsStandaloneAndPromptless`](../internal/config/sessionpipe_test.go)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). Configuration refuses fallbacks, routes, switch-back and timing for it. [`TestSessionpipeTargetIsStandaloneAndPromptless`](../internal/config/sessionpipe_test.go)
 - **Agent defined in configuration:** partial, evidence fixture. With a probe in the definition: one small request with the prompt passed as a turn's is, judged by the finished and error rules. [`TestCustomProbe`](../internal/probe/custom_test.go)
 
 ### Quota readings
@@ -330,7 +330,7 @@ With `loop.prompt_context` (off by default), append the loop's supervision conte
 - **Cursor headless:** yes, evidence fixture. Last in the prompt Cursor's runner sends. `session reset` is not available for Cursor and looptender cannot see a new Cursor conversation, so only the events above send it again. The decision is the same for every adapter and is tested with a fake adapter, not with this one. [`TestPromptContextResendRules`](../internal/supervise/promptcontext_test.go) [operations.md#supervision-context-in-sends](operations.md#supervision-context-in-sends)
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** yes, evidence fixture. Last on the resume command's standard input, after the prompt. The status, stop and probe commands never receive it. looptender cannot see which conversation the command reaches, so a new one there does not send it again; a pause and resume does. [`TestPromptContextOnAProcessStandIn`](../internal/supervise/promptcontext_process_unix_test.go) [operations.md#supervision-context-in-sends](operations.md#supervision-context-in-sends)
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
 - **Agent defined in configuration:** yes, evidence fixture. Last in the prompt, passed as the definition declares, with no wake header. With exact_resume, the turn a `session reset` starts carries it again; without it every turn starts a new session, so every turn carries it. The decision is the same for every adapter and is tested with a fake adapter, not with this one. [`TestPromptContextAfterASessionReset`](../internal/supervise/promptcontext_test.go) [operations.md#supervision-context-in-sends](operations.md#supervision-context-in-sends)
 
 ### Turn usage reading
@@ -356,7 +356,7 @@ Take the work over in a conversation that did not exist before the handoff.
 - **Cursor headless:** missing, evidence none. Not a fallback candidate.
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** n/a. The resume command decides which conversation receives the brief.
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. Configuration refuses fallbacks, routes, switch-back and timing for it. [`TestSessionpipeTargetIsStandaloneAndPromptless`](../internal/config/sessionpipe_test.go)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). Configuration refuses fallbacks, routes, switch-back and timing for it. [`TestSessionpipeTargetIsStandaloneAndPromptless`](../internal/config/sessionpipe_test.go)
 - **Agent defined in configuration:** yes, evidence fixture. A candidate has no saved session, so the handoff brief starts one. [`TestDefinedAgentTurnLifecycle`](../internal/adapter/runner/definition_unix_test.go)
 
 ### Run graph and looptender runs
@@ -369,7 +369,7 @@ Record runs, sends and the conversation reference, and show them offline.
 - **Cursor headless:** yes, evidence fixture. The runner's saved resume ID, labelled observed. [`TestHeadlessTargetRecordsItsSavedSession`](../internal/supervise/graph_test.go)
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** partial, evidence fixture. Runs and sends are recorded. No conversation reference exists to record. [`TestHeadlessTargetRecordsNoChildListing`](../internal/supervise/graph_test.go)
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
 - **Agent defined in configuration:** partial, evidence fixture. Runs and sends are recorded. The session identifier is the agent's own shape and is not shown. [`TestDefinitionBecomesASpecification`](../internal/adapter/runner/definition_test.go)
 
 ### Stop and owned cancellation
@@ -395,7 +395,7 @@ On a person's request (`keepgoing stop --lanes`), stop the conversations the sup
 - **Cursor headless:** n/a. Not applicable: a headless turn has no child conversations outside its own process. The stop goes ahead and its report says lanes do not apply.
 - **Antigravity ACP:** missing, evidence none. Not supported by the primary-only Antigravity ACP adapter. [antigravity.md](antigravity.md)
 - **Generic process:** n/a. Not applicable: no child identities are reported. The stop goes ahead and its report says lanes do not apply.
-- **Sessionpipe (observed):** n/a. Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it. [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
+- **Sessionpipe (observed):** n/a. Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only). [sessionpipe.md#observed-sessions-in-unreleased](sessionpipe.md#observed-sessions-in-unreleased)
 - **Agent defined in configuration:** n/a. Not applicable: a defined agent reports no child conversations. The stop goes ahead and its report says lanes do not apply.
 
 ### Permission prompts

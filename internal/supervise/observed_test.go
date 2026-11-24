@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/looptender/looptender/internal/adapter"
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/decide"
@@ -115,7 +116,7 @@ func TestEveryDecisionKnowsAnObservedTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	built := false
+	built, wakeBuilt := false, false
 	ast.Inspect(f, func(n ast.Node) bool {
 		lit, ok := n.(*ast.CompositeLit)
 		if !ok {
@@ -136,11 +137,16 @@ func TestEveryDecisionKnowsAnObservedTarget(t *testing.T) {
 					built = true
 				}
 			}
+			if key != nil && key.Name == "ObservedWake" && call != nil {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "observedWake" {
+					wakeBuilt = true
+				}
+			}
 		}
 		return true
 	})
-	if !built {
-		t.Error("supervise.go builds the check's decide.Input without ObservedOnly: t.observedOnly()")
+	if !built || !wakeBuilt {
+		t.Error("supervise.go builds the check's decide.Input without ObservedOnly: t.observedOnly() and ObservedWake: t.observedWake()")
 	}
 	// And the hung-turn rule's stall check holds for an observed target.
 	in := decide.Input{Obs: decide.Observation{State: decide.Active}, Control: decide.Control{Enabled: true}, InWindow: true,
@@ -151,5 +157,43 @@ func TestEveryDecisionKnowsAnObservedTarget(t *testing.T) {
 	in.ObservedOnly = true
 	if stallRuleActs(in) {
 		t.Fatal("the stall rule acts on an observed target")
+	}
+}
+
+// A loop that opted in (sessionpipe.send: wake_only) wakes an idle observed
+// session with its prompt, within the ordinary bounds, and never anything
+// else; while the login session is unavailable it sends nothing.
+func TestObservedTargetWakeOnly(t *testing.T) {
+	setup := func(t *testing.T, obs decide.Observation) (*world, *fakeAdapter) {
+		w := newWorld(t, true, false)
+		w.cfg.Loop.Prompt = "Fictional wake text."
+		w.cfg.Loop.Agent = config.Agent{Adapter: config.SessionpipeAdapter, Provider: config.SessionpipeAdapter, Group: config.SessionpipeAdapter,
+			Sessionpipe: &config.Sessionpipe{Session: "claude-code:example", EventsFile: "/example/events.jsonl", Send: config.SessionpipeSendWakeOnly}}
+		return w, w.primary(obs)
+	}
+	w, p := setup(t, decide.Observation{State: decide.Idle})
+	if res := runTick(t, w, t0); res.Action != string(decide.Wake) || len(p.sent) != 1 || !strings.Contains(p.sent[0], "Fictional wake text.") || p.modes[0] != adapter.ModeAuto {
+		t.Fatalf("an idle session: %+v sent %v", res, p.sent)
+	}
+	for name, obs := range map[string]decide.Observation{
+		"errored":             {State: decide.Error, ErrorClass: decide.ErrUnknown},
+		"waiting on a person": {State: decide.Active, AwaitingInput: true},
+		"working":             {State: decide.Active},
+	} {
+		w, p := setup(t, obs)
+		for i := range 4 {
+			runTick(t, w, t0.Add(time.Duration(i)*3*time.Hour))
+		}
+		if len(p.sent) != 0 || p.stopped != 0 {
+			t.Errorf("%s: sent %v, stopped %d", name, p.sent, p.stopped)
+		}
+	}
+	// The login session unavailable: nothing is sent.
+	w, p = setup(t, decide.Observation{State: decide.Idle})
+	o := w.opts(t0)
+	o.HostSession = func(context.Context) bool { return false }
+	res, err := Tick(context.Background(), w.cfg, o)
+	if err != nil || res.Action == string(decide.Wake) || len(p.sent) != 0 || res.Reason != HostSessionReason {
+		t.Fatalf("login session unavailable: %+v %v sent %v", res, err, p.sent)
 	}
 }

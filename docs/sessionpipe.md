@@ -36,10 +36,14 @@ anything to that session.
 2. **Set up the loop.** At a terminal:
 
    ```sh
-   looptender init --agent sessionpipe --name try-sessionpipe --session claude-code:<id>
+   looptender init --agent sessionpipe --session claude-code:<id>
    ```
 
-   It writes a private setup directory and prints three commands. The events
+   The loop is named after the session unless you pass `--name`:
+   `observed-claude-code-` and eight hex digits of a SHA-256 of the session id,
+   for example `observed-claude-code-b3bc2e23`, so sessions started together
+   still get different names. It writes a
+   private setup directory and prints three commands. The events
    file defaults to `sessionpipe-events.jsonl` inside that directory, which
    only you can read. Pass `--events-file PATH` to choose another, and
    `--non-interactive` (with `--json` for a script) to be asked nothing.
@@ -145,6 +149,7 @@ lines of the one configured session and, of those, only these:
 
 ### Observed, never woken
 
+This is the default; a loop can opt in to [idle wakes](#waking-an-observed-session-opt-in-unreleased).
 Every rule that would wake, nudge, re-prompt, stop, hand off or switch the loop
 records why it did not, and the reason ends "observed only: looptender never
 sends to, wakes or stops this session". A gone session holds for a person, as
@@ -157,6 +162,75 @@ nothing is ever sent. The panel list carries that sentence as `observedNote`
 on the loop's row, as the dock does, for a page or menu to show.
 `looptender stop` is still accepted: it ends the checks and leaves the session
 alone.
+
+### Waking an observed session (opt-in, unreleased)
+
+A loop may opt in to waking the session when it is idle:
+
+```yaml
+loop:
+  adapter: sessionpipe
+  prompt: Carry on with the task in this session.   # or prompt_file
+  sessionpipe:
+    session: claude-code:8c132906-8c3f-4814-870a-afc3d05e1d2e
+    events_file: /home/example/.local/state/looptender-sessionpipe/events.jsonl
+    send: wake_only
+```
+
+- **Which rules apply.** With `send: wake_only` the ordinary decision rules run.
+  Only an ordinary wake of an idle session, and the holds, are acted on.
+  - A nudge, a re-prompt, a child-error or assignment wake, a stop, a handoff
+    and a switch-back are still never made. The reason recorded says so.
+  - Idle spacing, the send limit, the deadline, pause, stop and every hold apply
+    as for any loop.
+  - Nothing is sent while the session waits on a person, is working, has
+    background work, is in error, or reads unknown.
+  - Nothing is sent while this computer's login session is unavailable to
+    background processes.
+- **How it is delivered.** A wake runs
+  `sessionpipe ask <harness>:<id> --quiet --text -` with the prompt on stdin,
+  in its own process group. The environment it gets carries no
+  `CLAUDE_CODE_SESSION_ID`, `CODEX_SESSION_ID` or `SESSIONPIPE_ASK_CHAIN`, so
+  the wake is never treated as one session asking another.
+  - sessionpipe's background service delivers it the way the session allows: a
+    parked waiter, the next Stop, the session's inbox, or a headless resume.
+  - The command then waits for the agent's whole answer. looptender never reads
+    it: the command's standard output goes to the null device.
+- **What counts as sent.** Send waits 3 s.
+  - **Refused within that time:** the refusal's code is kept, from a fixed set
+    (`ask_off`, `folder`, `harness`, `loop`, `busy`, …; anything else counts as
+    `other`, and `no_daemon` means the service was not answering). The wake
+    counts as not sent, and none of sessionpipe's words are kept.
+  - **Still running then:** the wake is a delivery under way.
+  - **Failed without a refusal code:** whether it reached the session is
+    unknown, and it is not retried.
+- **One wake at a time.** While the previous wake's command is still running
+  (that is, the agent is still answering), the next is not sent.
+  - The record, `targets/<id>/sessionpipe-ask.json`, holds the process ID and
+    its start time, when the wake started, how it ended and the refusal code,
+    and no text. A process ID that now names another process does not count.
+  - A wake over a day old no longer holds the next one back.
+  - `status` prints a `wake:` line while one is outstanding, saying since
+    when; its JSON has `sessionpipeWake`. Doctor's `wake` check warns after an
+    hour.
+- **What the command is given.** An allow-listed environment: `PATH`, `HOME`,
+  the user and locale variables, `TMPDIR`, the `XDG_*` directories,
+  sessionpipe's own `SESSIONPIPE_CONFIG`, `_STATE`, `_SOCKET` and `_DATA`, and
+  what Windows needs to run a program. No token, no session identity and no
+  test switch. Its standard error is read through a pipe: at most 4 KiB is
+  kept in memory, for the refusal code, and nothing is written to disk.
+- **What you set up.** In sessionpipe: `sessionpipe ask on`, and the session's
+  folder on `sessionpipe control folders`. looptender runs neither; doctor's
+  `send` check says when asking is off or the service is not running.
+- **Not possible.** Stopping a wake: sessionpipe has no local cancel. A
+  delivered message stays delivered.
+- **Before you opt in: builds from before this change refuse the key.**
+  `sessionpipe.send` is a new configuration key, and configuration is read
+  strictly, so an older looptender (a daemon still running the previous
+  build, or the copy a rollback restores) refuses a configuration that has
+  it. Such a build stops checking that loop: it neither observes nor sends.
+  Add `send: wake_only` only once every supervisor of the loop runs a build
+  that has it; to go back, remove the line first.
 
 ### Doctor
 
@@ -171,6 +245,7 @@ run in setup order, and the last, `next`, names the first one that failed
 | `agent.<id>.cli` | the `sessionpipe` command is not found (warning: the file is still checked) |
 | `agent.<id>.version` | sessionpipe is older than 0.18.0 |
 | `agent.<id>.hooks` | sessionpipe has no current hooks for the session's harness |
+| `agent.<id>.send` | with `send: wake_only` only: asking is off in sessionpipe, or its background service is not running. It reads `sessionpipe ask status` and prints none of it |
 | `agent.<id>.sink` | no file sink writes the events file, or it sends above tier 0 (warning when it is paused) |
 | `agent.<id>.events_file` | the file is missing (a warning when the sink is set up and only no event was written yet) or not a regular file, or other users can write it (warning when they can read it). Windows reports the DACL check instead of mode bits |
 | `agent.<id>.limits` | never: it says usage and error classes are not read |
@@ -185,9 +260,11 @@ Without the `sessionpipe` command, doctor warns and still checks the file.
   usage windows only at tier 1, which also carries tool names, file paths and
   the attention message. So every error is unknown, and no limit or reset is
   read. Reading them needs sessionpipe to offer those words or numbers at tier 0.
-- **Send, stop and takeover.** sessionpipe's `ask` can reach an existing session
-  and start a new one, but it waits for the answer and returns its text, has no
-  local cancel and takes no account or effort. None of it is used.
+- **Nudges, re-prompts, stop and takeover.** Only the opt-in idle wake above
+  is sent. `ask` has no local cancel, waits for the agent's whole answer, and
+  takes no account or effort, so a stop, a queued nudge, a re-prompt after an
+  error of unknown class, and a takeover onto another account or a new
+  session are not done.
 - **Children, context window and per-turn usage.**
 - **Fallbacks, routes, switch-back and timing**, which configuration refuses.
 - **Live acceptance.** Every behaviour above is tested with fixture files and a
@@ -375,7 +452,7 @@ remote-answer or coordinator-message authority.
 | Acknowledgements | Only 202; accepted+duplicates exactly two, zero rejected, valid tier; duplicate acknowledgement accepted | Invalid/oversized/missing/rejected/mismatched responses remain unverified; no automatic resend or cursor advance. |
 | Restart / concurrency | Fresh CLI processes retain identity and sequences; private two-sequence reservation under nonwaiting delivery lock; separate nonwaiting report gate serializes sends/resume; rejected/corrupt state refuses send | Contention can lose a best-effort report. No replay/outbox/indefinite retry, crash-before-POST recovery or power-loss guarantee. |
 | Evidence | Native macOS fictional Go receivers, race tests, optional local demo with actual built core schema/data/filter | Local reference receiver package is a placeholder. This is not upstream receiver/conformance certification, GUI/phone or live provider acceptance. |
-| IN | [Observed sessions](#observed-sessions-in-unreleased): one session from a person-added tier-0 file sink, allowlisted types and words, never woken | No error classes or usage (tier 1 only); no send, stop or takeover; no live acceptance. |
+| IN | [Observed sessions](#observed-sessions-in-unreleased): one session from a person-added tier-0 file sink, allowlisted types and words; [opt-in idle wakes](#waking-an-observed-session-opt-in-unreleased) through `sessionpipe ask` | No error classes or usage (tier 1 only); no stop, nudge, re-prompt or takeover; no live acceptance. |
 | BACK | None exposed; #233 remains held | Needs owner authorization plus upstream non-harness control dispatch and a looptender-hold command/board support. Existing prompt/cancel commands cannot grant loop authority. |
 
 ## Repeatable local demo and upstream documentation preparation

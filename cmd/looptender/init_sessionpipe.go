@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,25 @@ import (
 // sessionpipe writes the tier-0 events file this target reads.
 func sessionpipeSinkLine(eventsFile string) string {
 	return "sessionpipe sink add " + commandQuote("file:"+eventsFile) + " --tier 0 --name looptender"
+}
+
+// sessionpipeLoopName is the default loop name for a session: "observed-",
+// its harness and the first eight hex digits of the SHA-256 of its id. A
+// digest, not the id's start: time-ordered ids (UUIDv7, as Codex uses) share
+// their first characters for sessions started close together, as a batch of
+// lanes is. The name is stable per session and carries none of the id. It is
+// a valid loop name for any session config.SplitSessionpipeRef accepts.
+func sessionpipeLoopName(session string) string {
+	harness, id, ok := config.SplitSessionpipeRef(session)
+	if !ok {
+		return "observed-session"
+	}
+	sum := sha256.Sum256([]byte(id))
+	name := "observed-" + harness
+	if len(name) > 55 {
+		name = strings.TrimRight(name[:55], "-")
+	}
+	return name + "-" + hex.EncodeToString(sum[:4])
 }
 
 // initSessionpipeReport is init --json for an observed sessionpipe target.
@@ -70,15 +91,18 @@ func setupSessionpipe(e env, o initOptions, session, eventsFile string, input io
 			return nil
 		}
 		fmt.Fprintln(e.stdout, "An observed sessionpipe session: looptender reads its tier-0 events and never sends to, wakes or stops it.")
-		if err := ask("name", "Loop name", "observed-session", &o.name); err != nil {
-			return fail("%v", err)
-		}
 		if err := ask("session", "Session, as <harness>:<id> (session.id in `sessionpipe tail --tier 0 --json`)", "", &session); err != nil {
 			return fail("%v", err)
 		}
+		if err := ask("name", "Loop name", sessionpipeLoopName(session), &o.name); err != nil {
+			return fail("%v", err)
+		}
 	}
-	if o.name == "" || session == "" {
-		return fail("--agent sessionpipe needs --name and --session <harness>:<id>")
+	if session == "" {
+		return fail("--agent sessionpipe needs --session <harness>:<id>")
+	}
+	if o.name == "" {
+		o.name = sessionpipeLoopName(session)
 	}
 	if o.name == "" || len(o.name) > 64 || strings.Trim(o.name, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" || o.name[0] == '-' {
 		return fail("name must be 1-64 lowercase letters, digits, or hyphens, starting with a letter or digit")

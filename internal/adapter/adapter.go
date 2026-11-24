@@ -85,6 +85,13 @@ type TurnRetrier interface {
 	StillFailed(ctx context.Context) (bool, error)
 }
 
+// ModelSetter is implemented by adapters that can change the model of the
+// supervised conversation for its next turn, on the same account and with
+// the same settings. It sends no text.
+type ModelSetter interface {
+	SetModel(ctx context.Context, model string) error
+}
+
 // LaneRecoverer is implemented by adapters that can recover a failed lane: a
 // direct child conversation of the supervised session. The supervisor uses
 // it only when the loop has opted in. It is the only way the supervisor acts

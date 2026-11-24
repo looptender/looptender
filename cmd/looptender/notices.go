@@ -27,11 +27,12 @@ const (
 	noticeInstall    = "install"         // an install was adopted or refused
 	noticeDisk       = "disk"            // the state volume is low or critical
 	noticeBound      = "bound"           // a deadline or send limit was reached
+	noticeModelStep  = "model_step"      // a conversation was stepped down a model, or could not be
 )
 
 // noticeKinds is every kind, for settings. Kinds a person is pushed by
 // default are in noticeDefaultOn; the rest are listed but quiet.
-var noticeKinds = []string{noticeNeedsYou, noticeLimit, noticeSupervisor, noticeLane, noticeHold, noticeInstall, noticeDisk, noticeBound}
+var noticeKinds = []string{noticeNeedsYou, noticeLimit, noticeSupervisor, noticeLane, noticeHold, noticeInstall, noticeDisk, noticeBound, noticeHost, noticeModelStep}
 var noticeDefaultOn = map[string]bool{noticeNeedsYou: true, noticeLimit: true, noticeSupervisor: true}
 
 // Severities: urgent (an agent asked a question), high, normal, info.
@@ -87,7 +88,7 @@ const noticeResetBucket = 12 * time.Hour
 // noticeActionWords say, in short fixed words by the kind of action the usage
 // limit record offers, that something can be done; the panel says what.
 var noticeActionWords = map[string]string{
-	"login_bb_directory": "Another Claude account can take over; see the panel.",
+	"login_bb_directory": "Another configured account may have quota; see the panel.",
 	"arm_takeover":       "Another provider can take over; see the panel.",
 }
 
@@ -141,6 +142,20 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 	if l.LastCheck.At != nil {
 		checked = *l.LastCheck.At
 	}
+	if v := l.ModelStep; v != nil && v.InForce != nil {
+		s := v.InForce
+		n := panelNotice{Kind: noticeModelStep, Severity: sevInfo, Since: s.At, ID: noticeID(noticeModelStep, l.Key, s.At, ""), Group: noticeModelStep + ".down",
+			Text: name + " runs on a weaker model until a one-model weekly limit resets " + noticeTime(s.ResetsAt) + ".", GroupText: "{n} loops run on a weaker model until a one-model weekly limit resets."}
+		switch {
+		case s.StoodDown:
+			n.Severity, n.Group, n.ID = sevNormal, noticeModelStep+".stayed", noticeID(noticeModelStep, l.Key, s.At, "stayed")
+			n.Text, n.GroupText = name+" stays on the model it is on: it was not moved back to its stronger model after the limit reset, because it was no longer on the weaker one or step-down is off.", "{n} loops were not moved back to their stronger model after a limit reset."
+		case s.Failed:
+			n.Severity, n.Group, n.ID = sevNormal, noticeModelStep+".failed", noticeID(noticeModelStep, l.Key, s.At, "failed")
+			n.Text, n.GroupText = name+" could not step down a model at a one-model weekly limit; it waits for the reset "+noticeTime(s.ResetsAt)+".", "{n} loops could not step down a model at a one-model weekly limit."
+		}
+		add(n)
+	}
 	if w := l.Waiting; w != nil && needs {
 		since := time.Time{}
 		if w.Since != nil {
@@ -181,6 +196,9 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 		}
 		bucket := time.Time{}
 		cause := words
+		// The group's sentence names no time: loops in a group can reset up to
+		// a bucket apart, and one loop's minute would be wrong for the rest.
+		groupCause := words
 		if !reset.IsZero() {
 			bucket = time.Unix(reset.Unix()/int64(noticeResetBucket/time.Second)*int64(noticeResetBucket/time.Second), 0)
 			cause += " until " + noticeTime(reset.In(now.Location()))
@@ -190,11 +208,13 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 		group := noticeLimit + "." + window + "." + strconv.FormatInt(bucket.Unix(), 10)
 		if moved {
 			text = name + " reached a usage limit and moved to its next route."
-			cause = "usage limit, moved on"
+			groupCause = "usage limit, moved on"
 			group = noticeLimit + ".moved"
 		} else if u := l.UsageLimit; u != nil && len(u.Actions) > 0 {
-			// What a person can do, in fixed words by kind (the record keeps the kind only).
-			if w, ok := noticeActionWords[u.Actions[0].Kind]; ok {
+			// What a person can do, in fixed words by kind (the record keeps the
+			// kind only). Another Claude account is offered only when the
+			// catalog has one; a provider takeover is the loop's own configuration.
+			if w, ok := noticeActionWords[u.Actions[0].Kind]; ok && (u.Actions[0].Kind != "login_bb_directory" || u.OtherAccounts > 0) {
 				text += " " + w
 			}
 		}
@@ -203,7 +223,7 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 			what += "moved"
 		}
 		add(panelNotice{Kind: noticeLimit, Severity: sevHigh, Since: checked, ID: noticeID(noticeLimit, l.Key, bucket, what),
-			Text: text, Group: group, GroupText: "{n} loops stopped: " + cause + "."})
+			Text: text, Group: group, GroupText: "{n} loops stopped: " + groupCause + "."})
 	}
 	if l.Supervisor == "not_answering" && l.State != "stopped" && l.State != "finished" && l.State != "off" && l.State != "paused" {
 		add(panelNotice{Kind: noticeSupervisor, Severity: sevHigh, Since: checked, ID: noticeID(noticeSupervisor, l.Key, time.Time{}, ""),

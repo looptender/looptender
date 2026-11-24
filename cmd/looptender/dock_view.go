@@ -82,7 +82,12 @@ type dockReport struct {
 	Volumes []dockVolume `json:"volumes,omitempty"`
 	// Notices is the one list of events a person is told about (notices.go).
 	Notices []panelNotice `json:"notices"`
-	Loops   []dockLoop    `json:"loops"`
+	// Notify is the shared notification settings and whether the menu is
+	// notifying on this computer (notify_settings.go).
+	Notify *notifyState `json:"notify,omitempty"`
+	// Host is the computer's login session and load.
+	Host  *hostStatus `json:"host,omitempty"`
+	Loops []dockLoop  `json:"loops"`
 	// Archived counts the loops in Loops whose State is "archived"; they are
 	// listed last, need nobody and are left out of Worth.
 	Archived int `json:"archived"`
@@ -237,7 +242,8 @@ type dockLoop struct {
 	LoopArg string `json:"loopArg,omitempty"`
 	// State is one of supervising, waiting_for_you, waiting_on_limit,
 	// waiting_on_network, checks_failing, paused, stopped, finished, off,
-	// outside_hours, not_checked_recently, archived or unknown. Phrase is its label,
+	// outside_hours, not_checked_recently, waiting_on_condition, archived or
+	// unknown. Phrase is its label,
 	// Detail one sentence about it, PickerState the picker row's second line.
 	State       string `json:"state"`
 	Phrase      string `json:"phrase"`
@@ -288,6 +294,9 @@ type dockLoop struct {
 	// NoProgress is the no-progress flag, the same value status shows; nil
 	// when the loop's status could not be read. It is never a need.
 	NoProgress *noProgressView `json:"noProgress,omitempty"`
+	// ModelStep is the model step-down in force or failed, for the notice
+	// list only; status says it in full.
+	ModelStep *modelStepView `json:"-"`
 	// UsageBurn is the usage watch's projection, the same value status
 	// shows; nil when it has none.
 	UsageBurn *usageBurnView `json:"usageBurn,omitempty"`
@@ -351,6 +360,8 @@ type dockLoop struct {
 	Archived      *archiveView `json:"archived,omitempty"`
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
 	Naming        *loopNaming  `json:"naming,omitempty"`
+	// Wait is a wait in force (State waiting_on_condition).
+	Wait *waitView `json:"wait,omitempty"`
 	// Lineage: the count of earlier loops and the key of the one it
 	// continues; absent for a loop that continues none.
 	Lineage *listLineage `json:"lineage,omitempty"`
@@ -1290,6 +1301,9 @@ type dockHold struct {
 //	           deadline, no-progress limits, refusals or a restricted
 //	           account, or a provider usage limit it waits out (By: check)
 //	checks     its checks have stopped (By: check)
+//	condition  a wait for a condition the supervisor checks itself (looptender
+//	           wait): it carries on by itself, needing nobody (By: the role
+//	           that set the wait)
 //	unreadable a record it needs cannot be read (By: unknown)
 //	unknown    the records do not say (By: unknown)
 //
@@ -1406,7 +1420,7 @@ func secondsSince(now, t time.Time) *int64 {
 }
 
 var dockStatePriority = map[string]int{
-	"waiting_for_you": 0, "unknown": 1, "checks_failing": 2, "not_checked_recently": 3, "waiting_on_limit": 4, "waiting_on_network": 4,
+	"waiting_for_you": 0, "unknown": 1, "checks_failing": 2, "not_checked_recently": 3, "waiting_on_limit": 4, "waiting_on_network": 4, "waiting_on_condition": 4,
 	"supervising": 5, "outside_hours": 6, "paused": 7, "off": 8, "stopped": 9, "finished": 10, "archived": 11,
 }
 
@@ -1758,7 +1772,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		l.CurrentRoute = dockTarget{Availability: "known", Role: dockRole(st.Target), Tool: dockTool(a.Adapter),
 			Provider: clip(a.Provider, dockMaxText), Model: clip(a.Model, dockMaxText)}
 		if a.Observed {
-			l.Observed, l.ObservedNote = true, sessionpipeObservedNotice
+			l.Observed, l.ObservedNote = true, observedNotice(a.Wakes)
 		}
 		if identifiers {
 			l.CurrentRoute.Name = clip(st.Target, dockMaxText)
@@ -2038,6 +2052,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		// the hold, not current.
 		np.Text = noProgressText(np, loopHeld(st.Control, st.controlUnreadable))
 		l.NoProgress = &np
+		l.ModelStep = st.ModelStep
 		l.UsageBurn = st.UsageBurn
 		if r := st.Refusals; r.Total > 0 || r.Question != "" {
 			l.Refusals = &r
@@ -2091,6 +2106,19 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			r.Thread = ""
 			c.ContinuedIn = &r
 			snap.Archived = &c
+		}
+		if wt := snap.Wait; wt != nil && snap.Archived == nil && snap.Controls != nil && !snap.Controls.Paused && !snap.Controls.Stop && !snap.Controls.Completed && snap.Controls.Enabled {
+			// A wait needs nobody: it ends by itself when its condition holds.
+			l.State, l.Phrase, l.PickerState = "waiting_on_condition", "Waiting for "+waitPhrase[wt.Until], "Waiting for "+waitPhrase[wt.Until]
+			l.Detail = "It " + wt.Text + "."
+			since := wt.Since
+			by := "unknown"
+			if in.Hold != nil && in.Hold.Caller != "" {
+				by = in.Hold.Caller
+			}
+			l.Waiting = &dockWaiting{Kind: "condition", By: by, Reason: "It waits for " + waitPhrase[wt.Until] + " and carries on by itself.", Since: &since}
+			l.Wait, l.AlsoWaiting = wt, ""
+			need = nil
 		}
 		if a := snap.Archived; a != nil {
 			// Archived: listed apart, needing nobody, with no control offered
@@ -3094,3 +3122,6 @@ func dockNoteState(l dockLoop) string {
 	}
 	return l.State
 }
+
+// waitPhrase is a wait's condition in a few fixed words.
+var waitPhrase = map[string]string{"host-session": "the login session", "network": "the network", "time": "a time", "limit-reset": "a usage-limit reset"}

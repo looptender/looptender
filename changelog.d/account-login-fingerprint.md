@@ -1,0 +1,1 @@
+- `accounts check` keeps a keyed fingerprint of a Claude entry's login (never the identity), so the account cards say "Same login as <other label>" or "A different login than when checked on <date>". A check at a usage limit runs that cheap check for the account its route states, at most once an hour.

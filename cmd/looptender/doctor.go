@@ -186,6 +186,7 @@ func doctor(e env, args []string, run doctorRun) int {
 	doctorFile(&r, "state.directory", cfg.Loop.StateDir, true)
 	doctorStateAccess(&r, cfg.Loop.StateDir, doctorOSAccess)
 	doctorDiskSpace(&r, cfg.Loop.StateDir)
+	doctorHost(&r, readHost(context.Background()))
 	for _, name := range []string{control.FileName, state.FileName, "health.json", state.LogName, daemoninfo.FileName, report.DeliveryFile, "delivery.lock", report.SessionpipeGateFile, report.SessionpipeLock + ".lock"} {
 		p := filepath.Join(cfg.Loop.StateDir, name)
 		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
@@ -210,7 +211,13 @@ func doctor(e env, args []string, run doctorRun) int {
 		}
 		r.ControlState = ctl.Summary()
 		r.add("control", "ok", "Control state: "+r.ControlState+".", "")
+		if j := readLaunchJob(cfg.Loop.StateDir); j != nil {
+			r.add("daemon.launch_job", "ok", "The daemon runs as the "+j.Kind+" job "+j.Label+", outside BB, so it keeps running when BB quits.", "End it with "+launchStopCommand(j.Kind, j.Label, j.Target)+" or by terminating its PID.")
+		}
 		r.Archived, r.ArchiveLapsed = loopArchive(cfg.Loop.StateDir, ctl)
+		if wt := waitOf(cfg.Loop.StateDir, ctl); wt != nil {
+			r.add("loop.wait", "ok", "The loop is "+wt.Text+".", "")
+		}
 		if a := r.Archived; a != nil {
 			r.add("loop.archived", "ok", "The loop is archived "+archiveSince(a)+": it is listed apart, needs nobody and is checked by no daemon; warnings about its routes are not given.", "")
 		}
@@ -287,6 +294,9 @@ func doctor(e env, args []string, run doctorRun) int {
 			r.add("agent."+id+".session", status, s.Message, "")
 		}
 		workspace := doctorAgent(e.ctx, &r, id, a, *offline, *timeout, run)
+		if id == state.Primary && a.WakesObserved() {
+			doctorSessionpipeWake(&r, "agent."+id+".wake", cfg.Loop.StateDir, time.Now())
+		}
 		if a.BB != nil && a.BB.Thread != "" {
 			if *offline {
 				r.add("agent."+id+".workspace", "unavailable", "Working-directory comparison skipped in offline mode.", "")
