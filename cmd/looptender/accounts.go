@@ -33,7 +33,7 @@ func accountsDirectory(path string) (string, error) {
 }
 func accountsCommand(e env, args []string, run accountRun) int {
 	if len(args) == 0 {
-		e.errf("usage: accounts list|add|update|check|usage [flags]")
+		e.errf("usage: accounts list|add|update|check|usage|connect|disconnect [flags]")
 		return exitUsage
 	}
 	op := args[0]
@@ -49,6 +49,8 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	workdir := fs.String("workdir", "", "selected working directory")
 	expect := fs.String("expect", "", "required current revision for update")
 	asJSON := fs.Bool("json", false, "print minimized structured result")
+	like := fs.String("like", "", "connect: take the executable and working directory from this entry")
+	force := fs.Bool("force", false, "disconnect: even when a loop names the account")
 	if err := fs.Parse(args[1:]); err != nil {
 		return exitUsage
 	}
@@ -59,13 +61,15 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	fs.Visit(func(f *flag.Flag) { supplied[f.Name] = true })
 	for k := range supplied {
 		allowed := k == "directory" || k == "json" || ((op == "check" || op == "update" || op == "usage") && k == "id") ||
-			((op == "add" || op == "update") && (k == "label" || k == "provider" || k == "selection" || k == "cli" || k == "account-dir" || k == "workdir" || (op == "update" && k == "expect")))
+			((op == "add" || op == "update") && (k == "label" || k == "provider" || k == "selection" || k == "cli" || k == "account-dir" || k == "workdir" || (op == "update" && k == "expect"))) ||
+			(op == "connect" && (k == "label" || k == "provider" || k == "cli" || k == "workdir" || k == "like")) ||
+			(op == "disconnect" && (k == "label" || k == "id" || k == "force"))
 		if !allowed {
 			e.errf("accounts: flag not allowed for this operation")
 			return exitUsage
 		}
 	}
-	if op != "list" && op != "add" && op != "update" && op != "check" && op != "usage" {
+	if op != "list" && op != "add" && op != "update" && op != "check" && op != "usage" && op != "connect" && op != "disconnect" {
 		return exitUsage
 	}
 	path, err := accountsDirectory(*dir)
@@ -75,6 +79,12 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	}
 	if op == "usage" {
 		return accountsUsage(e, path, *id, *asJSON)
+	}
+	if op == "connect" {
+		return accountsConnect(e, path, accountConnectOptions{provider: *provider, label: *label, like: *like, cli: *cli, workdir: *workdir, asJSON: *asJSON}, accountConnectDefaults())
+	}
+	if op == "disconnect" {
+		return accountsDisconnect(e, path, *id, *label, *force, *asJSON, accountUses)
 	}
 	now := time.Now().UTC()
 	caller := os.Getenv("BB_THREAD_ID")
