@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/looptender/looptender/internal/hostcheck"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -187,6 +188,9 @@ func NewWorld(t *testing.T, start time.Time) *World {
 		"TMPDIR=" + filepath.Join(root, "tmp"),
 		"LANG=C",
 		"SCENARIO_WORLD=" + w.world,
+		// The binaries read a fixed computer: a loaded test machine must not
+		// change what a check decides or records.
+		hostcheck.FixedEnv + "=1",
 		"KEEPGOING_WEBHOOK_URL=" + w.Hooks.URL,
 		"KEEPGOING_WEBHOOK_SECRET=" + webhookSecret(),
 		// Any connectivity check keepgoing makes goes to the fake target.

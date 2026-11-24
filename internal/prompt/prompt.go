@@ -257,3 +257,12 @@ func UsageWarningOnly(w UsageWarning, running int) Message {
 	return Message{NoticeOnly: true, Text: usageWarningText(w) +
 		fmt.Sprintf("This is not an instruction to continue the task: %d direct child thread(s) are still running.\n", running)}
 }
+
+// HostOverloadOnly is the whole message of the one wake an overloaded
+// computer causes while the session's children run: a count, nothing else.
+// It asks for no action on the lanes; looptender takes none.
+func HostOverloadOnly(running int) Message {
+	return Message{NoticeOnly: true, Text: fmt.Sprintf("[keepgoing:host-load lanes=%d]\n"+
+		"looptender notice: the host is overloaded: %d lanes running; consider pausing new heavy work, such as test suites and browsers, until it recovers. "+
+		"looptender has not paused, stopped or messaged any lane. This is not an instruction to continue the task.\n", running, running)}
+}
