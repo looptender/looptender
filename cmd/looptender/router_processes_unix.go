@@ -13,9 +13,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/looptender/looptender/internal/accounts"
 	"github.com/looptender/looptender/internal/router/channel"
 	"github.com/looptender/looptender/internal/router/core"
 	"github.com/looptender/looptender/internal/router/front"
+	"github.com/looptender/looptender/internal/router/login"
 	"github.com/looptender/looptender/internal/router/loopcert"
 )
 
@@ -31,14 +33,36 @@ import (
 // certificate a client would be told to trust. The key is never written.
 const routerFrontCertName = "front-cert.pem"
 
-// routerRunCommand is __router-run: the deciding process.
+// routerRunCommand is __router-run / router run: the deciding process.
 func routerRunCommand(e env, args []string) int {
 	fs := flag.NewFlagSet("__router-run", flag.ContinueOnError)
 	fs.SetOutput(e.stderr)
 	dir := fs.String("dir", "", "the router's private directory")
+	accountsDir := fs.String("accounts", "", "optional accounts catalog directory for login reading")
 	if fs.Parse(args) != nil || fs.NArg() != 0 || *dir == "" {
-		e.errf("usage: __router-run --dir DIR")
+		e.errf("usage: __router-run --dir DIR [--accounts DIR]")
 		return exitUsage
+	}
+	var cfg core.Config
+	if *accountsDir != "" {
+		cat, err := accounts.Load(*accountsDir)
+		if err != nil {
+			e.errf("router: cannot load accounts catalog: %v", err)
+			return exitFailed
+		}
+		var subs []login.Subscription
+		for _, entry := range cat.Entries {
+			if entry.Provider != login.ProviderClaude && entry.Provider != login.ProviderCodex {
+				continue
+			}
+			cfg.Order = append(cfg.Order, entry.ID)
+			subs = append(subs, login.Subscription{
+				ID:       entry.ID,
+				Provider: entry.Provider,
+				Dir:      entry.Directory,
+			})
+		}
+		cfg.Logins = login.New(login.Config{Subscriptions: subs})
 	}
 	srv, err := channel.Listen(*dir)
 	if err != nil {
@@ -50,7 +74,7 @@ func routerRunCommand(e env, args []string) int {
 		<-e.ctx.Done()
 		srv.Close()
 	}()
-	if err := srv.Serve(core.New(core.Config{})); err != nil {
+	if err := srv.Serve(core.New(cfg)); err != nil {
 		e.errf("router: stopped: %v", err)
 		return exitFailed
 	}
