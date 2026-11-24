@@ -288,6 +288,9 @@ func doctor(e env, args []string, run doctorRun) int {
 			r.add("agent."+id+".session", status, s.Message, "")
 		}
 		workspace := doctorAgent(e.ctx, &r, id, a, *offline, *timeout, run)
+		if id == state.Primary && a.WakesObserved() {
+			doctorSessionpipeWake(&r, "agent."+id+".wake", cfg.Loop.StateDir, time.Now())
+		}
 		if a.BB != nil && a.BB.Thread != "" {
 			if *offline {
 				r.add("agent."+id+".workspace", "unavailable", "Working-directory comparison skipped in offline mode.", "")

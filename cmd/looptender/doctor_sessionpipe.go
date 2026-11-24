@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/looptender/looptender/internal/adapter/sessionpipe"
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/state"
 )
 
 // sessionpipeMinVersion is the oldest sessionpipe whose tier-0 file sink and
@@ -317,5 +319,38 @@ func doctorSessionpipeAsk(r *doctorReport, id string, out []byte, err error) {
 		r.add(id, "ok", "Wakes are on: asking is on in sessionpipe and its background service is running. A wake still needs the session's folder on sessionpipe control folders; a refusal says so by its code.", "")
 	default:
 		r.add(id, "unavailable", "sessionpipe ask status printed an unrecognized page, so whether a wake can be delivered is unknown; raw output is withheld.", "Run sessionpipe ask status yourself.")
+	}
+}
+
+// sessionpipeWakeStatus is an outstanding wake, for status and doctor.
+type sessionpipeWakeStatus struct {
+	Since      time.Time `json:"since"`
+	ForSeconds int64     `json:"forSeconds"`
+	Text       string    `json:"text"`
+}
+
+// pendingSessionpipeWake reads the target's wake record; nil when no wake is
+// running.
+func pendingSessionpipeWake(stateDir, target string, now time.Time) *sessionpipeWakeStatus {
+	since, pending := sessionpipe.PendingWake(filepath.Join(stateDir, "targets", target), now)
+	if !pending {
+		return nil
+	}
+	d := now.Sub(since).Round(time.Second)
+	return &sessionpipeWakeStatus{Since: since, ForSeconds: int64(d / time.Second),
+		Text: fmt.Sprintf("a wake has been running since %s (%s): the agent has not finished answering it, so the next wake waits. sessionpipe has no cancel; a wake still running after a day no longer holds the next one back.", since.Local().Format(time.RFC3339), d)}
+}
+
+// doctorSessionpipeWake reports an outstanding wake: a warning once it has
+// run for an hour, since every later wake waits for it.
+func doctorSessionpipeWake(r *doctorReport, id, stateDir string, now time.Time) {
+	pw := pendingSessionpipeWake(stateDir, state.Primary, now)
+	switch {
+	case pw == nil:
+		r.add(id, "ok", "No wake is outstanding.", "")
+	case time.Duration(pw.ForSeconds)*time.Second >= time.Hour:
+		r.add(id, "warning", "A wake has been outstanding for a long time: "+pw.Text, "Look at the session: sessionpipe delivered the wake and the agent is still answering, or the delivery is stuck in sessionpipe. Wakes resume once it ends.")
+	default:
+		r.add(id, "ok", "A wake is being answered: "+pw.Text, "")
 	}
 }

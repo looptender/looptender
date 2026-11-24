@@ -1,6 +1,7 @@
 package decide
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -97,5 +98,55 @@ func TestObservedTargetWithWakeOnly(t *testing.T) {
 	in.ObservedWake, in.Obs.State, in.ProgressTracked, in.UnchangedFor, in.StallAfter = true, Active, true, 24*h, h
 	if d := Decide(in); d.Action != Nudge {
 		t.Fatalf("an ordinary target with ObservedWake: %s", d.Action)
+	}
+}
+
+// Only the ordinary idle wake reaches an observed session that opted in;
+// every other kind of wake, including any added later, is held by default.
+func TestObservedWakeIsAnAllowList(t *testing.T) {
+	if !OrdinaryIdleWake(Decision{Action: Wake, Reason: "idle", IdleWake: true}) {
+		t.Fatal("the ordinary idle wake is not allowed")
+	}
+	if OrdinaryIdleWake(Decision{Action: Wake}) || OrdinaryIdleWake(Decision{Action: Nudge, IdleWake: true}) {
+		t.Fatal("a wake that is not the idle rule's, or a nudge, is allowed")
+	}
+	// Every other flag named ...Wake, set with IdleWake, holds it.
+	rt := reflect.TypeOf(Decision{})
+	flags := 0
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		if f.Name == "IdleWake" || !strings.HasSuffix(f.Name, "Wake") || f.Type.Kind() != reflect.Bool {
+			continue
+		}
+		flags++
+		d := Decision{Action: Wake, IdleWake: true}
+		reflect.ValueOf(&d).Elem().Field(i).SetBool(true)
+		if OrdinaryIdleWake(d) {
+			t.Errorf("a wake with %s is allowed", f.Name)
+		}
+	}
+	if flags < 4 {
+		t.Fatalf("found %d wake kinds; expected at least ChildErrorWake, AssignmentWake, UsageWarningWake and HostOverloadWake", flags)
+	}
+	// And each notice wake the rules make is held for an observed target.
+	for name, mut := range map[string]func(*Input){
+		"child errors": func(i *Input) {
+			i.Obs.ErroredChildren, i.UnannouncedErroredChildren, i.MaxChildErrorNotices = []string{"c"}, 1, 3
+		},
+		"usage warning": func(i *Input) { i.UsageWarning = true },
+		"host overload": func(i *Input) { i.HostOverload = true },
+		"assignment":    func(i *Input) { i.AssignmentReady = 1 },
+	} {
+		in := base()
+		in.Obs.State, in.Obs.ActiveChildren = Idle, 1
+		mut(&in)
+		ordinary := Decide(in)
+		if ordinary.Action != Wake {
+			t.Fatalf("%s: the ordinary rules give %s (%q); the case needs a notice wake", name, ordinary.Action, ordinary.Reason)
+		}
+		in.ObservedOnly, in.ObservedWake = true, true
+		if d := Decide(in); d.Action != None {
+			t.Errorf("%s: an observed target gets %s (%q)", name, d.Action, d.Reason)
+		}
 	}
 }

@@ -201,14 +201,32 @@ loop:
   - **Failed without a refusal code:** whether it reached the session is
     unknown, and it is not retried.
 - **One wake at a time.** While the previous wake's command is still running
-  (that is, the agent is still answering), the next is not sent. The record,
-  `targets/<id>/sessionpipe-ask.json`, holds the process, when the wake
-  started, how it ended and the refusal code, and no text.
+  (that is, the agent is still answering), the next is not sent.
+  - The record, `targets/<id>/sessionpipe-ask.json`, holds the process ID and
+    its start time, when the wake started, how it ended and the refusal code,
+    and no text. A process ID that now names another process does not count.
+  - A wake over a day old no longer holds the next one back.
+  - `status` prints a `wake:` line while one is outstanding, saying since
+    when; its JSON has `sessionpipeWake`. Doctor's `wake` check warns after an
+    hour.
+- **What the command is given.** An allow-listed environment: `PATH`, `HOME`,
+  the user and locale variables, `TMPDIR`, the `XDG_*` directories,
+  sessionpipe's own `SESSIONPIPE_CONFIG`, `_STATE`, `_SOCKET` and `_DATA`, and
+  what Windows needs to run a program. No token, no session identity and no
+  test switch. Its standard error is read through a pipe: at most 4 KiB is
+  kept in memory, for the refusal code, and nothing is written to disk.
 - **What you set up.** In sessionpipe: `sessionpipe ask on`, and the session's
   folder on `sessionpipe control folders`. looptender runs neither; doctor's
   `send` check says when asking is off or the service is not running.
 - **Not possible.** Stopping a wake: sessionpipe has no local cancel. A
   delivered message stays delivered.
+- **Before you opt in: builds from before this change refuse the key.**
+  `sessionpipe.send` is a new configuration key, and configuration is read
+  strictly, so an older looptender (a daemon still running the previous
+  build, or the copy a rollback restores) refuses a configuration that has
+  it. Such a build stops checking that loop: it neither observes nor sends.
+  Add `send: wake_only` only once every supervisor of the loop runs a build
+  that has it; to go back, remove the line first.
 
 ### Doctor
 

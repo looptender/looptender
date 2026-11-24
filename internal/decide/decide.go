@@ -6,6 +6,7 @@ package decide
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -489,16 +490,34 @@ func observedWake(in Input) Decision {
 	ordinary := in
 	ordinary.ObservedOnly, ordinary.ObservedWake = false, false
 	d := decideRules(ordinary)
-	switch d.Action {
-	case None, AwaitUser:
+	switch {
+	case d.Action == None, d.Action == AwaitUser:
 		return d
-	case Wake:
-		if !d.ChildErrorWake && !d.AssignmentWake {
-			return d
-		}
+	case OrdinaryIdleWake(d):
+		return d
 	}
 	s := observedReason(in.Obs)
 	return none(strings.TrimSuffix(s, ObservedReasonSuffix) + ObservedWakeSuffix)
+}
+
+// OrdinaryIdleWake reports whether d is the ordinary wake of an idle
+// session (the "idle" rule) and nothing more: IdleWake is set and no other
+// flag of the Decision whose name ends in Wake is, so a notice wake (child
+// errors, a usage warning, an overloaded computer, an assignment) is not, and
+// neither is any wake kind added later. It is an allow-list: only this one
+// wake is sent to an observed session that opted in.
+func OrdinaryIdleWake(d Decision) bool {
+	if d.Action != Wake || !d.IdleWake {
+		return false
+	}
+	v := reflect.ValueOf(d)
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Type().Field(i)
+		if f.Name != "IdleWake" && strings.HasSuffix(f.Name, "Wake") && f.Type.Kind() == reflect.Bool && v.Field(i).Bool() {
+			return false
+		}
+	}
+	return true
 }
 
 func decideRules(in Input) Decision {

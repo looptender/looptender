@@ -29,8 +29,10 @@ func fakeSessionpipe(mode string) int {
 	in, _ := io.ReadAll(os.Stdin)
 	_, chained := os.LookupEnv("SESSIONPIPE_ASK_CHAIN")
 	_, fromSession := os.LookupEnv("CLAUDE_CODE_SESSION_ID")
-	_ = os.WriteFile(os.Getenv("FAKE_SESSIONPIPE_LOG"), []byte(fmt.Sprintf("args=%s\nstdin=%s\nchained=%v\nfrom=%v\n",
-		strings.Join(os.Args[1:], " "), in, chained, fromSession)), 0o600)
+	_, testSwitch := os.LookupEnv("LOOPTENDER_TEST_FICTIONAL")
+	_, token := os.LookupEnv("FICTIONAL_API_TOKEN")
+	_ = os.WriteFile(os.Getenv("FAKE_SESSIONPIPE_LOG"), []byte(fmt.Sprintf("args=%s\nstdin=%s\nchained=%v\nfrom=%v\ntest=%v\ntoken=%v\nhome=%v\n",
+		strings.Join(os.Args[1:], " "), in, chained, fromSession, testSwitch, token, os.Getenv("HOME") != "")), 0o600)
 	switch {
 	case mode == "deliver":
 		// Accepted; the agent takes a while; then its answer, which must
@@ -46,6 +48,11 @@ func fakeSessionpipe(mode string) int {
 		return 1
 	case mode == "nodaemon":
 		fmt.Fprintln(os.Stderr, "sessionpipe ask: no control daemon is answering on this machine. The person runs `sessionpipe ask on` once at its terminal.")
+		return 1
+	case mode == "chatty":
+		// Far more stderr than is ever kept, then a refusal line at the end.
+		fmt.Fprint(os.Stderr, strings.Repeat("FICTIONAL progress words\n", 20000))
+		fmt.Fprintln(os.Stderr, "sessionpipe ask: refused (busy): late")
 		return 1
 	case mode == "fail":
 		fmt.Fprintln(os.Stderr, "sessionpipe ask: claude-code:x failed: FICTIONAL failure words")
@@ -63,11 +70,14 @@ func newWakeFixture(t *testing.T, mode string) *wakeFixture {
 	t.Helper()
 	f := newFixture(t)
 	log := filepath.Join(t.TempDir(), "fake.log")
-	t.Setenv("FAKE_SESSIONPIPE", mode)
-	t.Setenv("FAKE_SESSIONPIPE_LOG", log)
+	// The stand-in's switches are given through extraEnv: the ask's own
+	// environment is an allow-list, which drops them like any other name.
 	t.Setenv("SESSIONPIPE_ASK_CHAIN", "claude-code:outer")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "fictional-supervisor-session")
+	t.Setenv("LOOPTENDER_TEST_FICTIONAL", "1")
+	t.Setenv("FICTIONAL_API_TOKEN", "not-a-real-token")
 	f.a.wake, f.a.cli, f.a.ackWindow = true, os.Args[0], 300*time.Millisecond
+	f.a.extraEnv = []string{"FAKE_SESSIONPIPE=" + mode, "FAKE_SESSIONPIPE_LOG=" + log}
 	f.a.CheckAt(time.Now())
 	f.a.now = time.Now
 	return &wakeFixture{fixture: f, log: log}
@@ -111,7 +121,7 @@ func TestWakeIsDeliveredThroughAskAndTheAnswerIsNeverRead(t *testing.T) {
 		t.Fatalf("Send waited %s: it must return after the acknowledgement window, not after the answer", d)
 	}
 	got := w.logged(t)
-	for _, want := range []string{"args=ask " + harness + ":" + session + " --quiet --text -", "stdin=Fictional wake text.", "chained=false", "from=false"} {
+	for _, want := range []string{"args=ask " + harness + ":" + session + " --quiet --text -", "stdin=Fictional wake text.", "chained=false", "from=false", "test=false", "token=false", "home=true"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the ask got %q; want %q", got, want)
 		}
@@ -119,6 +129,24 @@ func TestWakeIsDeliveredThroughAskAndTheAnswerIsNeverRead(t *testing.T) {
 	rec, ok := w.a.loadAsk()
 	if !ok || rec.Outcome != "delivering" || rec.PID == 0 {
 		t.Fatalf("record while delivering: %+v %v", rec, ok)
+	}
+	if since, pending := PendingWake(w.a.dir, time.Now()); !pending || !since.Equal(rec.StartedAt) {
+		t.Fatalf("PendingWake while delivering: %v %v", since, pending)
+	}
+	// A record whose process ID now names another process is not pending.
+	if rec.ProcStart != "" {
+		other := rec
+		other.ProcStart = "fictional:another-start"
+		saved := rec
+		if err := w.a.saveAsk(other); err != nil {
+			t.Fatal(err)
+		}
+		if _, pending := PendingWake(w.a.dir, time.Now()); pending {
+			t.Fatal("a reused process ID was taken for the pending wake")
+		}
+		if err := w.a.saveAsk(saved); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// One wake at a time.
 	if err := w.a.Send(t.Context(), "again", adapter.ModeAuto); !errors.As(err, new(adapter.ErrNotStarted)) {
@@ -128,7 +156,10 @@ func TestWakeIsDeliveredThroughAskAndTheAnswerIsNeverRead(t *testing.T) {
 	if rec := w.outcome(t); rec.Outcome != "answered" || rec.PID != 0 {
 		t.Fatalf("record after the answer: %+v", rec)
 	}
-	for _, p := range []string{w.a.askPath(), w.a.stderrPath(), w.a.statePath()} {
+	if _, pending := PendingWake(w.a.dir, time.Now()); pending {
+		t.Fatal("PendingWake after the answer")
+	}
+	for _, p := range []string{w.a.askPath(), w.a.statePath()} {
 		if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), "FICTIONAL") {
 			t.Errorf("%s keeps text from sessionpipe: %s", filepath.Base(p), b)
 		}
@@ -155,10 +186,20 @@ func TestWakeRefusalsSendNothingAndKeepOnlyTheCode(t *testing.T) {
 			if rec.Outcome != "refused" || rec.Code != want {
 				t.Fatalf("record %+v", rec)
 			}
-			if b, _ := os.ReadFile(w.a.stderrPath()); len(b) != 0 {
-				t.Fatalf("the ask's stderr was kept: %q", b)
+			if b, _ := os.ReadFile(w.a.askPath()); strings.Contains(string(b), "FICTIONAL") {
+				t.Fatalf("the ask's stderr was kept: %s", b)
 			}
 		})
+	}
+	// Stderr past the cap is read and discarded: a refusal line after it is
+	// not seen, so the ask counts as failed, not as refused.
+	w0 := newWakeFixture(t, "chatty")
+	w0.a.ackWindow = 10 * time.Second
+	if err := w0.a.Send(t.Context(), "Fictional wake text.", adapter.ModeAuto); err == nil || errors.As(err, new(adapter.ErrNotStarted)) {
+		t.Fatalf("a chatty ask: %v", err)
+	}
+	if entries, _ := os.ReadDir(w0.a.dir); len(entries) > 2 {
+		t.Fatalf("files beside the records: %v", entries)
 	}
 	// A failure without a refusal code may have reached the session.
 	w := newWakeFixture(t, "fail")
@@ -198,7 +239,7 @@ func TestWakeOnlyWhenOptedInAndNeverQueued(t *testing.T) {
 	if err := opted.Stop(t.Context()); !errors.As(err, new(adapter.ErrUnsupported)) {
 		t.Fatalf("stop: %v", err)
 	}
-	if got := strings.Join(scrubbedEnv([]string{"HOME=/h", "CLAUDE_CODE_SESSION_ID=s", "CODEX_SESSION_ID=c", "SESSIONPIPE_ASK_CHAIN=a", "SESSIONPIPE_SOCKET=/s"}), ","); got != "HOME=/h,SESSIONPIPE_SOCKET=/s" {
-		t.Fatalf("scrubbed env: %s", got)
+	if got := strings.Join(askEnv([]string{"HOME=/h", "PATH=/p", "CLAUDE_CODE_SESSION_ID=s", "CODEX_SESSION_ID=c", "SESSIONPIPE_ASK_CHAIN=a", "SESSIONPIPE_SOCKET=/s", "LOOPTENDER_TEST_X=1", "KEEPGOING_TEST_Y=1", "ANTHROPIC_API_KEY=k", "GITHUB_TOKEN=t"}), ","); got != "HOME=/h,PATH=/p,SESSIONPIPE_SOCKET=/s" {
+		t.Fatalf("allow-listed env: %s", got)
 	}
 }

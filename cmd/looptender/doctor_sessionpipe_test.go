@@ -215,3 +215,46 @@ func TestDoctorSessionpipeAskStatus(t *testing.T) {
 		}
 	}
 }
+
+// A wake still running shows in status and doctor, with how long it has been
+// outstanding; a long one is a warning.
+func TestSessionpipeOutstandingWakeShows(t *testing.T) {
+	stateDir := t.TempDir()
+	target := filepath.Join(stateDir, "targets", "primary")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// This test process stands in for the running ask: alive, and its start
+	// time unrecorded (so only the process ID is compared).
+	write := func(started time.Time, outcome string) {
+		b, _ := json.Marshal(map[string]any{"pid": os.Getpid(), "startedAt": started, "outcome": outcome})
+		if err := os.WriteFile(filepath.Join(target, "sessionpipe-ask.json"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	write(now.Add(-2*time.Hour), "delivering")
+	pw := pendingSessionpipeWake(stateDir, "primary", now)
+	if pw == nil || pw.ForSeconds < 7000 || !strings.Contains(pw.Text, "has been running since") {
+		t.Fatalf("pending wake: %+v", pw)
+	}
+	var r doctorReport
+	doctorSessionpipeWake(&r, "agent.primary.wake", stateDir, now)
+	if r.Checks[0].Status != "warning" || !strings.Contains(r.Checks[0].Message, "2h0m0s") {
+		t.Fatalf("doctor: %+v", r.Checks)
+	}
+	write(now.Add(-time.Minute), "delivering")
+	r = doctorReport{}
+	doctorSessionpipeWake(&r, "agent.primary.wake", stateDir, now)
+	if r.Checks[0].Status != "ok" || !strings.Contains(r.Checks[0].Message, "being answered") {
+		t.Fatalf("a short wake: %+v", r.Checks)
+	}
+	write(now.Add(-time.Minute), "answered")
+	if pendingSessionpipeWake(stateDir, "primary", now) != nil {
+		t.Fatal("an answered wake shows as pending")
+	}
+	write(now.Add(-25*time.Hour), "delivering")
+	if pendingSessionpipeWake(stateDir, "primary", now) != nil {
+		t.Fatal("a wake over a day old holds the next one back")
+	}
+}

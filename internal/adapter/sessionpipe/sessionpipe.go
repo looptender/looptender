@@ -81,6 +81,8 @@ type Adapter struct {
 	cli       string
 	wake      bool
 	ackWindow time.Duration
+	// extraEnv is added to the ask's environment; tests only.
+	extraEnv []string
 }
 
 // New returns the adapter for c. dir is the target's state directory.
