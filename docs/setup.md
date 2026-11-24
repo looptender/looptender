@@ -2,7 +2,7 @@
 
 Commands below use `looptender`. A v0.2.0 release archive provides the executable under its earlier name, and a v0.2.0 CLI names its files that way too; see [installing looptender](install.md). The file and directory names below describe **unreleased source**. Keep using the path your installed build prints; existing loops are not migrated.
 
-`looptender init` builds a disabled loop without editing YAML or installing a loop skill. This command requires v0.1.2 or newer; the v0.1.1 release does not include it. Follow the [installation instructions](../README.md#install), then check `looptender version` before using this guide. If using a separate development binary, substitute its absolute path for `keepgoing`.
+`looptender init` builds a disabled loop without editing YAML or installing a loop skill. This command requires v0.1.2 or newer; the v0.1.1 release does not include it. Follow the [installation instructions](../README.md#install), then check `looptender version` before using this guide. If using a separate development binary, substitute its absolute path for `looptender`.
 
 ## First loop
 
@@ -59,7 +59,7 @@ After a phase or lane finishes, new prompts ask the coordinator to verify the re
 
 ## Optional goal during setup
 
-In v0.1.5, `looptender init --with-goal` records a durable goal while creating the disabled setup. The interactive wizard asks whether to record and share a goal, suggesting yes; answer no or pass `--with-goal=false` to retain the existing prompt-only setup. Noninteractive callers must explicitly pass `--with-goal`; existing scripts retain their previous behavior. The rebuilt BB plugin exposes an explicit goal checkbox using the same flag; older plugins retain task-only setup. Published v0.1.4 does not support this flag.
+From v0.1.5, `init --with-goal` records a durable goal while creating the disabled setup. The interactive wizard asks whether to record and share a goal, suggesting yes; answer no or pass `--with-goal=false` to retain the existing prompt-only setup. Noninteractive callers must explicitly pass `--with-goal`; existing scripts retain their previous behavior. The rebuilt BB plugin exposes an explicit goal checkbox using the same flag; older plugins retain task-only setup. Published v0.1.4 does not support this flag.
 
 The task and completion criteria are copied once into private `task.md`. The goal title starts as the loop name; both objective and acceptance references point to that absolute snapshot path. `state/goal.json` holds the generated identity and revision 1, using the existing goal store. `prompt.md` contains stable operating instructions, and `loop.prompt_goal` explicitly shares the current goal specification in future automatic messages. Task text is not repeated in that scaffold or ordinary setup output. The agent must be able to read the private snapshot; setup does not grant filesystem access or change provider permissions. The supervisor does not read the goal's references or validate completion criteria.
 

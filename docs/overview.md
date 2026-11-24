@@ -2,6 +2,26 @@
 
 The longer description behind the [README](../README.md): how looptender connects to models, fallbacks, setup and the prompt, the panel and menu, alerts, what it does and does not do, and where it is headed. Labels such as *unreleased* and *in v0.2.0* say where each part is; [availability](availability.md) says what has been verified.
 
+## Two layers
+
+There are two layers. The looptender supervisor watches, wakes, bounds, recovers and holds the coordinator's session and, on a limit, moves it to the next route you configured; the coordinator agent under it splits the work into lanes, chooses their models and talks to other coordinators. The supervised session can be a BB thread, a headless Claude Code, Codex or Cursor session, an agent defined in configuration, or another program described to looptender by its status and resume commands.
+
+The core is a single binary for macOS, Linux and Windows. Use its daemon or an existing scheduler to check the loop. No separate loop skill is required. The host and supervisor must be running for checks to happen.
+
+The goal is to grow from one loop on your machine to fleets of agents across machines, with clear ownership, bounded execution, and work that stays visible. Today, [supervision runs on the same machine as the agents](architecture.md); [cross-device coordination is planned](roadmap.md#loops-across-devices-planned).
+
+## What it handles, in detail
+
+These are the failures that stop an agent nobody is watching, and what looptender does about each today:
+
+- **A provider limit is reached.** If you configured other routes, looptender moves the work to the next one in your list, in the order you gave, after one small real request confirms that route works. It is an ordered list, not a pool that it balances. Without other routes it waits, and a known reset time holds recovery until then. Returning to the first route is opt-in. The full [preferred routes](roadmap.md#preferred-routes-planned) rule is partly implemented.
+- **The network drops.** Before recovery work, looptender checks configured reachability so an unavailable connection can withhold re-prompts, handoffs and probes. Recovery still requires a running host, a later check and the usual holds and bounds. One real outage was observed; unattended lane recovery and the full network-cut procedure remain unverified ([evidence](testing.md#observed-once-a-real-outage-2026-11-14)).
+- **The machine goes away and comes back.** Nothing runs while the machine is off. Managed macOS and Linux [services](services.md) can keep checks running when the user service manager is available; `status`, `doctor` and the panel show recorded check and service evidence. Live logout/reboot, sleep and recovery acceptance remains open, so installation alone does not establish that supervision will return.
+- **A turn dies for no clear reason.** A failed BB turn is retried by reference. An error looptender cannot classify gets a limited number of re-prompts and then a hold, and it never moves the work to another route.
+- **A loop spins without progress.** Nudges to a stalled session are capped, and when they are spent the loop holds for a person. Optional deadlines, send limits and a Git-based no-progress timeout bound the total.
+
+Whenever the right move is not clear, looptender holds and asks you instead of deciding for you.
+
 ## More on the quick start
 
 A plain `stop` is carried out by the next check and stops the supervised conversation only; `--lanes` also stops the conversations it started, and theirs, and `--immediately` carries the stop out in the command ([stopping the lanes too](operations.md#stopping-the-lanes-too)). `complete` saves a completion hold; it is a declaration by the agent or operator, not independent verification. `resume` explicitly clears pause, stop, awaiting-user and completion holds; a resume of a hold that looptender raised because its re-prompts or nudges were spent also starts the counts over. Existing holds remain intact when starting or restarting a supervisor. Unreleased Antigravity status diagnostics expose a recognized saved ACP session ID and manual `--conversation` guidance; they do not start a CLI, approve a request, or release supervision holds. Replying in the agent conversation does not resume supervision. A person explicitly resumes from the looptender menu/panel or an ordinary terminal outside BB; if `resume` reports a conflicting `BB_THREAD_ID`, use that reviewed person-facing path rather than transferring ownership. Status displays may update on their next refresh. Unreleased CLI output labels a question retained after completion as history: completion ended that wait, and the historical note does not require resuming the completed loop.
@@ -212,3 +232,11 @@ not installed coordinator acceptance; overall automatic delegation remains open.
 Panel frontend contributors also use [pinned browser guidance and an advisory
 legacy-pattern scan](../tools/modern-web-guidance/README.md), alongside Impeccable.
 The scan is development tooling and does not establish browser compatibility.
+
+## More documentation
+
+- [Goals](goals.md), [transfer](transfer.md) and [local clients](local-clients.md) and [the panel](dock.md): task metadata and optional integrations.
+- [Agent chats](agent-chats.md) and [BB plugin](../integrations/bb-plugin-keepgoing/README.md): conversation supervision.
+- [Roadmap](roadmap.md): current priorities, planned scaling across devices and remaining acceptance gates; [feature analysis](supervision-feature-analysis.md) gives checkable criteria.
+- [Current scale limits and read-only benchmarks](scale-baseline.md): local bounds, loss domains and measurement scope; no fleet capacity claim.
+- [Where the supervisor runs](command-center.md): design record on why looptender runs on the machine where the agents live, and how a person elsewhere is reached (mostly planned).

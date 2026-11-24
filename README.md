@@ -34,10 +34,10 @@ These are the failures that stop an agent nobody is watching, and what looptende
   <img alt="Diagram: one row per case and what looptender does. Limit reached: moves to the next route you configured, or waits for the reset. Connection lost: waits for a later check; existing holds still apply. Turn failed: retries or re-prompts, within a cap. No progress: nudges within a cap, then holds. Needs a person: holds and shows it in status and the panel. Caption: when the right move is not clear, looptender holds and asks you." src="docs/assets/looptender-failures-light.svg" width="960">
 </picture>
 
-- **A provider limit is reached.** looptender moves to the next route you configured, in your order, after one small real request confirms it works; without one it waits for the reset. [Routes](docs/fallbacks.md).
-- **The network drops.** Re-prompts, handoffs and probes wait for a later check that finds the network up. [Network outages](docs/operations.md#network-outages).
+- **A provider limit is reached.** looptender moves to the next route you configured, in your order (an ordered list, not a pool it balances), after one small real request confirms it works; without one it waits for the reset. Returning to the first route is opt-in, and [preferred routes](docs/roadmap.md#preferred-routes-planned) are partly implemented. [Routes](docs/fallbacks.md).
+- **The network drops.** Re-prompts, handoffs and probes wait for a later check that finds the network up. One real outage was observed; unattended lane recovery and the full network-cut procedure remain unverified ([evidence](docs/testing.md#observed-once-a-real-outage-2026-11-14)).
 - **The machine sleeps or restarts.** Nothing runs while it is off. A [service](docs/services.md) or scheduler can run checks again afterwards, though that return is not yet verified live; `status` and the panel show what was recorded.
-- **A turn fails.** A failed BB turn is retried by reference; an unclassified error gets a capped number of re-prompts, then a hold.
+- **A turn fails.** A failed BB turn is retried by reference; an unclassified error gets a capped number of re-prompts, then a hold, and never moves the work to another route.
 - **No progress.** Nudges are capped, then the loop holds; optional deadlines, send limits and a Git no-progress timeout bound the total.
 
 Whenever the right move is not clear, looptender holds and asks you instead of deciding for you.
@@ -59,7 +59,7 @@ Agent tools have their own loops, retries and background agents, and each of the
 | BB threads, with lanes and the BB plugin | released (v0.2.0) |
 | Headless Claude Code and Codex | released (v0.2.0) |
 | Cursor CLI, as the first route only | released (v0.2.0) |
-| An agent defined in configuration, or any program with status and resume commands | released (v0.2.0) |
+| An agent defined in configuration, or any program with status and resume commands | released (v0.2.0); definitions tested with stand-ins only |
 | The panel: one local page for every loop | released (v0.2.0) |
 | Antigravity CLI, as the first route only | in source |
 | Observing a sessionpipe session; Telegram, Slack, Discord, ntfy and Pushover alerts | in source |
