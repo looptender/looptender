@@ -1,0 +1,1 @@
+- The panel is re-themed in the looptender brand (Orbital Control): new light and dark colours, flat planes with sharper corners, state shapes that differ without colour, a new mark, and a 2.5 px focus ring. Amber now appears only where a person is needed. No wording or data changed.
