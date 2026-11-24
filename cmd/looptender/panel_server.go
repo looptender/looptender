@@ -58,7 +58,7 @@ const panelExpiredPage = `<!doctype html>
 <body>
 <header class="bar">
   <div class="bar-in">
-    <p class="brand"><svg viewBox="0 0 20 20" aria-hidden="true" class="mark"><path d="M15.5 6.2A6.5 6.5 0 1 0 16.5 10"/><path d="M16.8 3.4v3.4h-3.4"/></svg><span>looptender</span></p>
+    <p class="brand"><svg viewBox="0 0 32 32" aria-hidden="true" class="mark"><path d="M24.2 10.6 A10 10 0 1 0 26 16"/><path d="M25.6 6.2 V11.2 H20.6"/><rect x="11" y="14.5" width="10" height="3"/></svg><span>looptender</span></p>
   </div>
 </header>
 <main class="notice">
