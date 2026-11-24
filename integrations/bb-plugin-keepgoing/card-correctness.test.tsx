@@ -33,12 +33,12 @@ test("pausing a loop whose target is another thread asks first, naming the loop 
   const watching = { ...loop, supervising: false };
   const ui = card(watching, "thr_primary", { control: (i) => { calls.push(i); return { ok: true, message: "pause done" }; } });
   try {
-    fireEvent.click(await ui.findByRole("button", { name: "Pause…" }));
+    fireEvent.click(await ui.findByRole("button", { name: "Pause… example-loop" }));
     assert.deepEqual(calls, [], "the first click only asks");
     assert.ok(ui.getByText("Pause loop example-loop? It supervises thr_target, not this thread."));
     fireEvent.click(ui.getByRole("button", { name: "Cancel" }));
-    assert.deepEqual(calls, []); assert.ok(ui.getByRole("button", { name: "Pause…" }));
-    fireEvent.click(ui.getByRole("button", { name: "Pause…" }));
+    assert.deepEqual(calls, []); assert.ok(ui.getByRole("button", { name: "Pause… example-loop" }));
+    fireEvent.click(ui.getByRole("button", { name: "Pause… example-loop" }));
     fireEvent.click(ui.getByRole("button", { name: "Pause loop example-loop" }));
     await waitFor(() => assert.equal(calls.length, 1));
     assert.deepEqual(calls[0], { configPath: loop.configPath, action: "pause", expectedThreadId: "thr_primary" });
@@ -49,7 +49,7 @@ test("a loop that supervises this thread pauses on one click, and an unmanaged l
   const calls: unknown[] = [];
   const ui = card(loop, "thr_one_click", { control: (i) => { calls.push(i); return { ok: true, message: "pause done" }; } });
   try {
-    fireEvent.click(await ui.findByRole("button", { name: "Pause" }));
+    fireEvent.click(await ui.findByRole("button", { name: "Pause example-loop" }));
     await waitFor(() => assert.equal(calls.length, 1));
     // The SDK's RPC boundary rejects a value that is not JSON; an undefined managedId would have been refused there.
     assert.equal(ui.queryByRole("alert"), null);
@@ -61,7 +61,7 @@ test("a loop that supervises this thread pauses on one click, and an unmanaged l
 test("the confirmation for a target that is not a BB thread names the target, not an adapter string as a thread", async () => {
   const ui = card({ ...loop, supervising: false, target: "fallback-2", details: { ...loop.details, targetThread: null, targetAdapter: "example-adapter" } }, "thr_nonbb");
   try {
-    fireEvent.click(await ui.findByRole("button", { name: "Pause…" }));
+    fireEvent.click(await ui.findByRole("button", { name: "Pause… example-loop" }));
     assert.ok(ui.getByText("Pause loop example-loop? Its current target is example-adapter, not this thread."));
     assert.equal(ui.queryByText(/supervises example-adapter/), null);
   } finally { ui.lifecycle.unmount(); cleanup(); }
