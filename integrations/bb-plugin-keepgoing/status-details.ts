@@ -73,12 +73,19 @@ export const detailsSchema = z.object({
   // status --json deadline/deadlineReached, sendAllowance, sendRecord, diskSpace
   // and unreadable. Each is present only when there is something to say.
   deadline: z.object({ at: z.string().max(64), reached: z.boolean().optional() }).optional(),
-  // Names of the fields above that status sent in a form this plugin could not read.
-  unparsed: z.array(z.string().max(32)).max(8).optional(),
   sends: z.object({ max: z.number().int().nonnegative(), used: z.number().int().nonnegative().optional(), remaining: z.number().int().nonnegative().optional(), reached: z.boolean(), unavailable: z.boolean().optional() }).optional(),
   sendRecord: z.string().max(600).optional(),
   disk: z.object({ level: z.enum(["low", "critical"]), message: z.string().max(400) }).optional(),
   unreadable: z.array(z.object({ file: z.string().max(64), problem: z.string().max(40), offset: z.number().int().nonnegative().optional(), remedy: z.string().max(1200) })).max(8).optional(),
+  // Names of the fields above that status sent in a form this plugin could not read.
+  unparsed: z.array(z.string().max(32)).max(8).optional(),
+  // The no-progress flag, only while status says it is raised ("flagged"): status's own sentence.
+  noProgress: z.object({ text: z.string().max(400) }).optional(),
+  // status --json buildFreshness (looptender's own words, shared with the dock and the menu): how this
+  // loop's supervisor build compares with the installed one. Absent from a looptender that does not send it.
+  // status --json archived (from a looptender that can archive a loop): when, and the hold it had. Absent otherwise.
+  archived: z.object({ at: z.string().max(40), note: z.string().max(300).optional(), hold: z.string().max(40).optional(), unreadable: z.boolean().optional() }).optional(),
+  buildFreshness: z.object({ state: z.string().max(24), text: z.string().max(200), detail: z.string().max(600).optional(), command: z.string().max(400).optional(), action: z.string().max(300).optional() }).optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
 
@@ -166,6 +173,24 @@ const resetAfterDeadline = (d: StatusDetails | undefined): boolean => {
 /** The send allowance as status prints it: `used/max attempts reserved; N remaining`. */
 const sendsText = (s: NonNullable<StatusDetails["sends"]>) => s.unavailable || s.used === undefined || s.remaining === undefined ? `${s.max} allowed; the count is unavailable` : `${s.used}/${s.max} attempts reserved; ${s.remaining} remaining`;
 
+/** "Archived since <date> · unarchive to use it again", as looptender words an archived loop: no resume applies. */
+export const archivedLine = (a: NonNullable<StatusDetails["archived"]>): string => `Archived since ${dateLabel(a.at)} · unarchive to use it again`;
+
+/** What status calls a hold, in the sentence it puts after a no-progress flag recorded before the hold. */
+const HELD_WORD: Record<string, string> = { "stop requested": "stopped", completed: "completed", "awaiting user": "awaiting a person", paused: "paused", disabled: "disabled" };
+/** status's own sentence for a raised no-progress flag, qualified as status qualifies it for a held loop. */
+export function noProgressLine(controlState: string, d: StatusDetails | undefined): string | undefined {
+  if (!d?.noProgress) return undefined;
+  const held = HELD_WORD[controlState];
+  return held ? `${d.noProgress.text} (recorded before the hold; the loop is held (${held}), so this is not current)` : d.noProgress.text;
+}
+
+/** The loop's build freshness as looptender worded it; nothing when it sent none or the build is current. */
+export function freshnessToShow(d: StatusDetails | undefined): NonNullable<StatusDetails["buildFreshness"]> | undefined {
+  const f = d?.buildFreshness;
+  return f && f.state !== "current" ? f : undefined;
+}
+
 /** status reported unreadable records, whether or not their details could be read. */
 export const recordsUnreadable = (d: StatusDetails | undefined): boolean => !!d?.unreadable?.length || !!d?.unparsed?.includes("unreadable");
 const unparsedLine = (names: readonly string[]) => `Status could not be read for: ${names.join(", ")}`;
@@ -192,6 +217,8 @@ export function reasonLines(controlState: string, note: string | null, d: Status
       : `Long limit wait: no handoff possible; resets ${dateLabel(wait.resetsAt)}${wait.resetIn ? ` (in ${wait.resetIn})` : ""}; the loop sends nothing until then${resetAfterDeadline(d) ? `; ${AFTER_DEADLINE}` : ""}`);
   }
   if (d?.schedule?.overdue) out.push(`Needs you: ${d.schedule.message ?? "no check has run for longer than usual"}`);
+  const np = noProgressLine(controlState, d);
+  if (np) out.push(np);
   if (note && controlState !== "enabled") out.push(`Note: ${shortNote(note, 160)}`);
   return out;
 }
@@ -211,6 +238,7 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
     `Build: ${buildSummary(d.runtime).text}${d.runtime?.installedBuild && !buildSummary(d.runtime).differs ? ` · installed ${d.runtime.installedBuild}` : ""}`,
     ...(d.targetProvider ? [`Provider: ${d.targetProvider}${d.targetModel ? ` · model ${d.targetModel}` : ""} (configured)`] : []),
     ...(d.moved ? [`Moved: ${d.moved.text}`] : []),
+    ...(d.archived ? [archivedLine(d.archived)] : []),
     // The words `looptender status` prints, with the successor when it names one.
     ...(d.supersededBy !== undefined ? [`Superseded: successor reference is recorded${d.supersededBy ? ` (${d.supersededBy})` : ""}; resume and takeover are refused`] : []),
     d.runtime ? `Check evidence: ${d.runtime.state} · ${d.runtime.freshness} · source ${d.runtime.source}` : "Check evidence: unavailable from this build",

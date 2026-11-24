@@ -55,7 +55,9 @@ type clientSnapshot struct {
 	// Archived is set while the loop is archived (as in status --json); its
 	// note only with --private. ArchiveLapsed: a record the loop no longer
 	// honours, since it supervises again.
-	Archived      *archiveView `json:"archived,omitempty"`
+	Archived *archiveView `json:"archived,omitempty"`
+	// Wait is a wait in force, its note only with --private.
+	Wait          *waitView    `json:"wait,omitempty"`
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
 	// Naming: as in status --json (loop_naming.go); the unmasked thread
 	// title only with --private.
@@ -294,6 +296,12 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 		s.Controls = &clientControls{ctl.Gate().Enabled, ctl.Paused, ctl.Stop, ctl.AwaitingUser, ctl.Completed}
 		s.ControlState = ctl.Summary()
 		s.Archived, s.ArchiveLapsed = loopArchive(entry.StateDir, ctl)
+		if wt := waitOf(entry.StateDir, ctl); wt != nil {
+			if !private {
+				wt.Note = ""
+			}
+			s.Wait = wt
+		}
 		for _, a := range []*archiveView{s.Archived, s.ArchiveLapsed} {
 			if a != nil && !private {
 				a.Note = ""

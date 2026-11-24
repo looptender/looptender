@@ -23,6 +23,7 @@ import (
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/daemoninfo"
 	"github.com/looptender/looptender/internal/health"
+	"github.com/looptender/looptender/internal/hostcheck"
 	"github.com/looptender/looptender/internal/incident"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/report"
@@ -184,7 +185,7 @@ func daemonOf(ctx context.Context) supervise.DaemonInfo {
 func tickOptions(e env, cfg *config.Config, dryRun bool) supervise.Options {
 	return supervise.Options{Version: version, DryRun: dryRun, Reporter: reporter(e, cfg), Routine: suppliedRoutine(e.ctx),
 		RoutineIgnored: e.ctx.Value(routineIgnoredKey{}) != nil, Daemon: daemonOf(e.ctx), Executable: checkExecutable(), ExecutableImage: processExecutableImage,
-		CommandPrefix: initCommandPrefix(), UsageRead: tickUsageRead}
+		CommandPrefix: initCommandPrefix(), UsageRead: tickUsageRead, AccountCheck: tickAccountCheck}
 }
 
 // Capture once during process initialization, before a command or check starts.
@@ -199,6 +200,13 @@ func checkExecutable() string {
 
 // tickOnce runs one pass under the tick lock.
 func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, leases ...*ownerLease) int {
+	if !dryRun {
+		at := now
+		if at.IsZero() {
+			at = time.Now()
+		}
+		settleWait(e, cfg, at)
+	}
 	if _, archived := archivedNow(cfg.Loop.StateDir); archived && !stopRequested(cfg.Loop.StateDir) {
 		// Nothing to check, and nothing recorded: a scheduler that still
 		// ticks an archived loop changes nothing. A saved stop is still
@@ -311,12 +319,28 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 	ctx, cancel := context.WithCancel(e.ctx)
 	e.ctx = ctx
 	defer cancel()
+	defer recordLaunchJob(cfg.Loop.StateDir)() // removed after the stopped record below
 	defer enableDaemonShutdown(monitor, cfg, cfgPath, lease, cancel)()
-	state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "started"})
+	started := state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "started"}
+	if j := readLaunchJobRecord(cfg.Loop.StateDir); j != nil {
+		started.Extra = map[string]any{"launch": j.Kind}
+	}
+	state.Append(cfg.Loop.StateDir, started)
+	if hostFixedByEnv() {
+		state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "host_readings_fixed", Error: hostcheck.FixedMessage})
+	}
 	clearStartRefused(cfg.Loop.StateDir) // a supervisor is running now
 	monitor.SetAdoption(adopter.followMode(cfg))
 	adopter.watch(monitor)
-	defer state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "stopped"})
+	defer func() {
+		// Which signal ended it, when one did: a person, a service
+		// manager, or BB quitting (SIGTERM or SIGHUP from the app).
+		stopped := state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "stopped"}
+		if s := stopSignal(); s != "" {
+			stopped.Extra = map[string]any{"signal": s}
+		}
+		state.Append(cfg.Loop.StateDir, stopped)
+	}()
 	var disk *diskWatch
 	if !dryRun {
 		disk = &diskWatch{}
@@ -606,6 +630,9 @@ type statusOut struct {
 	// UsageWatch is the usage watch's setting (looptender usage-watch);
 	// nil while it is off.
 	UsageWatch *usageWatchView `json:"usageWatch,omitempty"`
+	// LaunchJob is the service-manager job the daemon runs in when it was
+	// started from a BB thread (start_launch.go); nil otherwise.
+	LaunchJob *launchJob `json:"launchJob,omitempty"`
 	// ModelStep is the model step-down setting and any step in force
 	// (looptender model-step); nil while it is off and nothing is in force.
 	ModelStep *modelStepView `json:"modelStep,omitempty"`
@@ -663,8 +690,13 @@ type statusOut struct {
 	// control record that does not let it supervise. ArchiveLapsed is a
 	// record left on a loop that supervises again (resumed by a build from
 	// before archiving): shown, not acted on.
-	Archived      *archiveView `json:"archived,omitempty"`
-	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	Archived *archiveView `json:"archived,omitempty"`
+	// Wait is a wait in force (selfhold.go): the loop sends nothing until its
+	// condition holds and then carries on by itself. Withdrawn is the owner
+	// thread having taken back its own await-user.
+	Wait          *waitView      `json:"wait,omitempty"`
+	Withdrawn     *withdrawnView `json:"withdrawn,omitempty"`
+	ArchiveLapsed *archiveView   `json:"archiveLapsed,omitempty"`
 	// Naming is what a list needs to show a readable name (loop_naming.go).
 	Naming loopNaming `json:"naming"`
 	// ContinuedFrom is the loop this one continues (succession.go), and
@@ -720,6 +752,8 @@ type statusOut struct {
 	// DiskSpace is the room left on the volume that holds the state
 	// directory.
 	DiskSpace diskSpaceStatus `json:"diskSpace"`
+	// Host is the computer's login session and load, read now.
+	Host *hostStatus `json:"host,omitempty"`
 	// Builds names the build of the last check, this command's and the
 	// daemon's, from what is recorded; FollowsInstalls is yes, no, unknown,
 	// or ticks (checked by ticks, no daemon): whether the daemon will move to
@@ -1006,6 +1040,9 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	printUsageWatch(w, out.UsageWatch)
 	printModelStep(w, out.ModelStep)
 	printUsageBurn(w, out.UsageBurn)
+	if j := out.LaunchJob; j != nil {
+		fmt.Fprintf(w, "daemon job: %s %s, since %s (end it with %s)\n", j.Kind, j.Label, j.Since.Format(time.RFC3339), launchStopCommand(j.Kind, j.Label, j.Target))
+	}
 	if !out.stateUnreadable {
 		printTurnRetry(w, out.TurnRetry)
 		printContext(w, out.ContextWindow)
@@ -1074,6 +1111,12 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	fmt.Fprintln(w)
 	if ctl.SupersededBy != "" {
 		fmt.Fprintln(w, "superseded: successor reference is recorded in control.json; resume and takeover are refused")
+	}
+	if wt := out.Wait; wt != nil {
+		fmt.Fprintf(w, "waiting:   %s\n", wt.Text)
+	}
+	if wd := out.Withdrawn; wd != nil {
+		fmt.Fprintf(w, "question:  %s (%s)\n", wd.Text, when(wd.At))
 	}
 	if a := out.Archived; a != nil {
 		fmt.Fprintf(w, "archived:  %s; listed apart, needs nobody, and checked by no daemon. Resume and enable are refused until `looptender unarchive -c %s`, which resumes nothing\n", archiveSince(a), shellQuote(cfg.Path()))
@@ -1260,6 +1303,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if b := out.BuildAdoption; b != nil {
 		fmt.Fprintf(w, "daemon build change: %s\n", b.Message)
 	}
+	printHost(w, out.Host)
 	if d := out.DiskSpace; d.Level == "low" || d.Level == "critical" {
 		fmt.Fprintf(w, "disk:      %s\n", d.Message)
 	}
@@ -1404,6 +1448,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.NoProgress = noProgressOf(cfg, flagState, ctl, journal, graph, now)
 	out.UsageBurn = describeUsageBurn(l.StateDir, now)
 	out.UsageWatch = describeUsageWatch(l.StateDir)
+	out.LaunchJob = readLaunchJob(l.StateDir)
 	out.ModelStep = describeModelStep(l.StateDir)
 	if file := unreadableFile(out); file != "" {
 		// The flag needs both records; computed from an empty one it would
@@ -1513,6 +1558,8 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	}
 	if !out.controlUnreadable {
 		out.Archived, out.ArchiveLapsed = loopArchive(l.StateDir, out.Control)
+		out.Wait = waitOf(l.StateDir, out.Control)
+		out.Withdrawn = withdrawnOf(l.StateDir)
 	}
 	out.Naming = namingOf(l, out.TargetAgent.BBThread)
 	out.Lineage, out.ContinuedFrom = lineageOf(l.StateDir)
@@ -1568,6 +1615,8 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	}
 	out.SupervisorStartRefused = currentStartRefusal(l.StateDir, st.CheckedAt, out.Daemon)
 	out.DiskSpace = describeDiskSpace(l.StateDir)
+	h := readHost(context.Background())
+	out.Host = &h
 	out.Builds = buildNames(st, out.Daemon)
 	out.FollowsInstalls, out.followsText = followsInstalls(out.Daemon, out.Schedule)
 	if out.Daemon.State == "responsive" {
@@ -1834,8 +1883,10 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 	newEpisode, openQuestion := false, false
 	var settledBriefs []control.Brief
 	endedQuestion := ""
+	var before control.File // the record before an await-user, for noteOwnQuestion
 	f, err := updateControlAnnotated(cfg.Loop.StateDir, cmd, func(f *control.File) error {
 		newEpisode, openQuestion, settledBriefs, endedQuestion = false, false, nil, ""
+		before = *f
 		if cmd == "resume" && f.Question != nil {
 			endedQuestion = f.Question.ID
 		}
@@ -1919,6 +1970,11 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 		return exitFailed
 	}
 	recordQuestionEnded(cfg.Loop.StateDir, endedQuestion)
+	if cmd == "await-user" {
+		// Any other control change ends the right to take the question
+		// back by itself: the record no longer matches the control record.
+		noteOwnQuestion(cfg, before, f, note)
+	}
 	if err := state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "control", Action: cmd, Reason: f.Summary()}); err != nil {
 		e.errf("%v", err)
 		return exitFailed

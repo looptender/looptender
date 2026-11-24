@@ -58,7 +58,7 @@ const panelExpiredPage = `<!doctype html>
 <body>
 <header class="bar">
   <div class="bar-in">
-    <p class="brand"><svg viewBox="0 0 20 20" aria-hidden="true" class="mark"><path d="M15.5 6.2A6.5 6.5 0 1 0 16.5 10"/><path d="M16.8 3.4v3.4h-3.4"/></svg><span>looptender</span></p>
+    <p class="brand"><svg viewBox="0 0 32 32" aria-hidden="true" class="mark"><path d="M24.2 10.6 A10 10 0 1 0 26 16"/><path d="M25.6 6.2 V11.2 H20.6"/><rect x="11" y="14.5" width="10" height="3"/></svg><span>looptender</span></p>
   </div>
 </header>
 <main class="notice">
@@ -332,6 +332,10 @@ type panelHandler struct {
 	// changes is set only on a server started with --allow-changes. Without
 	// it no write request is routed at all.
 	changes *panelChanges
+	// notifySecret keys the notification form value; notifyDir is where the
+	// shared notification files are.
+	notifySecret []byte
+	notifyDir    string
 }
 
 // allowOpening is the guard for an opening address. It is the page guard
@@ -357,12 +361,23 @@ func (h *panelHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		// A change: its own stricter guard, then the session, then the
 		// anti-forgery value the change handler checks.
-		if h.changes == nil || !panelAllowPost(r, h.state.port) {
+		if !panelAllowPost(r, h.state.port) {
 			http.Error(w, "refused", http.StatusForbidden)
 			return
 		}
 		rest, ok := h.state.authorize(r)
 		if !ok {
+			http.Error(w, "refused", http.StatusForbidden)
+			return
+		}
+		// The notification choices are not a loop change: available on a
+		// read-only panel too, with their own anti-forgery value.
+		if rest == notifyPath {
+			h.state.touch()
+			h.serveNotify(w, r, h.state.sessionOf(r))
+			return
+		}
+		if h.changes == nil {
 			http.Error(w, "refused", http.StatusForbidden)
 			return
 		}
@@ -410,6 +425,7 @@ func (h *panelHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *panelHandler) served(w http.ResponseWriter) func(session string) {
 	return func(session string) {
 		out := h.page.served
+		out.NotifyForm = notifyFormValue(h.notifySecret, session)
 		now := h.state.now().UTC()
 		if h.changes == nil {
 			out.Changes = "off"
@@ -663,7 +679,11 @@ func runPanelServer(parent context.Context, c panelServerConfig) int {
 	page := newDockServer(port, state, reader)
 	page.served = dockServed{SchemaVersion: 1, ServedBy: "panel", IdleSeconds: max(1, int(c.idle/time.Second)),
 		Version: dockBuildLabel(version), VersionText: dockPanelVersionText(version)}
-	handler := &panelHandler{state: state, guard: newDockGuard(port), page: page}
+	nsecret, err := panelRandom(32)
+	if err != nil {
+		return exitFailed
+	}
+	handler := &panelHandler{state: state, guard: newDockGuard(port), page: page, notifySecret: []byte(nsecret), notifyDir: c.dir}
 	rec := panelRecord{SchemaVersion: 1, PID: os.Getpid(), Port: port, StartedAt: c.now().UTC().Truncate(time.Second), IdleSeconds: int(c.idle / time.Second),
 		Instance: state.instance, Registry: registryDir, Version: version, Changes: c.changes, BuildAuthority: panelCallerKind()}
 	if c.changes {
