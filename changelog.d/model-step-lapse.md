@@ -1,0 +1,1 @@
+- A model step-down whose step back cannot confirm the conversation's model stands down a day after the reset instead of warning at every check, and a stood-down notice lapses after a day.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/looptender/looptender/internal/state"
 	"regexp"
 	"sort"
 	"strconv"
@@ -142,7 +143,7 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 	if l.LastCheck.At != nil {
 		checked = *l.LastCheck.At
 	}
-	if v := l.ModelStep; v != nil && v.InForce != nil {
+	if v := l.ModelStep; v != nil && v.InForce != nil && !(v.InForce.StoodDown && now.Sub(v.InForce.StoodDownAt) > state.StoodDownShown) {
 		s := v.InForce
 		n := panelNotice{Kind: noticeModelStep, Severity: sevInfo, Since: s.At, ID: noticeID(noticeModelStep, l.Key, s.At, ""), Group: noticeModelStep + ".down",
 			Text: name + " runs on a weaker model until a one-model weekly limit resets " + noticeTime(s.ResetsAt) + ".", GroupText: "{n} loops run on a weaker model until a one-model weekly limit resets."}
@@ -150,6 +151,9 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 		case s.StoodDown:
 			n.Severity, n.Group, n.ID = sevNormal, noticeModelStep+".stayed", noticeID(noticeModelStep, l.Key, s.At, "stayed")
 			n.Text, n.GroupText = name+" stays on the model it is on: it was not moved back to its stronger model after the limit reset, because it was no longer on the weaker one or step-down is off.", "{n} loops were not moved back to their stronger model after a limit reset."
+			if s.StoodDownWhy != "" {
+				n.Text = name + " stays on the model it is on: it was not moved back to its stronger model after the limit reset, because " + s.StoodDownWhy + "."
+			}
 		case s.Failed:
 			n.Severity, n.Group, n.ID = sevNormal, noticeModelStep+".failed", noticeID(noticeModelStep, l.Key, s.At, "failed")
 			n.Text, n.GroupText = name+" could not step down a model at a one-model weekly limit; it waits for the reset "+noticeTime(s.ResetsAt)+".", "{n} loops could not step down a model at a one-model weekly limit."

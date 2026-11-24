@@ -89,3 +89,17 @@ func TestModelStepIsTheOwnersToSet(t *testing.T) {
 		t.Fatal("the owner was refused")
 	}
 }
+
+// A stand-down is said in the notice list for a day, then lapses.
+func TestModelStepStandDownNoticeLapses(t *testing.T) {
+	at := time.Date(2026, 3, 6, 9, 0, 0, 0, time.UTC)
+	l := dockLoop{Key: "lexample", Name: "example-loop", ModelStep: &modelStepView{InForce: &state.ModelStep{From: "opus", To: "sonnet", ResetsAt: at, At: at.Add(-time.Hour),
+		StoodDown: true, StoodDownAt: at, StoodDownWhy: "looptender could not confirm the conversation's model"}}}
+	got := noticesOf(l, false, at.Add(time.Hour))
+	if len(got) != 1 || got[0].Kind != noticeModelStep || !strings.Contains(got[0].Text, "because looptender could not confirm the conversation's model") {
+		t.Fatalf("%+v", got)
+	}
+	if got := noticesOf(l, false, at.Add(state.StoodDownShown+time.Minute)); len(got) != 0 {
+		t.Fatalf("not lapsed: %+v", got)
+	}
+}
