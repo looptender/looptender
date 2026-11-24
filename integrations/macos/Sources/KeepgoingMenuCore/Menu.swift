@@ -51,7 +51,12 @@ public struct PanelLoop: Decodable, Equatable {
     /// What it waits for, by kind: asked, held, limit, checks or unknown.
     public var waiting: PanelWaiting? = nil
 
-    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil, naming: PanelNaming? = nil, archived: PanelArchived? = nil, checkedAt: String? = nil, reason: String? = nil, waiting: PanelWaiting? = nil) {
+    /// Set when the loop was replaced by a successor: out of the way,
+    /// whatever hold it kept. Absent from a CLI that predates it.
+    public var superseded: Bool? = nil
+
+    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil, naming: PanelNaming? = nil, archived: PanelArchived? = nil, checkedAt: String? = nil, reason: String? = nil, waiting: PanelWaiting? = nil, superseded: Bool? = nil) {
+        self.superseded = superseded
         self.waiting = waiting
         self.naming = naming
         self.archived = archived
@@ -491,20 +496,22 @@ public enum MenuBuilder {
             let installed = list.installedBuild.map(Contract.text)
             let groups: [(String, [PanelLoop])] = [("Needs you", list.loops.filter { group($0) == .needsYou }), ("Working", list.loops.filter { group($0) == .working })]
             let others = list.loops.filter { group($0) == .other }
+            let listedLoops = groups.flatMap { $0.1.prefix(maxLoops) } + others.prefix(maxLoops * 2)
+            let names = disambiguatedTitles(listedLoops)
             if !list.loops.isEmpty { rows.append(separator) }
             for (title, loops) in groups where !loops.isEmpty {
                 rows.append(status(title))
-                for loop in loops.prefix(maxLoops) { rows.append(loopRow(loop, installed: installed, now: now)) }
+                for loop in loops.prefix(maxLoops) { rows.append(loopRow(loop, title: names[loop.key], installed: installed, now: now)) }
             }
             if !others.isEmpty {
                 rows.append(MenuRow(kind: .action, title: "Other loops (\(others.count))", detail: "", symbol: "tray.full", accessibilityLabel: "Other loops, \(others.count)",
                                     accessibilityHelp: "Shows paused, off, stopped, finished and archived loops.", toolTip: "", command: nil,
-                                    submenu: others.prefix(maxLoops * 2).map { loopRow($0, installed: installed, now: now) }))
+                                    submenu: others.prefix(maxLoops * 2).map { loopRow($0, title: names[$0.key], installed: installed, now: now) }))
             }
             // Accounts: only those at or near a limit on top; the rest in one submenu.
             if let quota = list.accountQuotas {
                 let all = quotaRows(quota)
-                let matter = accountsThatMatter(all)
+                let matter = accountsThatMatter(quota)
                 if !matter.isEmpty || !all.isEmpty {
                     rows.append(separator)
                     rows.append(contentsOf: matter)
@@ -527,7 +534,7 @@ public enum MenuBuilder {
             let total = list.loops.count + list.omitted
             // Whenever some loops are not listed here, whether this menu cut
             // them or the CLI did.
-            if total > list.loops.count || list.loops.count > maxLoops * 2 {
+            if total > listedLoops.count {
                 rows.append(action("All \(total) Loops in the Panel", .openPanel, symbol: "ellipsis.circle", help: "Opens the panel, which lists every loop."))
             }
             var facts: [String] = []

@@ -13,9 +13,11 @@ public enum LoopGroup: Equatable {
 
 extension MenuBuilder {
     /// A loop that was replaced by a successor: out of the way, whatever hold it kept.
-    static func isRetired(_ loop: PanelLoop) -> Bool { Contract.text(loop.phrase) == "Superseded" }
+    static func isRetired(_ loop: PanelLoop) -> Bool { loop.superseded == true }
 
     static func isArchived(_ loop: PanelLoop) -> Bool { loop.archived != nil || loop.state == "archived" }
+
+    static func isThreadIDSlug(_ slug: String) -> Bool { slug.hasPrefix("bb-thr-") || slug.hasPrefix("thr_") }
 
     /// The group a loop is listed in. Archived and retired loops are never in
     /// the first two; a loop needs you only when the CLI says a person is
@@ -40,8 +42,44 @@ extension MenuBuilder {
         }
         // A registered name that is only a thread ID in disguise is never shown.
         let slug = Contract.text(loop.name)
-        if slug.hasPrefix("bb-thr-") || slug.hasPrefix("thr_") { return "A loop" }
+        if isThreadIDSlug(slug) { return "A loop" }
         return slug
+    }
+
+    static func middleShortened(_ text: String, to limit: Int, tail: Int) -> String {
+        let chars = Array(text)
+        guard chars.count > limit, limit > 2, tail > 0, limit - 1 - tail >= 1 else { return shortened(text, to: limit) }
+        let head = String(chars.prefix(limit - 1 - tail)).trimmingCharacters(in: .whitespaces)
+        let suffix = String(chars.suffix(tail)).trimmingCharacters(in: .whitespaces)
+        return head + "…" + suffix
+    }
+
+    /// Shortens each loop's display name to `limit`, keeping a distinguishing tail
+    /// when two or more listed loops would otherwise share the same shortened title.
+    static func disambiguatedTitles(_ loops: [PanelLoop], limit: Int = maxName) -> [String: String] {
+        var fullByKey: [String: String] = [:]
+        var baseByKey: [String: String] = [:]
+        var keysByBase: [String: [String]] = [:]
+        for l in loops {
+            let full = displayName(l)
+            let base = shortened(full, to: limit)
+            fullByKey[l.key] = full
+            baseByKey[l.key] = base
+            keysByBase[base, default: []].append(l.key)
+        }
+        var out = baseByKey
+        for (_, keys) in keysByBase where keys.count > 1 {
+            let longKeys = keys.filter { Array(fullByKey[$0] ?? "").count > limit }
+            guard longKeys.count > 1 || (longKeys.count == 1 && keys.count > 1) else { continue }
+            for tail in 6...max(6, limit - 4) {
+                let candidates = keys.map { middleShortened(fullByKey[$0] ?? "", to: limit, tail: tail) }
+                if Set(candidates).count == keys.count {
+                    for (k, v) in zip(keys, candidates) { out[k] = v }
+                    break
+                }
+            }
+        }
+        return out
     }
 
     /// One short word for a state. Known states have a fixed word; a state this
@@ -102,8 +140,8 @@ extension MenuBuilder {
     }
 
     /// A loop's row: display name, one state word, and a submenu.
-    static func loopRow(_ loop: PanelLoop, installed: String?, now: Date) -> MenuRow {
-        let full = displayName(loop), name = shortened(full, to: maxName)
+    static func loopRow(_ loop: PanelLoop, title: String? = nil, installed: String?, now: Date) -> MenuRow {
+        let full = displayName(loop), name = title ?? shortened(full, to: maxName)
         let word = stateWord(loop)
         let facts = loopFacts(loop, installed: installed, now: now)
         let choices = loopChoices(loop) + freshnessRows(loop)
@@ -129,11 +167,22 @@ extension MenuBuilder {
     }
 
     /// The accounts that matter now (at or near a limit), as top-level rows; at most two.
-    static func accountsThatMatter(_ rows: [MenuRow]) -> [MenuRow] {
-        let matters = rows.filter { row in
-            guard row.kind == .action, row.symbol == "gauge.with.dots.needle.33percent", let pct = row.detail.split(separator: "%").first.flatMap({ Double($0) }) else { return false }
-            return pct >= 80
+    /// Ranks by each account's highest active usage window descending, with list-order tie-breaking.
+    static func accountsThatMatter(_ quota: AccountQuotaList) -> [MenuRow] {
+        guard quota.state == "available" else { return [] }
+        let candidates: [(index: Int, account: AccountQuota, peak: Double)] = quota.accounts.enumerated().compactMap { index, account in
+            guard account.summary.state == "reported" else { return nil }
+            let peak = account.summary.rows
+                .filter { $0.ended != true }
+                .compactMap(\.usedPercent)
+                .max()
+            guard let peak, peak >= 80 else { return nil }
+            return (index, account, peak)
         }
-        return Array(matters.prefix(2))
+        let sorted = candidates.sorted { lhs, rhs in
+            if lhs.peak != rhs.peak { return lhs.peak > rhs.peak }
+            return lhs.index < rhs.index
+        }
+        return sorted.prefix(2).map { quotaAccountRow($0.account, peakUsed: $0.peak) }
     }
 }
