@@ -32,6 +32,9 @@ const (
 	thirdLogin = "sk-ant-oat01-third-login"
 	secret     = "client-secret-for-tests"
 	convA      = "11111111-2222-4333-8444-555555555555"
+	// Made-up account ids: the session's own and the spare's.
+	ownAccount   = "99999999-2222-4333-8444-555555555555"
+	spareAccount = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 )
 
 // router is a stand-in for the router: it answers as decide says and keeps
@@ -81,7 +84,7 @@ func always(d front.Decision) func(context.Context, front.Ask) (front.Decision, 
 }
 
 func to(subscription, login string) front.Decision {
-	return front.Decision{Subscription: subscription, Authorization: "Bearer " + login}
+	return front.Decision{Subscription: subscription, Authorization: "Bearer " + login, Account: spareAccount}
 }
 
 func noRouter(context.Context, front.Ask) (front.Decision, error) {
@@ -96,12 +99,33 @@ type rig struct {
 	front  *front.Front
 	addr   string
 	upHost string
+
+	mu      sync.Mutex
+	bodies  []string
+	headers []http.Header
+}
+
+func (g *rig) sent() ([]string, []http.Header) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.bodies...), append([]http.Header(nil), g.headers...)
 }
 
 func start(t *testing.T, change func(*front.Config)) *rig {
 	t.Helper()
 	up := &standin.Upstream{}
-	provider := httptest.NewServer(up)
+	g := &rig{t: t, up: up}
+	// The provider as the tests see it: the stand-in, with the bodies and
+	// headers it was sent kept for the tests that compare them. Everything
+	// here is made up.
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		g.mu.Lock()
+		g.bodies, g.headers = append(g.bodies, string(b)), append(g.headers, r.Header.Clone())
+		g.mu.Unlock()
+		r.Body = io.NopCloser(strings.NewReader(string(b)))
+		up.ServeHTTP(w, r)
+	}))
 	t.Cleanup(provider.Close)
 	u, _ := url.Parse(provider.URL)
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -129,13 +153,16 @@ func start(t *testing.T, change func(*front.Config)) *rig {
 		defer cancel()
 		f.Stop(ctx)
 	})
-	return &rig{t: t, up: up, router: rt, front: f, addr: ln.Addr().String(), upHost: u.Host}
+	g.router, g.front, g.addr, g.upHost = rt, f, ln.Addr().String(), u.Host
+	return g
 }
 
 type call struct {
 	path, secret, login, conversation, host string
-	header                                  map[string]string
-	method                                  string
+	// body replaces the usual request body.
+	body   string
+	header map[string]string
+	method string
 }
 
 // do sends one request as a session would and returns the answer with its
@@ -154,7 +181,10 @@ func (g *rig) do(c call) (resp *http.Response, body string, err error) {
 	if c.conversation == "" {
 		c.conversation = convA
 	}
-	payload := fmt.Sprintf(`{"model":"model-large","stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"a {nested} \"prompt\""}]}],"metadata":{"user_id":"user_0123_account_99999999-2222-4333-8444-555555555555_session_%s"}}`, c.conversation)
+	payload := payloadFor(c.conversation)
+	if c.body != "" {
+		payload = c.body
+	}
 	req, _ := http.NewRequest(c.method, "http://"+g.addr+c.path, strings.NewReader(payload))
 	if c.host != "" {
 		req.Host = c.host
@@ -178,6 +208,12 @@ func (g *rig) do(c call) (resp *http.Response, body string, err error) {
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
 	return resp, string(b), err
+}
+
+// payloadFor is a request body shaped like Claude Code's: user_id is a JSON
+// object inside a string, naming a device, the account and the session.
+func payloadFor(conversation string) string {
+	return fmt.Sprintf(`{"model":"model-large","stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"a {nested} \"prompt\" with caf\u00e9"}]}],"metadata":{"user_id":"{\"device_id\":\"%s\",\"account_uuid\":\"%s\",\"session_id\":\"%s\"}"}}`, strings.Repeat("ab", 32), ownAccount, conversation)
 }
 
 func (g *rig) ok(c call) string {
@@ -532,14 +568,18 @@ func TestOnlyAKnownClientOnAMessagePathIsRouted(t *testing.T) {
 		{path: "/v1/models", method: http.MethodGet},
 		{path: "/v1/something/new"},
 		{path: "/api/hello"},
+		// Read-only calls a client makes for itself share a prefix with the
+		// sign-in paths and are not refused for it.
+		{path: "/api/oauth/profile", method: http.MethodGet},
+		{path: "/api/oauth/account/settings", method: http.MethodGet},
 		{path: "/v1/models/a%2Fb", method: http.MethodGet},
 	} {
 		g.ok(c)
 	}
-	if got := g.up.Records()[5].Path; got != "/v1/models/a%2Fb" {
+	if got := g.up.Records()[7].Path; got != "/v1/models/a%2Fb" {
 		t.Fatalf("an escaped slash reached the provider as %q", got)
 	}
-	if len(g.router.asked()) != 0 || g.up.Served(ownLogin) != 6 || g.up.Served(spareLogin) != 0 {
+	if len(g.router.asked()) != 0 || g.up.Served(ownLogin) != 8 || g.up.Served(spareLogin) != 0 {
 		t.Fatalf("asked %d, own %d, spare %d", len(g.router.asked()), g.up.Served(ownLogin), g.up.Served(spareLogin))
 	}
 	for _, rec := range g.up.Records() {
@@ -563,9 +603,16 @@ func TestGuards(t *testing.T) {
 		"another host":         {host: "example.com"},
 		"another port":         {host: "127.0.0.1:1"},
 		"a web page":           {header: map[string]string{"Origin": "https://example.com"}},
-		"signing in":           {path: "/v1/oauth/token"},
-		"making a key":         {path: "/api/claude_cli/create_api_key"},
-		"billing":              {path: "/api/billing/prepaid"},
+		"exchanging a token":   {path: "/v1/oauth/token"},
+		"granting a token":     {path: "/api/oauth/authorize", method: http.MethodGet},
+		"making a key":         {path: "/api/oauth/claude_cli/create_api_key"},
+		"billing":              {path: "/api/billing/usage"},
+		"payment":              {path: "/api/payment_methods"},
+		"prepaid credit":       {path: "/api/prepaid/credits"},
+		"a device grant":       {path: "/api/auth/trusted_devices"},
+		"a dot segment":        {path: "/api/oauth/./token"},
+		"an escaped dot":       {path: "/api/oauth/%2e/token"},
+		"a doubled slash":      {path: "/api/oauth//token"},
 		"health, wrong host":   {path: front.HealthPath, method: http.MethodGet, host: "example.com"},
 		"not the provider API": {path: "/metrics"},
 		"nor its root":         {path: "/", method: http.MethodGet},
@@ -606,7 +653,7 @@ func TestConflictingLengthsAreRefused(t *testing.T) {
 // The conversation is named by a header when the client sends one.
 func TestConversationFromHeader(t *testing.T) {
 	g := start(t, nil)
-	g.ok(call{header: map[string]string{front.ConversationHeader: "from-the-header"}})
+	g.ok(call{header: map[string]string{"X-Claude-Code-Session-Id": "from-the-header"}})
 	if a := g.router.asked(); len(a) != 1 || a[0].Conversation != "from-the-header" {
 		t.Fatalf("asked %+v", a)
 	}
@@ -729,5 +776,201 @@ func TestConnectTimeoutIsNotAnAnswerTimeout(t *testing.T) {
 	}
 	if o := g.router.outcome(t); o.Event != front.Unreachable {
 		t.Fatalf("outcome %+v", o)
+	}
+}
+
+// A routed request names the serving account, and only it: the account id
+// inside user_id is replaced in place, the same length, and every other
+// byte of the body is as the session sent it. A request on the session's
+// own login is not touched at all.
+func TestRoutedBodyNamesTheServingAccount(t *testing.T) {
+	g := start(t, nil)
+	g.router.set(always(to("spare", spareLogin)))
+	g.ok(call{})
+	g.router.set(always(front.Decision{Own: true}))
+	g.ok(call{conversation: "22222222-2222-4333-8444-555555555555"})
+	bodies, _ := g.sent()
+	original := payloadFor(convA)
+	routed := bodies[0]
+	if len(routed) != len(original) || strings.Contains(routed, ownAccount) || strings.Count(routed, spareAccount) != 1 {
+		t.Fatalf("routed body: len %d (sent %d), own account present %v, serving account %d times", len(routed), len(original), strings.Contains(routed, ownAccount), strings.Count(routed, spareAccount))
+	}
+	if strings.Replace(routed, spareAccount, ownAccount, 1) != original {
+		t.Fatal("a byte other than the account id changed")
+	}
+	if bodies[1] != payloadFor("22222222-2222-4333-8444-555555555555") {
+		t.Fatal("a request on the session's own login was changed")
+	}
+	if c := g.front.Counts(); c.Unroutable != 0 {
+		t.Fatalf("counts %+v", c)
+	}
+}
+
+// When the account a request names cannot be changed by one same-length
+// replacement, the request is not routed: it goes on the session's own
+// login, untouched, and is counted.
+func TestRequestThatCannotBeRewrittenIsNotRouted(t *testing.T) {
+	usual := payloadFor(convA)
+	cases := map[string]struct {
+		body     string
+		decision front.Decision
+	}{
+		"no metadata":                                             {body: `{"model":"model-large","messages":[]}`, decision: to("spare", spareLogin)},
+		"not JSON":                                                {body: `model-large, please`, decision: to("spare", spareLogin)},
+		"user_id of another shape":                                {body: `{"model":"model-large","metadata":{"user_id":"user_0123_account_` + ownAccount + `_session_` + convA + `"}}`, decision: to("spare", spareLogin)},
+		"the account id also in a prompt":                         {body: strings.Replace(usual, "a {nested}", ownAccount+" {nested}", 1), decision: to("spare", spareLogin)},
+		"no account id from the router":                           {body: usual, decision: front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin}},
+		"an account id of another length":                         {body: usual, decision: front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin, Account: "short"}},
+		"an account id that is no UUID":                           {body: usual, decision: front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin, Account: strings.Repeat("z", len(spareAccount))}},
+		"the account id escaped in user_id and plain in a prompt": {body: strings.Replace(strings.Replace(usual, `account_uuid\":\"9`, `account_uuid\":\"\u0039`, 1), "a {nested}", ownAccount+" {nested}", 1), decision: to("spare", spareLogin)},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			g := start(t, nil)
+			g.router.set(always(c.decision))
+			g.ok(call{body: c.body})
+			bodies, _ := g.sent()
+			if g.up.Served(spareLogin) != 0 || g.up.Served(ownLogin) != 1 || bodies[0] != c.body {
+				t.Fatalf("spare %d, own %d, body changed %v", g.up.Served(spareLogin), g.up.Served(ownLogin), bodies[0] != c.body)
+			}
+			if n := g.front.Counts().Unroutable; n != 1 {
+				t.Fatalf("counted %d", n)
+			}
+			if o := g.router.outcome(t); o.Subscription != "" || o.Status != 200 {
+				t.Fatalf("outcome %+v", o)
+			}
+		})
+	}
+}
+
+// The conversation comes from the body when the client sends no header.
+func TestConversationFromBody(t *testing.T) {
+	g := start(t, nil)
+	g.ok(call{})
+	if a := g.router.asked(); len(a) != 1 || a[0].Conversation != convA || a[0].Model != "model-large" {
+		t.Fatalf("asked %+v", a)
+	}
+}
+
+// A long upload on a slow connection is not cut: the body bound is on
+// silence, not on the whole upload.
+func TestSlowUploadIsNotCut(t *testing.T) {
+	g := start(t, func(c *front.Config) { c.BodyWait = 400 * time.Millisecond })
+	conn, err := net.Dial("tcp4", g.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	body := payloadFor(convA)
+	fmt.Fprintf(conn, "POST /v1/messages HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\n%s: %s\r\nConnection: close\r\nContent-Length: %d\r\n\r\n", g.addr, ownLogin, front.SecretHeader, secret, len(body))
+	began := time.Now()
+	for i := 0; i < len(body); i += len(body)/8 + 1 {
+		end := i + len(body)/8 + 1
+		if end > len(body) {
+			end = len(body)
+		}
+		io.WriteString(conn, body[i:end])
+		time.Sleep(100 * time.Millisecond)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("after %v: %v %v", time.Since(began), resp, err)
+	}
+	if took := time.Since(began); took < 500*time.Millisecond {
+		t.Fatalf("the upload took %v, not longer than the bound it is meant to outlast", took)
+	}
+	if bodies, _ := g.sent(); len(bodies) != 1 || bodies[0] != body {
+		t.Fatal("the slow body did not arrive whole")
+	}
+}
+
+// The Codex profile, on paper: a POST to /responses is routed with the
+// login and the account header changed together and the body untouched;
+// the conversation comes from a header; other paths go on unchanged or are
+// refused. Nothing uses this profile yet.
+func TestCodexProfile(t *testing.T) {
+	g := start(t, func(c *front.Config) { c.Profile = front.Codex() })
+	d := front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin, Account: spareAccount}
+	g.router.set(always(d))
+	body := `{"model":"model-small","input":[],"prompt_cache_key":"k","stream":true}`
+	headers := map[string]string{"Chatgpt-Account-Id": ownAccount, "Session-Id": convA, "Thread-Id": "33333333-2222-4333-8444-555555555555"}
+	g.ok(call{path: "/responses", body: body, header: headers})
+	g.ok(call{path: "/models", method: http.MethodGet, header: headers})
+	bodies, sent := g.sent()
+	if bodies[0] != body || sent[0].Get("Chatgpt-Account-Id") != spareAccount || sent[0].Get("Authorization") != "Bearer "+spareLogin || sent[0].Get("Session-Id") != convA {
+		t.Fatalf("routed request: body changed %v, headers %v", bodies[0] != body, sent[0])
+	}
+	if sent[1].Get("Chatgpt-Account-Id") != ownAccount || sent[1].Get("Authorization") != "Bearer "+ownLogin {
+		t.Fatal("a path that is not routed was changed")
+	}
+	if a := g.router.asked(); len(a) != 1 || a[0].Conversation != convA || a[0].Model != "model-small" {
+		t.Fatalf("asked %+v", a)
+	}
+	if resp, _, _ := g.do(call{path: "/v1/messages"}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("another provider's path: %d", resp.StatusCode)
+	}
+	// Without the serving account's id the request is not routed.
+	g = start(t, func(c *front.Config) { c.Profile = front.Codex() })
+	g.router.set(always(front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin}))
+	g.ok(call{path: "/responses", body: body, header: headers})
+	if _, sent := g.sent(); sent[0].Get("Authorization") != "Bearer "+ownLogin || g.front.Counts().Unroutable != 1 {
+		t.Fatal("a request was routed without the serving account's id")
+	}
+	// Nor with something that is not an account id: what goes into the
+	// account header is a UUID or nothing.
+	g = start(t, func(c *front.Config) { c.Profile = front.Codex() })
+	g.router.set(always(front.Decision{Subscription: "spare", Authorization: "Bearer " + spareLogin, Account: "x\r\nX-Injected: 1"}))
+	g.ok(call{path: "/responses", body: body, header: headers})
+	if _, sent := g.sent(); sent[0].Get("Authorization") != "Bearer "+ownLogin || sent[0].Get("Chatgpt-Account-Id") != ownAccount || sent[0].Get("X-Injected") != "" {
+		t.Fatal("a request was routed with an account id that is not one")
+	}
+}
+
+// Limit headers are reported by the profile's prefixes.
+func TestLimitHeadersByProfile(t *testing.T) {
+	g := start(t, func(c *front.Config) { c.Profile = front.Codex() })
+	g.up.Script(ownLogin, standin.Step{Events: 1, Header: map[string]string{"X-Codex-Primary-Used-Percent": "40", "Anthropic-Ratelimit-Unified-Status": "allowed"}})
+	g.router.set(always(front.Decision{Own: true}))
+	g.ok(call{path: "/responses", body: `{"model":"model-small"}`})
+	if o := g.router.outcome(t); o.Limits["x-codex-primary-used-percent"] != "40" || len(o.Limits) != 1 {
+		t.Fatalf("limits %v", o.Limits)
+	}
+}
+
+// A sender of one byte at a time, each inside the silence bound, is cut off
+// by the bound on the whole upload.
+func TestTrickledUploadIsCutByTheTotalBound(t *testing.T) {
+	g := start(t, func(c *front.Config) { c.BodyWait, c.BodyTotal = 300*time.Millisecond, 600*time.Millisecond })
+	conn, err := net.Dial("tcp4", g.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "POST /v1/messages HTTP/1.1\r\nHost: %s\r\n%s: %s\r\nContent-Length: 1000\r\n\r\n", g.addr, front.SecretHeader, secret)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(100 * time.Millisecond):
+				if _, err := io.WriteString(conn, "x"); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	began := time.Now()
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err == nil {
+		t.Fatalf("a trickled request was answered with %d", resp.StatusCode)
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) || time.Since(began) > 5*time.Second {
+		t.Fatalf("the front kept a trickled upload open for %v", time.Since(began))
+	}
+	if bodies, _ := g.sent(); len(bodies) != 0 {
+		t.Fatal("a trickled request reached the provider")
 	}
 }

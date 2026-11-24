@@ -9,7 +9,10 @@
 // itself, so nothing that happens to the Decider can cut a stream.
 //
 // It keeps nothing of a request or an answer. From a request body it takes
-// the model name and the conversation id and drops the rest. To the Decider
+// the model name and the ids the provider's profile names and drops the
+// rest. It changes a body in one case only: a routed request whose body
+// names its account gets the serving account's id in place of its own, one
+// value of the same length. To the Decider
 // it reports the conversation, the model, the status and the provider's
 // limit headers. It reads no file, writes none and logs nothing, and imports
 // only the standard library; tests hold it to that.
@@ -26,7 +29,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,10 +43,6 @@ const Protocol = 1
 // SecretHeader carries the client secret from the session to the front. The
 // front removes it before forwarding.
 const SecretHeader = "X-Looptender-Client"
-
-// ConversationHeader is where a client may name its conversation; without
-// it the id is taken from the body's metadata.
-const ConversationHeader = "X-Claude-Code-Session-Id"
 
 // HealthPath answers whether this is a front, and how many requests it has
 // open.
@@ -74,6 +72,10 @@ type Decision struct {
 	Own           bool
 	Subscription  string
 	Authorization string
+	// Account is the serving subscription's account id, for a provider
+	// whose requests name the account. Like Authorization it is kept in
+	// memory only and never reported.
+	Account string
 	// Expires is until when the front may reuse the answer for the same
 	// conversation without asking. Zero: ask every time.
 	Expires time.Time
@@ -118,6 +120,9 @@ type Decider interface {
 type Config struct {
 	// Upstream is the one address requests are forwarded to.
 	Upstream *url.URL
+	// Profile describes the provider behind Upstream. The zero value is
+	// Claude Code's.
+	Profile Profile
 	// Port is the loopback port the front listens on; a request must name
 	// it in Host.
 	Port int
@@ -135,11 +140,16 @@ type Config struct {
 	FirstWait, MaxWait, RetryWait time.Duration
 	// NoRouterPause is how long the front does not ask after ErrNoRouter.
 	NoRouterPause time.Duration
-	// BodyWait bounds reading a request's body from the session.
-	BodyWait time.Duration
+	// BodyWait bounds silence while a request's body is read from the
+	// session: a bound on a stalled upload, not on a long one. BodyTotal
+	// bounds the whole upload, so a sender of one byte per interval does
+	// not hold a request open for ever.
+	BodyWait, BodyTotal time.Duration
 	// ConnectWait, HeaderWait and IdleWait bound the provider: connecting,
 	// the first byte of the answer, and silence inside a stream. HeaderWait
-	// must not be shorter than the client's own request limit.
+	// must not be shorter than the client's own request limit. IdleWait is
+	// off unless set: a client was seen to wait four minutes on a silent
+	// stream, and how often the provider sends something is not yet known.
 	ConnectWait, HeaderWait, IdleWait time.Duration
 	// MaxDecisions caps the decisions kept for reuse.
 	MaxDecisions int
@@ -156,16 +166,19 @@ func (c *Config) defaults() {
 	def(&c.RetryWait, 2*time.Second)
 	def(&c.NoRouterPause, 5*time.Second)
 	def(&c.BodyWait, 2*time.Minute)
+	def(&c.BodyTotal, 15*time.Minute)
 	def(&c.ConnectWait, 10*time.Second)
 	// Above a client's own request limit, so the front never gives up on a
 	// request its client would still have waited for.
 	def(&c.HeaderWait, 15*time.Minute)
-	def(&c.IdleWait, 2*time.Minute)
 	if c.MaxBody <= 0 {
 		c.MaxBody = 32 << 20
 	}
 	if c.MaxDecisions <= 0 {
 		c.MaxDecisions = 4096
+	}
+	if c.Profile.Name == "" {
+		c.Profile = ClaudeCode()
 	}
 	if c.Now == nil {
 		c.Now = time.Now
@@ -204,6 +217,10 @@ type Counts struct {
 	Missed int64
 	// Skipped counts requests not asked about because no router was there.
 	Skipped int64
+	// Unroutable counts requests the router named another subscription for
+	// that went on their own login instead, because the account they name
+	// could not be changed safely.
+	Unroutable int64
 }
 
 // Front is one running front.
@@ -212,7 +229,7 @@ type Front struct {
 	dec Decider
 	srv *http.Server
 
-	open, missed, skipped atomic.Int64
+	open, missed, skipped, unroutable atomic.Int64
 
 	mu         sync.Mutex
 	decisions  map[string]Decision
@@ -260,7 +277,7 @@ func (f *Front) Stop(ctx context.Context) (open, cut int) {
 
 // Counts returns the front's tallies.
 func (f *Front) Counts() Counts {
-	return Counts{Open: f.open.Load(), Missed: f.missed.Load(), Skipped: f.skipped.Load()}
+	return Counts{Open: f.open.Load(), Missed: f.missed.Load(), Skipped: f.skipped.Load(), Unroutable: f.unroutable.Load()}
 }
 
 // Replace gives the front a new decision for a conversation, when the
@@ -389,38 +406,6 @@ func (f *Front) ask(ctx context.Context, a Ask, wait time.Duration) Decision {
 	return got.d
 }
 
-// Paths another subscription's login may be attached to.
-var routed = map[string]bool{
-	"/v1/messages":              true,
-	"/v1/messages/count_tokens": true,
-}
-
-// Paths the front forwards at all: the provider's API. Anything else is
-// refused.
-var forwarded = []string{"/v1/", "/api/"}
-
-func forwardedPath(path string) bool {
-	for _, prefix := range forwarded {
-		if strings.HasPrefix(path, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// Paths the front never forwards: signing in, making keys, billing.
-var refusedParts = []string{"/oauth", "api_key", "apikey", "billing", "payment", "prepaid", "overage"}
-
-func refused(path string) bool {
-	p := strings.ToLower(path)
-	for _, part := range refusedParts {
-		if strings.Contains(p, part) {
-			return true
-		}
-	}
-	return false
-}
-
 func (f *Front) hostOK(host string) bool {
 	port := strconv.Itoa(f.cfg.Port)
 	return host == "127.0.0.1:"+port || host == "localhost:"+port
@@ -447,7 +432,8 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "{\"front\":%d,\"open\":%d}\n", Protocol, f.open.Load())
 		return
 	}
-	if !forwardedPath(r.URL.Path) || refused(r.URL.Path) {
+	p := f.cfg.Profile
+	if !p.forwards(r.URL.Path) {
 		say(w, http.StatusForbidden, "this path is not forwarded")
 		return
 	}
@@ -463,14 +449,21 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Anything that is not a known client's request on a routed path goes
 	// through unchanged, body unread.
-	if !known || r.Method != http.MethodPost || !routed[r.URL.Path] {
+	if !known || r.Method != http.MethodPost || !p.Routed[r.URL.Path] {
 		f.finish(w, r, r.Body, r.ContentLength, Outcome{Client: client}, own)
 		return
 	}
-	// A session that stops sending its body does not keep a request open.
+	// A session that stops sending its body does not keep a request open;
+	// one that is still sending is given all the time it needs.
 	reading := http.NewResponseController(w)
-	reading.SetReadDeadline(time.Now().Add(f.cfg.BodyWait))
-	body, whole, err := readUpTo(r.Body, f.cfg.MaxBody)
+	latest := time.Now().Add(f.cfg.BodyTotal)
+	body, whole, err := readUpTo(r.Body, f.cfg.MaxBody, func() {
+		until := time.Now().Add(f.cfg.BodyWait)
+		if until.After(latest) {
+			until = latest
+		}
+		reading.SetReadDeadline(until)
+	})
 	if err != nil {
 		// The session went away or stalled mid-body. There is nothing to
 		// answer, and returning would send an empty 200.
@@ -482,8 +475,11 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.finish(w, r, rest, r.ContentLength, Outcome{Client: client}, own)
 		return
 	}
-	model, conversation := scan(body)
-	if h := r.Header.Get(ConversationHeader); h != "" {
+	var model, conversation string
+	if p.Body != nil {
+		model, conversation = p.Body(body)
+	}
+	if h := r.Header.Get(p.ConversationHeader); p.ConversationHeader != "" && h != "" {
 		conversation = h
 	}
 	o := Outcome{Client: client, Conversation: conversation, Model: model, RequestBytes: int64(len(body))}
@@ -493,7 +489,8 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		d = f.ask(r.Context(), a, f.wait())
 	}
-	resp, err := f.send(r.Context(), r, bytes.NewReader(body), int64(len(body)), d)
+	sent, d := f.shaped(body, d)
+	resp, err := f.send(r.Context(), r, bytes.NewReader(sent), int64(len(sent)), d)
 	if err != nil {
 		f.failed(w, r, o, d, err)
 		return
@@ -516,8 +513,8 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.report(o, d, resp, "")
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 			resp.Body.Close()
-			d = next
-			if resp, err = f.send(r.Context(), r, bytes.NewReader(body), int64(len(body)), d); err != nil {
+			sent, d = f.shaped(body, next)
+			if resp, err = f.send(r.Context(), r, bytes.NewReader(sent), int64(len(sent)), d); err != nil {
 				f.failed(w, r, o, d, err)
 				return
 			}
@@ -527,6 +524,31 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	f.stream(w, r, resp, o, d)
+}
+
+// shaped returns the body to send for decision d, and d. When d names
+// another subscription but the request cannot be made to name that
+// subscription's account and nothing else, the request is not routed: the
+// body comes back unchanged with the decision "your own login".
+func (f *Front) shaped(body []byte, d Decision) ([]byte, Decision) {
+	p := f.cfg.Profile
+	if d.Own || (p.Rewrite == nil && p.AccountHeader == "") {
+		return body, d
+	}
+	// What goes into a request as an account id is a UUID or nothing.
+	if !accountID.MatchString(d.Account) {
+		f.unroutable.Add(1)
+		return body, own
+	}
+	if p.Rewrite == nil {
+		return body, d
+	}
+	changed, ok := p.Rewrite(body, d.Account)
+	if !ok {
+		f.unroutable.Add(1)
+		return body, own
+	}
+	return changed, d
 }
 
 // finish sends a request that is not routed and streams its answer.
@@ -603,7 +625,12 @@ func (f *Front) send(ctx context.Context, r *http.Request, body io.Reader, n int
 	out.Host = f.cfg.Upstream.Host
 	if !d.Own {
 		out.Header.Set("Authorization", d.Authorization)
-		out.Header.Del("X-Api-Key")
+		for _, name := range f.cfg.Profile.DropWithLogin {
+			out.Header.Del(name)
+		}
+		if name := f.cfg.Profile.AccountHeader; name != "" {
+			out.Header.Set(name, d.Account)
+		}
 	}
 	return f.cfg.Transport.RoundTrip(out)
 }
@@ -623,7 +650,7 @@ func (f *Front) report(o Outcome, d Decision, resp *http.Response, event string)
 		o.Status = resp.StatusCode
 		o.RetryAfter = resp.Header.Get("Retry-After")
 		for name, values := range resp.Header {
-			if l := strings.ToLower(name); strings.HasPrefix(l, "anthropic-ratelimit-") && len(values) > 0 {
+			if l := strings.ToLower(name); f.cfg.Profile.limit(l) && len(values) > 0 {
 				if o.Limits == nil {
 					o.Limits = map[string]string{}
 				}
@@ -645,17 +672,21 @@ func (f *Front) stream(w http.ResponseWriter, r *http.Request, resp *http.Respon
 	flush.Flush()
 
 	var silent atomic.Bool
-	idle := time.AfterFunc(f.cfg.IdleWait, func() {
-		silent.Store(true)
-		resp.Body.Close()
-	})
-	defer idle.Stop()
+	heard := func() {}
+	if f.cfg.IdleWait > 0 {
+		idle := time.AfterFunc(f.cfg.IdleWait, func() {
+			silent.Store(true)
+			resp.Body.Close()
+		})
+		defer idle.Stop()
+		heard = func() { idle.Reset(f.cfg.IdleWait) }
+	}
 
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
-			idle.Reset(f.cfg.IdleWait)
+			heard()
 			if _, werr := w.Write(buf[:n]); werr != nil {
 				return // the client went away
 			}
@@ -679,62 +710,25 @@ func (f *Front) stream(w http.ResponseWriter, r *http.Request, resp *http.Respon
 	}
 }
 
-// readUpTo reads at most max bytes of r. whole is false when more follow.
-func readUpTo(r io.Reader, max int64) (body []byte, whole bool, err error) {
-	body, err = io.ReadAll(io.LimitReader(r, max+1))
-	if err != nil {
-		return nil, false, err
-	}
-	if int64(len(body)) > max {
-		return body, false, nil
-	}
-	return body, true, nil
-}
-
-var uuidRE = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
-
-// scan takes the model name and the conversation id from a request body and
-// nothing else. The conversation id is the uuid that follows the last
-// "session" in metadata.user_id.
-func scan(body []byte) (model, conversation string) {
-	dec := json.NewDecoder(bytes.NewReader(body))
-	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
-		return "", ""
-	}
-	var user string
-	for dec.More() {
-		t, err := dec.Token()
+// readUpTo reads at most max bytes of r, calling waiting before each read so
+// the caller can bound silence rather than the whole read. whole is false
+// when more follow.
+func readUpTo(r io.Reader, max int64, waiting func()) (body []byte, whole bool, err error) {
+	buf := make([]byte, 32<<10)
+	for {
+		waiting()
+		n, err := r.Read(buf)
+		body = append(body, buf[:n]...)
+		if int64(len(body)) > max {
+			return body, false, nil
+		}
+		if err == io.EOF {
+			return body, true, nil
+		}
 		if err != nil {
-			break
-		}
-		switch t {
-		case "model":
-			if dec.Decode(&model) != nil {
-				return "", ""
-			}
-		case "metadata":
-			var m struct {
-				UserID string `json:"user_id"`
-			}
-			if dec.Decode(&m) != nil {
-				return model, ""
-			}
-			user = m.UserID
-		default:
-			if skip(dec) != nil {
-				return model, conversationOf(user)
-			}
+			return nil, false, err
 		}
 	}
-	return model, conversationOf(user)
-}
-
-func conversationOf(user string) string {
-	i := strings.LastIndex(strings.ToLower(user), "session")
-	if i < 0 {
-		return ""
-	}
-	return strings.ToLower(uuidRE.FindString(user[i:]))
 }
 
 // skip reads past one JSON value.

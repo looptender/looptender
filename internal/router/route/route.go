@@ -87,8 +87,16 @@ func Defaults() Settings {
 type Window struct {
 	Name        string
 	UsedPercent float64
-	// ResetsAt is zero when the reading named no reset.
+	// ResetsAt is zero when the reading named no reset that could be
+	// believed.
 	ResetsAt time.Time
+	// At is when the window was read. A window with no reset stops
+	// counting MaxHold after it: nothing may stay shut for ever on a
+	// reading that says no more. Every source of readings must set it
+	// (Observe sets it from the observation's time when it is zero); a
+	// window put into a State any other way with no At and no reset does
+	// not count at all.
+	At time.Time
 	// Model is empty for a window that counts every model, else the model
 	// family it counts ("opus" matches "claude-opus-…").
 	Model string
@@ -185,9 +193,14 @@ const (
 	shut              // cannot serve this request
 )
 
-// counts reports whether window w limits a request for model at now.
-func counts(w Window, model string, now time.Time) bool {
+// counts reports whether window w limits a request for model at now. A
+// window whose reset has passed does not; nor does one that named no reset
+// and was read longer ago than MaxHold.
+func counts(w Window, model string, now time.Time, set Settings) bool {
 	if !w.ResetsAt.IsZero() && !w.ResetsAt.After(now) {
+		return false
+	}
+	if w.ResetsAt.IsZero() && now.Sub(w.At) > set.MaxHold {
 		return false
 	}
 	return w.Model == "" || strings.Contains(strings.ToLower(model), strings.ToLower(w.Model))
@@ -234,7 +247,7 @@ func levelOf(s Subscription, set Settings, rq Request, placed bool) level {
 		lv = soft
 	}
 	for _, w := range s.Windows {
-		if !counts(w, rq.Model, rq.Now) {
+		if !counts(w, rq.Model, rq.Now, set) {
 			continue
 		}
 		used := w.UsedPercent
@@ -260,7 +273,7 @@ func roomAt(s Subscription, set Settings, rq Request) time.Time {
 	}
 	at := holdEnd(s, set, rq.Now)
 	for _, w := range s.Windows {
-		if counts(w, rq.Model, rq.Now) && w.UsedPercent >= set.Hard && w.ResetsAt.After(at) {
+		if counts(w, rq.Model, rq.Now, set) && w.UsedPercent >= set.Hard && w.ResetsAt.After(at) {
 			at = w.ResetsAt
 		}
 	}
@@ -350,7 +363,7 @@ func uncertain(s Subscription, set Settings, rq Request) bool {
 		return true
 	}
 	for _, w := range s.Windows {
-		if counts(w, rq.Model, rq.Now) && w.UsedPercent+set.Near >= set.Soft {
+		if counts(w, rq.Model, rq.Now, set) && w.UsedPercent+set.Near >= set.Soft {
 			return true
 		}
 	}
@@ -463,6 +476,25 @@ func Expire(st *State, set Settings, now time.Time) {
 	}
 }
 
+// merge puts a reading's windows into what is known, by name. A known
+// window the reading does not name is kept until its own reset has passed.
+func merge(known, read []Window, at time.Time) []Window {
+	out := make([]Window, 0, len(known)+len(read))
+	named := map[string]bool{}
+	for i, w := range read {
+		named[w.Name] = true
+		if w.At.IsZero() {
+			read[i].At = at
+		}
+	}
+	for _, w := range known {
+		if !named[w.Name] && (w.ResetsAt.IsZero() || w.ResetsAt.After(at)) {
+			out = append(out, w)
+		}
+	}
+	return append(out, read...)
+}
+
 // Kind is what an answer said about the subscription that gave it.
 type Kind int
 
@@ -507,12 +539,14 @@ func Observe(st *State, set Settings, id string, o Observation) {
 		if len(o.Windows) == 0 {
 			return
 		}
-		s.Windows, s.ReadAt, s.Placed = o.Windows, o.At, 0
+		// An answer does not carry every window every time: what it names
+		// replaces what was known of those windows, and the others stay.
+		s.Windows, s.ReadAt, s.Placed = merge(s.Windows, o.Windows, o.At), o.At, 0
 		if !s.HoldUntil.After(o.At) {
 			s.HoldUntil, s.HoldSetAt = time.Time{}, time.Time{}
 		}
 		under := true
-		for _, w := range o.Windows {
+		for _, w := range s.Windows {
 			if w.UsedPercent >= set.Release && (w.ResetsAt.IsZero() || w.ResetsAt.After(o.At)) {
 				under = false
 			}

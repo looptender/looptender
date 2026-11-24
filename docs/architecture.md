@@ -57,7 +57,8 @@ internal/daemoninfo         private loopback diagnostics and authenticated shutd
 internal/netretry           retry only while the network is down
 internal/ciwait             wait for CI on an exact commit
 internal/router/route       the account router's decision, pure: which subscription serves a request of a conversation; nothing uses it yet (design/router.md)
-internal/router/front       the account router's forwarding front: one fixed upstream, a bounded wait for a decision, unchanged pass-through on any failure; standard library only, reads and writes no file; nothing starts it yet
+internal/router/front       the account router's forwarding front: one fixed upstream, a bounded wait for a decision, unchanged pass-through on any failure; what it knows of a provider is a Profile (Claude Code, and Codex on paper); standard library only, reads and writes no file; nothing starts it yet
+internal/router/limits      a provider's limit headers, as the front reports them, read into the routing decision's windows; pure
 internal/router/standin     test-only stand-in for a provider's API that records header names and the shape of a credential, never a value
 ```
 
