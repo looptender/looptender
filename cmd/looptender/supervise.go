@@ -200,6 +200,13 @@ func checkExecutable() string {
 
 // tickOnce runs one pass under the tick lock.
 func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, leases ...*ownerLease) int {
+	if !dryRun {
+		at := now
+		if at.IsZero() {
+			at = time.Now()
+		}
+		settleWait(e, cfg, at)
+	}
 	if _, archived := archivedNow(cfg.Loop.StateDir); archived && !stopRequested(cfg.Loop.StateDir) {
 		// Nothing to check, and nothing recorded: a scheduler that still
 		// ticks an archived loop changes nothing. A saved stop is still
@@ -680,8 +687,13 @@ type statusOut struct {
 	// control record that does not let it supervise. ArchiveLapsed is a
 	// record left on a loop that supervises again (resumed by a build from
 	// before archiving): shown, not acted on.
-	Archived      *archiveView `json:"archived,omitempty"`
-	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	Archived *archiveView `json:"archived,omitempty"`
+	// Wait is a wait in force (selfhold.go): the loop sends nothing until its
+	// condition holds and then carries on by itself. Withdrawn is the owner
+	// thread having taken back its own await-user.
+	Wait          *waitView      `json:"wait,omitempty"`
+	Withdrawn     *withdrawnView `json:"withdrawn,omitempty"`
+	ArchiveLapsed *archiveView   `json:"archiveLapsed,omitempty"`
 	// Naming is what a list needs to show a readable name (loop_naming.go).
 	Naming loopNaming `json:"naming"`
 	// ContinuedFrom is the loop this one continues (succession.go), and
@@ -1095,6 +1107,12 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	fmt.Fprintln(w)
 	if ctl.SupersededBy != "" {
 		fmt.Fprintln(w, "superseded: successor reference is recorded in control.json; resume and takeover are refused")
+	}
+	if wt := out.Wait; wt != nil {
+		fmt.Fprintf(w, "waiting:   %s\n", wt.Text)
+	}
+	if wd := out.Withdrawn; wd != nil {
+		fmt.Fprintf(w, "question:  %s (%s)\n", wd.Text, when(wd.At))
 	}
 	if a := out.Archived; a != nil {
 		fmt.Fprintf(w, "archived:  %s; listed apart, needs nobody, and checked by no daemon. Resume and enable are refused until `looptender unarchive -c %s`, which resumes nothing\n", archiveSince(a), shellQuote(cfg.Path()))
@@ -1535,6 +1553,8 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	}
 	if !out.controlUnreadable {
 		out.Archived, out.ArchiveLapsed = loopArchive(l.StateDir, out.Control)
+		out.Wait = waitOf(l.StateDir, out.Control)
+		out.Withdrawn = withdrawnOf(l.StateDir)
 	}
 	out.Naming = namingOf(l, out.TargetAgent.BBThread)
 	out.Lineage, out.ContinuedFrom = lineageOf(l.StateDir)
@@ -1858,8 +1878,10 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 	newEpisode, openQuestion := false, false
 	var settledBriefs []control.Brief
 	endedQuestion := ""
+	var before control.File // the record before an await-user, for noteOwnQuestion
 	f, err := updateControlAnnotated(cfg.Loop.StateDir, cmd, func(f *control.File) error {
 		newEpisode, openQuestion, settledBriefs, endedQuestion = false, false, nil, ""
+		before = *f
 		if cmd == "resume" && f.Question != nil {
 			endedQuestion = f.Question.ID
 		}
@@ -1943,6 +1965,11 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 		return exitFailed
 	}
 	recordQuestionEnded(cfg.Loop.StateDir, endedQuestion)
+	if cmd == "await-user" {
+		// Any other control change ends the right to take the question
+		// back by itself: the record no longer matches the control record.
+		noteOwnQuestion(cfg, before, f, note)
+	}
 	if err := state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "control", Action: cmd, Reason: f.Summary()}); err != nil {
 		e.errf("%v", err)
 		return exitFailed

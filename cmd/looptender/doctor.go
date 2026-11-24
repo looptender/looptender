@@ -215,6 +215,9 @@ func doctor(e env, args []string, run doctorRun) int {
 			r.add("daemon.launch_job", "ok", "The daemon runs as the "+j.Kind+" job "+j.Label+", outside BB, so it keeps running when BB quits.", "End it with "+launchStopCommand(j.Kind, j.Label, j.Target)+" or by terminating its PID.")
 		}
 		r.Archived, r.ArchiveLapsed = loopArchive(cfg.Loop.StateDir, ctl)
+		if wt := waitOf(cfg.Loop.StateDir, ctl); wt != nil {
+			r.add("loop.wait", "ok", "The loop is "+wt.Text+".", "")
+		}
 		if a := r.Archived; a != nil {
 			r.add("loop.archived", "ok", "The loop is archived "+archiveSince(a)+": it is listed apart, needs nobody and is checked by no daemon; warnings about its routes are not given.", "")
 		}

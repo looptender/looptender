@@ -89,7 +89,10 @@ Control:
   pause | resume           Pause; resume also clears stop, awaiting-user, and completion
   stop                     Stop the running session on the next pass, then send nothing
   complete                 Mark the task finished; hold until resume
-  await-user               Mark the loop as waiting for a person
+  await-user               Mark the loop as waiting for a person; --withdraw --note WHY: the
+                           loop's own thread takes back the await-user it set, if nothing changed since
+  wait --until CONDITION   Send nothing until host-session, network, time:RFC3339 or limit-reset
+                           holds, then carry on by itself (--for, default 24h, then an ordinary await-user)
   archive | unarchive      List a loop that is not supervising apart (--note TEXT), or normally again;
                            an archived loop needs nobody and cannot be resumed until unarchived.
                            Neither changes a hold; unarchive resumes nothing
@@ -303,6 +306,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		now:         fs.String("now", "", "RFC 3339 time to use instead of the clock"),
 		reviewFile:  fs.String("review-file", "", "complete: bounded private whole-objective and assignment review JSON"),
 		note:        fs.String("note", "", "a short note stored in control.json"),
+		until:       fs.String("until", "", "wait: what to wait for: host-session, network, time:RFC3339 or limit-reset"),
+		waitFor:     fs.Duration("for", 0, "wait: how long before the wait becomes an ordinary await-user (default 24h, at most 7 days)"),
+		withdraw:    fs.Bool("withdraw", false, "await-user: the owner thread takes back the await-user it set (needs --note)"),
 		succeededBy: fs.String("succeeded-by", "", "archive: the configuration of the loop that continues this one; this loop is archived after its first completed check"),
 		id:          fs.String("id", "", "fallbacks check: only this candidate"),
 		exact:       fs.Bool("exact", false, "fallbacks check: probe the target model, not the cheap one"),
@@ -323,6 +329,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	positional = append(positional, fs.Args()...)
+	if (*f.until != "" || *f.waitFor != 0) && cmd != "wait" {
+		e.errf("--until and --for are only supported by wait")
+		return exitUsage
+	}
+	if *f.withdraw && cmd != "await-user" {
+		e.errf("--withdraw is only supported by await-user")
+		return exitUsage
+	}
 	if *f.succeededBy != "" && cmd != "archive" {
 		e.errf("--succeeded-by is only supported by archive")
 		return exitUsage
@@ -485,7 +499,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return unarchiveCmd(e, cfg, *f.asJSON)
 	case "complete":
 		return completionCommand(e, cfg, *f.note, *f.reviewFile)
-	case "disable", "pause", "resume", "await-user":
+	case "wait":
+		if len(positional) != 0 || *f.until == "" {
+			e.errf("usage: looptender wait --until host-session|network|time:RFC3339|limit-reset [--for DURATION] [--note TEXT] [-c looptender.yaml]")
+			return exitUsage
+		}
+		return waitCmd(e, cfg, *f.until, *f.note, *f.waitFor, now)
+	case "await-user":
+		if *f.withdraw {
+			return withdrawCmd(e, cfg, *f.note)
+		}
+		return controlCmd(e, cfg, cmd, *f.note, *f.takeOver, *f.keepStop)
+	case "disable", "pause", "resume":
 		return controlCmd(e, cfg, cmd, *f.note, *f.takeOver, *f.keepStop)
 	case "session reset":
 		if *f.dryRun {
@@ -537,7 +562,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 type cliFlags struct {
 	staleAfter                      *time.Duration
 	cfgPath, now, note, id, routine *string
-	reviewFile, succeededBy         *string
+	reviewFile, succeededBy, until  *string
+	waitFor                         *time.Duration
+	withdraw                        *bool
 	client                          *string
 	target                          *string
 	here                            *bool
