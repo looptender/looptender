@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
+import { warmUp } from "./stand-in.ts";
 
 function fixtureEnvironment(root: string, inherited: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const location = (name: string) => {
@@ -55,6 +56,7 @@ test('coordinator harness excludes poisoned inherited environment', { skip: proc
 test('coordinator workflow preserves obligations and bounds dispatch', { skip: process.platform === 'win32', timeout: 180_000 }, () => {
   const root = mkdtempSync(join(realpathSync('/tmp'), 'coordinator-wrapper-'));
   try {
+    warmUp('/usr/bin/python3', ['-c', 'pass']); // its first start is not part of the timed run
     const suite = fileURLToPath(new URL('../../tools/coordinator-workflow', import.meta.url));
     const result = spawnSync('/usr/bin/python3', ['-B', '-m', 'unittest', 'discover', '-s', suite, '-p', 'test_*.py', '-v'], {
       env: fixtureEnvironment(root, process.env), encoding: 'utf8', timeout: 170_000, maxBuffer: 512 * 1024,
