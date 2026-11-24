@@ -118,6 +118,31 @@ test("a long limit wait says why no handoff is possible and whether anyone was t
   }
 });
 
+test("limitWaitListingTag surfaces active limit waits and failover blocks for bb looptender status", async () => {
+  const { limitWaitListingTag } = await import("./status-details.ts");
+  const base = { readAt: "2030-01-01T00:00:00Z", completed: false, targetThread: "thr_example", targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null };
+  assert.equal(
+    limitWaitListingTag({ ...base, limitWait: { state: "not_subscribed", resetsAt: "2030-01-06T12:00:00Z", reason: "limit_failover_disabled", resetIn: "3d 4h" } }),
+    "\tlimit=waiting (failover disabled; resets in 3d 4h)",
+  );
+  assert.equal(
+    limitWaitListingTag({ ...base, limitWait: { state: "reported", resetsAt: "2030-01-06T12:00:00Z", reason: "limit_no_fallback", resetIn: "5h" } }),
+    "\tlimit=waiting (no confirmed fallback; resets in 5h)",
+  );
+  assert.equal(
+    limitWaitListingTag({ ...base, limitWait: { state: "not_subscribed", resetsAt: "2030-01-06T12:00:00Z", reason: "limit_refusal_unrecovered" } }),
+    "\tlimit=waiting (unrecovered refusal)",
+  );
+  for (const limitWait of [
+    null,
+    { state: "none" },
+    { state: "reported", resetPassed: true, reason: "limit_failover_disabled", resetIn: "3d 4h" },
+    { state: "not_subscribed", held: "paused", reason: "limit_failover_disabled", resetIn: "3d 4h" },
+  ]) {
+    assert.equal(limitWaitListingTag({ ...base, limitWait }), "", JSON.stringify(limitWait));
+  }
+});
+
 test("the build lines say what was recorded and never guess", async () => {
   const { buildSummary } = await import("./status-details.ts");
   const rt = { state: "recent", source: "state", freshness: "recent" };

@@ -403,3 +403,54 @@ test("an existing directory is 'exists'; 'files may already exist' is a possible
   const home = (await import("node:os")).homedir();
   assert.equal(firstErrorLine(`warning: x\ninit: cannot read ${home}/private/task.md`), "init: cannot read ~/private/task.md");
 });
+
+test("setupOnHost passes --succeeds without BB_THREAD_ID and surfaces init warnings", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "keepgoing-succeeds-host-")));
+  try {
+    const target = { threadId: "thr_next_example", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: root, provider: "codex" };
+    const oldConfig = "/private/example-old/looptender.yaml";
+    const reply = { schemaVersion: 1, outcome: "created", loop: "example-old-2", project: root, configPath: join(root, "outside", "looptender.yaml"), stateDir: join(root, "outside", "state"), primary: { agent: { adapter: "bb", bbThread: target.threadId, provider: target.provider } }, fallbacks: [], limits: { wakeEvery: "1h", interval: "5m", stallAfter: "30m", backoff: "10m", maxNudges: 3, maxReprompts: 3, failoverOn: [] } };
+    const seenThreads: string[] = [];
+    let seenArgs: string[] = [];
+    const run: Execute = async (_bin, args, _stdin, thread) => {
+      seenThreads.push(thread);
+      if (args[0] === "init") seenArgs = args;
+      return { code: 0, data: reply, stderr: "init: warning: the succession was not recorded: fictional reason\n" };
+    };
+    const r = await setupOnHost({ bin: "keepgoing", target, name: "example-old-2", task: "Continue example", dryRun: false, succeeds: oldConfig }, undefined, run);
+    assert.equal(seenThreads[0], "");
+    const idx = seenArgs.indexOf("--succeeds");
+    assert.ok(idx > 0 && seenArgs[idx + 1] === oldConfig);
+    assert.ok("plan" in r);
+    assert.deepEqual(r.warnings, ["init: warning: the succession was not recorded: fictional reason"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("continuationCandidatesOnHost lists and sorts same-project active loops first", async () => {
+  const { continuationCandidatesOnHost } = await import("./setup-host.ts");
+  const root = await realpath(await mkdtemp(join(tmpdir(), "keepgoing-cont-")));
+  const project = join(root, "example-project");
+  await mkdir(project);
+  try {
+    const target = { threadId: "thr_new", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project, provider: "codex" };
+    const statuses: Record<string, unknown> = {
+      "/p/other.yaml": { loop: "other-loop", controlState: "paused", naming: { displayName: "Other Work", project: "other-project" } },
+      "/p/arch.yaml": { loop: "arch-loop", controlState: "awaiting user", archived: { at: "2026-01-01T00:00:00Z" }, naming: { displayName: "Archived Work", project: "example-project" } },
+      "/p/same.yaml": { loop: "same-loop", controlState: "paused", naming: { displayName: "Same Project Work", project: "example-project" } },
+      "/p/superseded.yaml": { loop: "old-loop", controlState: "superseded", naming: { displayName: "Old Work", project: "example-project" } },
+    };
+    const run: Execute = async (_bin, args) => {
+      if (args[0] === "registry") return { code: 0, data: { entries: [{ loop: "other-loop", configPath: "/p/other.yaml" }, { loop: "arch-loop", configPath: "/p/arch.yaml" }] } };
+      if (args[0] === "status") {
+        const cfg = args[args.indexOf("-c") + 1]!;
+        return { code: 0, data: statuses[cfg] };
+      }
+      return { code: 1, data: null };
+    };
+    const res = await continuationCandidatesOnHost({ bin: "keepgoing", target, extraPaths: ["/p/same.yaml", "/p/superseded.yaml"] }, undefined, run);
+    assert.deepEqual(res.candidates.map(c => c.loop), ["same-loop", "other-loop", "arch-loop"]);
+    assert.equal(res.candidates[0]!.sameProject, true);
+    assert.equal(res.candidates[0]!.archived, false);
+    assert.equal(res.candidates[2]!.archived, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

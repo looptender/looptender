@@ -168,6 +168,23 @@ export function lastLabel(lastState: string | null | undefined, details: { moved
   return details?.moved ? "none yet (new target, not yet checked)" : lastState || "never";
 }
 
+const LIMIT_WAIT_LISTING_WHY: Record<string, string> = {
+  limit_failover_disabled: "failover disabled",
+  limit_no_fallback: "no confirmed fallback",
+  limit_refusal_unrecovered: "unrecovered refusal",
+};
+
+/** Concise tab-prefixed usage-limit status field for `bb looptender status`, or empty when none is active. */
+export function limitWaitListingTag(d: StatusDetails | undefined): string {
+  const wait = d?.limitWait;
+  if (!wait || wait.state === "none" || wait.resetPassed || wait.held) return "";
+  const parts: string[] = [];
+  const why = LIMIT_WAIT_LISTING_WHY[wait.reason ?? ""];
+  if (why) parts.push(why);
+  if (wait.resetIn) parts.push(`resets in ${wait.resetIn}`);
+  return parts.length > 0 ? `\tlimit=waiting (${parts.join("; ")})` : "\tlimit=waiting";
+}
+
 export function dateLabel(value: string | null | undefined): string {
   if (!value || value.startsWith("0001-")) return "unavailable";
   const time = new Date(value);

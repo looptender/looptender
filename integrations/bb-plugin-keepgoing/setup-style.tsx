@@ -47,6 +47,13 @@ const css = `
 .kgs .msg{padding:8px 10px;border-radius:6px;border:1px solid color-mix(in srgb,currentColor 24%,transparent)}
 .kgs .msg[role=status]{border:0;padding:0;opacity:.8}
 .kgs .msg[role=alert]{border-color:#d2402b;background:color-mix(in srgb,#d2402b 10%,transparent)}
+.kgs .warn{padding:8px 10px;border-radius:6px;border:1px solid color-mix(in srgb,#b45309 48%,currentColor);background:color-mix(in srgb,#b45309 8%,transparent);font-size:12px;display:grid;gap:4px}
+.kgs .tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:3px;border:1px solid color-mix(in srgb,currentColor 22%,transparent);border-radius:8px;background:color-mix(in srgb,currentColor 4%,transparent)}
+.kgs .tab{font:inherit;font-weight:500;color:inherit;background:transparent;border:0;border-radius:6px;padding:7px 10px;cursor:pointer;text-align:center}
+.kgs .tab:hover:not(:disabled){background:color-mix(in srgb,currentColor 7%,transparent)}
+.kgs .tab[aria-selected=true]{background:color-mix(in srgb,currentColor 13%,transparent);font-weight:600;box-shadow:0 1px 2px color-mix(in srgb,currentColor 10%,transparent)}
+.kgs .tab:disabled{opacity:.55;cursor:not-allowed}
+.kgs .tab:focus-visible{outline:2px solid #1a73e8;outline-offset:2px}
 .kgs details>summary,.kgs-more>summary{cursor:pointer;font-weight:600;list-style:none}
 .kgs summary::-webkit-details-marker,.kgs-more>summary::-webkit-details-marker{display:none}
 .kgs summary::before,.kgs-more>summary::before{content:"\\25B8";display:inline-block;width:1.2em;opacity:.7}
@@ -57,6 +64,7 @@ const css = `
 .kgs input[type=text],.kgs input[type=number],.kgs textarea,.kgs select{font-size:16px;min-height:44px}
 .kgs textarea{min-height:120px}
 .kgs .btn{min-height:44px}
+.kgs .tab{min-height:44px;font-size:14px}
 .kgs .choice{min-height:44px;padding:12px}
 .kgs summary,.kgs-more>summary{min-height:44px;display:flex;align-items:center}
 .kgs-chip{min-height:44px !important;padding:8px 14px !important;font-size:14px !important;line-height:20px !important;box-sizing:border-box}
