@@ -36,10 +36,14 @@ anything to that session.
 2. **Set up the loop.** At a terminal:
 
    ```sh
-   looptender init --agent sessionpipe --name try-sessionpipe --session claude-code:<id>
+   looptender init --agent sessionpipe --session claude-code:<id>
    ```
 
-   It writes a private setup directory and prints three commands. The events
+   The loop is named after the session unless you pass `--name`:
+   `observed-claude-code-` and eight hex digits of a SHA-256 of the session id,
+   for example `observed-claude-code-b3bc2e23`, so sessions started together
+   still get different names. It writes a
+   private setup directory and prints three commands. The events
    file defaults to `sessionpipe-events.jsonl` inside that directory, which
    only you can read. Pass `--events-file PATH` to choose another, and
    `--non-interactive` (with `--json` for a script) to be asked nothing.
