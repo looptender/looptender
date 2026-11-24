@@ -2,21 +2,22 @@ package channel
 
 import (
 	"net"
-	"os"
 
 	"golang.org/x/sys/unix"
 )
 
-// samePeer reports whether the process at the other end runs as this user.
-func samePeer(c *net.UnixConn) bool {
+// peerUID asks the system which user the process at the other end of c runs
+// as. A test replaces it.
+var peerUID = func(c *net.UnixConn) (uid int, ok bool) {
 	raw, err := c.SyscallConn()
 	if err != nil {
-		return false
+		return 0, false
 	}
-	ok := false
 	raw.Control(func(fd uintptr) {
 		cred, err := unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED)
-		ok = err == nil && int(cred.Uid) == os.Getuid()
+		if err == nil {
+			uid, ok = int(cred.Uid), true
+		}
 	})
-	return ok
+	return uid, ok
 }

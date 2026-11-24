@@ -237,6 +237,9 @@ type Front struct {
 	open, missed, skipped, unroutable atomic.Int64
 	handshakes, handshakesFailed      atomic.Int64
 
+	stopping chan struct{}
+	stopOnce sync.Once
+
 	mu         sync.Mutex
 	decisions  map[string]Decision
 	pauseUntil time.Time
@@ -249,7 +252,7 @@ func New(cfg Config, dec Decider) (*Front, error) {
 		return nil, errors.New("front: an upstream address is required")
 	}
 	cfg.defaults()
-	f := &Front{cfg: cfg, dec: dec, decisions: map[string]Decision{}}
+	f := &Front{cfg: cfg, dec: dec, decisions: map[string]Decision{}, stopping: make(chan struct{})}
 	f.srv = &http.Server{
 		Handler:           f,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -280,8 +283,14 @@ func (f *Front) ServeTLS(ln net.Listener, cert tls.Certificate) error {
 		config:   &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		ready:    make(chan net.Conn),
 		done:     make(chan struct{}),
+		slots:    make(chan struct{}, maxHandshakes),
 	})
 }
+
+// maxHandshakes bounds the TLS handshakes in progress at once. A peer that
+// connects and sends nothing holds one for ten seconds; beyond the bound a
+// new connection is closed and counted as a failed handshake.
+const maxHandshakes = 256
 
 // handshaking is a listener that completes the TLS handshake itself, so it
 // can count the ones that fail, and hands on only connections that
@@ -293,6 +302,7 @@ type handshaking struct {
 	once   sync.Once
 	ready  chan net.Conn
 	done   chan struct{}
+	slots  chan struct{}
 }
 
 func (h *handshaking) Accept() (net.Conn, error) {
@@ -306,13 +316,39 @@ func (h *handshaking) Accept() (net.Conn, error) {
 }
 
 func (h *handshaking) accept() {
+	var wait time.Duration
 	for {
 		c, err := h.Listener.Accept()
 		if err != nil {
+			// An error that passes (out of file descriptors, a connection
+			// gone before it was accepted) must not end the front: wait a
+			// little and go on, as net/http does for its own listeners.
+			var ne net.Error
+			if !errors.Is(err, net.ErrClosed) && errors.As(err, &ne) && (ne.Timeout() || temporaryAccept(err)) {
+				if wait == 0 {
+					wait = 5 * time.Millisecond
+				} else if wait *= 2; wait > time.Second {
+					wait = time.Second
+				}
+				select {
+				case <-time.After(wait):
+					continue
+				case <-h.stopped():
+				}
+			}
 			close(h.done)
 			return
 		}
+		wait = 0
+		select {
+		case h.slots <- struct{}{}:
+		default:
+			h.front.handshakesFailed.Add(1)
+			c.Close()
+			continue
+		}
 		go func() {
+			defer func() { <-h.slots }()
 			t := tls.Server(c, h.config)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -331,9 +367,21 @@ func (h *handshaking) accept() {
 	}
 }
 
+// stopped is closed when the front is told to stop.
+func (h *handshaking) stopped() <-chan struct{} { return h.front.stopping }
+
+// temporaryAccept reports whether an accept error is one that passes. The
+// standard library marks these Temporary; the method is deprecated for
+// errors in general but is still how accept errors are told apart.
+func temporaryAccept(err error) bool {
+	var t interface{ Temporary() bool }
+	return errors.As(err, &t) && t.Temporary()
+}
+
 // Stop stops accepting and lets open requests finish until ctx ends. It
 // returns how many were open when it was called and how many it cut.
 func (f *Front) Stop(ctx context.Context) (open, cut int) {
+	f.stopOnce.Do(func() { close(f.stopping) })
 	open = int(f.open.Load())
 	if err := f.srv.Shutdown(ctx); err != nil {
 		cut = int(f.open.Load())

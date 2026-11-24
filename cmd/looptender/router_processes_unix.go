@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/looptender/looptender/internal/router/channel"
@@ -92,14 +93,15 @@ func routerFrontCommand(e env, args []string) int {
 	if *useTLS {
 		cert, certPEM, err := loopcert.New(time.Now())
 		if err == nil {
-			err = os.WriteFile(filepath.Join(*dir, routerFrontCertName), certPEM, 0o600)
+			err = writeFrontCertificate(*dir, certPEM)
 		}
 		if err != nil {
 			ln.Close()
-			e.errf("front: the loopback certificate could not be made or written")
+			e.errf("front: the loopback certificate could not be made, or written into a directory that is this user's alone")
 			return exitFailed
 		}
 		serve, scheme = func() error { return f.ServeTLS(ln, cert) }, "https"
+		fmt.Fprintf(e.stdout, "front: its certificate (no key) is in %s\n", filepath.Join(*dir, routerFrontCertName))
 	}
 	fmt.Fprintf(e.stdout, "front: listening on %s://%s\n", scheme, ln.Addr())
 	done := make(chan error, 1)
@@ -116,4 +118,28 @@ func routerFrontCommand(e env, args []string) int {
 	c := f.Counts()
 	fmt.Fprintf(e.stdout, "front: stopped; waited for %d open requests, cut %d; decisions missed %d, not asked %d; handshakes %d, failed %d\n", open-cut, cut, c.Missed, c.Skipped, c.Handshakes, c.HandshakesFailed)
 	return exitOK
+}
+
+// writeFrontCertificate writes the certificate a client would be told to
+// trust into the router's directory, which must pass the channel's own
+// check. An older file of that name is removed first, by name, so a link
+// planted there is removed and not followed; the new file is then created,
+// refusing to follow a link or to reuse a file that appeared meanwhile.
+func writeFrontCertificate(dir string, certPEM []byte) error {
+	if _, err := channel.CheckDirectory(dir); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, routerFrontCertName)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(certPEM)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }

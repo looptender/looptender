@@ -136,3 +136,42 @@ func TestRouterProcessesRefusals(t *testing.T) {
 		}
 	}
 }
+
+// The certificate is written into a directory that is this user's alone,
+// and a link planted under its name is removed, not followed.
+func TestFrontCertificateIsNotWrittenThroughALink(t *testing.T) {
+	dir, err := os.MkdirTemp("", "rc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	outside := filepath.Join(t.TempDir(), "someone-elses-file")
+	if err := os.WriteFile(outside, []byte("untouched"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, routerFrontCertName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFrontCertificate(dir, []byte("made-up certificate")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "untouched" {
+		t.Fatalf("the file behind the planted link was written: %q", b)
+	}
+	st, err := os.Lstat(filepath.Join(dir, routerFrontCertName))
+	if err != nil || !st.Mode().IsRegular() || st.Mode().Perm() != 0o600 {
+		t.Fatalf("the certificate file: %v %v", st, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, routerFrontCertName)); string(b) != "made-up certificate" {
+		t.Fatalf("content %q", b)
+	}
+	// A directory others can enter is refused, and nothing is written.
+	open := t.TempDir()
+	os.Chmod(open, 0o755)
+	if err := writeFrontCertificate(open, []byte("x")); err == nil {
+		t.Fatal("written into a directory that is not closed")
+	}
+	if entries, _ := os.ReadDir(open); len(entries) != 0 {
+		t.Fatal("something was written there")
+	}
+}

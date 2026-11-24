@@ -4,6 +4,6 @@ package channel
 
 import "net"
 
-// samePeer is false where this code has no way to ask who the peer is: the
-// channel then answers nobody, and every request goes on its own login.
-func samePeer(*net.UnixConn) bool { return false }
+// peerUID cannot ask who the peer is on this system: nobody is answered and
+// nobody is trusted, and every request goes on its own login.
+var peerUID = func(*net.UnixConn) (int, bool) { return 0, false }

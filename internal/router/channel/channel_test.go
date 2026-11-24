@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -307,4 +308,282 @@ func (f fixed) Login(_ context.Context, sub string) (core.Login, error) {
 		return core.Login{}, errors.New("unavailable")
 	}
 	return l, nil
+}
+
+// squatter is a listener that is not the router: it answers every
+// connection with a decision naming another login, and counts the requests
+// it was sent.
+type squatter struct {
+	ln       net.Listener
+	mu       sync.Mutex
+	requests int
+}
+
+func squat(t *testing.T, dir string) *squatter {
+	t.Helper()
+	ln, err := net.Listen("unix", filepath.Join(dir, SocketName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &squatter{ln: ln}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				c.SetDeadline(time.Now().Add(2 * time.Second))
+				if line, _ := bufio.NewReader(c).ReadString('\n'); line != "" {
+					s.mu.Lock()
+					s.requests++
+					s.mu.Unlock()
+				}
+				c.Write([]byte(`{"decision":{"Subscription":"theirs","Authorization":"Bearer someone-elses-login","Account":"someone-elses-account"}}` + "\n"))
+			}()
+		}
+	}()
+	return s
+}
+
+func (s *squatter) got() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.requests
+}
+
+// The front asks only its own user's router. A socket in a directory that
+// is not the user's alone is not asked at all, whoever listens there: the
+// answer is "no router", never a decision, and no question is sent.
+func TestClientTrustsOnlyAPrivateDirectory(t *testing.T) {
+	shared := privateDir(t)
+	s := squat(t, shared)
+	if err := os.Chmod(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewClient(shared).Decide(context.Background(), front.Ask{Client: "client-one"})
+	if !errors.Is(err, front.ErrNoRouter) || d.Authorization != "" || s.got() != 0 {
+		t.Fatalf("a directory others can enter: %+v %v, squatter was sent %d requests", d, err, s.got())
+	}
+	// A link to a private directory is not a private directory.
+	private := privateDir(t)
+	s2 := squat(t, private)
+	link := filepath.Join(privateDir(t), "link")
+	if err := os.Symlink(private, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewClient(link).Decide(context.Background(), front.Ask{}); !errors.Is(err, front.ErrNoRouter) || s2.got() != 0 {
+		t.Fatalf("through a link: %v, squatter was sent %d", err, s2.got())
+	}
+	// The same listener in the private directory itself is another user's
+	// only if the system says so: here it is this user, so it is asked. This
+	// is the control for the two refusals above.
+	if d, err := NewClient(private).Decide(context.Background(), front.Ask{}); err != nil || d.Subscription != "theirs" || s2.got() != 1 {
+		t.Fatalf("the control: %+v %v", d, err)
+	}
+}
+
+// Each end asks the system who is at the other end and deals only with its
+// own user. Here the identity is replaced: first what the system says of
+// the peer, then who this process is.
+func TestPeerOfAnotherUserIsRefused(t *testing.T) {
+	realPeer, realOwn := peerUID, ownUID
+	defer func() { peerUID, ownUID = realPeer, realOwn }()
+	other := func(*net.UnixConn) (int, bool) { return realOwn() + 1, true }
+	unknown := func(*net.UnixConn) (int, bool) { return 0, false }
+
+	// The router does not answer another user, or a peer it cannot identify.
+	dir := privateDir(t)
+	called := 0
+	serve(t, dir, &handler{decide: func(context.Context, front.Ask) (front.Decision, error) {
+		called++
+		return front.Decision{Subscription: "spare", Authorization: "Bearer made-up"}, nil
+	}})
+	raw := func() string {
+		conn, err := net.Dial("unix", filepath.Join(dir, SocketName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		b, _ := json.Marshal(request{Protocol: front.Protocol, Op: "decide", Ask: &front.Ask{}})
+		conn.Write(append(b, '\n'))
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		line, _ := bufio.NewReader(conn).ReadString('\n')
+		return line
+	}
+	if line := raw(); !strings.Contains(line, "made-up") {
+		t.Fatalf("the control (the same user) was not answered: %q", line)
+	}
+	for name, who := range map[string]func(*net.UnixConn) (int, bool){"another user": other, "a peer the system cannot name": unknown} {
+		peerUID = who
+		if line := raw(); line != "" || called != 1 {
+			t.Fatalf("%s was answered %q (handler called %d times)", name, line, called)
+		}
+	}
+	peerUID = realPeer
+
+	// The front does not ask a router that is another user's, and sends it
+	// nothing.
+	theirs := privateDir(t)
+	s := squat(t, theirs)
+	for name, who := range map[string]func(*net.UnixConn) (int, bool){"another user": other, "a peer the system cannot name": unknown} {
+		peerUID = who
+		d, err := NewClient(theirs).Decide(context.Background(), front.Ask{Client: "client-one"})
+		if !errors.Is(err, front.ErrNoRouter) || d.Authorization != "" || s.got() != 0 {
+			t.Fatalf("%s: %+v %v, sent %d requests", name, d, err, s.got())
+		}
+	}
+	peerUID = realPeer
+	// A directory that belongs to another user is not this user's, however
+	// closed it is.
+	ownUID = func() int { return realOwn() + 1 }
+	if _, err := CheckDirectory(theirs); !errors.Is(err, ErrDirectory) {
+		t.Fatalf("a directory of another user: %v", err)
+	}
+	if _, err := Listen(theirs); !errors.Is(err, ErrDirectory) {
+		t.Fatalf("listening in a directory of another user: %v", err)
+	}
+}
+
+// A router of another protocol is, for the front, no router.
+func TestOtherProtocolIsNoRouter(t *testing.T) {
+	dir := privateDir(t)
+	serve(t, dir, &handler{decide: func(context.Context, front.Ask) (front.Decision, error) {
+		return front.Decision{Subscription: "spare", Authorization: "Bearer made-up"}, nil
+	}})
+	defer func(p int) { protocol = p }(protocol)
+	protocol = front.Protocol + 1
+	if d, err := NewClient(dir).Decide(context.Background(), front.Ask{}); !errors.Is(err, front.ErrNoRouter) || d.Authorization != "" {
+		t.Fatalf("%+v %v", d, err)
+	}
+}
+
+// Only "nobody is there" is no router. Running out of descriptors, or a
+// full backlog, is a router that is there: the front must go on asking.
+func TestAbsent(t *testing.T) {
+	for _, e := range []error{syscall.ENOENT, syscall.ECONNREFUSED, &net.OpError{Op: "dial", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}} {
+		if !absent(e) {
+			t.Errorf("%v is not taken as no router", e)
+		}
+	}
+	for _, e := range []error{syscall.EAGAIN, syscall.EMFILE, syscall.ENFILE, syscall.EACCES, errors.New("something else"), &net.OpError{Op: "dial", Err: os.NewSyscallError("socket", syscall.EMFILE)}} {
+		if absent(e) {
+			t.Errorf("%v is taken as no router", e)
+		}
+	}
+}
+
+// The router goes on serving through accept errors that pass, and stops for
+// one that does not.
+func TestServeSurvivesPassingAcceptErrors(t *testing.T) {
+	dir := privateDir(t)
+	s, err := Listen(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	real, fails := s.accept, 3
+	s.accept = func() (*net.UnixConn, error) {
+		if fails > 0 {
+			fails--
+			return nil, &net.OpError{Op: "accept", Net: "unix", Err: os.NewSyscallError("accept", syscall.EMFILE)}
+		}
+		return real()
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- s.Serve(&handler{decide: func(context.Context, front.Ask) (front.Decision, error) { return front.Decision{Own: true}, nil }})
+	}()
+	if d, err := NewClient(dir).Decide(context.Background(), front.Ask{}); err != nil || !d.Own {
+		t.Fatalf("after three passing errors: %+v %v", d, err)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("the router stopped: %v", err)
+	default:
+	}
+	s.accept = func() (*net.UnixConn, error) { return nil, errors.New("the listener is broken") }
+	// Wake the accept that is waiting in the real listener.
+	if c, err := net.Dial("unix", filepath.Join(dir, SocketName)); err == nil {
+		c.Close()
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("an error that does not pass ended the router without saying so")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("an error that does not pass did not end the router")
+	}
+}
+
+// Peers that connect and say nothing do not use the router up: beyond a
+// bound a new connection is closed unanswered, and when they leave it
+// answers again.
+func TestSilentPeersAreBounded(t *testing.T) {
+	dir := privateDir(t)
+	serve(t, dir, &handler{decide: func(context.Context, front.Ask) (front.Decision, error) { return front.Decision{Own: true}, nil }})
+	var silent []net.Conn
+	for i := 0; i < maxPeers; i++ {
+		c, err := net.Dial("unix", filepath.Join(dir, SocketName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		silent = append(silent, c)
+	}
+	time.Sleep(200 * time.Millisecond) // let the router take them all in
+	// One more is closed at once, not left waiting for a place.
+	extra, err := net.Dial("unix", filepath.Join(dir, SocketName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, err := extra.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("the connection beyond the bound was kept open: %v", err)
+	}
+	extra.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	_, err = NewClient(dir).Decide(ctx, front.Ask{})
+	cancel()
+	if err == nil || errors.Is(err, front.ErrNoRouter) {
+		t.Fatalf("with every place taken: %v (a full router is not an absent one)", err)
+	}
+	for _, c := range silent {
+		c.Close()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if d, err := NewClient(dir).Decide(context.Background(), front.Ask{}); err == nil && d.Own {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the router did not answer again after the silent peers left")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// The directory is still the one that was checked when the socket is bound
+// in it. Its parents are not walked; a directory put in its place between
+// the check and the bind is caught here instead.
+func TestDirectoryReplacedBeforeBind(t *testing.T) {
+	parent := privateDir(t)
+	dir := filepath.Join(parent, "router")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { beforeBind = func() {} }()
+	beforeBind = func() {
+		if err := os.Rename(dir, filepath.Join(parent, "moved")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Listen(dir); !errors.Is(err, ErrDirectory) {
+		t.Fatalf("a directory replaced between the check and the bind: %v", err)
+	}
 }

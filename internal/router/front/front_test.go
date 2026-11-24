@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1041,5 +1042,93 @@ func TestServeTLSCountsHandshakes(t *testing.T) {
 	}
 	if n := len(up.Records()); n != 1 {
 		t.Fatalf("%d requests reached the provider, want the one from the trusting client", n)
+	}
+}
+
+// passing is a listener whose first accepts fail with an error that passes.
+type passing struct {
+	net.Listener
+	mu    sync.Mutex
+	fails int
+}
+
+func (p *passing) Accept() (net.Conn, error) {
+	p.mu.Lock()
+	fail := p.fails > 0
+	if fail {
+		p.fails--
+	}
+	p.mu.Unlock()
+	if fail {
+		return nil, &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.EMFILE)}
+	}
+	return p.Listener.Accept()
+}
+
+// A TLS front goes on serving through accept errors that pass, and bounds
+// the handshakes in progress: connections that say nothing do not use it up.
+func TestTLSFrontSurvivesPassingAcceptErrorsAndSilentPeers(t *testing.T) {
+	up := &standin.Upstream{}
+	provider := httptest.NewServer(up)
+	defer provider.Close()
+	u, _ := url.Parse(provider.URL)
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := front.New(front.Config{Upstream: u, Port: ln.Addr().(*net.TCPAddr).Port}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, certPEM, _ := loopcert.New(time.Now())
+	served := make(chan error, 1)
+	go func() { served <- f.ServeTLS(&passing{Listener: ln, fails: 3}, cert) }()
+	defer f.Stop(context.Background())
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(certPEM)
+	get := func() error {
+		client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, TLSClientConfig: &tls.Config{RootCAs: roots}}, Timeout: 10 * time.Second}
+		resp, err := client.Get("https://" + ln.Addr().String() + front.HealthPath)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		return nil
+	}
+	if err := get(); err != nil {
+		t.Fatalf("after three passing accept errors: %v", err)
+	}
+	select {
+	case err := <-served:
+		t.Fatalf("the front stopped serving: %v", err)
+	default:
+	}
+	// More silent connections than handshakes may be in progress: the
+	// surplus is closed and counted, and a real client is still served once
+	// they leave.
+	var silent []net.Conn
+	for i := 0; i < 300; i++ {
+		c, err := net.Dial("tcp4", ln.Addr().String())
+		if err != nil {
+			break
+		}
+		silent = append(silent, c)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for f.Counts().HandshakesFailed < 40 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := f.Counts().HandshakesFailed; n < 40 {
+		t.Fatalf("with 300 silent connections only %d were turned away", n)
+	}
+	for _, c := range silent {
+		c.Close()
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for get() != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the front did not serve again after the silent connections left")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
