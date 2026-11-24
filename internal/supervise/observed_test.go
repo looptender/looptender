@@ -2,9 +2,11 @@ package supervise
 
 import (
 	"context"
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -195,5 +197,51 @@ func TestObservedTargetWakeOnly(t *testing.T) {
 	res, err := Tick(context.Background(), w.cfg, o)
 	if err != nil || res.Action == string(decide.Wake) || len(p.sent) != 0 || res.Reason != HostSessionReason {
 		t.Fatalf("login session unavailable: %+v %v sent %v", res, err, p.sent)
+	}
+}
+
+// A wake sessionpipe refused is followed by checks that still see the
+// session idle: they send nothing until the idle spacing interval has
+// passed, then exactly one attempt; the session's next turn ends the hold
+// sooner. (Before the hold, every check sent another attempt.)
+func TestRefusedWakeIsTriedOncePerInterval(t *testing.T) {
+	w := newWorld(t, true, false)
+	w.cfg.Loop.Prompt = "Fictional wake text."
+	w.cfg.Loop.Agent = config.Agent{Adapter: config.SessionpipeAdapter, Provider: config.SessionpipeAdapter, Group: config.SessionpipeAdapter,
+		Sessionpipe: &config.Sessionpipe{Session: "claude-code:example", EventsFile: "/example/events.jsonl", Send: config.SessionpipeSendWakeOnly}}
+	target := filepath.Join(w.dir, "targets", "primary")
+	p := w.primary(decide.Observation{State: decide.Idle})
+	var now time.Time
+	// The fake stands in for the adapter: each attempt is refused, and the
+	// record says so, as the real one writes it.
+	p.sendErr = adapter.ErrNotStarted{Reason: "sessionpipe refused the wake (ask_off)"}
+	p.onSend = func() {
+		_ = os.MkdirAll(target, 0o700)
+		b, _ := json.Marshal(map[string]any{"startedAt": now, "outcome": "refused", "code": "ask_off"})
+		_ = os.WriteFile(filepath.Join(target, "sessionpipe-ask.json"), b, 0o600)
+	}
+	interval := w.cfg.Loop.Progress.MinWakeInterval.Duration
+	for i, at := range []time.Duration{0, 5 * time.Minute, 10 * time.Minute, 30 * time.Minute, interval + time.Minute, interval + 6*time.Minute} {
+		now = t0.Add(at)
+		res := runTick(t, w, now)
+		want := 1
+		if at > interval {
+			want = 2
+		}
+		if len(p.sent) != want {
+			t.Fatalf("check %d at +%s: %d attempts, want %d (%s: %q)", i, at, len(p.sent), want, res.Action, res.Reason)
+		}
+		if at > 0 && at < interval && !strings.Contains(res.Reason, "last wake refused: ask_off, next attempt after ") {
+			t.Fatalf("check %d: reason %q", i, res.Reason)
+		}
+	}
+	// The session's next turn ends the hold at once.
+	b, _ := json.Marshal(map[string]any{"version": 2, "lastTurnAt": now.Add(time.Minute)})
+	if err := os.WriteFile(filepath.Join(target, "sessionpipe-read.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTick(t, w, now.Add(2*time.Minute))
+	if len(p.sent) != 3 {
+		t.Fatalf("after the session's next turn: %d attempts, want 3", len(p.sent))
 	}
 }

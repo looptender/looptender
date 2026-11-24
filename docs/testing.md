@@ -650,6 +650,44 @@ Accounts correction review: the catalog reader now uses snapshot LstatRecord/Ope
 
 Capability/documentation review covers README, configuration, adapter reference, architecture, Sessionpipe setup, canonical schema and compatibility reference, roadmap and changelog. The OUT feature remains source-only and partial. The standalone 401/restart regression reproduces four network calls on base `c26dfa3` where only the initial discovery/POST pair is allowed; the new implementation refuses the second call. Authentication-pause regressions additionally cover POST-401 persistence across fresh reporters and credential changes, explicit resume without replay, identity/sequence continuity, pending/corrupt gate refusal (including duplicate and incorrectly cased members) without network or evidence replacement, contention with an in-flight request, and distinct 403/429/503 outcomes. Command fixtures check foreign caller/check-lock refusal and unchanged loop holds. A migration fixture refuses while the new report lock is held. Lifecycle review: no subprocess, installer, OS integration or stop mechanism is added; private sequence publication reuses snapshot primitives and the existing migration-fenced delivery lock. The separate nonwaiting Sessionpipe send/resume lock is migration-fenced; bounded network I/O holds it, while delivery-history writes still use their separate short lock. The Windows storage/control job explicitly selects Sessionpipe report and resume fixtures; portable resume tests use absent fictional executables and never start a provider. Native fixture execution and compilation must be recorded separately. No changes to loop authority or the pure engine are implied.
 
+## Sessionpipe observed sessions: first live run (2026-11-24)
+
+**What ran.** One isolated lab on macOS:
+- looptender built from main `8fc05870` (#520).
+- sessionpipe 0.18.2 (the installed package), with its own `HOME`, config, state and socket under a temporary directory, and file secrets. It installed no service, and the owner's own sessionpipe configuration, daemon and receivers were not touched.
+- Claude Code 2.1.326 on BB's login directory, which has no `settings.json` and so no hooks of its own. The lab's sessionpipe hooks were added with `--settings`, and the lab's paths through the `SESSIONPIPE_*` variables.
+- The model was Claude Haiku 5.5. Three model turns in all.
+- The receiver was a stand-in written for the lab.
+- Each looptender command ran with its own `HOME`, so nothing was registered in the person's per-user directories.
+
+**Observing (held).**
+- `init --agent sessionpipe --session claude-code:<id>` with no `--name` named the loop `observed-claude-code-<hash>`. Before the session's first event, `doctor` walked the checks: the command, version 0.18.2, current hooks and a tier-0 sink were ok, and the events file was a warning that said to send the session one message.
+- A headless `claude -p` turn, checked once a second, read in order:
+  - unknown (no file yet);
+  - idle (`session.started`);
+  - active (`turn.started`, reason "working; observed only…");
+  - gone, holding for a person, when `session.ended` (reason `other`) arrived in the same second as `turn.ended`.
+
+  Nothing was sent, and the events file kept no title or text.
+
+**Waking (partly held).**
+- The second loop had `send: wake_only` and a prompt. While paused it observed nothing and sent nothing. After an ended session it held (`await_user`, then "awaiting user"), and the lab daemon received no ask.
+- The first wakes were refused with `harness` ("no Claude Code session … on this machine") at two stages:
+  - before sessionpipe's service was given the session's Claude Code configuration directory;
+  - after that, until the session had a transcript. A session that has never had a turn cannot be reached.
+
+  looptender recorded each as not sent ("nothing was sent: sessionpipe refused the wake (harness)", "last sent: never").
+- Once the session had one turn, the ask reached delivery and failed. The lab service could not confirm the login from its own `HOME`. looptender recorded `failed`, counted it as a send, and `doctor`'s `wake` check showed nothing outstanding.
+
+**What did not behave as the fixtures assume.**
+- **A failed wake was sent again on every following check while the session still read idle:** five attempts in about a minute, until the loop was paused. The adapter does not retry, but the decision did. The stand-in tests never followed a fast failure with another check. Fixed with this record: after a wake that did not get through, the next waits for the session's next turn event or `min_wake_interval`. `TestRefusedWakeIsTriedOncePerInterval` sends a second attempt on the very next check without the fix.
+- **A headless `claude -p` session sends `session.ended` with its last turn,** so it reads as gone, never as idle. Only a session that stays open (an interactive one, or `--input-format stream-json` with stdin held) can be woken.
+- **Stopping an observed loop sends no `stop` report,** because no stop action is taken. This is kept, and now documented: the report says a session was stopped.
+
+**Reporting.** With `loop.report.format: sessionpipe`, `report test` delivered a two-event tier-0 batch (`session.started`, `looptender.test`) to the stand-in receiver. An `await_user` hold on an ended session arrived as `attention.needed` of kind `error`. Both carried opaque ids and no text.
+
+**Not verified.** A wake actually delivered to a session: the lab's isolation kept sessionpipe's service from the real login. Also not verified: a `busy` refusal, a real receiver or the board, a phone, Linux, Windows, and an interactive session. The two throwaway transcripts Claude Code wrote are under `projects/` in BB's login directory.
+
 ## Explicit assignment lifecycle fixtures (unreleased)
 
 Provider-free command fixtures exercise an initial idle-child inventory, missing handoffs,

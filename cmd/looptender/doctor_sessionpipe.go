@@ -16,6 +16,7 @@ import (
 	"github.com/looptender/looptender/internal/adapter/sessionpipe"
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/state"
+	"github.com/looptender/looptender/internal/supervise"
 )
 
 // sessionpipeMinVersion is the oldest sessionpipe whose tier-0 file sink and
@@ -327,13 +328,24 @@ type sessionpipeWakeStatus struct {
 	Since      time.Time `json:"since"`
 	ForSeconds int64     `json:"forSeconds"`
 	Text       string    `json:"text"`
+	// Held: no wake is running, and the next is held after one that did not
+	// get through (Outcome, Code) until Until or the session's next turn.
+	Held    bool       `json:"held,omitempty"`
+	Outcome string     `json:"outcome,omitempty"`
+	Code    string     `json:"code,omitempty"`
+	Until   *time.Time `json:"until,omitempty"`
 }
 
 // pendingSessionpipeWake reads the target's wake record; nil when no wake is
 // running.
-func pendingSessionpipeWake(stateDir, target string, now time.Time) *sessionpipeWakeStatus {
-	since, pending := sessionpipe.PendingWake(filepath.Join(stateDir, "targets", target), now)
+func pendingSessionpipeWake(stateDir, target string, now time.Time, interval time.Duration) *sessionpipeWakeStatus {
+	dir := filepath.Join(stateDir, "targets", target)
+	since, pending := sessionpipe.PendingWake(dir, now)
 	if !pending {
+		if held, outcome, code, until := sessionpipe.WakeHold(dir, now, interval); held {
+			return &sessionpipeWakeStatus{Held: true, Outcome: outcome, Code: code, Until: &until,
+				Text: supervise.WakeHoldReason(outcome, code, until) + "; nothing is sent until then"}
+		}
 		return nil
 	}
 	d := now.Sub(since).Round(time.Second)
@@ -343,11 +355,14 @@ func pendingSessionpipeWake(stateDir, target string, now time.Time) *sessionpipe
 
 // doctorSessionpipeWake reports an outstanding wake: a warning once it has
 // run for an hour, since every later wake waits for it.
-func doctorSessionpipeWake(r *doctorReport, id, stateDir string, now time.Time) {
-	pw := pendingSessionpipeWake(stateDir, state.Primary, now)
+func doctorSessionpipeWake(r *doctorReport, id, stateDir string, now time.Time, interval time.Duration) {
+	pw := pendingSessionpipeWake(stateDir, state.Primary, now, interval)
 	switch {
 	case pw == nil:
 		r.add(id, "ok", "No wake is outstanding.", "")
+	case pw.Held:
+		fix := "Look at why sessionpipe did not take it; a refusal's code says what to change in sessionpipe (ask_off: sessionpipe ask on; folder: sessionpipe control folders add; harness: the session is not one sessionpipe can reach)."
+		r.add(id, "warning", "The next wake is held: "+pw.Text+".", fix)
 	case time.Duration(pw.ForSeconds)*time.Second >= time.Hour:
 		r.add(id, "warning", "A wake has been outstanding for a long time: "+pw.Text, "Look at the session: sessionpipe delivered the wake and the agent is still answering, or the delivery is stuck in sessionpipe. Wakes resume once it ends.")
 	default:

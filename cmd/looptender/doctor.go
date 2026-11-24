@@ -295,7 +295,7 @@ func doctor(e env, args []string, run doctorRun) int {
 		}
 		workspace := doctorAgent(e.ctx, &r, id, a, *offline, *timeout, run)
 		if id == state.Primary && a.WakesObserved() {
-			doctorSessionpipeWake(&r, "agent."+id+".wake", cfg.Loop.StateDir, time.Now())
+			doctorSessionpipeWake(&r, "agent."+id+".wake", cfg.Loop.StateDir, time.Now(), cfg.Loop.Progress.MinWakeInterval.Duration)
 		}
 		if a.BB != nil && a.BB.Thread != "" {
 			if *offline {

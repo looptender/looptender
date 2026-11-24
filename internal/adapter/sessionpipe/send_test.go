@@ -270,3 +270,64 @@ func TestPendingWakeWhenTheStartTimeCannotBeRead(t *testing.T) {
 		t.Fatal("an unreadable start time holds past the day bound")
 	}
 }
+
+// A wake that did not get through holds the next until the session's next
+// turn event or the interval, whichever comes first; an answered one never
+// holds.
+func TestWakeHoldAfterAWakeThatDidNotGetThrough(t *testing.T) {
+	dir := t.TempDir()
+	a := &Adapter{dir: dir}
+	at := time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)
+	for _, outcome := range []string{"refused", "failed", "unknown"} {
+		if err := a.saveAsk(askRecord{StartedAt: at, Outcome: outcome, Code: "folder"}); err != nil {
+			t.Fatal(err)
+		}
+		held, got, code, until := WakeHold(dir, at.Add(10*time.Minute), time.Hour)
+		if !held || got != outcome || code != "folder" || !until.Equal(at.Add(time.Hour)) {
+			t.Fatalf("%s: held=%v %s %s %s", outcome, held, got, code, until)
+		}
+		if held, _, _, _ := WakeHold(dir, at.Add(time.Hour), time.Hour); held {
+			t.Fatalf("%s: held after the interval", outcome)
+		}
+	}
+	// The session's next turn ends the hold before the interval.
+	if err := a.save(readState{Version: readStateVersion, LastTurnAt: at.Add(5 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if held, _, _, _ := WakeHold(dir, at.Add(10*time.Minute), time.Hour); held {
+		t.Fatal("held after the session's next turn")
+	}
+	// An answered wake, or none at all, holds nothing.
+	if err := a.saveAsk(askRecord{StartedAt: at, Outcome: "answered"}); err != nil {
+		t.Fatal(err)
+	}
+	if held, _, _, _ := WakeHold(dir, at.Add(time.Minute), time.Hour); held {
+		t.Fatal("an answered wake holds the next")
+	}
+	if held, _, _, _ := WakeHold(t.TempDir(), at, time.Hour); held {
+		t.Fatal("no record holds")
+	}
+}
+
+// The reader keeps the time of the session's last turn event.
+func TestObserveKeepsTheLastTurnTime(t *testing.T) {
+	f := newFixture(t)
+	f.append(line("session.started", 1, t0, nil), line("turn.started", 2, t0.Add(time.Minute), nil), line("session.heartbeat", 3, t0.Add(2*time.Minute), nil))
+	f.observe(t0.Add(2 * time.Minute))
+	if s := f.a.load(); !s.LastTurnAt.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("last turn %s", s.LastTurnAt)
+	}
+}
+
+// A wake recorded after now (the clock was set back) holds nothing.
+func TestWakeHoldIgnoresAWakeRecordedInTheFuture(t *testing.T) {
+	dir := t.TempDir()
+	a := &Adapter{dir: dir}
+	now := time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)
+	if err := a.saveAsk(askRecord{StartedAt: now.Add(3 * time.Hour), Outcome: "refused", Code: "folder"}); err != nil {
+		t.Fatal(err)
+	}
+	if held, _, _, _ := WakeHold(dir, now, time.Hour); held {
+		t.Fatal("a wake recorded in the future holds the next")
+	}
+}

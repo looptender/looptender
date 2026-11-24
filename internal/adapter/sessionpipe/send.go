@@ -269,3 +269,29 @@ func refusal(b []byte) string {
 	}
 	return "other"
 }
+
+// WakeHold says whether the next wake is held back after one that did not
+// get through: refused, failed, or of unknown outcome. It is held until the
+// session's next turn event (proof it is no longer idle where it was) or
+// until interval after that wake, whichever comes first. Without the
+// interval, a refusal the person then fixes (asking turned on, a folder
+// allowed) would hold an idle session for good; without the turn event, a
+// session that moved on would still wait out the interval. It reads the two
+// records only.
+func WakeHold(dir string, now time.Time, interval time.Duration) (held bool, outcome, code string, until time.Time) {
+	a := &Adapter{dir: dir}
+	r, ok := a.loadAsk()
+	if !ok || (r.Outcome != "refused" && r.Outcome != "failed" && r.Outcome != "unknown") {
+		return false, "", "", time.Time{}
+	}
+	until = r.StartedAt.Add(interval)
+	// A wake recorded in the future (the clock was set back) holds nothing:
+	// otherwise it could hold an idle session far past the interval.
+	if r.StartedAt.After(now) || !now.Before(until) {
+		return false, "", "", time.Time{}
+	}
+	if s := a.load(); s.LastTurnAt.After(r.StartedAt) {
+		return false, "", "", time.Time{}
+	}
+	return true, r.Outcome, r.Code, until
+}

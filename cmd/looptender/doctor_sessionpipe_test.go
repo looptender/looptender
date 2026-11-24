@@ -234,27 +234,54 @@ func TestSessionpipeOutstandingWakeShows(t *testing.T) {
 	}
 	now := time.Now()
 	write(now.Add(-2*time.Hour), "delivering")
-	pw := pendingSessionpipeWake(stateDir, "primary", now)
+	pw := pendingSessionpipeWake(stateDir, "primary", now, time.Hour)
 	if pw == nil || pw.ForSeconds < 7000 || !strings.Contains(pw.Text, "has been running since") {
 		t.Fatalf("pending wake: %+v", pw)
 	}
 	var r doctorReport
-	doctorSessionpipeWake(&r, "agent.primary.wake", stateDir, now)
+	doctorSessionpipeWake(&r, "agent.primary.wake", stateDir, now, time.Hour)
 	if r.Checks[0].Status != "warning" || !strings.Contains(r.Checks[0].Message, "2h0m0s") {
 		t.Fatalf("doctor: %+v", r.Checks)
 	}
 	write(now.Add(-time.Minute), "delivering")
 	r = doctorReport{}
-	doctorSessionpipeWake(&r, "agent.primary.wake", stateDir, now)
+	doctorSessionpipeWake(&r, "agent.primary.wake", stateDir, now, time.Hour)
 	if r.Checks[0].Status != "ok" || !strings.Contains(r.Checks[0].Message, "being answered") {
 		t.Fatalf("a short wake: %+v", r.Checks)
 	}
 	write(now.Add(-time.Minute), "answered")
-	if pendingSessionpipeWake(stateDir, "primary", now) != nil {
+	if pendingSessionpipeWake(stateDir, "primary", now, time.Hour) != nil {
 		t.Fatal("an answered wake shows as pending")
 	}
 	write(now.Add(-25*time.Hour), "delivering")
-	if pendingSessionpipeWake(stateDir, "primary", now) != nil {
+	if pendingSessionpipeWake(stateDir, "primary", now, time.Hour) != nil {
 		t.Fatal("a wake over a day old holds the next one back")
+	}
+}
+
+// After a wake that did not get through, status and doctor say the next is
+// held, why and until when.
+func TestSessionpipeHeldWakeShows(t *testing.T) {
+	stateDir := t.TempDir()
+	target := filepath.Join(stateDir, "targets", "primary")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	b, _ := json.Marshal(map[string]any{"startedAt": now.Add(-10 * time.Minute), "outcome": "refused", "code": "ask_off"})
+	if err := os.WriteFile(filepath.Join(target, "sessionpipe-ask.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pw := pendingSessionpipeWake(stateDir, "primary", now, time.Hour)
+	if pw == nil || !pw.Held || pw.Code != "ask_off" || !strings.Contains(pw.Text, "last wake refused: ask_off, next attempt after ") {
+		t.Fatalf("held wake: %+v", pw)
+	}
+	var r doctorReport
+	doctorSessionpipeWake(&r, "agent.primary.wake", stateDir, now, time.Hour)
+	if r.Checks[0].Status != "warning" || !strings.Contains(r.Checks[0].Message, "The next wake is held: last wake refused: ask_off") || !strings.Contains(r.Checks[0].Fix, "sessionpipe ask on") {
+		t.Fatalf("doctor: %+v", r.Checks)
+	}
+	if pendingSessionpipeWake(stateDir, "primary", now.Add(time.Hour), time.Hour) != nil {
+		t.Fatal("still held after the interval")
 	}
 }
