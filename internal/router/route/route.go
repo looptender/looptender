@@ -334,14 +334,28 @@ func Choose(st State, set Settings, rq Request) Decision {
 	return Decision{Subscription: cur.ID, Reason: Pinned}
 }
 
-// place picks for a conversation with nowhere to stay: the first
-// subscription under the soft threshold, else the first that can serve at
-// all.
+// place picks for a conversation with nowhere to stay. In order of
+// preference: the first subscription that is known to be under the soft
+// threshold (spread over those, when its reading is old or near the
+// threshold); else the first of which nothing is known, in the person's
+// order; else the first that can serve at all.
+//
+// A subscription with no reading is "unknown", which is not "has room": it
+// is never preferred to one that is known to have room, and new
+// conversations are never spread onto it. It is used when nothing known has
+// room, which is how a spare that was never used gets its first request.
 func place(st State, set Settings, rq Request, why Reason) Decision {
-	if id, ok := first(st, set, rq, open, true, ""); ok {
-		if s, _ := find(st, id); uncertain(s, set, rq) {
+	for _, s := range st.Order {
+		if len(s.Windows) == 0 || levelOf(s, set, rq, true) != open {
+			continue
+		}
+		id := s.ID
+		if uncertain(s, set, rq) {
 			id = fewest(st, set, rq)
 		}
+		return Decision{Subscription: id, Reason: why}
+	}
+	if id, ok := first(st, set, rq, open, true, ""); ok {
 		return Decision{Subscription: id, Reason: why}
 	}
 	if id, ok := first(st, set, rq, soft, false, ""); ok {
@@ -370,13 +384,13 @@ func uncertain(s Subscription, set Settings, rq Request) bool {
 	return false
 }
 
-// fewest returns, among the subscriptions under the soft threshold, the one
-// with the fewest conversations placed since its reading; the person's
-// order decides between equals.
+// fewest returns, among the subscriptions known to be under the soft
+// threshold, the one with the fewest conversations placed since its
+// reading; the person's order decides between equals.
 func fewest(st State, set Settings, rq Request) string {
 	best, n := "", 0
 	for _, s := range st.Order {
-		if levelOf(s, set, rq, true) == open && (best == "" || s.Placed < n) {
+		if len(s.Windows) > 0 && levelOf(s, set, rq, true) == open && (best == "" || s.Placed < n) {
 			best, n = s.ID, s.Placed
 		}
 	}

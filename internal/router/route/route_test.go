@@ -439,3 +439,44 @@ func TestFullWindowWithNoResetReopens(t *testing.T) {
 		t.Fatalf("a window with a reset reopened early: %+v", d)
 	}
 }
+
+// A subscription of which nothing is known is not one that "has room": a
+// new conversation goes to one known to have room first, is never spread
+// onto an unknown one, and reaches an unknown one only when nothing known
+// can take it.
+func TestUnknownIsNotRoom(t *testing.T) {
+	set := Defaults()
+	unknown := func(id string) Subscription { return Subscription{ID: id} }
+	place := func(st State, c string) string {
+		d := Choose(st, set, Request{Conversation: c, Model: "m", Now: t0})
+		Served(&st, set, c, d.Subscription, d.Reason, t0)
+		return d.Subscription
+	}
+	// Known room after an unknown one in the order: the known one.
+	if got := place(state(nil, unknown("main"), sub("spare", 10)), "c1"); got != "spare" {
+		t.Fatalf("with a known subscription that has room: %q", got)
+	}
+	// Nothing known anywhere: the person's order, and every conversation to
+	// the first, not spread over subscriptions nobody has read.
+	st := state(nil, unknown("main"), unknown("spare"))
+	for i := 0; i < 4; i++ {
+		if got := place(st, fmt.Sprintf("c%d", i)); got != "main" {
+			t.Fatalf("conversation %d went to %q", i, got)
+		}
+	}
+	// A known one with an old reading spreads over known ones only.
+	old := sub("main", 60)
+	old.ReadAt = t0.Add(-48 * time.Hour)
+	st = state(nil, old, unknown("spare"), sub("third", 10))
+	on := map[string]int{}
+	for i := 0; i < 4; i++ {
+		on[place(st, fmt.Sprintf("c%d", i))]++
+	}
+	if on["spare"] != 0 || on["main"] != 2 || on["third"] != 2 {
+		t.Fatalf("placed %v", on)
+	}
+	// The known ones are full: now the unknown one is used.
+	if got := place(state(nil, sub("main", 100), unknown("spare")), "c1"); got != "spare" {
+		t.Fatalf("with the known subscription full: %q", got)
+	}
+}

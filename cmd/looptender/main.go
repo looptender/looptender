@@ -237,6 +237,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return promptPolicyCommand(e, rest)
 	case "service":
 		return serviceCommand(e, rest, localServiceHost())
+	case "__router-run":
+		return routerRunCommand(e, rest)
+	case "__router-front":
+		return routerFrontCommand(e, rest)
 	case "__service-daemon":
 		return serviceDaemon(e, rest)
 	case adoptCommandName:
