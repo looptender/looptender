@@ -17,6 +17,10 @@ const (
 	ActionPrepareResume = "prepare_resume"
 	// ActionResume consumes a single-use prepared resume ticket bound to the reviewed state.
 	ActionResume = "resume"
+	// ActionRestart is the first of two taps for a loop that was stopped or
+	// marked finished: it consumes nothing and sends a second, separately
+	// worded confirmation carrying the same ticket as ActionResume.
+	ActionRestart = "restart"
 
 	// MaxCallbackDataBytes is Telegram's hard byte limit for inline button callback_data.
 	MaxCallbackDataBytes = 64
@@ -46,7 +50,7 @@ func EncodeControlCallback(cb ControlCallback) (string, error) {
 	if !validRegistrationID(cb.RegistrationID) {
 		return "", fmt.Errorf("%w: invalid registration id", ErrInvalidConfig)
 	}
-	if cb.Action == ActionResume {
+	if cb.Action == ActionResume || cb.Action == ActionRestart {
 		if cb.ExpectPrefix != "" {
 			return "", fmt.Errorf("%w: resume callback does not carry digest prefix", ErrInvalidConfig)
 		}
@@ -61,7 +65,11 @@ func EncodeControlCallback(cb ControlCallback) (string, error) {
 		if err != nil || len(ticketRaw) != 16 {
 			return "", fmt.Errorf("%w: invalid resume ticket id", ErrInvalidConfig)
 		}
-		out := "r:" + base64.RawURLEncoding.EncodeToString(loopRaw) + ":" + base64.RawURLEncoding.EncodeToString(ticketRaw)
+		code := "r"
+		if cb.Action == ActionRestart {
+			code = "rs"
+		}
+		out := code + ":" + base64.RawURLEncoding.EncodeToString(loopRaw) + ":" + base64.RawURLEncoding.EncodeToString(ticketRaw)
 		if len(out) > MaxCallbackDataBytes {
 			return "", fmt.Errorf("%w: callback payload exceeds %d bytes", ErrInvalidConfig, MaxCallbackDataBytes)
 		}
@@ -101,7 +109,7 @@ func DecodeControlCallback(data string) (ControlCallback, bool) {
 		return ControlCallback{}, false
 	}
 	parts := strings.Split(data, ":")
-	if parts[0] == "r" {
+	if parts[0] == "r" || parts[0] == "rs" {
 		if len(parts) != 3 || len(parts[1]) != 22 || len(parts[2]) != 22 {
 			return ControlCallback{}, false
 		}
@@ -113,8 +121,12 @@ func DecodeControlCallback(data string) (ControlCallback, bool) {
 		if err != nil || len(ticketRaw) != 16 || base64.RawURLEncoding.EncodeToString(ticketRaw) != parts[2] {
 			return ControlCallback{}, false
 		}
+		action := ActionResume
+		if parts[0] == "rs" {
+			action = ActionRestart
+		}
 		return ControlCallback{
-			Action:         ActionResume,
+			Action:         action,
 			RegistrationID: "loop_" + hex.EncodeToString(loopRaw),
 			TicketID:       "resume_" + hex.EncodeToString(ticketRaw),
 		}, true
@@ -279,7 +291,7 @@ func FormatStatusMessage(device string, items []LoopStatusItem, now time.Time) (
 	var rows [][]InlineKeyboardButton
 
 	for i, item := range items {
-		name := sanitizeInline(item.Loop)
+		name := RedactLoopName(item.Loop)
 		if name == "" {
 			name = "loop"
 		}
@@ -394,20 +406,89 @@ type ResumeReview struct {
 	Freshness      string
 	LastAction     string
 	LastOutcome    string
+	// SetBy is who set each hold, in fixed words (HoldSetter*), by hold:
+	// paused, stop, awaiting-user, completed. A hold missing here is said
+	// as set by someone the records do not show.
+	SetBy map[string]string
+	// HasNote: the hold has a note. It is never sent: the message says to
+	// read it on the computer.
+	HasNote bool
+}
+
+// Who set a hold, in the words a review uses.
+const (
+	HoldSetterPerson  = "a person"
+	HoldSetterAgent   = "the loop's own agent"
+	HoldSetterThread  = "another BB thread"
+	HoldSetterCheck   = "a check by the supervisor"
+	HoldSetterClient  = "a local client (the menu, the panel or Telegram)"
+	HoldSetterUnknown = "someone the records do not show"
+)
+
+// holdLines are the review's lines for the holds, each with who set it.
+func (r ResumeReview) holdLines() []string {
+	var out []string
+	add := func(on bool, key, words string) {
+		if !on {
+			return
+		}
+		by := r.SetBy[key]
+		if by == "" {
+			by = HoldSetterUnknown
+		}
+		out = append(out, "- "+words+", set by "+by)
+	}
+	add(r.Paused, "paused", "paused")
+	add(r.Stop, "stop", "stopped")
+	add(r.AwaitingUser, "awaiting-user", "waiting for a person")
+	add(r.Completed, "completed", "marked finished")
+	return out
+}
+
+// Restarts reports whether the review clears a stop or a completion, which
+// takes its own confirmation.
+func (r ResumeReview) Restarts() bool { return r.Stop || r.Completed }
+
+// FormatRestartConfirmMessage is the second tap for a stopped or finished
+// loop: its own question, and the Confirm button carrying the ticket.
+func FormatRestartConfirmMessage(r ResumeReview) (string, *InlineKeyboardMarkup, error) {
+	data, err := EncodeControlCallback(ControlCallback{Action: ActionResume, RegistrationID: r.RegistrationID, TicketID: r.TicketID})
+	if err != nil {
+		return "", nil, err
+	}
+	name := RedactLoopName(r.Loop)
+	if name == "" {
+		name = "loop"
+	}
+	q := "This loop was stopped. Start it again?"
+	if !r.Stop {
+		q = "This loop was marked finished. Start it again?"
+	}
+	lines := []string{fmt.Sprintf("[looptender] start again — %s", name), q, "Confirming clears every hold below; the next check decides what to send:"}
+	lines = append(lines, r.holdLines()...)
+	if !r.ExpiresAt.IsZero() {
+		lines = append(lines, "Single-use ticket expires: "+r.ExpiresAt.UTC().Format(time.RFC3339))
+	}
+	label := TruncateRunes(name, 20)
+	return TruncateRunes(strings.Join(lines, "\n"), MaxMessageRunes), &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{{{Text: "Yes, start " + label + " again", CallbackData: data}}}}, nil
 }
 
 // FormatResumeReviewMessage renders a redacted review summary for a prepared
 // single-use resume ticket and its Confirm resume inline button.
 func FormatResumeReviewMessage(r ResumeReview) (string, *InlineKeyboardMarkup, error) {
+	action := ActionResume
+	if r.Restarts() {
+		action = ActionRestart // a stop or a completion has its own confirmation
+	}
 	data, err := EncodeControlCallback(ControlCallback{
-		Action:         ActionResume,
+		Action:         action,
 		RegistrationID: r.RegistrationID,
 		TicketID:       r.TicketID,
 	})
 	if err != nil {
 		return "", nil, err
 	}
-	name := sanitizeInline(r.Loop)
+	name := RedactLoopName(r.Loop)
 	if name == "" {
 		name = "loop"
 	}
@@ -420,23 +501,15 @@ func FormatResumeReviewMessage(r ResumeReview) (string, *InlineKeyboardMarkup, e
 	if st := sanitizeInline(r.ControlState); st != "" {
 		lines = append(lines, "State: "+st)
 	}
-	var holds []string
-	if r.Paused {
-		holds = append(holds, "paused")
-	}
-	if r.Stop {
-		holds = append(holds, "stop")
-	}
-	if r.AwaitingUser {
-		holds = append(holds, "awaiting-user")
-	}
-	if r.Completed {
-		holds = append(holds, "completed")
-	}
-	if len(holds) > 0 {
-		lines = append(lines, "Holds to clear: "+strings.Join(holds, ", "))
+	if holds := r.holdLines(); len(holds) > 0 {
+		lines = append(lines, "Holds to clear:")
+		lines = append(lines, holds...)
 	} else {
 		lines = append(lines, "Holds to clear: none")
+	}
+	if r.HasNote {
+		// The note is free text and the Bot API is not end-to-end encrypted.
+		lines = append(lines, "The hold has a note: see it on your computer (looptender status).")
 	}
 	if f := sanitizeInline(r.Freshness); f != "" {
 		lines = append(lines, "Check freshness: "+f)
@@ -451,12 +524,17 @@ func FormatResumeReviewMessage(r ResumeReview) (string, *InlineKeyboardMarkup, e
 	if !r.ExpiresAt.IsZero() {
 		lines = append(lines, "Single-use ticket expires: "+r.ExpiresAt.UTC().Format(time.RFC3339))
 	}
-	lines = append(lines, "Confirming clears these holds on this device. Loop-wide limits are unchanged; supervision is not enabled or started.")
-
 	label := TruncateRunes(name, 20)
+	text := "Confirm resume " + label
+	if r.Restarts() {
+		lines = append(lines, "It was stopped or marked finished: the next tap asks separately whether to start it again. Nothing is cleared yet.")
+		text = "Start " + label + " again…"
+	} else {
+		lines = append(lines, "Confirming clears these holds on this device. Loop-wide limits are unchanged; supervision is not enabled or started.")
+	}
 	markup := &InlineKeyboardMarkup{
 		InlineKeyboard: [][]InlineKeyboardButton{{{
-			Text:         "Confirm resume " + label,
+			Text:         text,
 			CallbackData: data,
 		}}},
 	}

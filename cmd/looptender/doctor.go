@@ -391,6 +391,13 @@ func doctor(e env, args []string, run doctorRun) int {
 		held = "archived"
 	}
 	doctorRoutes(&r, cfg, *path, st, stateErr == nil, held, r.CheckedAt)
+	// A loop that reports to Telegram: say whether the poller that reads the
+	// phone's taps runs (doctor --telegram says more).
+	if rep := cfg.Loop.Report; rep != nil && rep.Format == "telegram" && !*telegramCheck {
+		if dir, err := resolveTelegramDir(""); err == nil {
+			doctorTelegramPoller(&r, dir)
+		}
+	}
 	if stateErr == nil {
 		if ctl, err := control.Load(cfg.Loop.StateDir); err == nil {
 			sch := describeSchedule(&cfg.Loop, st, ctl, &d, r.CheckedAt)

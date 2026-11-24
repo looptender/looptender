@@ -2,7 +2,7 @@
 
 Design specification and delivery plan, 2026-11-20. This document specifies how a person reaches a device's loops through a personal Telegram bot—starting with redacted alerts and safe remote controls, and optionally extending to threaded chat steering as a lightweight mobile interface.
 
-**Current status:** **TG1** (`internal/telegram` plus `loop.report.format: telegram` in `internal/report`, `internal/config`, and `schema/looptender.schema.json`), **TG2** (`looptender telegram setup|status|test|disconnect`), **TG3** (`looptender telegram poll` outbound `getUpdates` long polling for `/status`, `Pause`, and `Stop` with persisted offsets, staleness cutoffs, and `telegram_pause`/`telegram_stop` incident attribution), and **TG4** (two-step ticketed `Prepare resume` / `Confirm resume` bound to `client prepare-resume` / `client resume` single-use tickets with `telegram_resume` attribution, plus `looptender telegram topics` and automatic per-loop private-chat topic creation with single-DM fallback) are implemented on unreleased source and verified with offline HTTP stand-ins and unit tests. Opt-in `doctor --telegram` checks saved pairing validity and token-file presence locally without reading token contents or making network requests; delivery and polling health remain unverified. Opt-in terminal QR rendering (`telegram setup --qr`) is verified with an independent offline decoder. Delivery/poller diagnostics, background service wiring for `telegram poll`, **TG5** (opt-in `chat` steering and unified `onboard`), and live Telegram Bot API verification remain **planned, not built**.
+**Current status:** **TG1** (`internal/telegram` plus `loop.report.format: telegram` in `internal/report`, `internal/config`, and `schema/looptender.schema.json`), **TG2** (`looptender telegram setup|status|test|disconnect`), **TG3** (`looptender telegram poll` outbound `getUpdates` long polling for `/status`, `Pause`, and `Stop` with persisted offsets, staleness cutoffs, and `telegram_pause`/`telegram_stop` incident attribution), and **TG4** (two-step ticketed `Prepare resume` / `Confirm resume` bound to `client prepare-resume` / `client resume` single-use tickets with `telegram_resume` attribution, plus `looptender telegram topics` and automatic per-loop private-chat topic creation with single-DM fallback) are implemented on unreleased source and verified with offline HTTP stand-ins and unit tests. Opt-in `doctor --telegram` checks saved pairing validity and token-file presence locally without reading token contents or making network requests; delivery and polling health remain unverified. Opt-in terminal QR rendering (`telegram setup --qr`) is verified with an independent offline decoder. `looptender telegram service install|status|uninstall` keeps the poller running as a service, and `doctor` says whether a poller runs for a loop that reports to Telegram. Delivery diagnostics, **TG5** (opt-in `chat` steering and unified `onboard`), and live Telegram Bot API verification remain **planned, not built**.
 
 ## Where the architectural line sits
 
@@ -70,6 +70,31 @@ To make "install, connect GitHub and AI accounts, connect Telegram, and get goin
 Bot API 9.6 (2026-04-03) introduced Managed Bots (`can_manage_bots`, `KeyboardButtonRequestManagedBot`, `getManagedBotToken`), which allows a project-operated manager bot to create a user's bot in one confirmation tap without visiting `@BotFather`.
 
 This is **not chosen** for initial delivery because it requires a hosted helper and leaves the manager bot with `getManagedBotToken` / `replaceManagedBotToken` capability on the child bot—placing the project operator inside the user's trust boundary. If reconsidered later, it must remain an explicitly disclosed optional alternative beside Option A, never a requirement.
+
+## Keeping the poller running
+
+Resume, Pause, Stop and `/status` from the phone need `looptender telegram poll` running on the computer; alerts do not. `looptender telegram service install` keeps it running, and only a person runs it: it refuses inside a BB thread or a session looptender supervises, and nothing installs it for them.
+
+- macOS: a launchd job, `dev.looptender.telegram-poll`, in the per-user background domain (`launchctl bootstrap user/<uid>`, `LimitLoadToSessionType Background`), so a lost login session or a window-server restart does not end it; its property list stays in `~/Library/LaunchAgents`, and launchd keeps it alive.
+- Linux: a systemd user unit, `looptender-telegram-poll.service`, enabled and started; without lingering (`loginctl enable-linger`) it stops at logout, and install says so.
+- `telegram service status` says whether it is installed and whether a poller runs (any poller holding the poll lock, from the service or a terminal); `telegram service uninstall` removes it and leaves the pairing and the token; `--dry-run` shows what install or uninstall would write and run.
+- `doctor` adds `telegram.poller` for a loop whose `loop.report.format` is `telegram`, and `doctor --telegram` always: a warning with the command to run when no poller runs. `telegram status` says it too.
+
+While the computer sleeps nothing polls. A `/status` that arrives more than 10 minutes after it was sent gets "That message was too old to act on … Send /status again."; a button on a message older than that answers "Expired".
+
+## The token
+
+`telegram setup` never reads a token typed at a terminal, where it would be shown: with standard input on a terminal it refuses and prints a command that reads the token silently and pipes it in. The token file (`token.env`, 0600) is checked at every read: one that group or others can read or write, or that this user does not own, is not used until fixed. `telegram status` and `doctor --telegram` say when `LOOPTENDER_TELEGRAM_BOT_TOKEN` is set and overrides the file.
+
+## Resume from the phone
+
+- `/status` offers **Prepare resume** only for a held loop that a resume would start again: not for one superseded, disabled or archived.
+- The review lists each hold it would clear and who set it, in fixed words: a person, the loop's own agent, another BB thread, a local client (the menu, the panel or Telegram), a check by the supervisor, or someone the records do not show (from the incident history). It never carries the hold's note: the note is free text and the Bot API is not end-to-end encrypted; when there is one, the review says to see it on the computer.
+- A loop that was stopped or marked finished takes a second tap: the review's button only asks, and a separate message, "This loop was stopped. Start it again?" (or "marked finished"), carries the confirmation. An await-user or a pause alone is resumed with one Confirm.
+
+## What Resume from Telegram proves, and what it does not
+
+Any program running as the computer's owner can already resume a loop (`looptender resume`, or `client prepare-resume` and `client resume` with the environment markers removed: `BB_THREAD_ID` and `LOOPTENDER_SUPERVISED_LOOP` are cooperative markers, not credentials), and can read the bot token in `token.env` and so speak as the bot, including sending a message whose buttons the owner then taps. Resume from Telegram proves two things: the loop's state has not changed since the review (the single-use ticket's binding), and the tap came from the paired Telegram user in the paired chat. It does not prove that no program on the computer helped. Closing that needs an action a person attests to through the operating system (for example a keychain item that requires user presence) or through BB; nothing here does that.
 
 ## Threat model and security invariants
 
