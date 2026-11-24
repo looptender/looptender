@@ -62,6 +62,7 @@ internal/router/limits      a provider's limit headers, as the front reports the
 internal/router/core        the account router's deciding process without the outside: the routing decision, what the front reports, and an interface for logins that nothing here implements
 internal/router/channel     the private channel between the front and the router: a Unix socket in a directory closed to everyone else, the peer checked to be the same user; Unix only
 internal/router/loopcert    the front's loopback certificate: a self-signed leaf that cannot sign others, valid for loopback names only
+internal/router/pointer     the settings that send a session to the front, as text edits of a settings file: point, un-point by rewriting (the secret taken out and rotated), remove with the original bytes restored; nothing calls it yet
 internal/router/standin     test-only stand-in for a provider's API that records header names and the shape of a credential, never a value
 ```
 
