@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -88,6 +89,11 @@ exit 0
 // manager refuses, it starts as before, with a warning.
 func TestStartBackgroundInABBThreadOutlivesBB(t *testing.T) {
 	dir := t.TempDir()
+	// Whatever happens to the test, nothing it launched outlives it: every
+	// process whose command line names this test's directory (the job
+	// scripts and the daemons they run) is ended. Registered first, so it
+	// runs last, after any other cleanup, even when the test fails.
+	t.Cleanup(func() { endLaunchedUnder(t, dir) })
 	tools, err := testexec.NewDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -344,5 +350,78 @@ func TestStartClearsStaleLaunches(t *testing.T) {
 	}
 	if readLaunchJobRecord(dir) != nil {
 		t.Fatal("stale launch-job record kept")
+	}
+}
+
+// endLaunchedUnder ends every process whose command line names dir: what a
+// test launched through the stand-in service managers. SIGTERM first, so a
+// daemon writes its records and its job script runs its last lines, then
+// SIGKILL for anything still there.
+func endLaunchedUnder(t *testing.T, dir string) {
+	t.Helper()
+	find := func() []int {
+		out, err := exec.Command("ps", "-axo", "pid=,command=").Output()
+		if err != nil {
+			t.Logf("cleanup: ps: %v", err)
+			return nil
+		}
+		var pids []int
+		for _, line := range strings.Split(string(out), "\n") {
+			f := strings.Fields(line)
+			if len(f) < 2 || !strings.Contains(line, dir) {
+				continue
+			}
+			if pid, err := strconv.Atoi(f[0]); err == nil && pid != os.Getpid() {
+				pids = append(pids, pid)
+			}
+		}
+		return pids
+	}
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		pids := find()
+		if len(pids) == 0 {
+			return
+		}
+		if sig == syscall.SIGKILL {
+			t.Logf("cleanup: killing %v, still running after SIGTERM", pids)
+		}
+		for _, pid := range pids {
+			_ = syscall.Kill(pid, sig)
+		}
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && len(find()) > 0; time.Sleep(50 * time.Millisecond) {
+		}
+	}
+	if left := find(); len(left) > 0 {
+		t.Errorf("cleanup: processes from this test still running: %v", left)
+	}
+}
+
+// The cleanup ends what a test launched, even a process that ignores
+// SIGTERM, and leaves everything else alone.
+func TestEndLaunchedUnderEndsOnlyTheTestsProcesses(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "stubborn.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	other := exec.Command("sleep", "30")
+	if err := other.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer other.Process.Kill()
+	stubborn := exec.Command("/bin/sh", script)
+	if err := stubborn.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- stubborn.Wait() }()
+	endLaunchedUnder(t, dir)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the test's process was not ended")
+	}
+	if err := other.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("another process was ended: %v", err)
 	}
 }
