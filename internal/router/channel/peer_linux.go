@@ -6,9 +6,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// peerUID asks the system which user the process at the other end of c runs
-// as. A test replaces it.
-var peerUID = func(c *net.UnixConn) (uid int, ok bool) {
+// systemPeerUID asks the system which user the process at the other end of
+// c runs as.
+func systemPeerUID(c *net.UnixConn) (uid int, ok bool) {
 	raw, err := c.SyscallConn()
 	if err != nil {
 		return 0, false

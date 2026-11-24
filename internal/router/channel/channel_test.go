@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -67,9 +68,9 @@ func serve(t *testing.T, dir string, h Handler) *Server {
 func TestDecideAndReport(t *testing.T) {
 	dir := privateDir(t)
 	want := front.Decision{Subscription: "spare", Authorization: "Bearer made-up", Account: "made-up-account", Expires: time.Date(2030, 1, 7, 12, 0, 0, 0, time.UTC)}
-	var asked front.Ask
+	asks := make(chan front.Ask, 1)
 	h := &handler{outcomes: make(chan front.Outcome, 1), decide: func(_ context.Context, a front.Ask) (front.Decision, error) {
-		asked = a
+		asks <- a
 		return want, nil
 	}}
 	serve(t, dir, h)
@@ -79,6 +80,7 @@ func TestDecideAndReport(t *testing.T) {
 	if err != nil || got != want {
 		t.Fatalf("%+v %v", got, err)
 	}
+	asked := <-asks
 	if asked.Client != ask.Client || asked.Conversation != ask.Conversation || asked.Model != ask.Model || !asked.Retry || !asked.ExcludeOwn || len(asked.Exclude) != 1 {
 		t.Fatalf("the router was asked %+v", asked)
 	}
@@ -119,9 +121,9 @@ func TestNoRouter(t *testing.T) {
 
 func TestOtherProtocolIsRefused(t *testing.T) {
 	dir := privateDir(t)
-	called := false
+	var called atomic.Bool
 	serve(t, dir, &handler{decide: func(context.Context, front.Ask) (front.Decision, error) {
-		called = true
+		called.Store(true)
 		return front.Decision{Subscription: "spare", Authorization: "Bearer made-up"}, nil
 	}})
 	conn, err := net.Dial("unix", filepath.Join(dir, SocketName))
@@ -132,8 +134,8 @@ func TestOtherProtocolIsRefused(t *testing.T) {
 	b, _ := json.Marshal(request{Protocol: front.Protocol + 1, Op: "decide", Ask: &front.Ask{}})
 	conn.Write(append(b, '\n'))
 	line, _ := bufio.NewReader(conn).ReadString('\n')
-	if called || !strings.Contains(line, `"refused":"protocol"`) || strings.Contains(line, "made-up") {
-		t.Fatalf("called=%v reply %q", called, line)
+	if called.Load() || !strings.Contains(line, `"refused":"protocol"`) || strings.Contains(line, "made-up") {
+		t.Fatalf("called=%v reply %q", called.Load(), line)
 	}
 	// Garbage and an unknown operation get no decision either.
 	for _, raw := range []string{"not json\n", `{"protocol":1,"op":"shutdown"}` + "\n"} {
@@ -389,16 +391,23 @@ func TestClientTrustsOnlyAPrivateDirectory(t *testing.T) {
 // own user. Here the identity is replaced: first what the system says of
 // the peer, then who this process is.
 func TestPeerOfAnotherUserIsRefused(t *testing.T) {
-	realPeer, realOwn := peerUID, ownUID
-	defer func() { peerUID, ownUID = realPeer, realOwn }()
+	realOwn := os.Getuid
+	// as replaces, under the lock both ends read it with, what the system
+	// says of a peer and who this process is.
+	as := func(peer func(*net.UnixConn) (int, bool), own func() int) {
+		identity.Lock()
+		identity.peer, identity.own = peer, own
+		identity.Unlock()
+	}
+	defer as(systemPeerUID, realOwn)
 	other := func(*net.UnixConn) (int, bool) { return realOwn() + 1, true }
 	unknown := func(*net.UnixConn) (int, bool) { return 0, false }
 
 	// The router does not answer another user, or a peer it cannot identify.
 	dir := privateDir(t)
-	called := 0
+	var called atomic.Int32
 	serve(t, dir, &handler{decide: func(context.Context, front.Ask) (front.Decision, error) {
-		called++
+		called.Add(1)
 		return front.Decision{Subscription: "spare", Authorization: "Bearer made-up"}, nil
 	}})
 	raw := func() string {
@@ -417,28 +426,27 @@ func TestPeerOfAnotherUserIsRefused(t *testing.T) {
 		t.Fatalf("the control (the same user) was not answered: %q", line)
 	}
 	for name, who := range map[string]func(*net.UnixConn) (int, bool){"another user": other, "a peer the system cannot name": unknown} {
-		peerUID = who
-		if line := raw(); line != "" || called != 1 {
-			t.Fatalf("%s was answered %q (handler called %d times)", name, line, called)
+		as(who, realOwn)
+		if line := raw(); line != "" || called.Load() != 1 {
+			t.Fatalf("%s was answered %q (handler called %d times)", name, line, called.Load())
 		}
 	}
-	peerUID = realPeer
+	as(systemPeerUID, realOwn)
 
 	// The front does not ask a router that is another user's, and sends it
 	// nothing.
 	theirs := privateDir(t)
 	s := squat(t, theirs)
 	for name, who := range map[string]func(*net.UnixConn) (int, bool){"another user": other, "a peer the system cannot name": unknown} {
-		peerUID = who
+		as(who, realOwn)
 		d, err := NewClient(theirs).Decide(context.Background(), front.Ask{Client: "client-one"})
 		if !errors.Is(err, front.ErrNoRouter) || d.Authorization != "" || s.got() != 0 {
 			t.Fatalf("%s: %+v %v, sent %d requests", name, d, err, s.got())
 		}
 	}
-	peerUID = realPeer
 	// A directory that belongs to another user is not this user's, however
 	// closed it is.
-	ownUID = func() int { return realOwn() + 1 }
+	as(systemPeerUID, func() int { return realOwn() + 1 })
 	if _, err := CheckDirectory(theirs); !errors.Is(err, ErrDirectory) {
 		t.Fatalf("a directory of another user: %v", err)
 	}
@@ -484,13 +492,25 @@ func TestServeSurvivesPassingAcceptErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	real, fails := s.accept, 3
+	// Set before Serve starts and never replaced: the first three accepts
+	// fail with an error that passes; once broken is set, every accept fails
+	// with one that does not.
+	var fails atomic.Int32
+	var broken atomic.Bool
+	fails.Store(3)
+	real := s.accept
 	s.accept = func() (*net.UnixConn, error) {
-		if fails > 0 {
-			fails--
+		if fails.Add(-1) >= 0 {
 			return nil, &net.OpError{Op: "accept", Net: "unix", Err: os.NewSyscallError("accept", syscall.EMFILE)}
 		}
-		return real()
+		c, err := real()
+		if broken.Load() {
+			if c != nil {
+				c.Close()
+			}
+			return nil, errors.New("the listener is broken")
+		}
+		return c, err
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -504,7 +524,7 @@ func TestServeSurvivesPassingAcceptErrors(t *testing.T) {
 		t.Fatalf("the router stopped: %v", err)
 	default:
 	}
-	s.accept = func() (*net.UnixConn, error) { return nil, errors.New("the listener is broken") }
+	broken.Store(true)
 	// Wake the accept that is waiting in the real listener.
 	if c, err := net.Dial("unix", filepath.Join(dir, SocketName)); err == nil {
 		c.Close()

@@ -58,9 +58,27 @@ var ErrDirectory = errors.New("the router's directory must exist, belong to this
 // directory.
 var ErrRunning = errors.New("another router is already running in this directory")
 
-// ownUID is this process's user. A test replaces it to stand for another
-// user at either end.
-var ownUID = os.Getuid
+// identity is who this process is and how it learns who a peer is. Both
+// ends read it for every connection; a test replaces it, under its lock, to
+// stand for another user at either end.
+var identity = struct {
+	sync.RWMutex
+	own  func() int
+	peer func(*net.UnixConn) (uid int, ok bool)
+}{own: os.Getuid, peer: systemPeerUID}
+
+func ownUID() int {
+	identity.RLock()
+	defer identity.RUnlock()
+	return identity.own()
+}
+
+func peerUID(c *net.UnixConn) (int, bool) {
+	identity.RLock()
+	peer := identity.peer
+	identity.RUnlock()
+	return peer(c)
+}
 
 // protocol is the number this end speaks; a test changes it.
 var protocol = front.Protocol
