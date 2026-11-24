@@ -6,6 +6,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -186,7 +188,8 @@ loop:
 	v, errs := start()
 	job, _ := v["job"].(string)
 	if v["launch"] != kind || job == "" || strings.Contains(errs, "stops when BB quits") {
-		t.Fatalf("not handed to %s: %v %s", kind, v, errs)
+		rec, _ := os.ReadFile(record)
+		t.Fatalf("not handed to %s: %v %s; launcher record: %s", kind, v, errs, rec)
 	}
 	if lingers := strings.Contains(errs, "lingering is off"); lingers != (runtime.GOOS == "linux") {
 		t.Fatalf("linger warning on %s: %s", runtime.GOOS, errs)
@@ -314,42 +317,139 @@ func TestStatusShowsALaunchJobOnlyWhileItRuns(t *testing.T) {
 	}
 }
 
-// A start first clears what an earlier launch left when its job script was
-// killed before its last lines: its files, its job if launchd still has it
-// with no process, and its launch-job record. A job with a process is left
-// alone.
-func TestStartClearsStaleLaunches(t *testing.T) {
-	dir := t.TempDir()
-	for _, label := range []string{"dev.looptender.loop.stale", "dev.looptender.loop.live"} {
+// staleLaunchDir is a state directory with launch files of this loop's own
+// labels, old enough to be stale, and stand-ins for launchctl print and
+// bootout: print answers from outputs by label suffix.
+func staleLaunchDir(t *testing.T, outputs map[string]string, suffixes ...string) (dir string, labels map[string]string, booted *[]string) {
+	t.Helper()
+	dir = t.TempDir()
+	sum := sha256.Sum256([]byte(dir))
+	labels = map[string]string{}
+	old := time.Now().Add(-time.Hour)
+	for i, suffix := range suffixes {
+		label := fmt.Sprintf("dev.looptender.loop.%s.%06x", hex.EncodeToString(sum[:6]), i+1)
+		labels[suffix] = label
 		for _, ext := range []string{".plist", ".sh"} {
-			if err := os.WriteFile(filepath.Join(dir, "launch-"+label+ext), []byte("x"), 0o600); err != nil {
+			p := filepath.Join(dir, "launch-"+label+ext)
+			if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(p, old, old); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, launchJobName), []byte(`{"kind":"launchd","label":"dev.looptender.loop.stale","target":"user/501/dev.looptender.loop.stale","since":"2026-03-04T12:00:00Z"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	savedPrint, savedBootout := launchctlPrint, launchctlBootout
 	t.Cleanup(func() { launchctlPrint, launchctlBootout = savedPrint, savedBootout })
 	launchctlPrint = func(target string) (string, bool) {
-		if strings.HasSuffix(target, ".live") {
-			return "\tpid = 4242\n", true
+		for suffix, label := range labels {
+			if strings.HasSuffix(target, "/"+label) {
+				out, ok := outputs[suffix]
+				return out, ok
+			}
 		}
-		return "\tstate = not running\n", true
+		return "", false
 	}
-	var booted []string
-	launchctlBootout = func(target string) { booted = append(booted, target) }
-	clearStaleLaunches(dir, 501)
-	if len(booted) != 1 || booted[0] != "user/501/dev.looptender.loop.stale" {
-		t.Fatalf("booted out %v", booted)
+	var b []string
+	booted = &b
+	launchctlBootout = func(target string) { b = append(b, target) }
+	return dir, labels, booted
+}
+
+func launchFilesOf(dir, label string) int {
+	n := 0
+	for _, ext := range []string{".plist", ".sh"} {
+		if _, err := os.Lstat(filepath.Join(dir, "launch-"+label+ext)); err == nil {
+			n++
+		}
 	}
-	left, _ := filepath.Glob(filepath.Join(dir, "launch-*"))
-	if len(left) != 2 || !strings.Contains(left[0], ".live.") || !strings.Contains(left[1], ".live.") {
-		t.Fatalf("left %v", left)
+	return n
+}
+
+// A start first clears what an earlier launch left when its job script was
+// killed before its last lines: its job, booted out only when launchctl
+// positively says it is not running, its files and its record. A running
+// job, or one whose state cannot be read, is left alone.
+func TestStartClearsStaleLaunches(t *testing.T) {
+	dir, labels, booted := staleLaunchDir(t, map[string]string{
+		"stale":      "\tstate = not running\n",
+		"live":       "\tstate = running\n\tpid = 4242\n",
+		"unreadable": "some other wording entirely\n",
+	}, "stale", "live", "unreadable", "gone")
+	if err := os.WriteFile(filepath.Join(dir, launchJobName), []byte(`{"kind":"launchd","label":"`+labels["stale"]+`","since":"2026-03-04T12:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clearStaleLaunches(dir, 501, time.Now())
+	if len(*booted) != 1 || *booted != nil && (*booted)[0] != "user/501/"+labels["stale"] {
+		t.Fatalf("booted out %v", *booted)
+	}
+	for suffix, want := range map[string]int{"stale": 0, "live": 2, "unreadable": 2, "gone": 0} {
+		if got := launchFilesOf(dir, labels[suffix]); got != want {
+			t.Fatalf("%s: %d files left, want %d", suffix, got, want)
+		}
 	}
 	if readLaunchJobRecord(dir) != nil {
 		t.Fatal("stale launch-job record kept")
+	}
+}
+
+// Nothing is touched while the loop's daemon lock is held, whatever
+// launchctl says, nor files young enough to belong to a start still
+// waiting for its acknowledgement.
+func TestStaleLaunchClearingWaitsForALiveOrStartingDaemon(t *testing.T) {
+	dir, labels, booted := staleLaunchDir(t, map[string]string{"stale": "\tstate = not running\n"}, "stale")
+	l, err := lock.AcquireNamed(dir, lock.Daemon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clearStaleLaunches(dir, 501, time.Now())
+	l.Release()
+	if len(*booted) != 0 || launchFilesOf(dir, labels["stale"]) != 2 {
+		t.Fatalf("cleared under a held daemon lock: %v", *booted)
+	}
+	// Files from a launch a moment ago are a start still in progress.
+	clearStaleLaunches(dir, 501, time.Now().Add(-time.Hour).Add(launchAckWait/2))
+	if len(*booted) != 0 || launchFilesOf(dir, labels["stale"]) != 2 {
+		t.Fatalf("cleared a launch still waiting for its acknowledgement: %v", *booted)
+	}
+	clearStaleLaunches(dir, 501, time.Now())
+	if len(*booted) != 1 || launchFilesOf(dir, labels["stale"]) != 0 {
+		t.Fatalf("not cleared once stale: %v", *booted)
+	}
+}
+
+// A label not of this loop's own shape is never used: not a traversal from
+// a forged record, not another loop's hash, so nothing outside the state
+// directory is removed and no other job is booted out.
+func TestStaleLaunchClearingTakesOnlyThisLoopsLabels(t *testing.T) {
+	dir, _, booted := staleLaunchDir(t, map[string]string{}, "none")
+	outside := filepath.Join(filepath.Dir(dir), "org.keepgoing.loop.example.plist")
+	if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "launch-dev.looptender.loop.000000000000.000001.plist")
+	if err := os.WriteFile(other, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	_ = os.Chtimes(other, old, old)
+	for _, label := range []string{"../org.keepgoing.loop.example", "dev.looptender.loop.000000000000.000001"} {
+		if err := os.WriteFile(filepath.Join(dir, launchJobName), []byte(`{"kind":"launchd","label":"`+label+`","since":"2026-03-04T12:00:00Z"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		clearStaleLaunches(dir, 501, time.Now())
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatal("a file outside the state directory was removed")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatal("another loop's launch file was removed")
+	}
+	if len(*booted) != 0 {
+		t.Fatalf("booted out %v", *booted)
+	}
+	if !launchJobLabelFor(dir, launchLabel("darwin", dir)) || launchJobLabelFor(dir, "dev.looptender.loop.000000000000.000001") {
+		t.Fatal("label check")
 	}
 }
 
