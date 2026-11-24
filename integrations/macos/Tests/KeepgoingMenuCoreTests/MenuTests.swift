@@ -54,7 +54,7 @@ final class MenuTests: XCTestCase {
         XCTAssertEqual(api.accessibilityLabel, "example-api, Needs you")
         XCTAssertEqual(api.accessibilityHelp, "Opens this loop in the panel.")
         XCTAssertEqual(model.rows[0].accessibilityLabel, "Open looptender Panel")
-        XCTAssertEqual(model.rows[0].accessibilityHelp, "Opens the looptender panel in your browser.")
+        XCTAssertEqual(model.rows[0].accessibilityHelp, "Opens the looptender panel in your browser, where you can pause, stop and resume loops, each after a review.")
         // The paused loop is in the collapsed group, with its own row inside it.
         let other = model.rows[7]
         XCTAssertEqual(other.submenu.map { "\($0.title) | \($0.detail)" }, ["example-site | Paused"])
@@ -195,17 +195,20 @@ final class MenuTests: XCTestCase {
         XCTAssertFalse(MenuBuilder.sameShape(MenuBuilder.build(.read(list([loop(["pause", "stop"])]), at: now), now: now).rows, other))
     }
 
-    // The controls row is offered only by a CLI that gives the footer's
-    // exposure statement, which its confirmation shows.
-    func testOpenPanelWithControlsNeedsTheExposureStatement() {
+    // One panel item: the panel it opens can pause, stop and resume, so
+    // there is no separate "with controls" item, whatever the CLI says.
+    func testOnePanelItemOpensThePanelThatCanChangeLoops() {
         func rows(_ status: PanelStatus?) -> [MenuCommand?] { MenuBuilder.build(.read(three, at: now), now: now, panel: status).rows.map(\.command) }
-        XCTAssertFalse(rows(nil).contains(.openPanelWithChanges))
-        XCTAssertFalse(rows(PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil)).contains(.openPanelWithChanges))
         var status = PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil)
         status.exposure = "While changes are allowed, anyone who can use this browser window can pause, stop and resume loops."
+        for s in [nil, PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil), status] {
+            XCTAssertFalse(rows(s).contains(.openPanelWithChanges))
+        }
         let model = MenuBuilder.build(.read(three, at: now), now: now, panel: status)
-        XCTAssertEqual(Array(text(model).suffix(5)), ["---", "Open Panel with Controls…", "Quit looptender Menu", "---", "Read just now"])
-        XCTAssertEqual(model.rows.first { $0.command == .openPanelWithChanges }?.accessibilityHelp, "Opens the panel so its page can pause, stop and resume loops and offer a separate review to replace a loop’s own build. Asks first.")
+        XCTAssertEqual(Array(text(model).suffix(4)), ["---", "Quit looptender Menu", "---", "Read just now"])
+        XCTAssertEqual(model.rows.first { $0.command == .openPanel }?.accessibilityHelp, "Opens the looptender panel in your browser, where you can pause, stop and resume loops, each after a review.")
+        // An older menu's "with controls" call still opens the panel.
+        XCTAssertEqual(MenuBuilder.arguments(.openPanelWithChanges), ["panel", "--allow-changes"])
     }
 
     func testBadgeAndNeedsLine() {

@@ -182,7 +182,7 @@ func (b *buildSession) assess(entry registry.Entry, daemon daemonStatus, now tim
 	c := dockBuildChange{}
 	rec, err := state.LoadCheckExecutable(entry.StateDir)
 	if b == nil {
-		c.Text = "A panel started with changes allowed can replace a loop's own copy of the build."
+		c.Text = "A panel started with looptender panel --allow-changes can replace a loop's own copy of the build."
 		return c, rec
 	}
 	if b.agent {

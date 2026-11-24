@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { goalLabel } from "./status-details.ts";
-import type { SetupResult } from "./setup-contract.ts";
+import { fallbackSlug, slugFromPredecessor, slugFromTitle, type ContinuationCandidate, type SetupResult } from "./setup-contract.ts";
 import type { z } from "zod";
 import type { setupInput } from "./setup-contract.ts";
 import { SetupStyles } from "./setup-style.tsx";
@@ -13,7 +13,12 @@ const NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 // `hideStart` leaves starting to another control on the same thread, so a
 // thread never shows two buttons that start the same loop.
 export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { threadId: string; call: Call; onChanged(): void; hideStart?: boolean }) {
-  const [name, setName] = useState(`bb-${threadId.replace(/[^a-z0-9-]/g, "-").slice(0, 50)}`);
+  const [intent, setIntent] = useState<"new" | "continue">("new");
+  const [threadTitle, setThreadTitle] = useState<string | undefined>();
+  const [candidates, setCandidates] = useState<ContinuationCandidate[]>([]);
+  const [succeedsPath, setSucceedsPath] = useState("");
+  const [name, setName] = useState(() => fallbackSlug(threadId));
+  const [nameEdited, setNameEdited] = useState(false);
   const [withGoal, setWithGoal] = useState(true);
   // Off unless chosen: following the list also turns on handoff.
   const [followStandard, setFollowStandard] = useState(false);
@@ -27,9 +32,6 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
   // "Keep this conversation going" sends a fixed task; "own" sends the typed
   // one. Undecided until the thread's metadata is read: a thread with nothing
   // to continue starts on "own".
-  // What BB's metadata said when the thread was first inspected. Kept apart
-  // from `result`, which a preview or create replaces and which then carries
-  // no such field: the default must not change under the person.
   const [conversation, setConversation] = useState<"none" | "unknown">("unknown");
   const [chosen, setChosen] = useState<"conversation" | "own" | undefined>();
   const [note, setNote] = useState("");
@@ -43,7 +45,17 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
   const doneRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     let mounted = true;
-    call({ action: "inspect", threadId }).then(r => { if (mounted) { setResult(r); setStandardRoutes(r.standardRoutes === true); setConversation(r.conversation ?? "unknown"); } })
+    call({ action: "inspect", threadId }).then(r => {
+      if (!mounted) return;
+      setResult(r);
+      setStandardRoutes(r.standardRoutes === true);
+      setConversation(r.conversation ?? "unknown");
+      setThreadTitle(r.threadTitle);
+      if (r.continuationCandidates) setCandidates(r.continuationCandidates);
+      if (r.threadTitle) {
+        setName(prev => prev === fallbackSlug(threadId) ? slugFromTitle(r.threadTitle, threadId) : prev);
+      }
+    })
       .catch(e => { if (mounted) setResult({ ok: false, message: lostMessage("inspect", e, 0, name) }); })
       .finally(() => { if (mounted) setBusy(false); });
     return () => { mounted = false; };
@@ -53,15 +65,55 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
   const mode = chosen ?? (empty ? "own" : "conversation");
   const nameOk = NAME.test(name);
   const taskNeeded = mode === "own" && !task.trim();
+  const continueMissing = intent === "continue" && !succeedsPath;
+  const selectedCandidate = candidates.find(c => c.configPath === succeedsPath);
+
+  function selectIntent(next: "new" | "continue") {
+    if (next === intent) return;
+    setIntent(next);
+    edit();
+    if (!nameEdited) {
+      if (next === "continue" && selectedCandidate) {
+        setName(slugFromPredecessor(selectedCandidate, candidates.map(c => c.loop)));
+      } else if (next === "new") {
+        setName(slugFromTitle(threadTitle, threadId));
+      }
+    }
+  }
+
+  function selectPredecessor(configPath: string) {
+    setSucceedsPath(configPath);
+    edit();
+    const match = candidates.find(c => c.configPath === configPath);
+    if (match && !nameEdited) {
+      setName(slugFromPredecessor(match, candidates.map(c => c.loop)));
+    }
+  }
+
   async function act(action: Action) {
     setBusy(true); setPending(action);
     const began = Date.now();
     try {
       const follow = followStandard && standardRoutes;
+      const succeeds = intent === "continue" && succeedsPath ? succeedsPath : undefined;
       // BB's RPC layer refuses an input with an undefined value anywhere in it
       // ("is not a JSON value"), before the request leaves the browser; so a
       // key with nothing to say is left out, never set to undefined.
-      const r = await call({ action, threadId, ...(action === "preview" || action === "create" ? { name, mode, ...(mode === "conversation" ? { note } : { task }), withGoal, ...(result?.ticket ? { ticket: result.ticket } : {}), ...(follow ? { followStandard: true } : { takeover }) } : {}) });
+      const r = await call({
+        action,
+        threadId,
+        ...(action === "preview" || action === "create"
+          ? {
+              name,
+              mode,
+              ...(mode === "conversation" ? { note } : { task }),
+              withGoal,
+              ...(succeeds ? { succeeds } : {}),
+              ...(result?.ticket ? { ticket: result.ticket } : {}),
+              ...(follow ? { followStandard: true } : { takeover }),
+            }
+          : {}),
+      });
       if (r.plan?.takeoverOffer) setOffer(r.plan.takeoverOffer);
       setResult({
         ...r,
@@ -92,6 +144,9 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
           {result.record.followsStandard && <><dt>Routes</dt><dd>Follows your standard route list; hands off to it on a rate limit.</dd></>}
           {(started || created) && <><dt>Running</dt><dd>{started ? "Yes: a background supervisor was launched on this thread’s host." : "No. The loop is saved switched off and sends nothing until it is started."}</dd></>}
         </dl>
+        {result.warnings && result.warnings.length > 0 && <div className="warn" role="status">
+          {result.warnings.map((w, i) => <p key={i}>{w}</p>)}
+        </div>}
         {result.canStart && !hideStart && <div className="actions">
           <p className="help">Starting enables the loop and launches a background supervisor on this thread’s host. It may prompt the agent when eligible. Other timers are not detected or changed.</p>
           <div className="row"><button type="button" className="btn primary" disabled={busy} onClick={() => void act("start")}>Start background supervision</button></div>
@@ -112,18 +167,40 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
     <SetupStyles />
     <div>
       <h3>Add to Looptender</h3>
-      <p className="lead">Keep thread {threadId} going with a new loop. Nothing is created until you choose Create setup, and it stays switched off until you start it.</p>
+      <p className="lead">Nothing is created until you confirm, and new loops start switched off.</p>
     </div>
+    <div className="tabs" role="tablist" aria-label="Setup mode">
+      <button type="button" role="tab" className="tab" aria-selected={intent === "new"} disabled={busy} onClick={() => selectIntent("new")}>
+        Start a new loop
+      </button>
+      <button type="button" role="tab" className="tab" aria-selected={intent === "continue"} disabled={busy} onClick={() => selectIntent("continue")}>
+        Continue a loop{candidates.length > 0 ? ` (${candidates.length})` : ""}
+      </button>
+    </div>
+    {intent === "continue" && <div className="field">
+      <label htmlFor={`kgs-succeeds-${threadId}`}>Loop to continue</label>
+      {candidates.length > 0 ? <>
+        <select id={`kgs-succeeds-${threadId}`} aria-label="Loop to continue" value={succeedsPath} disabled={busy} onChange={e => selectPredecessor(e.target.value)}>
+          <option value="">Choose an existing loop</option>
+          {candidates.map(c => <option key={c.configPath} value={c.configPath}>
+            {c.displayName ? `${c.displayName} (${c.loop})` : c.loop}
+            {!c.sameProject && c.project ? ` · ${c.project}` : ""}
+            {` · ${c.archived ? "archived" : c.controlState}`}
+          </option>)}
+        </select>
+        <span className="help">The old loop will be archived automatically once this new loop completes its first check; nothing is deleted.</span>
+      </> : <p className="help">No existing loops found on this host. Start a new loop instead, or register one with the CLI.</p>}
+    </div>}
     <div className="field">
       <label htmlFor={`kgs-name-${threadId}`}>Loop name</label>
-      <input id={`kgs-name-${threadId}`} type="text" aria-label="Loop name" aria-invalid={!nameOk} aria-describedby={`kgs-name-help-${threadId}`} value={name} disabled={busy} onChange={e => { setName(e.target.value); edit(); }} />
-      <span id={`kgs-name-help-${threadId}`} className={nameOk ? "help" : "err"}>{nameOk ? "Lowercase letters, digits and hyphens. It names the loop’s configuration folder; this default comes from the thread." : "Use lowercase letters, digits and hyphens, starting with a letter or digit, up to 64 characters."}</span>
+      <input id={`kgs-name-${threadId}`} type="text" aria-label="Loop name" aria-invalid={!nameOk} aria-describedby={`kgs-name-help-${threadId}`} value={name} disabled={busy} onChange={e => { setName(e.target.value); setNameEdited(true); edit(); }} />
+      {!nameOk && <span id={`kgs-name-help-${threadId}`} className="err">Use lowercase letters, digits and hyphens, starting with a letter or digit, up to 64 characters.</span>}
     </div>
     <fieldset>
       <legend>What should the loop keep going?</legend>
       <label className="choice" data-checked={mode === "conversation"} data-disabled={busy}><input type="radio" name="setup-mode" aria-label="Keep this conversation going" aria-describedby={`kgs-h-conv-${threadId}`} checked={mode === "conversation"} disabled={busy} onChange={() => { setChosen("conversation"); edit(); }} />
         <span className="t">Keep this conversation going</span>
-        <span className="help" id={`kgs-h-conv-${threadId}`}>Continues the work already under way here, following your latest instructions, and stops for you when it needs you. The plugin reads nothing from the conversation.</span></label>
+        <span className="help" id={`kgs-h-conv-${threadId}`}>Continues the work here and stops when it needs you. The plugin never reads conversation text.</span></label>
       <label className="choice" data-checked={mode === "own"} data-disabled={busy}><input type="radio" name="setup-mode" aria-label="Write my own task" aria-describedby={`kgs-h-own-${threadId}`} checked={mode === "own"} disabled={busy} onChange={() => { setChosen("own"); edit(); }} />
         <span className="t">Write my own task</span>
         <span className="help" id={`kgs-h-own-${threadId}`}>Give the loop its own task and completion criteria.</span></label>
@@ -138,22 +215,24 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
       <legend>Options</legend>
       <label className="choice" data-checked={withGoal} data-disabled={busy}><input type="checkbox" aria-label="Record a goal for this task" aria-describedby={`kgs-h-goal-${threadId}`} checked={withGoal} disabled={busy} onChange={e => { setWithGoal(e.target.checked); edit(); }} />
         <span className="t">Record a goal for this task</span>
-        <span className="help" id={`kgs-h-goal-${threadId}`}>{withGoal ? "The loop name becomes the goal title. The task is saved once in a private file and future prompts share a short reference to the goal." : "The task is copied into the wake instructions without a goal record."}</span></label>
+        <span className="help" id={`kgs-h-goal-${threadId}`}>{withGoal ? "Saves the task once in a private file and shares a goal reference in future prompts." : "Copies the task into the wake instructions without a goal record."}</span></label>
       {standardRoutes && <label className="choice" data-checked={followStandard} data-disabled={busy}><input type="checkbox" aria-label="Follow my standard route list for handoffs" aria-describedby={`kgs-h-std-${threadId}`} checked={followStandard} disabled={busy} onChange={e => { setFollowStandard(e.target.checked); edit(); }} />
         <span className="t">Follow my standard route list for handoffs</span>
-        <span className="help" id={`kgs-h-std-${threadId}`}>On a rate limit the loop hands off to the routes of your standard list that apply to this thread. The preview names them.</span></label>}
+        <span className="help" id={`kgs-h-std-${threadId}`}>Hands off on a rate limit to matching routes in your standard list.</span></label>}
       {offer && !following && <label className="choice" data-checked={takeover === "on"} data-disabled={busy}><input type="checkbox" aria-label="Take over on a usage limit" aria-describedby={`kgs-h-take-${threadId}`} checked={takeover === "on"} disabled={busy} onChange={e => { setTakeover(e.target.checked ? "on" : "off"); edit(); }} />
         <span className="t">On a usage limit, start a new conversation on {offer.provider} ({offer.model}) that takes over</span>
         <span className="help" id={`kgs-h-take-${threadId}`}>Another provider is usable. You can turn this off.</span></label>}
     </fieldset>
     {!result?.plan && <div className="actions">
-      <div className="row"><button type="button" className="btn primary" disabled={busy || taskNeeded || !nameOk} aria-describedby={taskNeeded ? `kgs-why-${threadId}` : undefined} onClick={() => void act("preview")}>Preview setup</button></div>
-      {taskNeeded && <span id={`kgs-why-${threadId}`} className="help">Write the task to preview the setup.</span>}
+      <div className="row"><button type="button" className="btn primary" disabled={busy || taskNeeded || !nameOk || continueMissing} aria-describedby={taskNeeded ? `kgs-why-${threadId}` : continueMissing ? `kgs-why-cont-${threadId}` : undefined} onClick={() => void act("preview")}>Preview setup</button></div>
+      {continueMissing && <span id={`kgs-why-cont-${threadId}`} className="help">Choose a loop to continue.</span>}
+      {!continueMissing && taskNeeded && <span id={`kgs-why-${threadId}`} className="help">Write the task to preview the setup.</span>}
     </div>}
     {result?.plan && <div ref={previewRef} tabIndex={-1} className="card" role="group" aria-label="Setup preview">
       <h4>Preview: nothing has been created yet</h4>
       {result.task !== undefined && <div aria-label="Task to send"><span className="label">Task that will be sent</span><pre>{result.task}</pre></div>}
       <dl>
+        {result.plan.succeeds && <><dt>Continues</dt><dd>{result.plan.succeeds.displayName ? `${result.plan.succeeds.displayName} (${result.plan.succeeds.loop})` : result.plan.succeeds.loop} — archived automatically after first completed check</dd></>}
         <dt>Provider</dt><dd>{result.plan.provider}</dd>
         <dt>Project</dt><dd>{result.plan.project}</dd>
         <dt>Configuration</dt><dd>{result.plan.configPath}</dd>

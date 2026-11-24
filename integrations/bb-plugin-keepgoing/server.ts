@@ -3,7 +3,7 @@
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
 import { BUILD_LABEL } from "./build-label.ts";
-import { recordsUnreadable, isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
+import { recordsUnreadable, isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, limitWaitListingTag, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract } from "./host-contract.ts";
@@ -158,7 +158,7 @@ export const NOT_THIS_THREAD = "This loop does not belong to this thread (it is 
 // What the plugin says instead of resuming: where a person resumes the loop.
 export const resumeByPerson = (configPath: string) =>
   "looptender does not resume a loop from this plugin, because it cannot tell a person's click from the supervised session. " +
-  `From an ordinary terminal, not one BB opened on this loop's thread, run looptender resume -c ${JSON.stringify(configPath)}, or start the looptender panel there with looptender panel --allow-changes.`;
+  `From an ordinary terminal, not one BB opened on this loop's thread, run looptender resume -c ${JSON.stringify(configPath)}, or open the looptender panel there with looptender panel and resume it from the loop's page.`;
 
 export const rpcContract = defineRpcContract({
   attachment: { input: attachInput, output: attachResult },
@@ -417,7 +417,7 @@ export default async function plugin(bb: BbPluginApi) {
       const result = await allLoops(threadId);
       if (result.loops.length || result.errors.length) throw new Error("Existing or unverified supervision");
     },
-    init: (bin, target, name, task, dryRun, withGoal, bounds, followStandard, takeover) => host.call("init", { bin, target, name, task, dryRun, withGoal, ...(bounds ? { bounds } : {}), ...(followStandard ? { followStandard: true as const } : {}), ...(takeover ? { takeover } : {}) }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) }),
+    init: (bin, target, name, task, dryRun, withGoal, bounds, followStandard, takeover, succeeds) => host.call("init", { bin, target, name, task, dryRun, withGoal, ...(bounds ? { bounds } : {}), ...(followStandard ? { followStandard: true as const } : {}), ...(takeover ? { takeover } : {}), ...(succeeds ? { succeeds } : {}) }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) }),
     standardRoutes: async (bin, target) => (await host.call("standardRoutes", { bin, target }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) })).available,
     command: hostCommand,
     // Only thread metadata, never content: a thread BB reports as pending has
@@ -425,6 +425,25 @@ export default async function plugin(bb: BbPluginApi) {
     conversation: async threadId => {
       const t = await bb.sdk.threads.get({ threadId, signal: AbortSignal.timeout(10_000) });
       return t.status === "pending" || t.runtime?.displayStatus === "pending" || t.runtime?.displayStatus === "provisioning" ? "none" : "unknown";
+    },
+    threadTitle: async threadId => {
+      const t = await bb.sdk.threads.get({ threadId, signal: AbortSignal.timeout(10_000) });
+      const raw = (t.title ?? t.titleFallback ?? "").trim();
+      return raw ? raw.slice(0, 200) : undefined;
+    },
+    continuationCandidates: async (bin, target) => {
+      const recs = await records();
+      const sameHostRecs = recs.filter(r => r.hostId === target.hostId);
+      const extraPaths = [...new Set([...sameHostRecs.map(r => r.configPath), ...(await configured()).paths])].slice(0, 128);
+      const res = await host.call("continuationCandidates", { bin, target, extraPaths }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) });
+      const sameProjectPaths = new Set(sameHostRecs.filter(r => r.projectId === target.projectId || r.project === target.project).map(r => r.configPath));
+      const enriched = res.candidates.map(c => sameProjectPaths.has(c.configPath) ? { ...c, sameProject: true } : c);
+      enriched.sort((a, b) => {
+        const rank = (c: typeof a) => (c.archived ? 2 : 0) + (c.sameProject ? 0 : 1);
+        const diff = rank(a) - rank(b);
+        return diff !== 0 ? diff : (a.displayName ?? a.loop).localeCompare(b.displayName ?? b.loop);
+      });
+      return enriched;
     },
     changed: () => bb.realtime.publish(CHANGED, { at: Date.now() }),
   });
@@ -547,7 +566,7 @@ export default async function plugin(bb: BbPluginApi) {
       const [command, name, ...rest] = argv;
       if (command === "status" && name === undefined) {
         const { loops, errors } = await allLoops(null);
-        const lines = loops.map((l) => `${l.loop}\t${recordsUnreadable(l.details) ? "records unreadable" : l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.details?.disk ? `\tdisk=${l.details.disk.level}` : ""}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
+        const lines = loops.map((l) => `${l.loop}\t${recordsUnreadable(l.details) ? "records unreadable" : l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.details?.disk ? `\tdisk=${l.details.disk.level}` : ""}${limitWaitListingTag(l.details)}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
         // Registered loops this plugin was not told about: said, with how to add one.
         let notShown = "";
         try {

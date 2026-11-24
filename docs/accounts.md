@@ -482,7 +482,7 @@ and this action does not verify account identity. Confirmation clears prior
 login/plan observations and invalidates prior quota. It makes no provider call,
 changes no login/default or loop control, and does not refresh quota. Review
 **Refresh subscription quota…** separately afterward. The native menu directs
-you to Accounts through **Open Panel with Controls…**; it cannot revise a
+you to Accounts through **Open looptender Panel**; it cannot revise a
 selection itself. Read-only panels offer guidance without a write action.
 
 The single-use review pins the current revision, startup caller, effective

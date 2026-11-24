@@ -457,7 +457,7 @@ public enum MenuBuilder {
     /// only while it is running.
     public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil, notices: NoticeView? = nil) -> MenuModel {
         // The first row is always there and always tries, whatever was read.
-        var rows = [action("Open looptender Panel", .openPanel, symbol: "macwindow", help: "Opens the looptender panel in your browser.")]
+        var rows = [action("Open looptender Panel", .openPanel, symbol: "macwindow", help: "Opens the looptender panel in your browser, where you can pause, stop and resume loops, each after a review.")]
         var badge = ""
         var iconLabel = "looptender"
         var line: String
@@ -552,10 +552,11 @@ public enum MenuBuilder {
             if let installed = list.installedBuild.map(Contract.text), !installed.isEmpty { line += " · looptender " + installed }
         }
         rows.append(separator)
-        if let panel, panel.exposure != nil {
-            rows.append(action("Open Panel with Controls…", .openPanelWithChanges, symbol: "slider.horizontal.3",
-                               help: "Opens the panel so its page can pause, stop and resume loops and offer a separate review to replace a loop’s own build. Asks first."))
-        }
+        // One panel item: Open looptender Panel opens the panel in which a
+        // person can pause, stop and resume loops, each after a review. The
+        // separate "with controls" item is gone; .openPanelWithChanges still
+        // runs keepgoing panel --allow-changes for what needs it (connecting
+        // an account).
         if let panel, panel.running {
             // Named for what it stops, the page, so it is not taken for
             // stopping a loop; what happens to the loops is in the help.

@@ -1910,7 +1910,7 @@
     var current = accountConnections[c.id];
     if (current && (current.busy || (current.connect && current.connect.state === "waiting"))) { render(false, true); focusOn("connect-result-" + c.id); return; }
     if (accountConnectSupported(c)) accountConnectRequest(c, "prepare");
-    else { accountConnections[c.id] = { card: c, result: { text: "Open the panel with controls to connect this account. The native menu provides Open Panel with Controls…. If Connect is still unavailable, update looptender on this device." } }; render(false, true); focusOn("connect-result-" + c.id); }
+    else { accountConnections[c.id] = { card: c, result: { text: "Connecting an account needs a panel started with looptender panel --allow-changes. If Connect is still unavailable, update looptender on this device." } }; render(false, true); focusOn("connect-result-" + c.id); }
   }
   function accountConnectBox(c) {
     var current = accountConnections[c.id];
@@ -1998,7 +1998,7 @@
     if (needsSelectionReview) {
       if (changesOn() && state.server.accountSelectionReview) {
         if (!current) box.appendChild(button("Review selection for this panel…", "selection-review-" + c.id, "", function () { accountQuotaRequest(c, false, true); }));
-      } else box.appendChild(el("p", "sub", "Open a panel with changes allowed, then return to Accounts to review this selection. The native menu's Open Panel with Controls… provides that entry point."));
+      } else box.appendChild(el("p", "sub", "Reviewing this selection needs a panel started with looptender panel --allow-changes; open one, then return to Accounts."));
       return box;
     }
     if (changesOn() && accountQuotaSupported(c)) {

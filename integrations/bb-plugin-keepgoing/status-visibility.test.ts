@@ -6,12 +6,13 @@ import { join } from "node:path";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server.ts";
 import { reasonLines, boundedTitle, diagnosticLines, recordsUnreadable, type StatusDetails } from "./status-details.ts";
+import { writeStandIn } from "./stand-in.ts";
 
 // A stand-in looptender that prints the given status JSON and exits with the given code.
 async function loopWith(status: object, exit = 0) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "keepgoing-visibility-")));
   const program = join(dir, "looptender-stand-in");
-  await writeFile(program, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(status)}\nJSON\nexit ${exit}\n`, { mode: 0o700 });
+  await writeStandIn(program, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(status)}\nJSON\nexit ${exit}\n`);
   const config = join(dir, "looptender.yaml");
   const { bb, harness } = createFakePluginHost({ pluginId: "keepgoing", settings: { keepgoingPath: program, configs: config } });
   await plugin(bb);
