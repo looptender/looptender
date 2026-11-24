@@ -37,20 +37,32 @@ public enum NoticeKinds {
     public static let defaultOn: Set<String> = ["needs_you", "limit", "supervisor_gone"]
 }
 
-/// Per-kind settings, kept in the app's preferences.
-public final class NoticeSettings {
-    private let store: UpdateStore
-    public init(store: UpdateStore) { self.store = store }
-    public func isOn(_ kind: String) -> Bool {
-        switch store.string(forKey: "notify." + kind) {
-        case "on": return true
-        case "off": return false
-        default: return NoticeKinds.defaultOn.contains(kind)
-        }
+/// The notification settings the CLI keeps in one place, shared by the menu,
+/// the panel and push: which kinds are on, whether the panel's person chose
+/// browser notifications, and whether the menu is notifying now.
+public struct PanelNotify: Decodable, Equatable {
+    public var kinds: [String: Bool] = [:]
+    public var browser: Bool = false
+    public var menu: PanelNotifyMenu = PanelNotifyMenu()
+    public init(kinds: [String: Bool] = [:], browser: Bool = false, menu: PanelNotifyMenu = PanelNotifyMenu()) { self.kinds = kinds; self.browser = browser; self.menu = menu }
+}
+public struct PanelNotifyMenu: Decodable, Equatable {
+    public var notifying: Bool = false
+    /// When the menu last said it was running: what a menu starting up reads to
+    /// find what began while it was down.
+    public var lastRunningAt: String? = nil
+    public init(notifying: Bool = false, lastRunningAt: String? = nil) { self.notifying = notifying; self.lastRunningAt = lastRunningAt }
+}
+
+/// Whether a kind is pushed: the CLI's shared setting, else the default (a CLI
+/// that predates the setting).
+public enum NoticeSettings {
+    public static func isOn(_ kind: String, _ notify: PanelNotify?) -> Bool {
+        notify?.kinds[kind] ?? NoticeKinds.defaultOn.contains(kind)
     }
-    public func set(_ kind: String, on: Bool) { store.set(on ? "on" : "off", forKey: "notify." + kind) }
-    public func toggle(_ kind: String) { set(kind, on: !isOn(kind)) }
-    public var map: [String: Bool] { Dictionary(uniqueKeysWithValues: NoticeKinds.all.map { ($0.kind, isOn($0.kind)) }) }
+    public static func map(_ notify: PanelNotify?) -> [String: Bool] {
+        Dictionary(uniqueKeysWithValues: NoticeKinds.all.map { ($0.kind, isOn($0.kind, notify)) })
+    }
 }
 
 /// A notification to post.
@@ -81,6 +93,7 @@ public struct NoticeTracker {
     public init() {}
 
     public mutating func next(_ reading: MenuReading, now: Date, isOn: (String) -> Bool) -> [PostedNotice] {
+        var catchUp: [PanelNotice] = []
         // A CLI that sends no list, or a read that failed, changes nothing.
         guard case .read(let list, _) = reading, let notices = list.notices else { return [] }
         let current = Dictionary(notices.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -89,14 +102,23 @@ public struct NoticeTracker {
             // A cut-off read cannot say what ended, so it only adds.
             seen = list.complete ? current : seen.merging(current) { _, new in new }
         }
-        guard baselined else { return [] }
-        let fresh = notices.filter { seen[$0.id] == nil }
-        if list.complete {
-            for (id, old) in seen where current[id] == nil {
-                if let end = old.endText, !end.isEmpty { add(Contract.text(end), now) }
+        // Started after being down: an urgent question that began since the
+        // menu last ran is still news. Only that, only on the first read, so it
+        // is never a storm.
+        var fresh = notices.filter { seen[$0.id] == nil }
+        if !baselined {
+            guard let last = list.notify?.menu.lastRunningAt.flatMap(Contract.date) else { return [] }
+            catchUp = notices.filter { $0.kind == "needs_you" && $0.severity == "urgent" && (Contract.date($0.since).map { $0 > last && $0 <= now } ?? false) }
+            fresh = catchUp
+            for n in catchUp { add(Contract.text(n.text), Contract.date(n.since).map { min($0, now) } ?? now) }
+        } else {
+            if list.complete {
+                for (id, old) in seen where current[id] == nil {
+                    if let end = old.endText, !end.isEmpty { add(Contract.text(end), now) }
+                }
             }
+            for n in fresh { add(Contract.text(n.text), Contract.date(n.since).map { min($0, now) } ?? now) }
         }
-        for n in fresh { add(Contract.text(n.text), Contract.date(n.since).map { min($0, now) } ?? now) }
         var posted: [PostedNotice] = []
         var groups: [String: [PanelNotice]] = [:]
         var order: [String] = []
@@ -104,12 +126,17 @@ public struct NoticeTracker {
             if groups[n.group] == nil { order.append(n.group) }
             groups[n.group, default: []].append(n)
         }
+        // A group's count is its real total in this list, not only the members
+        // that are new (a kind that is off never forms a group with one that is on).
+        var total: [String: Int] = [:]
+        // (After being down, only what began since the menu last ran is told, so only that is counted.)
+        for n in (catchUp.isEmpty && baselined ? notices : fresh) { total[n.group, default: 0] += 1 }
         for g in order {
             let members = groups[g]!
-            if members.count == 1 {
+            if members.count == 1 && (total[g] ?? 1) == 1 {
                 posted.append(PostedNotice(identifier: "keepgoing.notice." + members[0].id, body: Contract.text(members[0].text), loop: members[0].loop))
             } else {
-                let sentence = Contract.text(members[0].groupText).replacingOccurrences(of: "{n}", with: String(members.count))
+                let sentence = Contract.text(members[0].groupText).replacingOccurrences(of: "{n}", with: String(max(members.count, total[g] ?? 0)))
                 posted.append(PostedNotice(identifier: "keepgoing.notice.group." + members.map(\.id).joined(separator: "+"), body: sentence, loop: nil))
             }
         }

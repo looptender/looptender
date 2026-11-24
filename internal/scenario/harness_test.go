@@ -34,6 +34,9 @@ import (
 var keepgoingBin, standinDir string
 
 func TestMain(m *testing.M) {
+	// No scenario hands a daemon to the real launchd or systemd, even when
+	// the suite runs inside a BB thread.
+	os.Setenv("LOOPTENDER_BACKGROUND_LAUNCH", "child")
 	// The suite builds the command and its stand-in, so it cannot run from
 	// the test bundle for machines without Go. Say so instead of failing.
 	if _, err := exec.LookPath("go"); err != nil {
