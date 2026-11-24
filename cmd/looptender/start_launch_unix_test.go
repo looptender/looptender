@@ -129,7 +129,7 @@ loop:
 	}
 	start := func(extra ...string) (map[string]any, string) {
 		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, bin, "start", "--background", "--json", "-c", cfg)
 		cmd.Dir = dir
@@ -202,7 +202,7 @@ loop:
 	var st struct {
 		LaunchJob *launchJob `json:"launchJob"`
 	}
-	for deadline := time.Now().Add(5 * time.Second); st.LaunchJob == nil && time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
+	for deadline := time.Now().Add(30 * time.Second); st.LaunchJob == nil && time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
 		status := exec.Command(bin, "status", "--json", "-c", cfg)
 		status.Env = append(os.Environ(), "PATH="+fake+":"+os.Getenv("PATH")) // the stand-in has the job
 		out, _ := status.Output()

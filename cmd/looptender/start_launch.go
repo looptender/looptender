@@ -155,8 +155,12 @@ func startLaunched(e env, executable, path string, cfg *config.Config, allowShar
 	// One start at a time for this loop, from its clean-up to its daemon's
 	// acknowledgement, so one start never takes another's launch for stale.
 	launchLock, err := acquireLaunchLock(e.ctx, stateDir)
-	if err != nil {
+	if errors.Is(err, lock.ErrHeld) {
 		e.errf("start: another start of this loop is still launching; try again shortly")
+		return exitFailed, true
+	}
+	if err != nil {
+		e.errf("start: could not take the launch lock: %v", err)
 		return exitFailed, true
 	}
 	defer launchLock.Release()
@@ -544,6 +548,10 @@ func launchStopCommand(kind, label, target string) string {
 //   - a job is booted out only when launchctl print positively says it is
 //     not running; unclear output leaves it alone.
 func clearStaleLaunches(stateDir string, uid int, now time.Time) {
+	// Taken only to learn that no daemon holds it, and held for the
+	// clean-up's few milliseconds. A daemon started at that instant by
+	// something else (a service, a terminal) is refused as already running,
+	// a clear refusal it can retry.
 	l, err := lock.AcquireNamed(stateDir, lock.Daemon)
 	if err != nil {
 		return // held: a live supervisor; or unknowable: leave it
@@ -590,8 +598,10 @@ func clearStaleLaunches(stateDir string, uid int, now time.Time) {
 	}
 }
 
-// launchAckWait is how long a start waits for its daemon's acknowledgement.
-const launchAckWait = 10 * time.Second
+// launchAckWait is how long a start waits for its service manager to take
+// the job and its daemon to acknowledge startup, together: long enough for a
+// busy machine, where a daemon can take well over ten seconds to start.
+const launchAckWait = 30 * time.Second
 
 var launchJobLabel = regexp.MustCompile(`^dev\.looptender\.loop\.([0-9a-f]{12})\.[0-9a-f]{6}$`)
 
