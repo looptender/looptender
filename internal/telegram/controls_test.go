@@ -308,11 +308,13 @@ func TestResumeCallbackCodecAndReviewFormat(t *testing.T) {
 		Freshness:      "fresh",
 		LastAction:     "hold",
 		LastOutcome:    "ok",
+		SetBy:          map[string]string{"paused": HoldSetterPerson, "awaiting-user": HoldSetterAgent},
+		HasNote:        true,
 	})
 	if err != nil {
 		t.Fatalf("FormatResumeReviewMessage: %v", err)
 	}
-	for _, want := range []string{"resume review — alpha-loop", "Holds to clear: paused, awaiting-user", "2026-11-20T12:05:00Z", "Loop-wide limits are unchanged"} {
+	for _, want := range []string{"resume review — alpha-loop", "- paused, set by a person", "- waiting for a person, set by the loop's own agent", "see it on your computer", "2026-11-20T12:05:00Z", "Loop-wide limits are unchanged"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("review message missing %q:\n%s", want, text)
 		}
@@ -327,5 +329,37 @@ func TestResumeCallbackCodecAndReviewFormat(t *testing.T) {
 	decoded, ok := DecodeControlCallback(btn.CallbackData)
 	if !ok || decoded.Action != ActionResume || decoded.RegistrationID != regID || decoded.TicketID != ticketID {
 		t.Fatalf("Confirm resume callback mismatch: %+v (%v)", decoded, ok)
+	}
+}
+
+// A stopped or finished loop takes two taps: the review's button only asks,
+// and the second message, worded on its own, carries the ticket.
+func TestStopOrCompletionHasItsOwnConfirmation(t *testing.T) {
+	regID := "loop_0123456789abcdef0123456789abcdef"
+	ticketID := "resume_fedcba9876543210fedcba9876543210"
+	r := ResumeReview{Loop: "alpha-loop", RegistrationID: regID, TicketID: ticketID, Stop: true, AwaitingUser: true,
+		SetBy: map[string]string{"stop": HoldSetterPerson, "awaiting-user": HoldSetterCheck}}
+	text, markup, err := FormatResumeReviewMessage(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb, ok := DecodeControlCallback(markup.InlineKeyboard[0][0].CallbackData)
+	if !ok || cb.Action != ActionRestart || cb.TicketID != ticketID || !strings.Contains(text, "Nothing is cleared yet") {
+		t.Fatalf("review: %+v %v\n%s", cb, ok, text)
+	}
+	text, markup, err = FormatRestartConfirmMessage(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb, ok = DecodeControlCallback(markup.InlineKeyboard[0][0].CallbackData)
+	if !ok || cb.Action != ActionResume || cb.TicketID != ticketID || !strings.Contains(text, "This loop was stopped. Start it again?") || !strings.Contains(text, "- stopped, set by a person") {
+		t.Fatalf("restart: %+v %v\n%s", cb, ok, text)
+	}
+	r.Stop, r.Completed = false, true
+	if text, _, _ := FormatRestartConfirmMessage(r); !strings.Contains(text, "This loop was marked finished. Start it again?") {
+		t.Fatalf("finished: %s", text)
+	}
+	if strings.Contains(text, "note") {
+		t.Fatal("a note in the message")
 	}
 }

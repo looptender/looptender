@@ -18,10 +18,26 @@ func doctorTelegram(r *doctorReport, selectedDirectory string) {
 	} else {
 		r.add("telegram.pairing", "ok", "Saved Telegram pairing validates locally; remote authorization is unverified.", "")
 	}
-	if telegram.HasTokenFile(dir) {
+	if telegram.TokenFileState(dir) == "not_private" {
+		r.add("telegram.token_file", "error", "The saved Telegram token file can be read by others or is not owned by this user, so it is not used.", "Run chmod 600 on token.env in the Telegram state directory, or telegram setup again.")
+	} else if telegram.HasTokenFile(dir) {
 		r.add("telegram.token_file", "ok", "A regular saved Telegram token file is present; its contents and validity were not checked.", "")
 	} else {
 		r.add("telegram.token_file", "warning", "A regular saved Telegram token file is not available; environment credentials were not inspected.", "Check your intended token source. Do not paste tokens into diagnostic reports.")
 	}
+	if telegram.TokenFromEnvironment() {
+		r.add("telegram.token_env", "warning", telegram.TokenEnv+" is set in this environment and overrides the saved token file.", "Unset it unless you mean every command run here to use that bot.")
+	}
+	doctorTelegramPoller(r, dir)
 	r.add("telegram.delivery", "unavailable", "Telegram delivery and polling health were not checked; no network request was made.", "Use telegram test only when you intend to send a test alert. Polling must be run separately for incoming controls.")
+}
+
+// doctorTelegramPoller says whether a Telegram poller runs, which Resume,
+// Pause and Stop from the phone need.
+func doctorTelegramPoller(r *doctorReport, dir string) {
+	if running, err := telegramPollerRunning(dir); err == nil && running {
+		r.add("telegram.poller", "ok", "A Telegram poller is running, so Resume, Pause and Stop from the phone are read.", "")
+		return
+	}
+	r.add("telegram.poller", "warning", "No Telegram poller is running: taps on the phone do nothing until one runs.", "Run looptender telegram service install once (yourself, in Terminal), or looptender telegram poll in a terminal.")
 }

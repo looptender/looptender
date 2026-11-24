@@ -82,7 +82,8 @@ func TestDoctorTelegramLocalEvidence(t *testing.T) {
 			if kind == "corrupt" {
 				want = "unavailable"
 			}
-			if len(r.Checks) != 3 || r.Checks[0].Status != want || r.Checks[2].Status != "unavailable" {
+			// pairing, token file, poller (none runs in a test), delivery.
+			if len(r.Checks) != 4 || r.Checks[0].Status != want || r.Checks[2].ID != "telegram.poller" || r.Checks[2].Status != "warning" || r.Checks[3].Status != "unavailable" {
 				t.Fatalf("checks: %+v", r.Checks)
 			}
 			token := "warning"

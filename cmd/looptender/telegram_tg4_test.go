@@ -166,7 +166,7 @@ func TestTelegramPollTicketedResumeFlowAndGuards(t *testing.T) {
 	if strings.Contains(reviewMsg.Text, "PRIVATE-HOLD-NOTE-NEVER-LEAK") {
 		t.Fatalf("resume review leaked private hold note: %q", reviewMsg.Text)
 	}
-	if !strings.Contains(reviewMsg.Text, "Holds to clear: paused, awaiting-user") {
+	if !strings.Contains(reviewMsg.Text, "Holds to clear:\n- paused, set by ") || !strings.Contains(reviewMsg.Text, "- waiting for a person, set by ") || !strings.Contains(reviewMsg.Text, "see it on your computer") {
 		t.Fatalf("expected holds list in review message:\n%s", reviewMsg.Text)
 	}
 	if reviewMsg.ReplyMarkup == nil || len(reviewMsg.ReplyMarkup.InlineKeyboard) != 1 || len(reviewMsg.ReplyMarkup.InlineKeyboard[0]) != 1 {

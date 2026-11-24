@@ -29,6 +29,36 @@ const (
 // ErrTokenUnavailable never embeds paths, tokens, or raw OS errors.
 var ErrTokenUnavailable = errors.New("telegram: bot token unavailable")
 
+// ErrTokenPermissions is a token file that group or others can read or
+// write, or that this user does not own. It is not used until fixed.
+var ErrTokenPermissions = errors.New("telegram: the bot token file is readable by others or not owned by this user, so it is not used; run chmod 600 on token.env in the Telegram state directory, or run telegram setup again")
+
+// TokenFromEnvironment reports whether LOOPTENDER_TELEGRAM_BOT_TOKEN is set:
+// it then overrides the token file for every command that reads the token.
+func TokenFromEnvironment() bool { return strings.TrimSpace(os.Getenv(TokenEnv)) != "" }
+
+// TokenFilePrivate reports whether a token file's mode lets only its owner
+// read it and its owner is this user (unix; elsewhere the platform's own
+// access control applies and this is true).
+func TokenFilePrivate(info os.FileInfo) bool { return privateFile(info) }
+
+// TokenFileState is the saved token file as status and doctor say it:
+// missing, private, or not_private (ErrTokenPermissions). Its contents are
+// not read.
+func TokenFileState(dir string) string {
+	if !filepath.IsAbs(dir) {
+		return "missing"
+	}
+	info, err := snapshot.LstatRecord(filepath.Join(dir, TokenFile))
+	if err != nil || !info.Mode().IsRegular() {
+		return "missing"
+	}
+	if !TokenFilePrivate(info) {
+		return "not_private"
+	}
+	return "private"
+}
+
 // DefaultBotCommands are registered via setMyCommands during setup.
 var DefaultBotCommands = []BotCommand{
 	{Command: "status", Description: "Show status of registered loops"},
@@ -112,6 +142,11 @@ func LoadTokenFile(dir string) (string, error) {
 	opened, statErr := f.Stat()
 	if statErr != nil || !opened.Mode().IsRegular() || opened.Size() > maxTokenFileBytes || !os.SameFile(info, opened) {
 		return "", ErrTokenUnavailable
+	}
+	// Checked at every read: a token file another user could read, or one
+	// this user does not own, is not used.
+	if !TokenFilePrivate(opened) {
+		return "", ErrTokenPermissions
 	}
 	b, err := io.ReadAll(io.LimitReader(f, maxTokenFileBytes+1))
 	if err != nil || len(b) > maxTokenFileBytes {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/control"
+	"github.com/looptender/looptender/internal/incident"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/registry"
 	"github.com/looptender/looptender/internal/telegram"
@@ -238,7 +239,18 @@ func runTelegramPoller(e env, cfg telegramPollConfig) int {
 func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram.PairingRecord, u telegram.Update) {
 	now := cfg.Now().UTC()
 	if u.Message != nil {
+		if !telegram.AuthorizeMessage(prior, u, now, 0) {
+			return // not from the paired chat: never answered
+		}
 		if !telegram.AuthorizeMessage(prior, u, now, cfg.StaleAfter) {
+			// From the paired chat but too old to act on (sent while this
+			// computer slept or was offline): say so, act on nothing.
+			_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+				ChatID:             current.AllowedChatID,
+				MessageThreadID:    u.Message.MessageThreadID,
+				Text:               "That message was too old to act on: it arrived while this computer was asleep or offline. Send /status again.",
+				LinkPreviewOptions: &telegram.LinkPreviewOptions{IsDisabled: true},
+			})
 			return
 		}
 		cmd, _, ok := telegram.ParseCommand(u.Message.Text, current.BotUsername)
@@ -351,6 +363,13 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 				RegistrationID: action.RegistrationID,
 				TicketID:       report.Ticket,
 			}
+			if entry, found := clientEntry(cfg.RegistryDir, action.RegistrationID); found {
+				rev.SetBy = holdSetters(entry.StateDir)
+				var ctl control.File
+				if readTransferRecord(entry.StateDir, control.FileName, &ctl) == nil {
+					rev.HasNote = strings.TrimSpace(ctl.Note) != ""
+				}
+			}
 			if report.ExpiresAt != nil {
 				rev.ExpiresAt = *report.ExpiresAt
 			}
@@ -382,6 +401,26 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 				CallbackQueryID: cbID,
 				Text:            "Review resume",
 			})
+			_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+				ChatID:             current.AllowedChatID,
+				MessageThreadID:    threadID,
+				Text:               text,
+				LinkPreviewOptions: &telegram.LinkPreviewOptions{IsDisabled: true},
+				ReplyMarkup:        markup,
+			})
+			return
+
+		case telegram.ActionRestart:
+			// The first tap for a stopped or finished loop asks again, in its
+			// own words, with the same ticket; nothing is cleared here.
+			text, markup, ok := telegramRestartQuestion(cfg, action, loopName)
+			toast := "Start again?"
+			if !ok {
+				toast = "Ticket expired; prepare again"
+				text, markup = telegram.FormatAlert(telegram.AlertSummary{Device: cfg.Host, Loop: loopName, Event: "control_resume",
+					Summary: "The resume review expired or the loop changed. Send /status and tap Prepare resume again.", At: now}), nil
+			}
+			_ = cfg.Client.AnswerCallbackQuery(e.ctx, telegram.AnswerCallbackQueryRequest{CallbackQueryID: cbID, Text: toast})
 			_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
 				ChatID:             current.AllowedChatID,
 				MessageThreadID:    threadID,
@@ -500,7 +539,10 @@ func buildTelegramStatus(ctx context.Context, cfg telegramPollConfig, now time.T
 					item.CanPause = true
 				}
 			}
-			if ctl.Paused || ctl.Stop || ctl.AwaitingUser || ctl.Completed {
+			// Not offered where a resume would leave the loop off: superseded,
+			// disabled, or archived (refused anyway).
+			archived := st.Snapshot != nil && st.Snapshot.Archived != nil
+			if (ctl.Paused || ctl.Stop || ctl.AwaitingUser || ctl.Completed) && ctl.Enabled && ctl.SupersededBy == "" && !archived {
 				item.CanResume = true
 			}
 		}
@@ -571,4 +613,86 @@ func formatTelegramResumeOutcome(r clientResumeReport, code int) (toast, summary
 		return "Loop busy; retry shortly", "Resume not saved because the loop lock is busy."
 	}
 	return "Resume refused", "Resume could not be saved; inspect loop status locally."
+}
+
+// telegramRestartQuestion is the second message for a stopped or finished
+// loop: false when the ticket is gone, used or expired.
+func telegramRestartQuestion(cfg telegramPollConfig, action telegram.ControlCallback, loopName string) (string, *telegram.InlineKeyboardMarkup, bool) {
+	entry, found := clientEntry(cfg.RegistryDir, action.RegistrationID)
+	if !found {
+		return "", nil, false
+	}
+	t, err := loadClientTicket(entry.StateDir)
+	if err != nil || t.ID != action.TicketID || t.Consumed || !cfg.Now().UTC().Before(t.ExpiresAt) {
+		return "", nil, false
+	}
+	var ctl control.File
+	if readTransferRecord(entry.StateDir, control.FileName, &ctl) != nil {
+		return "", nil, false
+	}
+	r := telegram.ResumeReview{Device: cfg.Host, Loop: loopName, RegistrationID: action.RegistrationID, TicketID: t.ID, ExpiresAt: t.ExpiresAt,
+		Paused: ctl.Paused, Stop: ctl.Stop, AwaitingUser: ctl.AwaitingUser, Completed: ctl.Completed, SetBy: holdSetters(entry.StateDir)}
+	if !r.Restarts() {
+		return "", nil, false
+	}
+	text, markup, err := telegram.FormatRestartConfirmMessage(r)
+	return text, markup, err == nil
+}
+
+// holdSetters says who set each hold now in force, from the newest history
+// record that turned it on: the role the journal records for a control
+// change, or a check. Fixed words only.
+func holdSetters(stateDir string) map[string]string {
+	j, err := incident.Load(stateDir)
+	if err != nil {
+		return nil
+	}
+	on := func(c *incident.Controls, k string) bool {
+		if c == nil {
+			return false
+		}
+		switch k {
+		case "paused":
+			return c.Paused
+		case "stop":
+			return c.Stop
+		case "awaiting-user":
+			return c.AwaitingUser
+		}
+		return c.Completed
+	}
+	out := map[string]string{}
+	for _, k := range []string{"paused", "stop", "awaiting-user", "completed"} {
+		for i := len(j.Records) - 1; i >= 0; i-- {
+			r := j.Records[i]
+			if !on(r.ControlAfter, k) || on(r.ControlBefore, k) {
+				continue
+			}
+			out[k] = holdSetterWords(r)
+			break
+		}
+	}
+	return out
+}
+
+func holdSetterWords(r incident.Record) string {
+	if r.ControlChange == nil {
+		if r.Kind == "tick" {
+			return telegram.HoldSetterCheck
+		}
+		return telegram.HoldSetterUnknown
+	}
+	switch c := r.ControlChange; {
+	case strings.HasPrefix(c.Operation, "telegram_"), strings.HasPrefix(c.Operation, "panel_"):
+		return telegram.HoldSetterClient
+	case c.Caller == "terminal":
+		return telegram.HoldSetterPerson
+	case c.Caller == "owner_thread":
+		return telegram.HoldSetterAgent
+	case c.Caller == "other_thread":
+		return telegram.HoldSetterThread
+	case c.Caller == "client":
+		return telegram.HoldSetterClient
+	}
+	return telegram.HoldSetterUnknown
 }
