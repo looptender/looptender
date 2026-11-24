@@ -1,1 +1,2 @@
 - A model step-down whose step back cannot confirm the conversation's model stands down a day after the reset instead of warning at every check, and a stood-down notice lapses after a day.
+- A host-overload wake, which carries only its own notice, no longer carries the model-step line; the line goes with the next ordinary wake. A usage warning is recorded as told only when it went out.

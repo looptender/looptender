@@ -9,6 +9,7 @@ import (
 
 	"github.com/looptender/looptender/internal/decide"
 	"github.com/looptender/looptender/internal/hostcheck"
+	"github.com/looptender/looptender/internal/state"
 )
 
 func setHost(t *testing.T, sessionOK bool, load float64) {
@@ -159,5 +160,35 @@ func TestTheGateHoldsOnlySendsAndHandoffs(t *testing.T) {
 		if got := tk.gateHostSession(auth, decide.Input{}, d); got != d {
 			t.Errorf("%s %q changed to %+v", d.Action, d.Reason, got)
 		}
+	}
+}
+
+// A host-overload wake is notice-only and carries nothing else: a pending
+// model-step line is neither sent with it nor consumed, and goes with the
+// next ordinary wake. (A pending usage warning is decided before an
+// overload, as its own wake, so it never meets one; the send path still
+// records it as told only when it went out.)
+func TestAnOverloadWakeCarriesNoOtherNotice(t *testing.T) {
+	w := newWorld(t, true, false)
+	p := w.primary(decide.Observation{State: decide.Idle, ActiveChildren: 3})
+	if err := state.SaveModelStepNote(w.dir, &state.ModelStepNote{Text: "[keepgoing:model-step to=claude-sonnet-example from=claude-opus-example]", At: t0}); err != nil {
+		t.Fatal(err)
+	}
+	setHost(t, true, 100)
+	res := runTick(t, w, t0)
+	if res.Reason != decide.HostOverloadWakeReason || len(p.sent) != 1 || strings.Contains(p.sent[0], "model-step") {
+		t.Fatalf("%+v %q", res, p.sent)
+	}
+	if n, _ := state.LoadModelStepNote(w.dir); n == nil {
+		t.Fatal("the model-step line was consumed")
+	}
+	setHost(t, true, 1)
+	p.obs = decide.Observation{State: decide.Idle}
+	res = runTick(t, w, t0.Add(2*time.Hour))
+	if res.Action != "wake" || len(p.sent) != 2 || !strings.Contains(p.sent[1], "model-step") {
+		t.Fatalf("%+v %q", res, p.sent)
+	}
+	if n, _ := state.LoadModelStepNote(w.dir); n != nil {
+		t.Fatal("the line was kept after it was sent")
 	}
 }
