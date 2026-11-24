@@ -27,11 +27,12 @@ const (
 	noticeInstall    = "install"         // an install was adopted or refused
 	noticeDisk       = "disk"            // the state volume is low or critical
 	noticeBound      = "bound"           // a deadline or send limit was reached
+	noticeModelStep  = "model_step"      // a conversation was stepped down a model, or could not be
 )
 
 // noticeKinds is every kind, for settings. Kinds a person is pushed by
 // default are in noticeDefaultOn; the rest are listed but quiet.
-var noticeKinds = []string{noticeNeedsYou, noticeLimit, noticeSupervisor, noticeLane, noticeHold, noticeInstall, noticeDisk, noticeBound, noticeHost}
+var noticeKinds = []string{noticeNeedsYou, noticeLimit, noticeSupervisor, noticeLane, noticeHold, noticeInstall, noticeDisk, noticeBound, noticeHost, noticeModelStep}
 var noticeDefaultOn = map[string]bool{noticeNeedsYou: true, noticeLimit: true, noticeSupervisor: true, noticeHost: true}
 
 // Severities: urgent (an agent asked a question), high, normal, info.
@@ -140,6 +141,20 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 	checked := time.Time{}
 	if l.LastCheck.At != nil {
 		checked = *l.LastCheck.At
+	}
+	if v := l.ModelStep; v != nil && v.InForce != nil {
+		s := v.InForce
+		n := panelNotice{Kind: noticeModelStep, Severity: sevInfo, Since: s.At, ID: noticeID(noticeModelStep, l.Key, s.At, ""), Group: noticeModelStep + ".down",
+			Text: name + " runs on a weaker model until a one-model weekly limit resets " + noticeTime(s.ResetsAt) + ".", GroupText: "{n} loops run on a weaker model until a one-model weekly limit resets."}
+		switch {
+		case s.StoodDown:
+			n.Severity, n.Group, n.ID = sevNormal, noticeModelStep+".stayed", noticeID(noticeModelStep, l.Key, s.At, "stayed")
+			n.Text, n.GroupText = name+" stays on the model it is on: it was not moved back to its stronger model after the limit reset, because it was no longer on the weaker one or step-down is off.", "{n} loops were not moved back to their stronger model after a limit reset."
+		case s.Failed:
+			n.Severity, n.Group, n.ID = sevNormal, noticeModelStep+".failed", noticeID(noticeModelStep, l.Key, s.At, "failed")
+			n.Text, n.GroupText = name+" could not step down a model at a one-model weekly limit; it waits for the reset "+noticeTime(s.ResetsAt)+".", "{n} loops could not step down a model at a one-model weekly limit."
+		}
+		add(n)
 	}
 	if w := l.Waiting; w != nil && needs {
 		since := time.Time{}

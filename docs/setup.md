@@ -1,28 +1,28 @@
 # Guided setup
 
-looptender is the product name; the released v0.2.0 executable and commands are still `keepgoing`. The directory and filename changes below describe **unreleased source**. A v0.2.0 CLI creates `keepgoing.yaml` under its existing `keepgoing` user directory. Keep using the path printed by your installed build; a documentation rename does not migrate existing loops. See the [name and release boundary](../README.md).
+Commands below use `looptender`. A v0.2.0 release archive provides the executable under its earlier name, and a v0.2.0 CLI names its files that way too; see [installing looptender](install.md). The file and directory names below describe **unreleased source**. Keep using the path your installed build prints; existing loops are not migrated.
 
-`keepgoing init` builds a disabled loop without editing YAML or installing a loop skill. This command requires v0.1.2 or newer; the v0.1.1 release does not include it. Follow the [installation instructions](../README.md#install), then check `keepgoing version` before using this guide. If using a separate development binary, substitute its absolute path for `keepgoing`.
+`looptender init` builds a disabled loop without editing YAML or installing a loop skill. This command requires v0.1.2 or newer; the v0.1.1 release does not include it. Follow the [installation instructions](../README.md#install), then check `looptender version` before using this guide. If using a separate development binary, substitute its absolute path for `looptender`.
 
 ## First loop
 
 From an existing Git project with at least one commit, run:
 
 ```sh
-keepgoing init
+looptender init
 ```
 
 Published v0.1.5 detects `codex`, `claude`, and `bb` on `PATH`. v0.2.0 also discovers Cursor through the `agent` executable, preserving the existing selection order when other CLIs are installed; the desktop `cursor` launcher is not a headless CLI. Choose a task file or enter a task with clear completion criteria, choose an agent, and accept or adjust the operating limits. The default is one agent with no fallbacks. A BB target requires an existing thread ID and its provider label; headless targets start a new session on their first wake and resume that session afterward. Setup does not attach to existing headless or IDE conversations.
 
 The wizard shows the target, project, account directory when explicitly selected, quota groups, fallback order, operating limits, and future probe behavior. It does not run providers, test authentication, create accounts, alter permissions, enable supervision, or install a scheduler.
 
-It writes `looptender.yaml` (releases up to v0.2.0 wrote `keepgoing.yaml`, which is still read), `prompt.md`, and, if needed, `fallbacks.yaml` into a **new** directory beneath the OS user configuration directory:
+It writes `looptender.yaml` (a file an earlier release wrote under the earlier name is still read), `prompt.md`, and, if needed, `fallbacks.yaml` into a **new** directory beneath the OS user configuration directory:
 
 - macOS: `~/Library/Application Support/looptender/loops/<name>`
 - Linux: `$XDG_CONFIG_HOME/looptender/loops/<name>` or `~/.config/looptender/loops/<name>`
 - Windows: `%AppData%\looptender\loops\<name>`
 
-On a computer where the tool already keeps its files in a `keepgoing` directory from before the rename, the directory is `keepgoing/loops/<name>` in the same place; see [per-user directories](configuration.md#per-user-directories).
+On a computer where the tool already keeps its files in a directory under its earlier name, the directory is `loops/<name>` in that directory; see [per-user directories](configuration.md#per-user-directories).
 
 Runtime state will live in that directory's `state` subdirectory. `--directory` selects a different new directory. Setup refuses paths inside the project or any Git checkout, including paths reached through existing symlinks, and refuses existing destinations even if empty. New directories use mode `0700` and files use `0600` on Unix; existing parent permissions are preserved. On Windows, filesystem ACLs govern access. Tasks and account configuration paths stay outside the checkout; account files are never copied.
 
@@ -45,7 +45,7 @@ looptender prompt-policy apply -c CONFIG --refresh-prefix --yes  # write it
 
 A prompt that follows policy updates keeps the command prefix it was written with, so a prompt written for another copy of the program can tell the agent to run that copy. `status`, `doctor` and `prompt-policy show` say when the prefix runs a program file other than the one running now, or one that does not exist (`wakePolicy.commandPrefix`: `installed`, `other_build`, `missing` or `unknown`), and `doctor` warns. `apply --refresh-prefix` previews rewriting the prefix of the policy part's commands to the running program's path and writes nothing; add `--yes` to write it, with the previous file kept beside it. The same path appearing in the task text is counted in the preview and never rewritten. A hand-edited prompt with no `Task:` line is told what `apply` needs instead of being offered a command that refuses.
 
-The same check covers any prompt, generated, hand-edited or set inline (`loop.prompt`): `status`, `doctor` and `prompt-policy show` read the prompt text for programs it names for the loop's commands, either a word that is an absolute or home-relative path named `looptender` or `keepgoing`, or any program followed by a control command (`complete`, `await-user`, `resume`, `status`, ...) and `-c` with this loop's configuration path. A program that is another file than the one running now, or does not exist, is listed in `wakePolicy.commandPrograms` (path, verdict, how often, how long ago the file changed, and `source`: `policy_prefix` for the command prefix of a generated prompt's policy part, `prompt_text` for any other place in the prompt; a generated prompt with an old prefix and another old program in its task lists both) and warned about, with the reason: a build older than the running one does not read a newer state directory safely, so its control commands can fail and it drops fields from `state.json`. Links resolve (`~/.local/bin/looptender` to `current` to `builds/<id>`, and the old `keepgoing` link name, are the same program), and a copy with the same bytes counts as the same. The named programs are never run to ask their version: they are files a prompt names, which anyone who can edit the prompt could have chosen. Only file identity, age and bytes are compared. The scan is bounded: at most 1 MiB of the prompt is read, 64 distinct programs are looked at, 16 are listed (with a count of the rest in `commandProgramsMore`), at most four same-size files are hashed, and the whole check stops after three seconds, saying it was cut short (`commandProgramsUnchecked`). Programs not looked at (past the 64, or a file of this build's size that the hashing budget did not allow comparing) are counted in `commandProgramsNotLooked`; with nothing found that still reads as "not an all-clear", and `doctor` warns, so a scan that did not finish is never reported as clean. A directory that happens to be named `looptender` or `keepgoing` is not a program and is not listed, and Windows drive paths are ignored on other systems. A prompt that is not generated wording is never rewritten; the warning says to change those commands by hand.
+The same check covers any prompt, generated, hand-edited or set inline (`loop.prompt`): `status`, `doctor` and `prompt-policy show` read the prompt text for programs it names for the loop's commands, either a word that is an absolute or home-relative path named `looptender` (or its earlier name), or any program followed by a control command (`complete`, `await-user`, `resume`, `status`, ...) and `-c` with this loop's configuration path. A program that is another file than the one running now, or does not exist, is listed in `wakePolicy.commandPrograms` (path, verdict, how often, how long ago the file changed, and `source`: `policy_prefix` for the command prefix of a generated prompt's policy part, `prompt_text` for any other place in the prompt; a generated prompt with an old prefix and another old program in its task lists both) and warned about, with the reason: a build older than the running one does not read a newer state directory safely, so its control commands can fail and it drops fields from `state.json`. Links resolve (`~/.local/bin/looptender` to `current` to `builds/<id>`, and a link under the earlier name, are the same program), and a copy with the same bytes counts as the same. The named programs are never run to ask their version: they are files a prompt names, which anyone who can edit the prompt could have chosen. Only file identity, age and bytes are compared. The scan is bounded: at most 1 MiB of the prompt is read, 64 distinct programs are looked at, 16 are listed (with a count of the rest in `commandProgramsMore`), at most four same-size files are hashed, and the whole check stops after three seconds, saying it was cut short (`commandProgramsUnchecked`). Programs not looked at (past the 64, or a file of this build's size that the hashing budget did not allow comparing) are counted in `commandProgramsNotLooked`; with nothing found that still reads as "not an all-clear", and `doctor` warns, so a scan that did not finish is never reported as clean. A directory that happens to be named like the program is not a program and is not listed, and Windows drive paths are ignored on other systems. A prompt that is not generated wording is never rewritten; the warning says to change those commands by hand.
 
 `apply` is how a loop starts following policy updates. It rewrites the prompt file to the current wording followed by the file's task, then records it. A file that reads as a generated wording keeps its own command path and configuration path. For any other file, the task is the text after its first line that reads exactly `Task:`, and the commands get the path of the looptender that ran `apply`, which it prints. The previous file is kept beside it as `prompt.md.before-policy-<time>`. It refuses a file with no `Task:` line, a caller other than the BB thread that owns the loop, and a moment when a check is running. Moving a loop from an older wording adds the guidance that wording lacked (see the changelog). Nothing else rewrites the file.
 
@@ -59,7 +59,7 @@ After a phase or lane finishes, new prompts ask the coordinator to verify the re
 
 ## Optional goal during setup
 
-In v0.1.5, `keepgoing init --with-goal` records a durable goal while creating the disabled setup. The interactive wizard asks whether to record and share a goal, suggesting yes; answer no or pass `--with-goal=false` to retain the existing prompt-only setup. Noninteractive callers must explicitly pass `--with-goal`; existing scripts retain their previous behavior. The rebuilt BB plugin exposes an explicit goal checkbox using the same flag; older plugins retain task-only setup. Published v0.1.4 does not support this flag.
+From v0.1.5, `init --with-goal` records a durable goal while creating the disabled setup. The interactive wizard asks whether to record and share a goal, suggesting yes; answer no or pass `--with-goal=false` to retain the existing prompt-only setup. Noninteractive callers must explicitly pass `--with-goal`; existing scripts retain their previous behavior. The rebuilt BB plugin exposes an explicit goal checkbox using the same flag; older plugins retain task-only setup. Published v0.1.4 does not support this flag.
 
 The task and completion criteria are copied once into private `task.md`. The goal title starts as the loop name; both objective and acceptance references point to that absolute snapshot path. `state/goal.json` holds the generated identity and revision 1, using the existing goal store. `prompt.md` contains stable operating instructions, and `loop.prompt_goal` explicitly shares the current goal specification in future automatic messages. Task text is not repeated in that scaffold or ordinary setup output. The agent must be able to read the private snapshot; setup does not grant filesystem access or change provider permissions. The supervisor does not read the goal's references or validate completion criteria.
 
@@ -74,7 +74,7 @@ Goal task input is bounded to 1 MiB of UTF-8 text; file input must be a regular 
 Every wizard choice has a flag. `--non-interactive` never asks questions; it requires a name, agent, and task or task file. It reads stdin only when `--task-file -` is explicit. Project defaults to the current directory. Prefer `--task-file` to avoid putting private task text in shell history or process arguments.
 
 ```sh
-keepgoing init --non-interactive \
+looptender init --non-interactive \
   --name example-loop --agent codex \
   --project /projects/example-app \
   --task-file /private/example-task.md \
@@ -83,7 +83,7 @@ keepgoing init --non-interactive \
   --max-reprompts 3 --backoff 10m --interval 5m
 ```
 
-Add `--dry-run` to preview without writing files. `keepgoing init --help` lists all flags. Input ending or cancellation while answering the wizard writes no setup. Existing setups are never overwritten; edit their private configuration or choose a new name/directory.
+Add `--dry-run` to preview without writing files. `looptender init --help` lists all flags. Input ending or cancellation while answering the wizard writes no setup. Existing setups are never overwritten; edit their private configuration or choose a new name/directory.
 
 In v0.1.3 or newer, optional `--no-progress-timeout 2h` holds after two hours without verified Git metadata changes. The baseline survives turns, restart and resume. Downtime counts through v0.1.5; v0.2.0 does not count time in which no check ran or the network was down. Choose it only when Git activity is a suitable progress signal. See [no-progress timeout](operations.md#no-progress-timeout).
 
@@ -94,7 +94,7 @@ In v0.1.3 or newer, optional `--deadline "2030-01-01T18:00:00Z"` sets an absolut
 For an existing BB thread:
 
 ```sh
-keepgoing init --non-interactive \
+looptender init --non-interactive \
   --name example-chat --agent bb \
   --thread thr_example --provider codex \
   --project /projects/example-app --task-file /private/example-task.md
@@ -109,12 +109,12 @@ This records the supplied target; it does not verify the thread's identity, swit
 With v0.2.0 or newer, choose `cursor` in the wizard or pass `--agent cursor`. Published v0.1.5 does not support this choice.
 
 ```sh
-keepgoing-dev init --non-interactive --agent cursor \
+looptender-dev init --non-interactive --agent cursor \
   --name example-cursor --project /projects/example-app \
   --task-file /private/example-task.md --with-goal --max-sends 10
 ```
 
-Setup resolves `agent` on `PATH` and saves that executable, the project directory and optional `--model`. It never runs the provider or checks/changes its login; run `keepgoing doctor` afterwards to check the CLI version and stored login. Existing Cursor credentials and permissions are inherited, and Cursor must already trust the project directory or the first turn fails before it starts. `--account-dir` and `--fallback` are rejected for Cursor without writing a setup; the wizard skips those questions. Cursor is also unavailable as a fallback for other agents. `--dry-run` and the private stdin/JSON path below work as for other targets.
+Setup resolves `agent` on `PATH` and saves that executable, the project directory and optional `--model`. It never runs the provider or checks/changes its login; run `looptender doctor` afterwards to check the CLI version and stored login. Existing Cursor credentials and permissions are inherited, and Cursor must already trust the project directory or the first turn fails before it starts. `--account-dir` and `--fallback` are rejected for Cursor without writing a setup; the wizard skips those questions. Cursor is also unavailable as a fallback for other agents. `--dry-run` and the private stdin/JSON path below work as for other targets.
 
 This starts a separate CLI conversation on the first wake. Existing IDE chats, interactive permission bridging, quota/reset detection and automatic fallback recovery are unavailable. Text/JSON previews and doctor disclose these limits; reading a version string does not establish a supported version range. Review [Cursor evidence and remaining live checks](cursor.md) before starting. Creation stays disabled, including with an optional goal.
 
@@ -127,7 +127,7 @@ For task entry from an integration, pass `--task-file -`, write UTF-8 task text 
 For example, in a POSIX shell:
 
 ```sh
-keepgoing init --non-interactive --json --dry-run \
+looptender init --non-interactive --json --dry-run \
   --name example-chat --agent bb \
   --thread thr_example --provider codex \
   --project /projects/example-app --task-file - < /private/example-task.md
@@ -173,7 +173,7 @@ Any failure or other answer means no provider is known, and setup is as before: 
 
 **The wizard** offers it after the [standard route list](routes.md) offer, and only when that offer was not taken or not made. It first prints what a yes sets up (the sentence below), then asks "On a usage limit, start a new conversation on codex that takes over this loop, with its child lanes? (yes/no) [yes]", then the model, defaulting to the one BB names. **A script** gets it only by asking: `--new-thread-provider claude-code|codex --new-thread-model M`, with optional `--new-thread-reasoning` and `--new-thread-permission-mode`. Without them it keeps today's single route and runs no bb command at all, as before. With `--detect-takeover` it asks bb which provider is usable (the two metadata reads above, nothing else); when one is, it prints a `Takeover: not set up` line naming the flags, and `--json` carries `newThreadOffer` (provider and model). The wizard always asks bb, since it offers the takeover. `--new-thread-provider none` declines it. These flags are for BB loops only, and exclude `--fallback` and `--routes standard`. The preview and the result say exactly what happens at a limit; in `--json`, each fallback that starts a new conversation carries `newThread` (provider, model, permission, whether children follow and blocked lanes get successors, and that sentence).
 
-**An existing loop** is not changed by an update. Arm it deliberately with `keepgoing fallbacks arm -c looptender.yaml`: it finds the usable provider the same way (or takes `--provider` and `--model`), says what will happen, previews the `fallbacks add` change, and writes it after a yes (or with `--yes`; `--dry-run` only previews). It also says whether the provider can take over now, as far as the loop's own probe records (`health.json`) show without a model call. Only a fallback on that provider in the same quota group counts, so a check of another account or pool on the same provider is not taken for this one. A recorded usage limit with its reset still ahead means it cannot until then. The age of the check is given beside its time. With no record, it says that this is not known and that the fallback is checked with a probe only when a handoff happens. `init` says the same. A `--dry-run` by a thread that does not own the loop is shown in full, ends by saying that the change must be made by the owning thread or from a terminal, and exits 0; it never advises `--take-over`. `fallbacks add --dry-run`, `fallbacks handoff|remove|move --dry-run` and `routes follow-standard|own --dry-run` do the same (`callerNotOwner` in `--json`); without `--dry-run` they refuse such a thread as before. The real command by such a thread writes nothing and exits 1. It turns handoff on for rate limits for the whole loop: when the loop already has other fallbacks with handoff off, they start taking handoffs too, in their order and before the new conversation, and arm says so. It keeps `fallbacks add`'s ownership check (the loop's owner, or a terminal with no BB identity), and says so when the loop is already armed. `doctor`'s `routes.single` warning for a BB loop names this command.
+**An existing loop** is not changed by an update. Arm it deliberately with `looptender fallbacks arm -c looptender.yaml`: it finds the usable provider the same way (or takes `--provider` and `--model`), says what will happen, previews the `fallbacks add` change, and writes it after a yes (or with `--yes`; `--dry-run` only previews). It also says whether the provider can take over now, as far as the loop's own probe records (`health.json`) show without a model call. Only a fallback on that provider in the same quota group counts, so a check of another account or pool on the same provider is not taken for this one. A recorded usage limit with its reset still ahead means it cannot until then. The age of the check is given beside its time. With no record, it says that this is not known and that the fallback is checked with a probe only when a handoff happens. `init` says the same. A `--dry-run` by a thread that does not own the loop is shown in full, ends by saying that the change must be made by the owning thread or from a terminal, and exits 0; it never advises `--take-over`. `fallbacks add --dry-run`, `fallbacks handoff|remove|move --dry-run` and `routes follow-standard|own --dry-run` do the same (`callerNotOwner` in `--json`); without `--dry-run` they refuse such a thread as before. The real command by such a thread writes nothing and exits 1. It turns handoff on for rate limits for the whole loop: when the loop already has other fallbacks with handoff off, they start taking handoffs too, in their order and before the new conversation, and arm says so. It keeps `fallbacks add`'s ownership check (the loop's owner, or a terminal with no BB identity), and says so when the loop is already armed. `doctor`'s `routes.single` warning for a BB loop names this command.
 
 ## Existing accounts and ordered fallbacks
 
@@ -186,7 +186,7 @@ Give each independent quota pool a label using letters, digits, hyphens, undersc
 Repeat `--fallback ADAPTER[:GROUP][=ACCOUNT_DIR]` in preference order. Without an explicit group, the provider label is used (`codex` or `claude-code`). The wizard asks these fields separately. For three already authenticated independent accounts:
 
 ```sh
-keepgoing init --non-interactive \
+looptender init --non-interactive \
   --name example-accounts --agent claude \
   --account-dir /private/accounts/claude-a --group pool-a \
   --fallback codex:pool-b=/private/accounts/codex-b \
@@ -197,7 +197,7 @@ keepgoing init --non-interactive \
 
 **Following your standard route list instead.** If you keep a [standard route list](routes.md), the wizard asks `Follow your standard route list for handoffs? N of its M switched-on routes apply to this loop. (yes/no) [yes]` for a `bb`, `claude` or `codex` loop, before the fallback questions, and only when at least one route applies; yes skips them, and the loop gets `routes: standard` with handoff on for rate limits. A script follows the list only with `--routes standard`, never because a list exists; `--routes standard` and `--fallback` exclude each other, and `--routes standard` is refused while no usable list is written or the list has no routes (`routes: []`). The JSON `limits.failoverOn` is what is written: `[rate_limit]` for a following loop, even while no route applies yet. The JSON result says `routes: "standard"` and lists the routes that apply to the loop now as its `fallbacks`. Probes follow the list's policy, not `--probe-daily-cap`.
 
-To add a fallback to a loop that already exists, v0.2.0 provides the guided [`keepgoing fallbacks add`](fallbacks.md#add-a-fallback-with-guided-setup).
+To add a fallback to a loop that already exists, v0.2.0 provides the guided [`looptender fallbacks add`](fallbacks.md#add-a-fallback-with-guided-setup).
 
 Generated fallbacks use redundancy `min_healthy: 1`, `span: group`. After you enable and run supervision, scheduled probes run at most every 12 hours per candidate, with a 24-hour health TTL and a default cap of two scheduled calls per candidate per UTC day. Active-group candidates are skipped. Exact handoff probes and manually requested probes are additional calls outside that cap. No calls occur during setup. Handoffs are allowed only for structured `rate_limit` errors and require an exact target probe. Switch-back stays off.
 

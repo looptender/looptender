@@ -83,7 +83,9 @@ final class NoticeTrackerTests: XCTestCase {
 
     func testSettingsAreTheSharedOnesAndDefaultWithoutThem() {
         XCTAssertEqual(NoticeKinds.all.filter { NoticeSettings.isOn($0.kind, nil) }.map(\.kind), ["needs_you", "limit", "supervisor_gone", "host"])
-        XCTAssertEqual(NoticeKinds.all.last?.label, "This computer's session or load", "host can be switched in the menu")
+        XCTAssertEqual(NoticeKinds.all.first { $0.kind == "host" }?.label, "This computer's session or load", "host can be switched in the menu")
+        XCTAssertNotNil(NoticeKinds.all.first { $0.kind == "model_step" }, "so can a model step, and it is quiet by default")
+        XCTAssertFalse(NoticeSettings.isOn("model_step", nil))
         let shared = PanelNotify(kinds: ["needs_you": false, "disk": true])
         XCTAssertFalse(NoticeSettings.isOn("needs_you", shared))
         XCTAssertTrue(NoticeSettings.isOn("disk", shared))

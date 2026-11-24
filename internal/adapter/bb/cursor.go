@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -61,8 +62,11 @@ type Cursor struct {
 	Blocked       bool         `json:"blocked,omitempty"` // latest rate-limit window blocked
 	ResetsAt      time.Time    `json:"resetsAt,omitempty"`
 	// Window is the blocked window that resets at ResetsAt.
-	Window  decide.LimitWindow `json:"window,omitempty"`
-	Pending map[string]string  `json:"pending,omitempty"` // interaction id -> "pending"
+	Window decide.LimitWindow `json:"window,omitempty"`
+	// Model is the model of the latest turn request (client/turn/requested
+	// execution.model), when it is a plain model name.
+	Model   string            `json:"model,omitempty"`
+	Pending map[string]string `json:"pending,omitempty"` // interaction id -> "pending"
 	// LastEventAt is the bounded time of the newest event that is not
 	// requested input (client/...), and
 	// ScannedAt the local time of the last complete scan. See eventTime.
@@ -245,6 +249,9 @@ func (c *Cursor) apply(e event, seenAt time.Time) {
 	case e.Type == "client/turn/requested":
 		// Input can be queued behind a reconnecting turn; it is not recovery.
 		c.TurnSeq = e.Seq
+		if m := requestModel(e); m != "" {
+			c.Model = m
+		}
 		if !retriedRequest(e) {
 			c.TurnRequests++
 		}
@@ -467,6 +474,21 @@ func (a *Adapter) scan(ctx context.Context) (Cursor, bool) {
 
 // retriedRequest reports whether a turn request is a provider's retry of an
 // earlier one, from its structured retryOfRequestId field only.
+var requestModelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$`)
+
+// requestModel is the model a turn request ran with, or "".
+func requestModel(e event) string {
+	var d struct {
+		Execution struct {
+			Model string `json:"model"`
+		} `json:"execution"`
+	}
+	if json.Unmarshal(e.Data, &d) != nil || !requestModelName.MatchString(d.Execution.Model) {
+		return ""
+	}
+	return d.Execution.Model
+}
+
 func retriedRequest(e event) bool {
 	var d struct {
 		RetryOf string `json:"retryOfRequestId"`

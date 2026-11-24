@@ -297,6 +297,7 @@ async function notifyScenario(label, setup) {
   const hostBox = [...area().querySelectorAll("input[type=checkbox]")].find((c) => /session or load/.test(c.parentNode.textContent));
   if (!hostBox) t.fail("the host kind is not offered in the settings");
   else if (!hostBox.checked) t.fail("the host kind is not on by default");
+  else if (![...area().querySelectorAll("input[type=checkbox]")].some((c) => /another model/.test(c.parentNode.textContent))) t.fail("the model step kind is not offered in the settings");
   else { hostBox.checked = false; hostBox.dispatchEvent(new w.Event("change")); await settle(); if (!env.saved.some((x) => x.kind === "host" && x.on === false)) t.fail("the host choice was not saved"); }
   w.close();
   for (const e of t.errors) failures.push("notices: " + e);
