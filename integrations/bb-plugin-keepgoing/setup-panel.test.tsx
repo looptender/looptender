@@ -273,7 +273,8 @@ test("each step has exactly one prominent button, and the choices are form contr
     // Selection is by radio and checkbox, grouped under headings; the only buttons are actions.
     assert.deepEqual([...ui.container.querySelectorAll("fieldset > legend")].map(l => l.textContent), ["What should the loop keep going?", "Options"]);
     assert.equal(ui.container.querySelectorAll("input[type=radio]").length, 2); assert.equal(ui.container.querySelectorAll("input[type=checkbox]").length, 1);
-    assert.deepEqual([...ui.container.querySelectorAll("button")].map(b => b.textContent), ["Preview setup"]);
+    assert.deepEqual([...ui.container.querySelectorAll('button:not([role="tab"])')].map(b => b.textContent), ["Preview setup"]);
+    assert.deepEqual([...ui.container.querySelectorAll('[role="tab"]')].map(b => b.textContent), ["Start a new loop", "Continue a loop"]);
     assert.ok(ui.container.querySelector("label[for]"), "labelled fields");
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByRole("button", { name: "Create setup" });
@@ -365,4 +366,46 @@ test("focus rings and error text meet the contrast the form needs in both themes
   assert.ok(ratio(ring!, "#ffffff") >= 3, "light"); assert.ok(ratio(ring!, "#1b1b1d") >= 3, "dark");
   assert.ok(!/outline:2px solid Highlight/.test(css));
   assert.match(css, /\.kgs-chip\{min-height:44px !important/);
+});
+
+test("slugFromTitle and slugFromPredecessor derive clean slugs and avoid collisions", async () => {
+  const { slugFromTitle, slugFromPredecessor } = await import("./setup-contract.ts");
+  assert.equal(slugFromTitle("Fix auth token refresh (Claude 4)", "thr_example"), "fix-auth-token-refresh");
+  assert.equal(slugFromTitle("Add continuation UI · Gemini 4 Hydrogen (Medium)", "thr_example"), "add-continuation-ui");
+  assert.equal(slugFromTitle("New thread", "thr_example"), "bb-thr-example");
+  assert.equal(slugFromTitle(null, "thr_example"), "bb-thr-example");
+  assert.equal(slugFromPredecessor({ loop: "example-loop" }, ["example-loop"]), "example-loop-2");
+  assert.equal(slugFromPredecessor({ loop: "example-loop-2" }, ["example-loop", "example-loop-2"]), "example-loop-3");
+  assert.equal(slugFromPredecessor({ loop: "bb-thr_old", displayName: "Auth Refresh Work" }, []), "auth-refresh-work-2");
+});
+
+test("Continue a loop mode selects a predecessor, derives slug, explains auto-archive, and sends succeeds", async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const candidates = [
+    { configPath: "/private/auth-work/looptender.yaml", loop: "auth-work", displayName: "Auth Work", project: "example", sameProject: true, controlState: "paused", archived: false },
+  ];
+  const call = async (input: Record<string, unknown>): Promise<SetupResult> => {
+    seen.push(input);
+    if (input.action === "inspect") return { ok: true, message: "No loop yet", threadTitle: "Continue auth work (Codex)", continuationCandidates: candidates };
+    if (input.action === "preview") return { ok: true, message: "Preview only", ticket: "t1", plan: { ...plan, loop: "auth-work-2", succeeds: { configPath: candidates[0]!.configPath, loop: "auth-work", displayName: "Auth Work" } } };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record: { ...record, loop: "auth-work-2" }, canStart: true, checks: [], warnings: ["init: warning: fictional notice"] };
+    return { ok: true, message: "No loop yet" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call as never} onChanged={() => {}} />);
+  try {
+    await ui.findByText("No loop yet");
+    const nameInput = ui.getByLabelText("Loop name") as HTMLInputElement;
+    assert.equal(nameInput.value, "continue-auth-work");
+    fireEvent.click(ui.getByRole("tab", { name: /Continue a loop/ }));
+    assert.ok(ui.getByText(/archived automatically once this new loop completes its first check; nothing is deleted/));
+    fireEvent.change(ui.getByLabelText("Loop to continue"), { target: { value: candidates[0]!.configPath } });
+    assert.equal(nameInput.value, "auth-work-2");
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByText(/Auth Work \(auth-work\) — archived automatically after first completed check/);
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await ui.findByText("init: warning: fictional notice");
+    const createCall = seen.find(c => c.action === "create")!;
+    assert.equal(createCall.succeeds, candidates[0]!.configPath);
+    assert.equal(createCall.name, "auth-work-2");
+  } finally { cleanup(); }
 });
