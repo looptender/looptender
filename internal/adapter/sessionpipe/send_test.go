@@ -73,9 +73,25 @@ func newWakeFixture(t *testing.T, mode string) *wakeFixture {
 	return &wakeFixture{fixture: f, log: log}
 }
 
+// outcome waits for the wake's record to reach a final outcome: the stand-in
+// is this test binary run again, which can take a while to start on a busy
+// machine.
+func (w *wakeFixture) outcome(t *testing.T) askRecord {
+	t.Helper()
+	var rec askRecord
+	for i := 0; i < 200; i++ {
+		if rec, _ = w.a.loadAsk(); rec.Outcome != "" && rec.Outcome != "delivering" {
+			return rec
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("the wake never finished: %+v", rec)
+	return rec
+}
+
 func (w *wakeFixture) logged(t *testing.T) string {
 	t.Helper()
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 500; i++ {
 		if b, err := os.ReadFile(w.log); err == nil && len(b) > 0 {
 			return string(b)
 		}
@@ -109,8 +125,7 @@ func TestWakeIsDeliveredThroughAskAndTheAnswerIsNeverRead(t *testing.T) {
 		t.Fatalf("a second wake while the first is answered: %v", err)
 	}
 	// The detached ask finishes; its answer went nowhere.
-	time.Sleep(2 * time.Second)
-	if rec, _ := w.a.loadAsk(); rec.Outcome != "answered" || rec.PID != 0 {
+	if rec := w.outcome(t); rec.Outcome != "answered" || rec.PID != 0 {
 		t.Fatalf("record after the answer: %+v", rec)
 	}
 	for _, p := range []string{w.a.askPath(), w.a.stderrPath(), w.a.statePath()} {
@@ -129,6 +144,8 @@ func TestWakeRefusalsSendNothingAndKeepOnlyTheCode(t *testing.T) {
 	} {
 		t.Run(mode, func(t *testing.T) {
 			w := newWakeFixture(t, mode)
+			// A refusal is told within the window; give a slow start room.
+			w.a.ackWindow = 10 * time.Second
 			err := w.a.Send(t.Context(), "Fictional wake text.", adapter.ModeAuto)
 			var ns adapter.ErrNotStarted
 			if !errors.As(err, &ns) || !strings.Contains(ns.Reason, "("+want+")") || strings.Contains(err.Error(), "FICTIONAL") {
@@ -145,6 +162,7 @@ func TestWakeRefusalsSendNothingAndKeepOnlyTheCode(t *testing.T) {
 	}
 	// A failure without a refusal code may have reached the session.
 	w := newWakeFixture(t, "fail")
+	w.a.ackWindow = 10 * time.Second
 	err := w.a.Send(t.Context(), "Fictional wake text.", adapter.ModeAuto)
 	if err == nil || errors.As(err, new(adapter.ErrNotStarted)) || strings.Contains(err.Error(), "FICTIONAL") {
 		t.Fatalf("a failure: %v", err)
@@ -154,7 +172,7 @@ func TestWakeRefusalsSendNothingAndKeepOnlyTheCode(t *testing.T) {
 	if err := w.a.Send(t.Context(), "Fictional wake text.", adapter.ModeAuto); err != nil {
 		t.Fatalf("a quick answer: %v", err)
 	}
-	if rec, _ := w.a.loadAsk(); rec.Outcome != "answered" {
+	if rec := w.outcome(t); rec.Outcome != "answered" {
 		t.Fatalf("record %+v", rec)
 	}
 }
