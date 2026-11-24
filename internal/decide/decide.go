@@ -500,6 +500,9 @@ func observedWake(in Input) Decision {
 	return none(strings.TrimSuffix(s, ObservedReasonSuffix) + ObservedWakeSuffix)
 }
 
+// IdleWakeReason is the reason of the ordinary wake of an idle session.
+const IdleWakeReason = "idle"
+
 // OrdinaryIdleWake reports whether d is the ordinary wake of an idle
 // session (the "idle" rule) and nothing more: IdleWake is set and no other
 // flag of the Decision whose name ends in Wake is, so a notice wake (child
@@ -507,7 +510,7 @@ func observedWake(in Input) Decision {
 // neither is any wake kind added later. It is an allow-list: only this one
 // wake is sent to an observed session that opted in.
 func OrdinaryIdleWake(d Decision) bool {
-	if d.Action != Wake || !d.IdleWake {
+	if d.Action != Wake || !d.IdleWake || d.Reason != IdleWakeReason {
 		return false
 	}
 	v := reflect.ValueOf(d)
@@ -639,7 +642,7 @@ func decideRules(in Input) Decision {
 			}
 			return Decision{Action: Wake, Reason: "independent assignments need coordinator", IdleWake: true, AssignmentWake: true}
 		}
-		return Decision{Action: Wake, Reason: "idle", IdleWake: true}
+		return Decision{Action: Wake, Reason: IdleWakeReason, IdleWake: true}
 	case Active:
 		// A turn that went silent before a network outage and stayed silent
 		// after it may be hung. Nothing is sent into it: a nudge would only

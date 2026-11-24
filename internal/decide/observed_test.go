@@ -119,7 +119,7 @@ func TestObservedWakeIsAnAllowList(t *testing.T) {
 			continue
 		}
 		flags++
-		d := Decision{Action: Wake, IdleWake: true}
+		d := Decision{Action: Wake, Reason: IdleWakeReason, IdleWake: true}
 		reflect.ValueOf(&d).Elem().Field(i).SetBool(true)
 		if OrdinaryIdleWake(d) {
 			t.Errorf("a wake with %s is allowed", f.Name)
@@ -148,5 +148,18 @@ func TestObservedWakeIsAnAllowList(t *testing.T) {
 		if d := Decide(in); d.Action != None {
 			t.Errorf("%s: an observed target gets %s (%q)", name, d.Action, d.Reason)
 		}
+	}
+}
+
+// A wake that sets IdleWake but is not the idle rule's own (another reason)
+// is held: the reason is part of the allow-list.
+func TestOrdinaryIdleWakeNeedsTheIdleReason(t *testing.T) {
+	if OrdinaryIdleWake(Decision{Action: Wake, Reason: "some future wake", IdleWake: true}) {
+		t.Fatal("a wake with IdleWake and another reason is allowed")
+	}
+	in := base()
+	in.Obs.State = Idle
+	if d := Decide(in); d.Reason != IdleWakeReason || !OrdinaryIdleWake(d) {
+		t.Fatalf("the idle rule's own wake: %+v", d)
 	}
 }

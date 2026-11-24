@@ -101,11 +101,19 @@ func PendingWake(dir string, now time.Time) (since time.Time, pending bool) {
 	if !ok || r.Outcome != "delivering" || now.Sub(r.StartedAt) >= askStale || !alive(r.PID) {
 		return time.Time{}, false
 	}
-	if r.ProcStart != "" && procStart(r.PID) != r.ProcStart {
-		return time.Time{}, false // the process ID now names another process
+	if r.ProcStart != "" {
+		// Another start time: the process ID now names another process. A
+		// start time that cannot be read now says nothing either way, so
+		// the wake stays pending, up to askStale.
+		if now := readProcStart(r.PID); now != "" && now != r.ProcStart {
+			return time.Time{}, false
+		}
 	}
 	return r.StartedAt, true
 }
+
+// readProcStart is procStart; tests replace it.
+var readProcStart = procStart
 
 func (a *Adapter) askPath() string { return filepath.Join(a.dir, AskRecordFile) }
 
@@ -169,7 +177,7 @@ func (a *Adapter) Send(ctx context.Context, prompt string, mode adapter.Mode) er
 	if err := cmd.Start(); err != nil {
 		return adapter.ErrNotStarted{Reason: "sessionpipe could not be run: " + pathless(err).Error()}
 	}
-	rec := askRecord{PID: cmd.Process.Pid, ProcStart: procStart(cmd.Process.Pid), StartedAt: started, Outcome: "delivering"}
+	rec := askRecord{PID: cmd.Process.Pid, ProcStart: readProcStart(cmd.Process.Pid), StartedAt: started, Outcome: "delivering"}
 	if err := a.saveAsk(rec); err != nil {
 		// The ask is running; without its record the next wake cannot know.
 		_ = cmd.Process.Kill()

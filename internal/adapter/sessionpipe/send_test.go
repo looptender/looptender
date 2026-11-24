@@ -243,3 +243,30 @@ func TestWakeOnlyWhenOptedInAndNeverQueued(t *testing.T) {
 		t.Fatalf("allow-listed env: %s", got)
 	}
 }
+
+// A start time that cannot be read at check time, while the process is
+// alive, leaves the wake pending; another start time means another process.
+func TestPendingWakeWhenTheStartTimeCannotBeRead(t *testing.T) {
+	dir := t.TempDir()
+	a := &Adapter{dir: dir}
+	if err := a.saveAsk(askRecord{PID: os.Getpid(), ProcStart: "recorded-start", StartedAt: time.Now(), Outcome: "delivering"}); err != nil {
+		t.Fatal(err)
+	}
+	defer func(f func(int) string) { readProcStart = f }(readProcStart)
+	readProcStart = func(int) string { return "" }
+	if _, pending := PendingWake(dir, time.Now()); !pending {
+		t.Fatal("an unreadable start time reads as finished")
+	}
+	readProcStart = func(int) string { return "another-start" }
+	if _, pending := PendingWake(dir, time.Now()); pending {
+		t.Fatal("another start time reads as the same process")
+	}
+	readProcStart = func(int) string { return "recorded-start" }
+	if _, pending := PendingWake(dir, time.Now()); !pending {
+		t.Fatal("the same start time reads as finished")
+	}
+	readProcStart = func(int) string { return "" }
+	if _, pending := PendingWake(dir, time.Now().Add(25*time.Hour)); pending {
+		t.Fatal("an unreadable start time holds past the day bound")
+	}
+}
