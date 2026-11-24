@@ -57,6 +57,13 @@ func panelServeInProcess(t *testing.T, idle time.Duration) (string, panelRecord,
 // panelServeInProcessWith starts the server with or without --allow-changes.
 func panelServeInProcessWith(t *testing.T, idle time.Duration, changes bool) (string, panelRecord, string) {
 	t.Helper()
+	return panelServeInProcessMode(t, idle, changes, false)
+}
+
+// panelServeInProcessMode serves a panel in this process: every change
+// (changes), the default pause, stop and resume (controls), or read-only.
+func panelServeInProcessMode(t *testing.T, idle time.Duration, changes, controls bool) (string, panelRecord, string) {
+	t.Helper()
 	root := t.TempDir()
 	registryDir := dockScratch(t, root, dockNow)
 	runsClock(t, dockNow)
@@ -67,7 +74,7 @@ func panelServeInProcessWith(t *testing.T, idle time.Duration, changes bool) (st
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	go func() {
-		done <- runPanelServer(ctx, panelServerConfig{dir: dir, registry: registryDir, idle: idle, refresh: dockDefaultRefresh, staleAfter: defaultStaleAfter, offline: true, changes: changes, now: time.Now})
+		done <- runPanelServer(ctx, panelServerConfig{dir: dir, registry: registryDir, idle: idle, refresh: dockDefaultRefresh, staleAfter: defaultStaleAfter, offline: true, changes: changes, controls: controls && !changes, now: time.Now})
 	}()
 	stopped := false
 	t.Cleanup(func() {
@@ -1770,7 +1777,7 @@ func TestPanelOpeningRetiresTheOldLocation(t *testing.T) {
 	}
 	now := panelServeAt(t, dir, registryDir)
 	var out, errs bytes.Buffer
-	if code := panelCommand(env{context.Background(), &out, &errs}, []string{"--no-open", "--directory", registryDir}); code != exitOK ||
+	if code := panelCommand(env{context.Background(), &out, &errs}, []string{"--read-only", "--no-open", "--directory", registryDir}); code != exitOK ||
 		!strings.Contains(out.String(), "Stopped a panel an earlier build started at "+legacy+".") || !strings.Contains(out.String(), "http://127.0.0.1:") {
 		t.Fatalf("%d %s %s", code, out.String(), errs.String())
 	}

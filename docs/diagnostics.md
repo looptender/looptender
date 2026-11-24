@@ -411,7 +411,7 @@ Incident schema 12 (unreleased source) records [refused and restricted turns](op
 
 Unreleased: the cause `idle_unchanged` is new, for a check that spaced an idle wake under [`progress.idle_spacing`](configuration.md#spacing-idle-wakes-that-changed-nothing). The schema is unchanged; a build that does not know the cause reads it as `unavailable`.
 
-Replacement adds the operation `panel_replace_build` without a path or build label. Undo restores only the binary and adds no history or control record. Earlier development builds could write `panel_undo_replace_build`; that operation remains readable for compatibility. These operation names need no schema bump: an older build reads an unknown operation as "unavailable". See [build replacement](dock.md#changes-from-the-page-keepgoing-panel---allow-changes).
+Replacement adds the operation `panel_replace_build` without a path or build label. Undo restores only the binary and adds no history or control record. Earlier development builds could write `panel_undo_replace_build`; that operation remains readable for compatibility. These operation names need no schema bump: an older build reads an unknown operation as "unavailable". See [build replacement](dock.md#changes-from-the-page-keepgoing-panel).
 
 Incident schema 13 (returns and manual probes) records two events that left no trace before:
 

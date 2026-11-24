@@ -153,7 +153,7 @@ func TestPanelWithoutABrowserPrintsTheAddressAndLaunchesNothing(t *testing.T) {
 	for _, platform := range []string{"darwin", "linux"} {
 		asked := standInLookups(t, platform, nil)
 		var out, errs bytes.Buffer
-		code := panelCommand(env{context.Background(), &out, &errs}, []string{"--panel-directory", dir, "--directory", rec.Registry, "--offline"})
+		code := panelCommand(env{context.Background(), &out, &errs}, []string{"--read-only", "--panel-directory", dir, "--directory", rec.Registry, "--offline"})
 		if code != exitOK || len(*asked) == 0 {
 			t.Fatalf("%s: %d %s %s", platform, code, out.String(), errs.String())
 		}

@@ -200,8 +200,10 @@ type dockServed struct {
 	// footer's words.
 	Version     string `json:"version"`
 	VersionText string `json:"versionText"`
-	// Changes is set by the panel server only: "on" when it was started with
-	// --allow-changes, otherwise "off". keepgoing dock never allows them.
+	// Changes is set by the panel server only: "on" when the page can change
+	// loops (the default panel's pause, stop and resume, or everything with
+	// --allow-changes), "off" for a panel started with --read-only. keepgoing
+	// dock never allows them.
 	// ChangesText says so in the footer's words. Form is the session's
 	// anti-forgery value for preparing a change, only when changes are on.
 	Changes      string     `json:"changes,omitempty"`

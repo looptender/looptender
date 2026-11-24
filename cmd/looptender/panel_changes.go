@@ -43,6 +43,9 @@ const (
 	panelChangesPrefix  = "api/v1/loops/"
 	panelChangeOrigin   = "panel"
 	panelPrepareContext = "keepgoing-panel-prepare\x00"
+	// panelControlsExposure is said wherever the default panel's pause,
+	// stop and resume are on.
+	panelControlsExposure = "Anyone using this window can pause, stop or resume loops, as the conversation or person that started this panel could from a terminal; a resume is refused for a loop its own conversation, or anything its supervisor started, asks to clear. Replacing a loop's build, editing routes and account sign-in need looptender panel --allow-changes."
 	// panelExposure is said wherever changes are turned on.
 	panelExposure = "While changes are allowed, anyone using this window can pause, stop or resume loops, replace their check builds with this panel's build, edit routes within the startup caller's authority, review send allowances when opened outside a supervised thread, review unchanged account selections in this panel's environment, start isolated provider sign-in for selected account rows, and read selected Codex subscription quota or retrieve supported Claude usage (provider freshness unknown)."
 )
@@ -54,6 +57,10 @@ type panelChanges struct {
 	registry     string          // the --directory value, as given
 	routeCatalog string          // optional catalog directory for isolated fixtures
 	caller       string          // immutable startup BB caller; never supplied by the page or a later opening
+	// controlsOnly: the default panel, started without --allow-changes, so
+	// pause, stop and resume only: no build replacement, route or
+	// send-allowance edits, account selection review, sign-in or quota reads.
+	controlsOnly bool
 	reader       *dockReader
 	since        time.Time
 	now          func() time.Time
@@ -245,6 +252,14 @@ var panelDone = map[string]string{"pause": "paused", "stop": "stopped", "resume"
 
 // serve answers one change request. rest is the path under the session.
 func (c *panelChanges) serve(w http.ResponseWriter, r *http.Request, rest, session string) {
+	if c.controlsOnly {
+		for _, p := range []string{panelSendAllowancePrefix, panelAccountConnectPrefix, panelRoutesPrefix, panelAccountSelectionPrefix, panelAccountQuotaPrefix} {
+			if strings.HasPrefix(rest, p) {
+				http.Error(w, "refused", http.StatusForbidden)
+				return
+			}
+		}
+	}
 	if strings.HasPrefix(rest, panelSendAllowancePrefix) {
 		c.serveSendAllowance(w, r, rest, session)
 		return
@@ -272,7 +287,7 @@ func (c *panelChanges) serve(w http.ResponseWriter, r *http.Request, rest, sessi
 	}
 	req, ok := panelReadAction(http.MaxBytesReader(w, r.Body, panelMaxBody))
 	// A build change is for one loop only, never for every loop at once.
-	if !ok || req.Action == panelAccountQuotaAction || req.Action == panelAccountSelectionAction || (step == "prepare" && (req.Lanes || req.Immediately || req.DropQueued)) || (key == panelGroupKey && panelBuildActions[req.Action] != "") {
+	if !ok || req.Action == panelAccountQuotaAction || req.Action == panelAccountSelectionAction || (step == "prepare" && (req.Lanes || req.Immediately || req.DropQueued)) || (key == panelGroupKey && panelBuildActions[req.Action] != "") || (c.controlsOnly && panelBuildActions[req.Action] != "") {
 		http.Error(w, "refused", http.StatusBadRequest)
 		return
 	}

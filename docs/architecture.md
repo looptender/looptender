@@ -355,7 +355,7 @@ Current-target resolution after transfer and lock-holder identification remain u
 
 ### Panel build replacement storage
 
-The panel owns `build-replacements/<key>/build-update.json` and its `upgrade-backups/<time>/` binary/configuration/state snapshots under its private runtime directory, outside loop state. The key binds registration ID, configuration and state directory. The receipt expires after seven days. A startup executable handle and hash supply replacement bytes; opened-directory-relative operations bind the target. Undo only swaps the binary and invalidates the private receipt; it never writes a loop record. See [the panel protocol](dock.md#changes-from-the-page-keepgoing-panel---allow-changes).
+The panel owns `build-replacements/<key>/build-update.json` and its `upgrade-backups/<time>/` binary/configuration/state snapshots under its private runtime directory, outside loop state. The key binds registration ID, configuration and state directory. The receipt expires after seven days. A startup executable handle and hash supply replacement bytes; opened-directory-relative operations bind the target. Undo only swaps the binary and invalidates the private receipt; it never writes a loop record. See [the panel protocol](dock.md#changes-from-the-page-keepgoing-panel).
 
 ## Timing decisions and steps (U4/U5, unreleased)
 
