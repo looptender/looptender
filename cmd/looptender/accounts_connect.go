@@ -65,17 +65,6 @@ func accountConnectInSession(environ []string) bool {
 	return false
 }
 
-// isTerminal reports whether f is a terminal: a character device that is
-// not the null device.
-func isTerminal(f *os.File) bool {
-	st, err := f.Stat()
-	if err != nil || st.Mode()&os.ModeCharDevice == 0 {
-		return false
-	}
-	null, err := os.Stat(os.DevNull)
-	return err != nil || !os.SameFile(st, null)
-}
-
 // accountConnectPassed are the variables the provider's tool is given, and
 // no others: where it lives and writes, who and where the person is, what
 // opening a browser needs, and how this network is reached. Proxy and
@@ -306,7 +295,7 @@ func accountsConnect(e env, dir string, o accountConnectOptions, d accountConnec
 		if o.provider == "claude-code" {
 			// Claude Code's sign-in output is not read, so its address
 			// cannot be shown here as Codex's is.
-			fmt.Fprintf(e.stdout, "If no browser opens within a minute, press Ctrl-C and sign in by hand instead:\n  %s=%s claude auth login\nthen add it with: looptender accounts add --provider claude-code --selection explicit_directory --account-dir %s --label %s\n", accountDirectoryVariable(o.provider), shellQuote(contextDir), shellQuote(contextDir), shellQuote(o.label))
+			fmt.Fprintln(e.stdout, "If no browser opens within a minute, press Ctrl-C: the directory is kept and the two commands to finish by hand are shown.")
 		}
 	}
 	err = d.run(ctx, running, accountQuotaExecutionEnvironment(running, accountConnectEnvironment(d.environ)), func(address string) {
@@ -321,10 +310,22 @@ func accountsConnect(e env, dir string, o accountConnectOptions, d accountConnec
 	kept := " The private directory made for it was kept: " + contextDir
 	out.DirectoryKept = true
 	if err != nil || ctx.Err() != nil {
-		// Nothing was written into it: it goes. Remove fails on anything
-		// but an empty directory, which is the point.
-		if os.Remove(contextDir) == nil {
-			kept, out.DirectoryKept = "", false
+		cancelled := ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded)
+		switch {
+		case o.provider == "claude-code" && cancelled:
+			// The person stopped a Claude Code sign-in, most likely
+			// because no browser opened: the directory stays, private, so
+			// the sign-in can be finished by hand in it.
+			kept += fmt.Sprintf("\nTo finish by hand, sign in in that directory and add it:\n  %s=%s claude auth login\n  looptender accounts add --provider claude-code --selection explicit_directory --account-dir %s --label %s",
+				accountDirectoryVariable(o.provider), shellQuote(contextDir), shellQuote(contextDir), shellQuote(o.label))
+		default:
+			// With no sign-in, what looptender itself wrote goes, and then
+			// the directory: Remove fails on anything but an empty one, so
+			// whatever the provider wrote keeps it.
+			accountConnectRemoveOwn(contextDir, o.provider)
+			if os.Remove(contextDir) == nil {
+				kept, out.DirectoryKept = "", false
+			}
 		}
 		out.State, out.Reason = "failed", "sign_in_unavailable"
 		text := "The sign-in did not complete, so nothing was added."
@@ -391,6 +392,23 @@ func accountsConnect(e env, dir string, o accountConnectOptions, d accountConnec
 	return finish(exitOK, fmt.Sprintf("Connected %q (%s) as account %s.\n%s\nNo route or loop was changed.", o.label, o.provider, entry.ID, note))
 }
 
+// accountConnectCodexConfig is the one file a Codex connect writes itself
+// (accountConnectCodex), with exactly this content.
+const accountConnectCodexConfig = "cli_auth_credentials_store = \"file\"\n"
+
+// accountConnectRemoveOwn removes from dir what looptender wrote there, and
+// only that: Codex's config.toml while it still has the content it was
+// written with.
+func accountConnectRemoveOwn(dir, provider string) {
+	if provider != "codex" {
+		return
+	}
+	path := filepath.Join(dir, "config.toml")
+	if b, err := os.ReadFile(path); err == nil && string(b) == accountConnectCodexConfig {
+		os.Remove(path)
+	}
+}
+
 // accountConnectCompare says whether the new entry's login is one already
 // connected, by the catalog's keyed login fingerprints: it never sees an
 // identity. It checks the new entry, and any other entry of the provider
@@ -444,8 +462,9 @@ func quotedList(labels []string) string {
 	return strings.Join(q[:len(q)-1], ", ") + " and " + q[len(q)-1]
 }
 
-// accountUses lists what names the account with this id: each registered
-// loop whose routes or usage watch name it. complete is false when a loop
+// accountUses lists what names the account with this id among the loops
+// registered on this computer: each one whose routes or usage watch name it.
+// A loop that is not registered here is not seen. complete is false when a loop
 // could not be read, so "nothing uses it" is not established.
 func accountUses(catalogDir, id string) (uses []string, complete bool) {
 	dir, err := registryDirectory("")
@@ -517,11 +536,11 @@ func accountsDisconnect(e env, dir, id, label string, force, asJSON bool, uses f
 	if !force {
 		used, complete := uses(dir, target.ID)
 		if len(used) > 0 {
-			e.errf("accounts disconnect: %q is used by %s. Nothing was changed. Change those first, or pass --force to disconnect it anyway.", target.Label, strings.Join(used, "; "))
+			e.errf("accounts disconnect: %q is used by loops registered on this computer: %s. Nothing was changed. Change those first, or pass --force to disconnect it anyway.", target.Label, strings.Join(used, "; "))
 			return exitFailed
 		}
 		if !complete {
-			e.errf("accounts disconnect: could not read every loop to see whether one uses %q. Nothing was changed. Pass --force to disconnect it anyway.", target.Label)
+			e.errf("accounts disconnect: could not read every loop registered on this computer to see whether one uses %q. Nothing was changed. Pass --force to disconnect it anyway.", target.Label)
 			return exitFailed
 		}
 	}

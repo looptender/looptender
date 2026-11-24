@@ -879,12 +879,14 @@ What it does, in order:
   is passed.
 - **If no browser opens:** for Codex the command prints the provider's sign-in
   address. For Claude Code it does not read the tool's output, so it tells you
-  at the start to press Ctrl-C after a minute and gives the two commands to
-  sign in by hand in the same directory and add it.
+  at the start to press Ctrl-C after a minute. It then keeps the private
+  directory and prints the two commands that finish by hand: the provider's
+  sign-in in that directory, and `accounts add` for it.
 - **If the sign-in fails, is cancelled or takes longer than ten minutes:**
   nothing is added. If the provider wrote anything into the private directory
   it is kept, and the message says where it is (`--json` says
-  `directoryKept`); an untouched one is removed. When a login turns out to be
+  `directoryKept`); an untouched one is removed, together with the one
+  configuration file looptender writes for Codex. When a login turns out to be
   an account already connected, its directory is kept signed in and the
   message gives the command to sign it out.
 - **Platforms:** as for the panel's Connect: Codex on macOS and Linux, Claude
@@ -898,8 +900,9 @@ looptender accounts disconnect --label "spare"
 
 This removes the entry from the catalog and nothing else.
 
-- It refuses when a registered loop uses the account, in a route or in its
-  usage watch, and names each one. It also refuses when it could not read
+- It refuses when a loop registered on this computer uses the account, in a
+  route or in its usage watch, and names each one. A loop that is not
+  registered here is not seen. It also refuses when it could not read
   every loop to find out. `--force` disconnects anyway; `looptender doctor`
   then reports the route that names a missing account.
 - It does not sign the login out and does not delete its directory. For a

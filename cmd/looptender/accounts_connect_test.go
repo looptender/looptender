@@ -123,7 +123,7 @@ func TestAccountsConnectAddsASecondSubscription(t *testing.T) {
 			text := g.out.String()
 			wants := []string{`Connected "Example spare"`, accountConnectIdentityNote, "https://auth.example.com/sign-in?attempt=one", "does not see or copy the login"}
 			if provider == "claude-code" {
-				wants = append(wants, "If no browser opens within a minute, press Ctrl-C", "CLAUDE_CONFIG_DIR="+shellQuote(added.Directory)+" claude auth login")
+				wants = append(wants, "If no browser opens within a minute, press Ctrl-C: the directory is kept")
 			}
 			for _, want := range wants {
 				if !strings.Contains(text, want) {
@@ -367,7 +367,7 @@ func TestAccountsDisconnect(t *testing.T) {
 
 	// Used by a loop: refused, naming it.
 	used[added.ID] = []string{"loop example-loop, route primary", "loop example-loop, usage watch"}
-	if code, _, said := run(false, "", "example SPARE"); code != exitFailed || !strings.Contains(said, `"Example spare" is used by loop example-loop, route primary; loop example-loop, usage watch. Nothing was changed.`) || !strings.Contains(said, "--force") || len(g.entries(t)) != 2 {
+	if code, _, said := run(false, "", "example SPARE"); code != exitFailed || !strings.Contains(said, `"Example spare" is used by loops registered on this computer: loop example-loop, route primary; loop example-loop, usage watch. Nothing was changed.`) || !strings.Contains(said, "--force") || len(g.entries(t)) != 2 {
 		t.Fatalf("in use: exit %d, %q", code, said)
 	}
 	// Its use could not be read: refused too.
@@ -579,5 +579,111 @@ func TestAccountsConnectNeedsAPersonAtATerminal(t *testing.T) {
 	}
 	if accountConnectInSession([]string{"HOME=/home/example", "CLAUDE_CONFIG_DIR=/home/example/c", "CODEX_HOME=/home/example/x", "BB_THREAD_ID="}) {
 		t.Error("a plain shell is seen as a session")
+	}
+}
+
+// Ctrl-C during a Claude Code sign-in, because no browser opened: the
+// directory is kept, private, and the two commands it prints finish the job
+// by hand. Here the first is stood in for by a file the provider would
+// write; the second is run for real.
+func TestAccountsConnectClaudeByHandAfterCancel(t *testing.T) {
+	g := newConnectRig(t, "claude-code")
+	ctx, cancel := context.WithCancel(context.Background())
+	var dir string
+	g.deps.run = func(c context.Context, e accounts.Entry, _ []string, _ func(string)) error {
+		dir = e.Directory
+		cancel()
+		<-c.Done()
+		return c.Err()
+	}
+	code := accountsConnect(env{ctx: ctx, stdout: &g.out, stderr: &g.err}, g.dir, accountConnectOptions{provider: "claude-code", label: "Example spare"}, g.deps)
+	said := g.err.String()
+	if code != exitFailed || len(g.entries(t)) != 1 {
+		t.Fatalf("exit %d, entries %d", code, len(g.entries(t)))
+	}
+	st, err := os.Stat(dir)
+	if err != nil || st.Mode().Perm() != 0700 {
+		t.Fatalf("the directory was not kept private: %v %v", st, err)
+	}
+	signIn := "CLAUDE_CONFIG_DIR=" + shellQuote(dir) + " claude auth login"
+	add := "looptender accounts add --provider claude-code --selection explicit_directory --account-dir " + shellQuote(dir) + " --label 'Example spare'"
+	for _, want := range []string{"was kept: " + dir, signIn, add} {
+		if !strings.Contains(said, want) {
+			t.Fatalf("said %q, lacks %q", said, want)
+		}
+	}
+	// The sign-in by hand, as the provider's tool would leave it.
+	if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// The printed add command, with the fixture's executable for "claude".
+	var out, errs bytes.Buffer
+	code = accountsCommand(env{ctx: context.Background(), stdout: &out, stderr: &errs}, []string{"add", "--directory", g.dir, "--provider", "claude-code", "--selection", "explicit_directory", "--account-dir", dir, "--label", "Example spare", "--cli", g.template.CLI, "--workdir", g.template.Workdir}, nil)
+	if code != exitOK {
+		t.Fatalf("the by-hand add failed: exit %d %s", code, errs.String())
+	}
+	if es := g.entries(t); len(es) != 2 || es[1].Label != "Example spare" || es[1].Directory != dir || es[1].Mode != "explicit_directory" {
+		t.Fatalf("entries %+v", es)
+	}
+	// A Codex sign-in that is cancelled keeps nothing by default.
+	c := newConnectRig(t, "codex")
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	c.deps.run = func(cc context.Context, _ accounts.Entry, _ []string, _ func(string)) error {
+		cancel2()
+		<-cc.Done()
+		return cc.Err()
+	}
+	before, _ := os.ReadDir(c.dir)
+	accountsConnect(env{ctx: ctx2, stdout: &c.out, stderr: &c.err}, c.dir, accountConnectOptions{provider: "codex", label: "Example spare"}, c.deps)
+	if after, _ := os.ReadDir(c.dir); len(after) != len(before) {
+		t.Fatal("a cancelled Codex sign-in left its directory")
+	}
+}
+
+// A Codex sign-in that never happened leaves nothing: the configuration
+// file looptender wrote is removed with the directory. A file the provider
+// wrote, or a changed configuration file, keeps it.
+func TestAccountsConnectCodexFailureRemovesItsOwnFile(t *testing.T) {
+	for name, c := range map[string]struct {
+		write map[string]string
+		kept  bool
+	}{
+		"only looptender's file":       {map[string]string{"config.toml": accountConnectCodexConfig}, false},
+		"the provider wrote a login":   {map[string]string{"config.toml": accountConnectCodexConfig, "auth.json": "{}"}, true},
+		"the configuration was edited": {map[string]string{"config.toml": accountConnectCodexConfig + "model = \"x\"\n"}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newConnectRig(t, "codex")
+			var dir string
+			g.deps.run = func(_ context.Context, e accounts.Entry, _ []string, _ func(string)) error {
+				dir = e.Directory
+				for file, content := range c.write {
+					if err := os.WriteFile(filepath.Join(e.Directory, file), []byte(content), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return errConnectProtocol
+			}
+			g.connect(accountConnectOptions{provider: "codex", label: "Example spare"})
+			_, err := os.Stat(dir)
+			if kept := err == nil; kept != c.kept || strings.Contains(g.err.String(), "was kept") != c.kept {
+				t.Fatalf("kept=%v, want %v; said %q", kept, c.kept, g.err.String())
+			}
+		})
+	}
+}
+
+// A terminal is something that answers as one: not a file, and not another
+// character device.
+func TestIsTerminal(t *testing.T) {
+	for _, path := range []string{os.DevNull, "/dev/zero", "accounts_connect.go"} {
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		if isTerminal(f) {
+			t.Errorf("%s was taken for a terminal", path)
+		}
+		f.Close()
 	}
 }
