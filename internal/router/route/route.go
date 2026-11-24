@@ -92,7 +92,10 @@ type Window struct {
 	ResetsAt time.Time
 	// At is when the window was read. A window with no reset stops
 	// counting MaxHold after it: nothing may stay shut for ever on a
-	// reading that says no more.
+	// reading that says no more. Every source of readings must set it
+	// (Observe sets it from the observation's time when it is zero); a
+	// window put into a State any other way with no At and no reset does
+	// not count at all.
 	At time.Time
 	// Model is empty for a window that counts every model, else the model
 	// family it counts ("opus" matches "claude-opus-…").

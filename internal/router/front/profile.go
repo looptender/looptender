@@ -230,6 +230,8 @@ func claudeRewrite(body []byte, to string) ([]byte, bool) {
 	if !accountID.MatchString(own) || !accountID.MatchString(to) || own == to {
 		return body, false
 	}
+	// The position check here and the re-read below refuse the same cases;
+	// both are kept on purpose, so that neither is the only line of defence.
 	at := int64(bytes.Index(body, []byte(own)))
 	if bytes.Count(body, []byte(own)) != 1 || at < from || at+int64(len(own)) > end {
 		return body, false
