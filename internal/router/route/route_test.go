@@ -85,6 +85,9 @@ func TestChoose(t *testing.T) {
 		{name: "no room anywhere: the earliest reset", st: state(pinned("main", warm), sub("main", 100), held), want: "", reason: NoRoom, roomAt: t0.Add(30 * time.Minute)},
 		{name: "a hold set in the future is believed for a minute", st: state(nil, clockBack), want: "", reason: NoRoom, roomAt: t0.Add(time.Minute)},
 		{name: "no room and nothing says when", st: state(nil, restricted), want: "", reason: NoRoom},
+		{name: "a pin unused for longer than pins are kept is no pin", st: state(pinned("main", 8*24*time.Hour), sub("main", 93), sub("spare", 94)), want: "main", reason: Placed},
+		{name: "a pin used six days ago still holds", st: state(pinned("main", 6*24*time.Hour), sub("main", 93), sub("spare", 94)), want: "main", reason: Pinned},
+		{name: "a pin last used in the future is not cold", st: state(pinned("spare", -time.Hour), sub("main", 10), sub("spare", 10)), want: "spare", reason: Pinned},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -146,6 +149,8 @@ func TestObserveLimitHolds(t *testing.T) {
 	far := sub("main", 100)
 	near := sub("main", 100)
 	near.Windows[0].ResetsAt = t0.Add(20 * time.Minute)
+	bare := sub("main", 50)
+	bare.Windows[0].ResetsAt = time.Time{}
 	cases := []struct {
 		name  string
 		s     Subscription
@@ -153,9 +158,11 @@ func TestObserveLimitHolds(t *testing.T) {
 		want  time.Duration
 	}{
 		{"the wait it names", sub("main", 50), 2 * time.Minute, 2 * time.Minute},
-		{"a named wait is believed for an hour at most", sub("main", 50), 400 * time.Hour, time.Hour},
+		{"a named wait of five hours, inside a window's reset", sub("main", 50), 5 * time.Hour, 5 * time.Hour},
+		{"a named wait is believed up to the latest reset a window names", sub("main", 50), 400 * time.Hour, 48 * time.Hour},
+		{"a named wait with no reset named anywhere: an hour at most", bare, 400 * time.Hour, time.Hour},
 		{"no wait named: the nearest reset of a full window", near, 0, 20 * time.Minute},
-		{"no wait named and a far reset: an hour at most", far, 0, time.Hour},
+		{"no wait named and a far reset: the reset, not an hour", far, 0, 48 * time.Hour},
 		{"nothing named at all: a minute", sub("main", 50), 0, time.Minute},
 	}
 	for _, c := range cases {
@@ -273,5 +280,96 @@ func TestReadingClearsAnEndedHold(t *testing.T) {
 	Observe(&st, set, "main", Observation{Kind: Reading, At: t0.Add(11 * time.Minute), Windows: w})
 	if !st.Order[0].HoldUntil.IsZero() {
 		t.Fatal("a reading after the hold kept it")
+	}
+}
+
+// R22: a hold set in the future (the clock went back) is cut to a minute
+// once, not a minute from every later moment.
+func TestExpireCutsAHoldSetInTheFuture(t *testing.T) {
+	set := Defaults()
+	s := sub("main", 50)
+	s.HoldSetAt, s.HoldUntil = t0.Add(time.Hour), t0.Add(2*time.Hour)
+	st := state(nil, s)
+	rq := Request{Conversation: "c1", Model: "m"}
+	rq.Now = t0
+	if d := Choose(st, set, rq); d.Reason != NoRoom || !d.RoomAt.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("before Expire: %+v", d)
+	}
+	Expire(&st, set, t0)
+	if got := st.Order[0]; !got.HoldUntil.Equal(t0.Add(time.Minute)) || !got.HoldSetAt.Equal(t0) {
+		t.Fatalf("hold not cut for good: %+v", got)
+	}
+	Expire(&st, set, t0.Add(30*time.Second))
+	if !st.Order[0].HoldUntil.Equal(t0.Add(time.Minute)) {
+		t.Fatal("the cut slid forward")
+	}
+	rq.Now = t0.Add(61 * time.Second)
+	if d := Choose(st, set, rq); d.Subscription != "main" {
+		t.Fatalf("still held 61 s later: %+v", d)
+	}
+	// And at the time the hold was stamped with, the full hold is not served.
+	rq.Now = t0.Add(61 * time.Minute)
+	if d := Choose(st, set, rq); d.Subscription != "main" {
+		t.Fatalf("the full hold came back: %+v", d)
+	}
+}
+
+// A reading that is old says little about where a new conversation should
+// go: new ones are spread, not all sent to the first subscription.
+func TestStaleReadingSpreadsNewConversations(t *testing.T) {
+	set := Defaults()
+	old := sub("main", 60)
+	old.ReadAt = t0.Add(-48 * time.Hour)
+	st := state(nil, old, sub("spare", 10))
+	on := map[string]int{}
+	for i := 0; i < 4; i++ {
+		c := fmt.Sprintf("c%d", i)
+		d := Choose(st, set, Request{Conversation: c, Now: t0})
+		Served(&st, set, c, d.Subscription, d.Reason, t0)
+		on[d.Subscription]++
+	}
+	if on["main"] != 2 || on["spare"] != 2 {
+		t.Fatalf("placed %v, want two on each", on)
+	}
+	// With a fresh reading far from the threshold, the person's order rules.
+	Observe(&st, set, "main", Observation{Kind: Reading, At: t0, Windows: []Window{{UsedPercent: 60, ResetsAt: t0.Add(time.Hour)}}})
+	for i := 4; i < 7; i++ {
+		c := fmt.Sprintf("c%d", i)
+		if d := Choose(st, set, Request{Conversation: c, Now: t0}); d.Subscription != "main" {
+			t.Fatalf("fresh reading: %s went to %q", c, d.Subscription)
+		} else {
+			Served(&st, set, c, d.Subscription, d.Reason, t0)
+		}
+	}
+}
+
+// A move away from a subscription whose windows name no reset still latches
+// it, for an hour.
+func TestLatchWithoutANamedTime(t *testing.T) {
+	set := Defaults()
+	s := sub("main", 93)
+	s.Windows[0].ResetsAt = time.Time{}
+	st := state(pinned("main", 10*time.Minute), s, sub("spare", 10))
+	d := Choose(st, set, Request{Conversation: "c1", Now: t0})
+	Served(&st, set, "c1", d.Subscription, d.Reason, t0)
+	if d.Reason != SoftMove || !st.Order[0].LatchUntil.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("%+v, latched until %v", d, st.Order[0].LatchUntil)
+	}
+}
+
+// Expire's own age rule, apart from the cap, and a pin from the future.
+func TestExpireByAge(t *testing.T) {
+	set := Defaults()
+	st := state(map[string]Pin{
+		"eight days": {Subscription: "main", LastUsed: t0.Add(-8 * 24 * time.Hour)},
+		"six days":   {Subscription: "main", LastUsed: t0.Add(-6 * 24 * time.Hour)},
+		"future":     {Subscription: "main", LastUsed: t0.Add(time.Hour)},
+	}, sub("main", 10))
+	Expire(&st, set, t0)
+	if _, ok := st.Pins["eight days"]; ok || len(st.Pins) != 2 {
+		t.Fatalf("kept %v", st.Pins)
+	}
+	if !st.Pins["future"].LastUsed.Equal(t0) {
+		t.Fatalf("a pin from the future kept its time: %v", st.Pins["future"])
 	}
 }

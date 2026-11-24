@@ -50,8 +50,16 @@ type Settings struct {
 	PinIdle time.Duration
 	// MaxPins caps the pins kept; the longest unused go first.
 	MaxPins int
-	// MaxHold is the longest a limit answer without a named reset is
-	// believed.
+	// Stale is the age from which a reading no longer says where a new
+	// conversation should go, and Near is how close to Soft, in percentage
+	// points, a reading makes that uncertain too. New conversations are then
+	// spread over the subscriptions with room instead of all going to the
+	// first.
+	Stale time.Duration
+	Near  float64
+	// MaxHold is the longest a limit answer is believed when no window
+	// names a reset, and how long a subscription that caused a move counts
+	// as full when nothing names a time.
 	MaxHold time.Duration
 	// ShortHold is used when a limit answer names nothing at all, and when a
 	// hold turns out to have been set in the future.
@@ -68,6 +76,8 @@ func Defaults() Settings {
 		PlacedShare: 1,
 		PinIdle:     7 * 24 * time.Hour,
 		MaxPins:     4096,
+		Stale:       5 * time.Minute,
+		Near:        5,
 		MaxHold:     time.Hour,
 		ShortHold:   time.Minute,
 	}
@@ -185,7 +195,9 @@ func counts(w Window, model string, now time.Time) bool {
 
 // holdEnd is when s's hold ends, zero when it has none at now. A hold set at
 // a time later than now means the clock went back; it is then believed for
-// ShortHold only.
+// ShortHold only. Choose changes nothing, so here that minute is counted
+// from now; Expire is what cuts the hold for good, the first time it runs
+// after the clock went back.
 func holdEnd(s Subscription, set Settings, now time.Time) time.Time {
 	if !s.HoldUntil.After(now) {
 		return time.Time{}
@@ -280,10 +292,13 @@ func find(st State, id string) (Subscription, int) {
 func Choose(st State, set Settings, rq Request) Decision {
 	pin, pinned := st.Pins[rq.Conversation]
 	cur, at := find(st, pin.Subscription)
-	if rq.Conversation == "" || !pinned || at < 0 {
+	quiet := rq.Now.Sub(pin.LastUsed)
+	if rq.Conversation == "" || !pinned || at < 0 || quiet > set.PinIdle {
 		return place(st, set, rq, Placed)
 	}
-	cold := rq.Now.Sub(pin.LastUsed) > set.Cold
+	// A pin last used in the future (the clock went back) is not cold yet:
+	// Expire stamps it with the present, and it is cold a Cold later.
+	cold := quiet > set.Cold
 	switch levelOf(cur, set, rq, false) {
 	case shut:
 		return place(st, set, rq, HardMove)
@@ -311,6 +326,9 @@ func Choose(st State, set Settings, rq Request) Decision {
 // all.
 func place(st State, set Settings, rq Request, why Reason) Decision {
 	if id, ok := first(st, set, rq, open, true, ""); ok {
+		if s, _ := find(st, id); uncertain(s, set, rq) {
+			id = fewest(st, set, rq)
+		}
 		return Decision{Subscription: id, Reason: why}
 	}
 	if id, ok := first(st, set, rq, soft, false, ""); ok {
@@ -325,6 +343,33 @@ func place(st State, set Settings, rq Request, why Reason) Decision {
 	return d
 }
 
+// uncertain reports whether s's numbers are too old, or too close to the
+// soft threshold, to send every new conversation its way.
+func uncertain(s Subscription, set Settings, rq Request) bool {
+	if rq.Now.Sub(s.ReadAt) > set.Stale {
+		return true
+	}
+	for _, w := range s.Windows {
+		if counts(w, rq.Model, rq.Now) && w.UsedPercent+set.Near >= set.Soft {
+			return true
+		}
+	}
+	return false
+}
+
+// fewest returns, among the subscriptions under the soft threshold, the one
+// with the fewest conversations placed since its reading; the person's
+// order decides between equals.
+func fewest(st State, set Settings, rq Request) string {
+	best, n := "", 0
+	for _, s := range st.Order {
+		if levelOf(s, set, rq, true) == open && (best == "" || s.Placed < n) {
+			best, n = s.ID, s.Placed
+		}
+	}
+	return best
+}
+
 // Served records that subscription id served the conversation at now, and
 // that the conversation left the subscription it was pinned to when that is
 // another one and why was a move for fullness. It keeps the pins within
@@ -337,7 +382,13 @@ func Served(st *State, set Settings, conversation, id string, why Reason, now ti
 	old, had := st.Pins[conversation]
 	if had && old.Subscription != id && (why == SoftMove || why == HardMove) {
 		if s, i := find(*st, old.Subscription); i >= 0 {
-			if t := latchEnd(s, set, now); t.After(st.Order[i].LatchUntil) {
+			t := latchEnd(s, set, now)
+			if t.IsZero() {
+				// Nothing names a time: full for MaxHold, or until a fresh
+				// reading under the release level.
+				t = now.Add(set.MaxHold)
+			}
+			if t.After(st.Order[i].LatchUntil) {
 				st.Order[i].LatchUntil = t
 			}
 		}
@@ -369,11 +420,27 @@ func latchEnd(s Subscription, set Settings, now time.Time) time.Time {
 }
 
 // Expire drops pins unused for PinIdle, pins to subscriptions no longer in
-// the order, and the longest unused pins over MaxPins.
+// the order, and the longest unused pins over MaxPins. It also settles what
+// a clock that went back left behind: a hold set in the future is cut, once
+// and for good, to ShortHold from now, and a pin last used in the future is
+// stamped with now. Served runs it; a caller with nothing to serve runs it
+// on its own timer.
 func Expire(st *State, set Settings, now time.Time) {
+	for i := range st.Order {
+		s := &st.Order[i]
+		if s.HoldSetAt.After(now) && s.HoldUntil.After(now) {
+			if short := now.Add(set.ShortHold); short.Before(s.HoldUntil) {
+				s.HoldUntil = short
+			}
+			s.HoldSetAt = now
+		}
+	}
 	for c, p := range st.Pins {
 		if _, at := find(*st, p.Subscription); at < 0 || now.Sub(p.LastUsed) > set.PinIdle {
 			delete(st.Pins, c)
+		} else if p.LastUsed.After(now) {
+			p.LastUsed = now
+			st.Pins[c] = p
 		}
 	}
 	over := len(st.Pins) - set.MaxPins
@@ -454,23 +521,34 @@ func Observe(st *State, set Settings, id string, o Observation) {
 			s.LatchUntil = time.Time{}
 		}
 	case Limited:
-		until := time.Time{}
+		// A reset that one of its full windows names is believed as it is.
+		// The answer's own wait is believed up to the latest reset any of
+		// its windows names, and for MaxHold at most when none names one: a
+		// mistaken wait must not park a subscription for a year.
+		var nearest, latest time.Time
+		for _, w := range s.Windows {
+			if !w.ResetsAt.After(o.At) {
+				continue
+			}
+			if w.ResetsAt.After(latest) {
+				latest = w.ResetsAt
+			}
+			if w.UsedPercent >= set.Soft && (nearest.IsZero() || w.ResetsAt.Before(nearest)) {
+				nearest = w.ResetsAt
+			}
+		}
+		until := o.At.Add(set.ShortHold)
 		switch {
 		case o.RetryAfter > 0:
-			until = o.At.Add(minDuration(o.RetryAfter, set.MaxHold))
-		default:
-			// With no wait named, the nearest reset among its full windows,
-			// believed for MaxHold at most; with none of those, ShortHold.
-			for _, w := range s.Windows {
-				if w.UsedPercent >= set.Soft && w.ResetsAt.After(o.At) && (until.IsZero() || w.ResetsAt.Before(until)) {
-					until = w.ResetsAt
-				}
+			limit := latest
+			if limit.IsZero() {
+				limit = o.At.Add(set.MaxHold)
 			}
-			if until.IsZero() {
-				until = o.At.Add(set.ShortHold)
-			} else if cap := o.At.Add(set.MaxHold); until.After(cap) {
-				until = cap
+			if until = o.At.Add(o.RetryAfter); until.After(limit) {
+				until = limit
 			}
+		case !nearest.IsZero():
+			until = nearest
 		}
 		if until.After(s.HoldUntil) {
 			s.HoldUntil, s.HoldSetAt = until, o.At
@@ -486,11 +564,4 @@ func Observe(st *State, set Settings, id string, o Observation) {
 	case Cleared:
 		s.NeedsPerson = ""
 	}
-}
-
-func minDuration(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
 }

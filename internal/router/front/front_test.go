@@ -3,6 +3,7 @@ package front_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -530,10 +531,15 @@ func TestOnlyAKnownClientOnAMessagePathIsRouted(t *testing.T) {
 		{secret: "-"},
 		{path: "/v1/models", method: http.MethodGet},
 		{path: "/v1/something/new"},
+		{path: "/api/hello"},
+		{path: "/v1/models/a%2Fb", method: http.MethodGet},
 	} {
 		g.ok(c)
 	}
-	if len(g.router.asked()) != 0 || g.up.Served(ownLogin) != 4 || g.up.Served(spareLogin) != 0 {
+	if got := g.up.Records()[5].Path; got != "/v1/models/a%2Fb" {
+		t.Fatalf("an escaped slash reached the provider as %q", got)
+	}
+	if len(g.router.asked()) != 0 || g.up.Served(ownLogin) != 6 || g.up.Served(spareLogin) != 0 {
 		t.Fatalf("asked %d, own %d, spare %d", len(g.router.asked()), g.up.Served(ownLogin), g.up.Served(spareLogin))
 	}
 	for _, rec := range g.up.Records() {
@@ -554,13 +560,15 @@ func TestOnlyAKnownClientOnAMessagePathIsRouted(t *testing.T) {
 func TestGuards(t *testing.T) {
 	g := start(t, nil)
 	for name, c := range map[string]call{
-		"another host":       {host: "example.com"},
-		"another port":       {host: "127.0.0.1:1"},
-		"a web page":         {header: map[string]string{"Origin": "https://example.com"}},
-		"signing in":         {path: "/v1/oauth/token"},
-		"making a key":       {path: "/api/claude_cli/create_api_key"},
-		"billing":            {path: "/api/billing/prepaid"},
-		"health, wrong host": {path: front.HealthPath, method: http.MethodGet, host: "example.com"},
+		"another host":         {host: "example.com"},
+		"another port":         {host: "127.0.0.1:1"},
+		"a web page":           {header: map[string]string{"Origin": "https://example.com"}},
+		"signing in":           {path: "/v1/oauth/token"},
+		"making a key":         {path: "/api/claude_cli/create_api_key"},
+		"billing":              {path: "/api/billing/prepaid"},
+		"health, wrong host":   {path: front.HealthPath, method: http.MethodGet, host: "example.com"},
+		"not the provider API": {path: "/metrics"},
+		"nor its root":         {path: "/", method: http.MethodGet},
 	} {
 		resp, body, _ := g.do(c)
 		if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "looptender router front") {
@@ -639,9 +647,87 @@ func TestFrontImportsOnlyTheStandardLibrary(t *testing.T) {
 				t.Errorf("%s imports %s", name, path)
 			}
 			switch path {
-			case "os", "log", "log/slog", "io/ioutil", "os/exec", "unsafe":
+			// "log" is there only to hand the listener a logger that
+			// writes nowhere; TestServerLogsNowhere checks that it does.
+			case "os", "log/slog", "io/ioutil", "os/exec", "unsafe":
 				t.Errorf("%s imports %s: the front reads no file, writes none and logs nothing", name, path)
 			}
 		}
+	}
+}
+
+// A request with both a chunked body and a stated length cannot be read two
+// ways by the provider: the front reads it as chunked, as the standard says,
+// and sends on one request with one framing. What followed it on the
+// connection is not a second request.
+func TestChunkedWithALengthReachesTheProviderAsOneRequest(t *testing.T) {
+	g := start(t, nil)
+	conn, err := net.Dial("tcp4", g.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "POST /v1/messages HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\n5\r\nhello\r\n0\r\n\r\nGET /v1/smuggled HTTP/1.1\r\nHost: %s\r\n\r\n", g.addr, ownLogin, g.addr)
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	recs := g.up.Records()
+	if resp.StatusCode != 200 || len(recs) != 1 || recs[0].Path != "/v1/messages" || recs[0].BodyBytes != 5 {
+		t.Fatalf("status %d, provider saw %v", resp.StatusCode, recs)
+	}
+	for _, h := range recs[0].Headers {
+		if h == "Transfer-Encoding" {
+			t.Fatal("the session's framing was forwarded")
+		}
+	}
+}
+
+// A session that stops sending its body is cut off after the bound, gets no
+// answer that looks like success, and nothing reaches the provider.
+func TestStalledBodyIsCutOff(t *testing.T) {
+	g := start(t, func(c *front.Config) { c.BodyWait = 100 * time.Millisecond })
+	conn, err := net.Dial("tcp4", g.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "POST /v1/messages HTTP/1.1\r\nHost: %s\r\n%s: %s\r\nContent-Length: 100\r\n\r\n{\"model\":", g.addr, front.SecretHeader, secret)
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err == nil {
+		t.Fatalf("a stalled request was answered with %d", resp.StatusCode)
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatal("the front kept a stalled request open past its bound")
+	}
+	if len(g.up.Records()) != 0 || len(g.router.asked()) != 0 {
+		t.Fatal("a stalled request reached the provider or the router")
+	}
+}
+
+type dialTimeout struct{}
+
+func (dialTimeout) Error() string   { return "i/o timeout" }
+func (dialTimeout) Timeout() bool   { return true }
+func (dialTimeout) Temporary() bool { return true }
+
+type cannotConnect struct{}
+
+func (cannotConnect) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, &net.OpError{Op: "dial", Net: "tcp", Err: dialTimeout{}}
+}
+
+// Not connecting in time is "could not be reached", not "did not answer
+// within" the first-byte bound.
+func TestConnectTimeoutIsNotAnAnswerTimeout(t *testing.T) {
+	g := start(t, func(c *front.Config) { c.Transport = cannotConnect{} })
+	resp, body, _ := g.do(call{})
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(body, "could not be reached") {
+		t.Fatalf("%d %q", resp.StatusCode, body)
+	}
+	if o := g.router.outcome(t); o.Event != front.Unreachable {
+		t.Fatalf("outcome %+v", o)
 	}
 }

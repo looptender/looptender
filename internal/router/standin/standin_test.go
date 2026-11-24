@@ -56,7 +56,9 @@ func TestShapeOf(t *testing.T) {
 		{"none", "", "", Shape{}},
 		{"an API key", "X-Api-Key", "sk-ant-api03-abcdef", Shape{Carrier: "x-api-key", Kind: "api_key", PrefixLen: 13, Len: 19}},
 		{"another bearer", "Authorization", "Bearer something-else", Shape{Carrier: "authorization", Scheme: "bearer", Kind: "other", Len: 14}},
-		{"no scheme", "Authorization", "opaque", Shape{Carrier: "authorization", Kind: "other", Len: 6}},
+		{"no scheme", "Authorization", "opaque", Shape{Carrier: "authorization", Scheme: "other", Kind: "other", Len: 6}},
+		{"no scheme, a space in the value", "Authorization", "sk-ant-oat01-made-up extra", Shape{Carrier: "authorization", Scheme: "other", Kind: "oauth_access", PrefixLen: 13, Len: 26}},
+		{"an unknown scheme", "Authorization", "Token abcdef", Shape{Carrier: "authorization", Scheme: "other", Kind: "other", Len: 12}},
 	} {
 		h := http.Header{}
 		if c.header != "" {
@@ -64,6 +66,29 @@ func TestShapeOf(t *testing.T) {
 		}
 		if got := ShapeOf(h); got != c.want {
 			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+// A credential sent with no scheme never ends up in the record, and the
+// name it is kept under differs from one stand-in to the next.
+func TestSchemelessCredentialIsNotRecorded(t *testing.T) {
+	const login = "sk-ant-oat01-MADE-UP-login"
+	a, b := &Upstream{}, &Upstream{}
+	for _, up := range []*Upstream{a, b} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}"))
+		req.Header.Set("Authorization", login+" extra")
+		up.ServeHTTP(httptest.NewRecorder(), req)
+		if text := strings.ToLower(fmt.Sprintf("%+v %s %+v", up.Records(), up.Records()[0], up.served)); strings.Contains(text, "made-up") {
+			t.Fatalf("the credential was kept: %s", text)
+		}
+		if up.Served(login+" extra") != 1 {
+			t.Fatal("not counted under its own name")
+		}
+	}
+	for ka := range a.served {
+		if _, same := b.served[ka]; same {
+			t.Fatal("two stand-ins keep a credential under the same name")
 		}
 	}
 }

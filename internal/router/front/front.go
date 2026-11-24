@@ -11,8 +11,8 @@
 // It keeps nothing of a request or an answer. From a request body it takes
 // the model name and the conversation id and drops the rest. To the Decider
 // it reports the conversation, the model, the status and the provider's
-// limit headers. It reads no file and writes none, and imports only the
-// standard library; a test holds it to that.
+// limit headers. It reads no file, writes none and logs nothing, and imports
+// only the standard library; tests hold it to that.
 package front
 
 import (
@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -134,6 +135,8 @@ type Config struct {
 	FirstWait, MaxWait, RetryWait time.Duration
 	// NoRouterPause is how long the front does not ask after ErrNoRouter.
 	NoRouterPause time.Duration
+	// BodyWait bounds reading a request's body from the session.
+	BodyWait time.Duration
 	// ConnectWait, HeaderWait and IdleWait bound the provider: connecting,
 	// the first byte of the answer, and silence inside a stream. HeaderWait
 	// must not be shorter than the client's own request limit.
@@ -152,6 +155,7 @@ func (c *Config) defaults() {
 	def(&c.MaxWait, 500*time.Millisecond)
 	def(&c.RetryWait, 2*time.Second)
 	def(&c.NoRouterPause, 5*time.Second)
+	def(&c.BodyWait, 2*time.Minute)
 	def(&c.ConnectWait, 10*time.Second)
 	// Above a client's own request limit, so the front never gives up on a
 	// request its client would still have waited for.
@@ -171,7 +175,7 @@ func (c *Config) defaults() {
 	}
 	if c.Transport == nil {
 		c.Transport = &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
+			Proxy:                 tunnelOnly,
 			DialContext:           (&net.Dialer{Timeout: c.ConnectWait}).DialContext,
 			TLSHandshakeTimeout:   c.ConnectWait,
 			ResponseHeaderTimeout: c.HeaderWait,
@@ -180,6 +184,16 @@ func (c *Config) defaults() {
 			DisableCompression: true,
 		}
 	}
+}
+
+// tunnelOnly uses the environment's proxy only for an https upstream, where
+// the proxy carries an encrypted tunnel and sees no header. A plain http
+// upstream is never reached through a proxy, which would see the login.
+func tunnelOnly(r *http.Request) (*url.URL, error) {
+	if r.URL.Scheme != "https" {
+		return nil, nil
+	}
+	return http.ProxyFromEnvironment(r)
 }
 
 // Counts are the front's own tallies, for status.
@@ -218,6 +232,9 @@ func New(cfg Config, dec Decider) (*Front, error) {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    64 << 10,
+		// The standard library would otherwise write its own complaints
+		// about a connection to standard error.
+		ErrorLog: log.New(io.Discard, "", 0),
 	}
 	return f, nil
 }
@@ -378,6 +395,19 @@ var routed = map[string]bool{
 	"/v1/messages/count_tokens": true,
 }
 
+// Paths the front forwards at all: the provider's API. Anything else is
+// refused.
+var forwarded = []string{"/v1/", "/api/"}
+
+func forwardedPath(path string) bool {
+	for _, prefix := range forwarded {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // Paths the front never forwards: signing in, making keys, billing.
 var refusedParts = []string{"/oauth", "api_key", "apikey", "billing", "payment", "prepaid", "overage"}
 
@@ -417,7 +447,7 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "{\"front\":%d,\"open\":%d}\n", Protocol, f.open.Load())
 		return
 	}
-	if refused(r.URL.Path) {
+	if !forwardedPath(r.URL.Path) || refused(r.URL.Path) {
 		say(w, http.StatusForbidden, "this path is not forwarded")
 		return
 	}
@@ -437,10 +467,16 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.finish(w, r, r.Body, r.ContentLength, Outcome{Client: client}, own)
 		return
 	}
+	// A session that stops sending its body does not keep a request open.
+	reading := http.NewResponseController(w)
+	reading.SetReadDeadline(time.Now().Add(f.cfg.BodyWait))
 	body, whole, err := readUpTo(r.Body, f.cfg.MaxBody)
 	if err != nil {
-		return // the client went away mid-body
+		// The session went away or stalled mid-body. There is nothing to
+		// answer, and returning would send an empty 200.
+		panic(http.ErrAbortHandler)
 	}
+	reading.SetReadDeadline(time.Time{})
 	if !whole {
 		rest := io.MultiReader(bytes.NewReader(body), r.Body)
 		f.finish(w, r, rest, r.ContentLength, Outcome{Client: client}, own)
@@ -508,8 +544,11 @@ func (f *Front) failed(w http.ResponseWriter, r *http.Request, o Outcome, d Deci
 	if r.Context().Err() != nil {
 		return // the client went away
 	}
+	var op *net.OpError
 	var ne net.Error
-	if errors.As(err, &ne) && ne.Timeout() {
+	if errors.As(err, &op) && op.Op == "dial" {
+		// Not connecting in time is not the provider failing to answer.
+	} else if errors.As(err, &ne) && ne.Timeout() {
 		o.Event = UpstreamTimeout
 		f.report(o, d, nil, o.Event)
 		say(w, http.StatusGatewayTimeout, "the provider did not answer within "+f.cfg.HeaderWait.String())
@@ -546,10 +585,13 @@ func copyHeaders(dst, src http.Header) {
 // send forwards the request to the fixed upstream with d's login, or its
 // own.
 func (f *Front) send(ctx context.Context, r *http.Request, body io.Reader, n int64, d Decision) (*http.Response, error) {
-	u := *f.cfg.Upstream
-	u.Path = strings.TrimSuffix(u.Path, "/") + r.URL.Path
-	u.RawQuery = r.URL.RawQuery
-	out, err := http.NewRequestWithContext(ctx, r.Method, u.String(), body)
+	// The path goes on as it was written: an escaped slash stays escaped.
+	up := f.cfg.Upstream
+	target := up.Scheme + "://" + up.Host + strings.TrimSuffix(up.EscapedPath(), "/") + r.URL.EscapedPath()
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	out, err := http.NewRequestWithContext(ctx, r.Method, target, body)
 	if err != nil {
 		return nil, err
 	}

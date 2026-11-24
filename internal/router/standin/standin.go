@@ -7,11 +7,14 @@
 // the request's headers and the shape of its credential: its kind, the
 // length of its prefix and its length. It never holds a header's value, a
 // body or a credential, so it stays safe to read when a real login is on
-// the wire. Scripts and counts are kept by a digest of the credential they
-// are for.
+// the wire. Scripts and counts are kept under a digest of the credential
+// they are for, keyed with a random value made for each Upstream and never
+// shown, so the digest says nothing outside the process.
 package standin
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -46,7 +49,8 @@ type Step struct {
 // Record is what is kept of one request.
 type Record struct {
 	Method string
-	Path   string
+	// Path is the path as it was written, escapes kept.
+	Path string
 	// Headers are the request's header names, sorted. No values.
 	Headers []string
 	Host    string
@@ -59,7 +63,8 @@ type Record struct {
 type Shape struct {
 	// Carrier is "authorization", "x-api-key" or "" when none was sent.
 	Carrier string
-	// Scheme is the Authorization scheme in lower case ("bearer").
+	// Scheme is "bearer" or "basic", or "other" for anything else,
+	// including a value with no scheme at all.
 	Scheme string
 	// Kind is "oauth_access", "api_key" or "other", told from the
 	// provider's public prefixes.
@@ -76,10 +81,11 @@ func ShapeOf(h http.Header) Shape {
 	v := ""
 	if a := h.Get("Authorization"); a != "" {
 		s.Carrier = "authorization"
+		s.Scheme, v = "other", a
 		if scheme, rest, ok := strings.Cut(a, " "); ok {
-			s.Scheme, v = strings.ToLower(scheme), strings.TrimSpace(rest)
-		} else {
-			v = a
+			if l := strings.ToLower(scheme); l == "bearer" || l == "basic" {
+				s.Scheme, v = l, strings.TrimSpace(rest)
+			}
 		}
 	} else if k := h.Get("X-Api-Key"); k != "" {
 		s.Carrier, v = "x-api-key", k
@@ -118,6 +124,7 @@ func (r Record) String() string {
 // short stream.
 type Upstream struct {
 	mu      sync.Mutex
+	salt    []byte
 	scripts map[string][]Step
 	records []Record
 	served  map[string]int
@@ -132,7 +139,7 @@ func (u *Upstream) Script(credential string, steps ...Step) {
 	if u.scripts == nil {
 		u.scripts = map[string][]Step{}
 	}
-	u.scripts[digest(credential)] = steps
+	u.scripts[u.digest(credential)] = steps
 }
 
 // Records returns what arrived so far.
@@ -146,27 +153,39 @@ func (u *Upstream) Records() []Record {
 func (u *Upstream) Served(credential string) int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.served[digest(credential)]
+	return u.served[u.digest(credential)]
 }
 
 // digest names a credential without keeping it. The empty credential keeps
-// the empty name: it is the script for everything else.
-func digest(credential string) string {
+// the empty name: it is the script for everything else. The caller holds
+// u.mu.
+func (u *Upstream) digest(credential string) string {
 	if credential == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(credential))
-	return hex.EncodeToString(sum[:])
+	if u.salt == nil {
+		u.salt = make([]byte, 32)
+		if _, err := rand.Read(u.salt); err != nil {
+			panic(err)
+		}
+	}
+	mac := hmac.New(sha256.New, u.salt)
+	mac.Write([]byte(credential))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// credentialOf returns the credential a request carries: what follows a
+// known scheme, else the whole value.
 func credentialOf(h http.Header) string {
 	if a := h.Get("Authorization"); a != "" {
-		if _, rest, ok := strings.Cut(a, " "); ok {
-			return digest(strings.TrimSpace(rest))
+		if scheme, rest, ok := strings.Cut(a, " "); ok {
+			if l := strings.ToLower(scheme); l == "bearer" || l == "basic" {
+				return strings.TrimSpace(rest)
+			}
 		}
-		return digest(a)
+		return a
 	}
-	return digest(h.Get("X-Api-Key"))
+	return h.Get("X-Api-Key")
 }
 
 func (u *Upstream) next(r *http.Request, n int64) Step {
@@ -175,10 +194,10 @@ func (u *Upstream) next(r *http.Request, n int64) Step {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	cred := credentialOf(r.Header)
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.records = append(u.records, Record{Method: r.Method, Path: r.URL.Path, Headers: names, Host: r.Host, Credential: ShapeOf(r.Header), BodyBytes: n})
+	cred := u.digest(credentialOf(r.Header))
+	u.records = append(u.records, Record{Method: r.Method, Path: r.URL.EscapedPath(), Headers: names, Host: r.Host, Credential: ShapeOf(r.Header), BodyBytes: n})
 	if u.served == nil {
 		u.served = map[string]int{}
 	}
