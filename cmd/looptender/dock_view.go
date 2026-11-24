@@ -82,7 +82,9 @@ type dockReport struct {
 	Volumes []dockVolume `json:"volumes,omitempty"`
 	// Notices is the one list of events a person is told about (notices.go).
 	Notices []panelNotice `json:"notices"`
-	Loops   []dockLoop    `json:"loops"`
+	// Host is the computer's login session and load.
+	Host  *hostStatus `json:"host,omitempty"`
+	Loops []dockLoop  `json:"loops"`
 	// Archived counts the loops in Loops whose State is "archived"; they are
 	// listed last, need nobody and are left out of Worth.
 	Archived int `json:"archived"`

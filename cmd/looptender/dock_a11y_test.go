@@ -66,7 +66,7 @@ func TestDockViewChangeFocusesHeadingG5(t *testing.T) {
 		t.Error("nothing may focus the whole pane directly")
 	}
 	// The heading shows the page's focus ring; nothing turns it off.
-	if !strings.Contains(css, ":focus-visible { outline: 2px solid var(--focus);") {
+	if !strings.Contains(css, ":focus-visible { outline: 2.5px solid var(--focus);") {
 		t.Error("the page's :focus-visible ring is missing")
 	}
 	if regexp.MustCompile(`(?m)(h1|#pane-title|\.pane-head[^{]*)\s*:focus[^{]*\{[^}]*outline:\s*none`).MatchString(css) {

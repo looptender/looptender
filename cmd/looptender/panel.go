@@ -1028,6 +1028,8 @@ type panelList struct {
 	Volumes []dockVolume `json:"volumes,omitempty"`
 	// Notices is the one list of events a person is told about, as the page
 	// has it (notices.go). A reader notifies once for each new ID.
+	// Host is the computer's login session and load.
+	Host    *hostStatus   `json:"host,omitempty"`
 	Notices []panelNotice `json:"notices"`
 	// CanAll is which changes can be made to every loop at once
 	// (client review|apply --all): pause and stop, while any loop can be.
@@ -1133,6 +1135,7 @@ func buildPanelList(r dockReport) panelList {
 	out.AccountQuotas = panelQuotaSummary(r)
 	out.Volumes = r.Volumes
 	out.Notices = r.Notices
+	out.Host = r.Host
 	if out.Notices == nil {
 		out.Notices = []panelNotice{}
 	}

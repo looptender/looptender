@@ -23,6 +23,7 @@ import (
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/daemoninfo"
 	"github.com/looptender/looptender/internal/health"
+	"github.com/looptender/looptender/internal/hostcheck"
 	"github.com/looptender/looptender/internal/incident"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/report"
@@ -318,6 +319,9 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 		started.Extra = map[string]any{"launch": j.Kind}
 	}
 	state.Append(cfg.Loop.StateDir, started)
+	if hostFixedByEnv() {
+		state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "host_readings_fixed", Error: hostcheck.FixedMessage})
+	}
 	clearStartRefused(cfg.Loop.StateDir) // a supervisor is running now
 	monitor.SetAdoption(adopter.followMode(cfg))
 	adopter.watch(monitor)
@@ -733,6 +737,8 @@ type statusOut struct {
 	// DiskSpace is the room left on the volume that holds the state
 	// directory.
 	DiskSpace diskSpaceStatus `json:"diskSpace"`
+	// Host is the computer's login session and load, read now.
+	Host *hostStatus `json:"host,omitempty"`
 	// Builds names the build of the last check, this command's and the
 	// daemon's, from what is recorded; FollowsInstalls is yes, no, unknown,
 	// or ticks (checked by ticks, no daemon): whether the daemon will move to
@@ -1275,6 +1281,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if b := out.BuildAdoption; b != nil {
 		fmt.Fprintf(w, "daemon build change: %s\n", b.Message)
 	}
+	printHost(w, out.Host)
 	if d := out.DiskSpace; d.Level == "low" || d.Level == "critical" {
 		fmt.Fprintf(w, "disk:      %s\n", d.Message)
 	}
@@ -1583,6 +1590,8 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	}
 	out.SupervisorStartRefused = currentStartRefusal(l.StateDir, st.CheckedAt, out.Daemon)
 	out.DiskSpace = describeDiskSpace(l.StateDir)
+	h := readHost(context.Background())
+	out.Host = &h
 	out.Builds = buildNames(st, out.Daemon)
 	out.FollowsInstalls, out.followsText = followsInstalls(out.Daemon, out.Schedule)
 	if out.Daemon.State == "responsive" {

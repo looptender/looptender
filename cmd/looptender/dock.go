@@ -533,6 +533,11 @@ func (d *dockReader) read(ctx context.Context, identifiers bool) (result dockRep
 		}
 	})
 	r := buildDockReport(inputs, now, d.refresh, d.staleAfter, identifiers, true, omitted, ctx.Err() == nil)
+	h := readHost(ctx)
+	r.Host = &h
+	if n := hostNotices(&h, now); len(n) > 0 {
+		r.Notices = append(n, r.Notices...)
+	}
 	if d.versions {
 		var clients *clientsFile
 		var clientsErr error

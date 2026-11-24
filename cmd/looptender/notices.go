@@ -31,7 +31,7 @@ const (
 
 // noticeKinds is every kind, for settings. Kinds a person is pushed by
 // default are in noticeDefaultOn; the rest are listed but quiet.
-var noticeKinds = []string{noticeNeedsYou, noticeLimit, noticeSupervisor, noticeLane, noticeHold, noticeInstall, noticeDisk, noticeBound}
+var noticeKinds = []string{noticeNeedsYou, noticeLimit, noticeSupervisor, noticeLane, noticeHold, noticeInstall, noticeDisk, noticeBound, noticeHost}
 var noticeDefaultOn = map[string]bool{noticeNeedsYou: true, noticeLimit: true, noticeSupervisor: true}
 
 // Severities: urgent (an agent asked a question), high, normal, info.
@@ -79,6 +79,17 @@ func noticeID(kind, key string, since time.Time, what string) string {
 }
 
 func noticeTime(t time.Time) string { return t.Format("Mon 15:04") }
+
+// noticeResetBucket is how coarsely a reset is told apart in an id: the same
+// limit read with a reset a few minutes different is one limit.
+const noticeResetBucket = 12 * time.Hour
+
+// noticeActionWords say, in short fixed words by the kind of action the usage
+// limit record offers, that something can be done; the panel says what.
+var noticeActionWords = map[string]string{
+	"login_bb_directory": "Another Claude account can take over; see the panel.",
+	"arm_takeover":       "Another provider can take over; see the panel.",
+}
 
 // noticeName is the name a notice uses: the loop's display name when it has
 // one (already masked by the naming rule), else its registered slug, which is
@@ -148,8 +159,10 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 		add(n)
 	}
 	if w := l.Waiting; w != nil && w.Kind == "limit" || l.State == "waiting_on_limit" || l.UsageLimit != nil {
-		// When it resets, to the hour: a reset read a few seconds differently
-		// at the next check is the same limit, and loops on one window group.
+		// When it resets. The text says the real minute; the id and the group
+		// use a coarse bucket of it, so a reset read a few seconds or minutes
+		// differently at the next check is the same limit (readers forget an id
+		// that goes away, so a coarse bucket costs nothing).
 		var reset time.Time
 		window, words := "", "usage limit"
 		if u := l.UsageLimit; u != nil {
@@ -166,30 +179,31 @@ func noticesOf(l dockLoop, needs bool, now time.Time) []panelNotice {
 		} else if lw := l.LimitWait; lw != nil && lw.ResetsAt != nil && !lw.Passed {
 			reset = *lw.ResetsAt
 		}
-		if !reset.IsZero() {
-			reset = reset.In(now.Location()).Truncate(time.Hour)
-		}
+		bucket := time.Time{}
 		cause := words
 		if !reset.IsZero() {
-			cause += " until " + noticeTime(reset)
+			bucket = time.Unix(reset.Unix()/int64(noticeResetBucket/time.Second)*int64(noticeResetBucket/time.Second), 0)
+			cause += " until " + noticeTime(reset.In(now.Location()))
 		}
 		text := name + " stopped: " + cause + "."
 		moved := l.Away != nil
+		group := noticeLimit + "." + window + "." + strconv.FormatInt(bucket.Unix(), 10)
 		if moved {
 			text = name + " reached a usage limit and moved to its next route."
 			cause = "usage limit, moved on"
-		} else if u := l.UsageLimit; u != nil && len(u.Actions) > 0 && u.Actions[0].Text != "" && len(u.Actions[0].Text) <= 140 {
-			// What a person can do, in the record's own fixed words (never its command).
-			text += " " + strings.TrimSpace(u.Actions[0].Text)
+			group = noticeLimit + ".moved"
+		} else if u := l.UsageLimit; u != nil && len(u.Actions) > 0 {
+			// What a person can do, in fixed words by kind (the record keeps the kind only).
+			if w, ok := noticeActionWords[u.Actions[0].Kind]; ok {
+				text += " " + w
+			}
 		}
-		// Keyed on the window and its reset hour, which hold for as long as the
-		// limit does; never on the last check, which moves.
 		what := window
 		if moved {
 			what += "moved"
 		}
-		add(panelNotice{Kind: noticeLimit, Severity: sevHigh, Since: checked, ID: noticeID(noticeLimit, l.Key, reset, what),
-			Text: text, Group: noticeLimit + "." + cause, GroupText: "{n} loops stopped: " + cause + "."})
+		add(panelNotice{Kind: noticeLimit, Severity: sevHigh, Since: checked, ID: noticeID(noticeLimit, l.Key, bucket, what),
+			Text: text, Group: group, GroupText: "{n} loops stopped: " + cause + "."})
 	}
 	if l.Supervisor == "not_answering" && l.State != "stopped" && l.State != "finished" && l.State != "off" && l.State != "paused" {
 		add(panelNotice{Kind: noticeSupervisor, Severity: sevHigh, Since: checked, ID: noticeID(noticeSupervisor, l.Key, time.Time{}, ""),
