@@ -363,3 +363,38 @@ func TestStopOrCompletionHasItsOwnConfirmation(t *testing.T) {
 		t.Fatal("a note in the message")
 	}
 }
+
+func TestRedactLoopNameAcrossTelegramSurfaces(t *testing.T) {
+	for _, raw := range []string{"bb-thr-example000", "thr_example000"} {
+		if got := RedactLoopName(raw); got != "A loop" {
+			t.Fatalf("RedactLoopName(%q) = %q, want %q", raw, got, "A loop")
+		}
+		if got := TopicNameForLoop(raw); got != "A loop" {
+			t.Fatalf("TopicNameForLoop(%q) = %q, want %q", raw, got, "A loop")
+		}
+		alert := FormatAlert(AlertSummary{Loop: raw, Event: "control_resume", Summary: "done"})
+		if strings.Contains(alert, raw) || !strings.Contains(alert, "A loop") {
+			t.Fatalf("FormatAlert(%q) leaked raw name: %s", raw, alert)
+		}
+		regID := "loop_0123456789abcdef0123456789abcdef"
+		ticketID := "resume_fedcba9876543210fedcba9876543210"
+		statusText, markup := FormatStatusMessage("dev", []LoopStatusItem{{RegistrationID: regID, Loop: raw, ControlState: "paused", CanPause: true}}, time.Time{})
+		if strings.Contains(statusText, raw) || !strings.Contains(statusText, "A loop") {
+			t.Fatalf("FormatStatusMessage(%q) leaked raw name: %s", raw, statusText)
+		}
+		if markup == nil || strings.Contains(markup.InlineKeyboard[0][0].Text, raw) || !strings.Contains(markup.InlineKeyboard[0][0].Text, "A loop") {
+			t.Fatalf("FormatStatusMessage(%q) button leaked raw name: %+v", raw, markup)
+		}
+		revText, revMarkup, err := FormatResumeReviewMessage(ResumeReview{Loop: raw, RegistrationID: regID, TicketID: ticketID, Paused: true})
+		if err != nil || strings.Contains(revText, raw) || !strings.Contains(revText, "A loop") || strings.Contains(revMarkup.InlineKeyboard[0][0].Text, raw) {
+			t.Fatalf("FormatResumeReviewMessage(%q) leaked raw name: %v %s", raw, err, revText)
+		}
+		restText, restMarkup, err := FormatRestartConfirmMessage(ResumeReview{Loop: raw, RegistrationID: regID, TicketID: ticketID, Stop: true})
+		if err != nil || strings.Contains(restText, raw) || !strings.Contains(restText, "A loop") || strings.Contains(restMarkup.InlineKeyboard[0][0].Text, raw) {
+			t.Fatalf("FormatRestartConfirmMessage(%q) leaked raw name: %v %s", raw, err, restText)
+		}
+	}
+	if got := RedactLoopName("my-thr-loop"); got != "my-thr-loop" {
+		t.Fatalf("RedactLoopName(my-thr-loop) = %q", got)
+	}
+}

@@ -97,7 +97,7 @@ func telegramServiceFor(goos, home string, uid int, exe string, extra []string) 
 			q[i] = systemdQuote(s)
 		}
 		body := []byte("[Unit]\nDescription=looptender Telegram poller (Resume, Pause and Stop from the phone)\n\n[Service]\nType=exec\nExecStart=" + strings.Join(q, " ") +
-			"\nEnvironment=\"BB_THREAD_ID=\"\nRestart=always\nRestartSec=30s\nStandardOutput=null\nStandardError=null\n\n[Install]\nWantedBy=default.target\n")
+			"\nEnvironment=\"BB_THREAD_ID=\"\nUnsetEnvironment=" + telegram.TokenEnv + " " + telegram.APIURLEnv + "\nRestart=always\nRestartSec=30s\nStandardOutput=null\nStandardError=null\n\n[Install]\nWantedBy=default.target\n")
 		return telegramServicePlan{Kind: "systemd", File: file, Body: body, Target: telegramServiceUnit,
 			Install: [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "--now", telegramServiceUnit}},
 			Remove:  [][]string{{"systemctl", "--user", "disable", "--now", telegramServiceUnit}, {"systemctl", "--user", "daemon-reload"}}}, nil
@@ -218,6 +218,9 @@ func telegramServiceCommand(e env, args []string) int {
 			fmt.Fprintln(e.stdout, "Poller: running")
 		} else {
 			fmt.Fprintln(e.stdout, "Poller: not running, so taps on the phone do nothing")
+			if last := readPollerExit(dir); last != "" {
+				fmt.Fprintf(e.stdout, "Last exit: %s\n", last)
+			}
 		}
 		if !installed {
 			fmt.Fprintln(e.stdout, "Install it with: looptender telegram service install")
@@ -226,4 +229,16 @@ func telegramServiceCommand(e env, args []string) int {
 	}
 	e.errf("usage: looptender telegram service install|status|uninstall [--dir DIR] [--registry DIR] [--dry-run]")
 	return exitUsage
+}
+
+func readPollerExit(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, telegramPollerLastErrorFile))
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(strings.SplitN(string(b), "\n", 2)[0])
+	if len(line) > 200 {
+		line = line[:200]
+	}
+	return line
 }

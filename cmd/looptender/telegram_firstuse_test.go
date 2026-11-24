@@ -213,7 +213,7 @@ func TestTelegramServiceInstallStatusUninstall(t *testing.T) {
 		if goos == "darwin" && (!strings.Contains(out, "<key>LimitLoadToSessionType</key><string>Background</string>") || !strings.Contains(out, "launchctl bootstrap user/501 ")) {
 			t.Fatalf("darwin plan: %s", out)
 		}
-		if goos == "linux" && !strings.Contains(out, "systemctl --user enable --now looptender-telegram-poll.service") {
+		if goos == "linux" && (!strings.Contains(out, "systemctl --user enable --now looptender-telegram-poll.service") || !strings.Contains(out, "UnsetEnvironment=LOOPTENDER_TELEGRAM_BOT_TOKEN LOOPTENDER_TELEGRAM_API_URL")) {
 			t.Fatalf("linux plan: %s", out)
 		}
 		t.Setenv("BB_THREAD_ID", "thr_exampleagent")
@@ -237,5 +237,112 @@ func TestTelegramServiceInstallStatusUninstall(t *testing.T) {
 		if _, err := os.Stat(file); !os.IsNotExist(err) {
 			t.Fatalf("%s: service file kept", goos)
 		}
+	}
+}
+
+func TestTelegramPollRefusesThreadOrSupervisedEnv(t *testing.T) {
+	for _, kv := range [][2]string{{"BB_THREAD_ID", "thr_example"}, {control.SupervisedLoopVar, "example-loop"}} {
+		t.Setenv(kv[0], kv[1])
+		var out, errb bytes.Buffer
+		code := telegramCommand(env{ctx: context.Background(), stdout: &out, stderr: &errb}, []string{"poll", "--once"})
+		if code != exitFailed || !strings.Contains(errb.String(), "refused") {
+			t.Fatalf("%s=%s: code=%d err=%s", kv[0], kv[1], code, errb.String())
+		}
+		t.Setenv(kv[0], "")
+	}
+}
+
+func TestTelegramStopRequiresRestartConfirmationInHandler(t *testing.T) {
+	const tok = "123456789:EXAMPLE_FIRST_USE_TOKEN"
+	tgDir := setupPairedTelegramDir(t, tok, time.Now().UTC())
+	regDir, entry := clientFixture(t)
+	if err := control.Save(entry.StateDir, control.File{Enabled: true, Stop: true, AwaitingUser: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := newTGStandin(t, tok, tgDir, regDir)
+	prep := tgButton(t, s.send(tgCommand("/status")), "Prepare resume ")
+	review := s.send(tgTap(prep))
+	again := tgButton(t, review, "Start ")
+	cb, ok := telegram.DecodeControlCallback(again)
+	if !ok || cb.Action != telegram.ActionRestart {
+		t.Fatalf("expected ActionRestart, got %+v", cb)
+	}
+	// Forge ActionResume directly without tapping ActionRestart first.
+	forged, err := telegram.EncodeControlCallback(telegram.ControlCallback{
+		Action:         telegram.ActionResume,
+		RegistrationID: cb.RegistrationID,
+		TicketID:       cb.TicketID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := s.send(tgTap(forged))
+	if len(reply) == 0 || !strings.Contains(reply[0].Text, "confirm the start-again prompt first") {
+		t.Fatalf("expected refusal message, got %+v", reply)
+	}
+	if c, _ := control.Load(entry.StateDir); !c.Stop || !c.AwaitingUser {
+		t.Fatalf("forged ActionResume cleared holds: %+v", c)
+	}
+}
+
+func TestTelegramRedactsThreadSlugLoopNames(t *testing.T) {
+	const tok = "123456789:EXAMPLE_FIRST_USE_TOKEN"
+	tgDir := setupPairedTelegramDir(t, tok, time.Now().UTC())
+	regDir, entry := clientFixture(t)
+	// Rename loop in both registry and config to a raw bb-thr- thread slug.
+	for _, p := range []string{filepath.Join(regDir, "registry.json"), entry.ConfigPath} {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(strings.ReplaceAll(string(b), entry.Loop, "bb-thr-example999")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := control.Save(entry.StateDir, control.File{Enabled: true, Paused: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := newTGStandin(t, tok, tgDir, regDir)
+	statusMsgs := s.send(tgCommand("/status"))
+	if len(statusMsgs) == 0 || strings.Contains(statusMsgs[0].Text, "bb-thr-example999") || !strings.Contains(statusMsgs[0].Text, "A loop") {
+		t.Fatalf("status leaked thread slug: %+v", statusMsgs)
+	}
+	prep := tgButton(t, statusMsgs, "Prepare resume ")
+	if prep == "" {
+		t.Fatalf("missing prepare resume button: %+v", statusMsgs)
+	}
+	review := s.send(tgTap(prep))
+	if len(review) == 0 || strings.Contains(review[0].Text, "bb-thr-example999") || !strings.Contains(review[0].Text, "A loop") {
+		t.Fatalf("review leaked thread slug: %+v", review)
+	}
+	confirm := tgButton(t, review, "Confirm resume ")
+	if confirm == "" {
+		t.Fatalf("missing confirm resume button: %+v", review)
+	}
+	resumed := s.send(tgTap(confirm))
+	if len(resumed) == 0 || strings.Contains(resumed[0].Text, "bb-thr-example999") || !strings.Contains(resumed[0].Text, "A loop") {
+		t.Fatalf("alert leaked thread slug: %+v", resumed)
+	}
+}
+
+func TestTelegramPollerLastExitInServiceStatus(t *testing.T) {
+	tgDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv(telegram.TokenEnv, "")
+	var out, errb bytes.Buffer
+	code := telegramCommand(env{ctx: context.Background(), stdout: &out, stderr: &errb}, []string{"poll", "--once", "--dir", tgDir})
+	if code == exitOK {
+		t.Fatalf("expected unpaired poll to fail")
+	}
+	out.Reset()
+	errb.Reset()
+	telegramServiceGOOS = "linux"
+	if code := telegramCommand(env{ctx: context.Background(), stdout: &out, stderr: &errb}, []string{"service", "status", "--dir", tgDir}); code != exitOK {
+		t.Fatalf("service status: %d %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "Last exit: not paired") {
+		t.Fatalf("expected Last exit line, got: %s", out.String())
 	}
 }

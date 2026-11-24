@@ -291,7 +291,7 @@ func FormatStatusMessage(device string, items []LoopStatusItem, now time.Time) (
 	var rows [][]InlineKeyboardButton
 
 	for i, item := range items {
-		name := sanitizeInline(item.Loop)
+		name := RedactLoopName(item.Loop)
 		if name == "" {
 			name = "loop"
 		}
@@ -456,7 +456,7 @@ func FormatRestartConfirmMessage(r ResumeReview) (string, *InlineKeyboardMarkup,
 	if err != nil {
 		return "", nil, err
 	}
-	name := sanitizeInline(r.Loop)
+	name := RedactLoopName(r.Loop)
 	if name == "" {
 		name = "loop"
 	}
@@ -488,7 +488,7 @@ func FormatResumeReviewMessage(r ResumeReview) (string, *InlineKeyboardMarkup, e
 	if err != nil {
 		return "", nil, err
 	}
-	name := sanitizeInline(r.Loop)
+	name := RedactLoopName(r.Loop)
 	if name == "" {
 		name = "loop"
 	}

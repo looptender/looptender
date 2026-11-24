@@ -12,7 +12,7 @@ const maxTopicNameRunes = 128
 // TopicNameForLoop returns a sanitized, bounded private-chat topic title for
 // a registered loop. Pure function.
 func TopicNameForLoop(loopName string) string {
-	clean := strings.Join(strings.Fields(sanitizeInline(loopName)), " ")
+	clean := RedactLoopName(strings.Join(strings.Fields(sanitizeInline(loopName)), " "))
 	if clean == "" {
 		return "loop"
 	}

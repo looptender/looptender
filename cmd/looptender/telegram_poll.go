@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -17,8 +19,10 @@ import (
 )
 
 const (
-	telegramPollLock       = "telegram-poll"
-	telegramMinBackoff     = time.Second
+	telegramPollLock            = "telegram-poll"
+	telegramPollerLastErrorFile = "poller-last-error.txt"
+	telegramRestartFile         = "telegram-restart.json"
+	telegramMinBackoff          = time.Second
 	telegramMaxBackoff     = 30 * time.Second
 	telegramMaxRetryAfter  = 60 * time.Second
 	telegramDefaultPollSec = 25 * time.Second
@@ -62,6 +66,10 @@ func telegramPollCommand(e env, args []string) int {
 		e.errf("telegram poll: --poll-wait and --stale-after must be positive")
 		return exitUsage
 	}
+	if os.Getenv("BB_THREAD_ID") != "" || os.Getenv(control.SupervisedLoopVar) != "" {
+		e.errf("telegram poll refused: run it yourself in Terminal, not from a BB thread or a supervised session")
+		return exitFailed
+	}
 	dir, err := resolveTelegramDir(*dirFlag)
 	if err != nil {
 		e.errf("telegram poll: %v", err)
@@ -70,29 +78,35 @@ func telegramPollCommand(e env, args []string) int {
 	regDir, err := registryDirectory(*regFlag)
 	if err != nil {
 		e.errf("telegram poll: %v", err)
+		recordPollerExit(dir, "registry directory unavailable")
 		return exitFailed
 	}
 	_, paired, err := telegram.LoadPairing(dir)
 	if err != nil {
 		e.errf("telegram poll: %v", err)
+		recordPollerExit(dir, "pairing record unavailable")
 		return exitFailed
 	}
 	if !paired {
 		e.errf("telegram poll: not paired; run `looptender telegram setup` first")
+		recordPollerExit(dir, "not paired; run looptender telegram setup")
 		return exitFailed
 	}
 	token, err := telegram.LoadToken(dir)
 	if err != nil {
 		e.errf("telegram poll: %v", err)
+		recordPollerExit(dir, err.Error())
 		return exitFailed
 	}
 	pollLock, err := lock.AcquireNamed(dir, telegramPollLock)
 	if err != nil {
 		if errors.Is(err, lock.ErrHeld) {
 			e.errf("telegram poll: another Telegram poller is already running")
+			recordPollerExit(dir, "another Telegram poller is already running")
 			return exitSkipped
 		}
 		e.errf("telegram poll: failed to acquire poller lock")
+		recordPollerExit(dir, "failed to acquire poller lock")
 		return exitFailed
 	}
 	defer pollLock.Release()
@@ -115,10 +129,12 @@ func telegramPollCommand(e env, args []string) int {
 	})
 	if err != nil {
 		e.errf("telegram poll: %v", err)
+		recordPollerExit(dir, err.Error())
 		return exitUsage
 	}
+	clearPollerExit(dir)
 	host, _ := os.Hostname()
-	return runTelegramPoller(e, telegramPollConfig{
+	code := runTelegramPoller(e, telegramPollConfig{
 		Dir:         dir,
 		RegistryDir: regDir,
 		Client:      client,
@@ -131,6 +147,10 @@ func telegramPollCommand(e env, args []string) int {
 		Sleep:       telegramSleepContext,
 		DaemonQuery: inspectDaemon,
 	})
+	if code != exitOK {
+		recordPollerExit(dir, "poller exited with an error")
+	}
+	return code
 }
 
 func telegramSleepContext(ctx context.Context, d time.Duration) error {
@@ -319,15 +339,17 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 		if u.CallbackQuery.Message != nil {
 			threadID = u.CallbackQuery.Message.MessageThreadID
 		}
-		loopName := action.RegistrationID
+		rawLoopName := action.RegistrationID
 		if entry, found := clientEntry(cfg.RegistryDir, action.RegistrationID); found && entry.Loop != "" {
-			loopName = entry.Loop
+			rawLoopName = entry.Loop
 		}
 		if threadID == 0 && current.TopicsEnabled && current.LoopTopics != nil {
-			if tid := current.LoopTopics[loopName]; tid > 0 {
+			if tid := current.LoopTopics[rawLoopName]; tid > 0 {
 				threadID = tid
 			}
 		}
+		loopName := telegram.RedactLoopName(rawLoopName)
+		caller := os.Getenv("BB_THREAD_ID")
 
 		switch action.Action {
 		case telegram.ActionPrepareResume:
@@ -335,7 +357,7 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 			if action.ExpectPrefix != "" {
 				expect = controlExpectPrefixTag + action.ExpectPrefix
 			}
-			report, code := clientResume(e.ctx, cfg.RegistryDir, action.RegistrationID, "prepare-resume", "", false, "", "telegram", expect, cfg.Now, nil)
+			report, code := clientResume(e.ctx, cfg.RegistryDir, action.RegistrationID, "prepare-resume", "", false, caller, "telegram", expect, cfg.Now, nil)
 			if code != exitOK || report.Ticket == "" {
 				toast, summary := formatTelegramPrepareResumeFailure(report, code)
 				_ = cfg.Client.AnswerCallbackQuery(e.ctx, telegram.AnswerCallbackQueryRequest{
@@ -431,7 +453,39 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 			return
 
 		case telegram.ActionResume:
-			report, code := clientResume(e.ctx, cfg.RegistryDir, action.RegistrationID, "resume", action.TicketID, false, "", "telegram", "", cfg.Now, nil)
+			if entry, found := clientEntry(cfg.RegistryDir, action.RegistrationID); found {
+				var ctl control.File
+				if readTransferRecord(entry.StateDir, control.FileName, &ctl) == nil && (ctl.Stop || ctl.Completed) {
+					if loopCfg, ok := clientConfig(entry); ok {
+						if binding, _, berr := clientResumeBinding(entry, loopCfg, caller); berr == nil {
+							if t, terr := loadClientTicket(entry.StateDir); terr == nil && t.ID == action.TicketID && !t.Consumed && cfg.Now().UTC().Before(t.ExpiresAt) && binding == t.Binding {
+								if !telegramRestartConfirmed(entry.StateDir, action.TicketID) {
+									_ = cfg.Client.AnswerCallbackQuery(e.ctx, telegram.AnswerCallbackQueryRequest{
+										CallbackQueryID: cbID,
+										Text:            "Confirm start again first",
+									})
+									text := telegram.FormatAlert(telegram.AlertSummary{
+										Device:  cfg.Host,
+										Loop:    loopName,
+										Event:   "control_resume",
+										Summary: "This loop was stopped or marked finished. Send /status, tap Prepare resume, and confirm the start-again prompt first.",
+										At:      now,
+									})
+									_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+										ChatID:             current.AllowedChatID,
+										MessageThreadID:    threadID,
+										Text:               text,
+										LinkPreviewOptions: &telegram.LinkPreviewOptions{IsDisabled: true},
+									})
+									return
+								}
+							}
+						}
+					}
+					clearTelegramRestartConfirmed(entry.StateDir)
+				}
+			}
+			report, code := clientResume(e.ctx, cfg.RegistryDir, action.RegistrationID, "resume", action.TicketID, false, caller, "telegram", "", cfg.Now, nil)
 			toast, summary := formatTelegramResumeOutcome(report, code)
 			_ = cfg.Client.AnswerCallbackQuery(e.ctx, telegram.AnswerCallbackQueryRequest{
 				CallbackQueryID: cbID,
@@ -636,7 +690,64 @@ func telegramRestartQuestion(cfg telegramPollConfig, action telegram.ControlCall
 		return "", nil, false
 	}
 	text, markup, err := telegram.FormatRestartConfirmMessage(r)
-	return text, markup, err == nil
+	if err != nil {
+		return "", nil, false
+	}
+	saveTelegramRestartConfirmed(entry.StateDir, t.ID)
+	return text, markup, true
+}
+
+func saveTelegramRestartConfirmed(stateDir, ticketID string) {
+	b, err := json.Marshal(struct {
+		TicketID string `json:"ticketId"`
+	}{TicketID: ticketID})
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(stateDir, telegramRestartFile), b, 0o600)
+}
+
+func telegramRestartConfirmed(stateDir, ticketID string) bool {
+	if ticketID == "" {
+		return false
+	}
+	var rec struct {
+		TicketID string `json:"ticketId"`
+	}
+	if readTransferRecord(stateDir, telegramRestartFile, &rec) != nil {
+		return false
+	}
+	return rec.TicketID == ticketID
+}
+
+func clearTelegramRestartConfirmed(stateDir string) {
+	_ = os.Remove(filepath.Join(stateDir, telegramRestartFile))
+}
+
+func recordPollerExit(dir, msg string) {
+	if dir == "" {
+		return
+	}
+	clean := strings.TrimSpace(strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, msg))
+	if clean == "" {
+		return
+	}
+	if len(clean) > 200 {
+		clean = clean[:197] + "..."
+	}
+	_ = os.WriteFile(filepath.Join(dir, telegramPollerLastErrorFile), []byte(clean+"\n"), 0o600)
+}
+
+func clearPollerExit(dir string) {
+	if dir == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(dir, telegramPollerLastErrorFile))
 }
 
 // holdSetters says who set each hold now in force, from the newest history

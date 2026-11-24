@@ -2,10 +2,23 @@ package telegram
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
 )
+
+var threadSlugPattern = regexp.MustCompile(`^(bb-thr-|thr_)[0-9A-Za-z_-]+$`)
+
+// RedactLoopName replaces loop names that are raw BB thread IDs
+// (bb-thr-..., thr_...) with "A loop", matching the notices redaction rule.
+func RedactLoopName(name string) string {
+	clean := sanitizeInline(name)
+	if threadSlugPattern.MatchString(clean) {
+		return "A loop"
+	}
+	return clean
+}
 
 // AlertSummary contains only redacted, structured supervision metadata suitable
 // for alerts mode (no transcripts, prompts, diffs, credentials, or raw paths).
@@ -22,7 +35,7 @@ type AlertSummary struct {
 // FormatAlert renders a concise, plain-text Telegram alert bounded to
 // MaxMessageRunes. Control characters other than newline are stripped.
 func FormatAlert(a AlertSummary) string {
-	loop := sanitizeInline(a.Loop)
+	loop := RedactLoopName(a.Loop)
 	if loop == "" {
 		loop = "loop"
 	}
