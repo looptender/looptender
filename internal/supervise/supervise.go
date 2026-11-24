@@ -1089,6 +1089,7 @@ func (t *tick) run() error {
 		// recovery, the hung-turn rule, the check's own) treats an observed
 		// target as never woken, not only the ones made through t.decide.
 		ObservedOnly: t.observedOnly(),
+		ObservedWake: t.observedWake(),
 	}
 	in.AssignmentReady = t.assignmentObservation(a, obs)
 	in.UsageWarning = t.usageWatchObservation()
@@ -1187,6 +1188,7 @@ func (t *tick) run() error {
 		d = t.decide("network_down", in)
 	}
 	d = t.gateHostSession(obs, in, d)
+	d = t.gateObservedWake(d)
 	if t.st.SkipHandoffOnce && !t.opts.DryRun {
 		t.st.SkipHandoffOnce = false
 		if d.Action == decide.Handoff || d.Action == decide.SwitchBack {

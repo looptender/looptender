@@ -1760,7 +1760,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		l.CurrentRoute = dockTarget{Availability: "known", Role: dockRole(st.Target), Tool: dockTool(a.Adapter),
 			Provider: clip(a.Provider, dockMaxText), Model: clip(a.Model, dockMaxText)}
 		if a.Observed {
-			l.Observed, l.ObservedNote = true, sessionpipeObservedNotice
+			l.Observed, l.ObservedNote = true, observedNotice(a.Wakes)
 		}
 		if identifiers {
 			l.CurrentRoute.Name = clip(st.Target, dockMaxText)

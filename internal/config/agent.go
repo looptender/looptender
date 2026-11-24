@@ -241,8 +241,23 @@ type Sessionpipe struct {
 	// before its state reads unknown. Silence is never idle.
 	StaleAfter Duration `yaml:"stale_after,omitempty"`
 	// CLI is the sessionpipe command doctor runs to check the version and
-	// the sink. Checks never run it.
+	// the sink, and, with Send, the one a wake runs (`sessionpipe ask`).
+	// Observing never runs it.
 	CLI string `yaml:"cli,omitempty"`
+	// Send opts the loop in to waking the session: "wake_only" lets the
+	// decision engine wake it when it is idle, through `sessionpipe ask`.
+	// Empty, the default, never sends. Nudges, re-prompts, stops and
+	// handoffs stay held either way.
+	Send string `yaml:"send,omitempty"`
+}
+
+// SessionpipeSendWakeOnly is the one value of sessionpipe.send.
+const SessionpipeSendWakeOnly = "wake_only"
+
+// WakesObserved reports whether an observed target of this agent may be
+// woken: a sessionpipe target with send: wake_only.
+func (a Agent) WakesObserved() bool {
+	return a.Sessionpipe != nil && a.Sessionpipe.Send == SessionpipeSendWakeOnly
 }
 
 // SessionpipeAdapter is the observed-only target kind.
@@ -438,6 +453,9 @@ func (a Agent) validate(where string) []error {
 		}
 		if d := a.Sessionpipe.StaleAfter.Duration; d != 0 && (d < 2*time.Minute || d > 7*24*time.Hour) {
 			add("sessionpipe.stale_after must be between 2m and 168h")
+		}
+		if s := a.Sessionpipe.Send; s != "" && s != SessionpipeSendWakeOnly {
+			add("sessionpipe.send must be %s or absent (absent never sends)", SessionpipeSendWakeOnly)
 		}
 	case a.Adapter == "claude" && a.Claude != nil:
 		if a.Claude.Workdir == "" {

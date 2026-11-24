@@ -55,9 +55,31 @@ func (t *tick) observedOnly() bool {
 	return config.ObservedOnly(t.loop.Adapter) || config.ObservedOnly(t.incidentAdapter)
 }
 
+// observedWake reports whether this check's observed target may be woken:
+// the loop opted in with sessionpipe.send: wake_only.
+func (t *tick) observedWake() bool {
+	return t.observedOnly() && t.loop.Agent.WakesObserved()
+}
+
+// gateObservedWake holds a wake of an observed session while this computer's
+// login session is unavailable to background processes: sessionpipe's
+// daemon delivers it, and a headless delivery would need the same keychain
+// the supervisor cannot reach then.
+func (t *tick) gateObservedWake(d decide.Decision) decide.Decision {
+	if d.Action != decide.Wake || !t.observedWake() || t.opts.DryRun {
+		return d
+	}
+	if !t.hostSessionAvailable() {
+		t.res.HostSession = "unavailable"
+		return decide.Decision{Action: decide.None, Reason: HostSessionReason}
+	}
+	return d
+}
+
 func (t *tick) decide(stage string, in decide.Input) decide.Decision {
 	// An observed target is never woken, whichever rule asks.
 	in.ObservedOnly = in.ObservedOnly || t.observedOnly()
+	in.ObservedWake = in.ObservedWake || t.observedWake()
 	d := decide.Decide(in)
 	t.incidentDecisions.Add(stage, in, d)
 	t.incidentLimitWait = d.LimitWait

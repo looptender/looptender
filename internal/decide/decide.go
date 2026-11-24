@@ -176,7 +176,13 @@ type Input struct {
 	// target). No rule may send to it, re-prompt it, stop it or move it; the
 	// state is recorded, a gone target is held for a person, and nothing else
 	// is done.
-	ObservedOnly      bool
+	ObservedOnly bool
+	// ObservedWake: with ObservedOnly, the loop opted in to waking the
+	// session (sessionpipe.send: wake_only). The ordinary rules run, and only
+	// an ordinary wake of an idle session, and the holds, survive: a nudge,
+	// a re-prompt, a child-error or assignment wake, a stop, a handoff and a
+	// switch-back are still never made.
+	ObservedWake      bool
 	Obs               Observation
 	Control           Control
 	InWindow          bool
@@ -464,6 +470,38 @@ const HandoffDeferredReason = "handoff deferred: no fallback could be confirmed 
 
 // Decide applies the rules in priority order. Stop and pause always win.
 func Decide(in Input) Decision {
+	if in.ObservedOnly && in.ObservedWake {
+		return observedWake(in)
+	}
+	return decideRules(in)
+}
+
+// ObservedWakeSuffix ends the reason a woken-on-opt-in observed target gets
+// when a rule wanted something other than a wake.
+const ObservedWakeSuffix = "; observed with wake only: looptender wakes this session when it is idle and never nudges, re-prompts, stops or moves it"
+
+// observedWake runs the ordinary rules for a target that may be woken and
+// keeps only what such a target allows.
+func observedWake(in Input) Decision {
+	if in.Control.Stop {
+		return none(ObservedStopReason)
+	}
+	ordinary := in
+	ordinary.ObservedOnly, ordinary.ObservedWake = false, false
+	d := decideRules(ordinary)
+	switch d.Action {
+	case None, AwaitUser:
+		return d
+	case Wake:
+		if !d.ChildErrorWake && !d.AssignmentWake {
+			return d
+		}
+	}
+	s := observedReason(in.Obs)
+	return none(strings.TrimSuffix(s, ObservedReasonSuffix) + ObservedWakeSuffix)
+}
+
+func decideRules(in Input) Decision {
 	c := in.Control
 	o := in.Obs
 	if c.Stop && in.ObservedOnly {

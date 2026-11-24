@@ -24,6 +24,18 @@ const sessionpipeMinVersion = "0.18.0"
 // observed target.
 const sessionpipeObservedNotice = "Observed, never woken: looptender reads this session's tier-0 sessionpipe events and never sends to, wakes, re-prompts or stops it. Pause and resume change only whether looptender checks it; nothing is ever sent. A stop ends the checks and leaves the session alone."
 
+// sessionpipeWakeNotice is the same for a loop with sessionpipe.send:
+// wake_only.
+const sessionpipeWakeNotice = "Observed, woken only when idle: looptender reads this session's tier-0 sessionpipe events and, because this loop opted in, wakes it through sessionpipe ask when it is between turns, within the loop's send limits and holds. It never nudges, re-prompts or stops it, and never reads the answer. Pause stops checks and wakes; resume starts them again. A stop ends the checks and leaves the session alone."
+
+// observedNotice is the sentence for an observed agent.
+func observedNotice(wakes bool) string {
+	if wakes {
+		return sessionpipeWakeNotice
+	}
+	return sessionpipeObservedNotice
+}
+
 // sessionpipeSinkCommand is the one line the person runs to add the sink.
 func sessionpipeSinkCommand() string {
 	return "sessionpipe sink add file:PATH --tier 0 --name looptender"
@@ -38,7 +50,7 @@ func sessionpipeSinkCommand() string {
 // then the events file. The last check, next, names the first that failed and
 // its next step, or says every check passed.
 func doctorSessionpipe(ctx context.Context, r *doctorReport, prefix string, s *config.Sessionpipe, offline bool, timeout time.Duration, run doctorRun) {
-	r.add(prefix+".observed", "ok", sessionpipeObservedNotice, "")
+	r.add(prefix+".observed", "ok", observedNotice(s.Send == config.SessionpipeSendWakeOnly), "")
 	start := len(r.Checks)
 	sink := doctorSessionpipeTool(ctx, r, prefix, s, offline, timeout, run)
 	doctorSessionpipeFileStep(r, prefix+".events_file", s.EventsFile, sink)
@@ -105,6 +117,10 @@ func doctorSessionpipeTool(ctx context.Context, r *doctorReport, prefix string, 
 		r.add(prefix+".version", "error", "sessionpipe "+v+" is older than "+sessionpipeMinVersion+", the oldest version this target reads.", "Update sessionpipe (sessionpipe update), then run doctor again.")
 	default:
 		r.add(prefix+".version", "ok", "sessionpipe "+v+" (this target needs "+sessionpipeMinVersion+" or later).", "")
+	}
+	if s.Send == config.SessionpipeSendWakeOnly {
+		out, err := call("ask", "status")
+		doctorSessionpipeAsk(r, prefix+".send", out, err)
 	}
 	out, err = call("status", "--json")
 	if err != nil {
@@ -268,4 +284,38 @@ func versionBefore(v, min string) bool {
 		}
 	}
 	return false
+}
+
+// doctorSessionpipeAsk checks what a wake needs from sessionpipe: asking on,
+// and its background service running. It reads `sessionpipe ask status`, a
+// page for a person, by its two fixed lines only; nothing else is printed.
+func doctorSessionpipeAsk(r *doctorReport, id string, out []byte, err error) {
+	if err != nil {
+		r.add(id, "unavailable", "sessionpipe ask status failed, timed out, or exceeded its output limit, so whether a wake can be delivered is unknown.", "Run sessionpipe ask status yourself.")
+		return
+	}
+	var on, off, running, stopped bool
+	for _, l := range strings.Split(string(out), "\n") {
+		l = strings.TrimSpace(l)
+		switch {
+		case l == "ask: on":
+			on = true
+		case strings.HasPrefix(l, "ask: off"):
+			off = true
+		case strings.HasPrefix(l, "daemon: running"):
+			running = true
+		case strings.HasPrefix(l, "daemon: not running"):
+			stopped = true
+		}
+	}
+	switch {
+	case off:
+		r.add(id, "error", "sessionpipe.send is wake_only, but asking is off in sessionpipe, so every wake would be refused (ask_off).", "Turn it on yourself, at this computer's terminal: sessionpipe ask on. looptender never runs it.")
+	case stopped:
+		r.add(id, "error", "sessionpipe.send is wake_only, but sessionpipe's background service is not running, so a wake cannot be delivered.", "Start it as sessionpipe describes (sessionpipe ask on installs it); looptender never starts it.")
+	case on && running:
+		r.add(id, "ok", "Wakes are on: asking is on in sessionpipe and its background service is running. A wake still needs the session's folder on sessionpipe control folders; a refusal says so by its code.", "")
+	default:
+		r.add(id, "unavailable", "sessionpipe ask status printed an unrecognized page, so whether a wake can be delivered is unknown; raw output is withheld.", "Run sessionpipe ask status yourself.")
+	}
 }

@@ -195,3 +195,23 @@ func TestDoctorCommandOnAnObservedTarget(t *testing.T) {
 		t.Fatalf("checks: %+v", seen)
 	}
 }
+
+func TestDoctorSessionpipeAskStatus(t *testing.T) {
+	for name, tc := range map[string]struct {
+		out    string
+		err    error
+		status string
+	}{
+		"on and running": {"  ask: on\n  daemon: running (pid 1, 0.18.2)\n  agents: claude-code\n  folders: /x\n", nil, "ok"},
+		"off":            {"  ask: off (`sessionpipe ask on` turns it on)\n  daemon: running (pid 1, 0.18.2)\n", nil, "error"},
+		"no daemon":      {"  ask: on\n  daemon: not running (`sessionpipe ask on` installs it as a service)\n", nil, "error"},
+		"odd page":       {"something else\n", nil, "unavailable"},
+		"failed":         {"", errors.New("exit status 1"), "unavailable"},
+	} {
+		var r doctorReport
+		doctorSessionpipeAsk(&r, "agent.primary.send", []byte(tc.out), tc.err)
+		if len(r.Checks) != 1 || r.Checks[0].Status != tc.status || strings.Contains(r.Checks[0].Message+r.Checks[0].Fix, "/x") {
+			t.Errorf("%s: %+v, want %s", name, r.Checks, tc.status)
+		}
+	}
+}

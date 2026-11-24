@@ -876,6 +876,9 @@ type agentRef struct {
 	// stops it.
 	Session  string `json:"session,omitempty"`
 	Observed bool   `json:"observed,omitempty"`
+	// Wakes: an observed target the loop may wake (sessionpipe.send:
+	// wake_only), only when it is idle.
+	Wakes bool `json:"wakes,omitempty"`
 	// Account is the accounts-catalog entry the route names, as stated by
 	// a person, or the derived account context of one that names none. Only
 	// status sets it.
@@ -897,6 +900,7 @@ func refOf(a config.Agent) agentRef {
 		r.Session = a.Sessionpipe.Session
 	}
 	r.Observed = config.ObservedOnly(a.Adapter)
+	r.Wakes = r.Observed && a.WakesObserved()
 	return r
 }
 
@@ -1044,7 +1048,7 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	}
 	fmt.Fprintln(w)
 	if out.TargetAgent.Observed {
-		fmt.Fprintln(w, "observed:  "+sessionpipeObservedNotice)
+		fmt.Fprintln(w, "observed:  "+observedNotice(out.TargetAgent.Wakes))
 	}
 	if s := out.TargetSession; s != nil {
 		fmt.Fprintf(w, "session:   %s", s.State)
@@ -1540,7 +1544,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		out.NewThreads.Active = &created
 	}
 	out.TaskSource = "inline"
-	if config.ObservedOnly(l.Adapter) {
+	if config.ObservedOnly(l.Adapter) && !l.Agent.WakesObserved() {
 		out.TaskSource = "none"
 	}
 	if l.PromptFile != "" {
