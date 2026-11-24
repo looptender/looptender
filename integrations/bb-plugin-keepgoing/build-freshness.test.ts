@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server.ts";
 import { freshnessToShow, noProgressLine, reasonLines, type StatusDetails } from "./status-details.ts";
+import { writeStandIn } from "./stand-in.ts";
 
 const fresh = (over: object = {}) => ({ state: "updated", text: "Updated 3 h ago", detail: "Installed 23 Nov 09:00 · was v0.2.0-dev.1111111 · now v0.2.0-dev.aaaaaaa", ...over });
 const details = (over: Partial<StatusDetails> = {}): StatusDetails => ({ readAt: "2026-01-01T00:00:00Z", completed: false, targetThread: "thr_x", targetAdapter: "bb", targetConfigured: true, lastCheck: null, runtime: null, daemon: null, ...over });
@@ -30,7 +31,7 @@ test("a raised no-progress flag is qualified for a held loop as status qualifies
 async function loopWith(status: object) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "keepgoing-freshness-")));
   const program = join(dir, "looptender-stand-in");
-  await writeFile(program, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(status)}\nJSON\n`, { mode: 0o700 });
+  await writeStandIn(program, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(status)}\nJSON\n`);
   const { bb, harness } = createFakePluginHost({ pluginId: "keepgoing", settings: { keepgoingPath: program, configs: join(dir, "looptender.yaml") } });
   await plugin(bb);
   return { forThread: async () => await harness.behavior.callRpc("forThread", { threadId: "thr_example" }) as { loops: { details: StatusDetails; pluginBuild?: string }[]; errors: string[] }, dispose: async () => { await harness.lifecycle.dispose(); await rm(dir, { recursive: true, force: true }); } };

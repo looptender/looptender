@@ -8,6 +8,7 @@ import plugin from "./server.ts";
 import { hostContract } from "./host-contract.ts";
 import { setupOnHost, type Execute } from "./setup-host.ts";
 import { newThreadResult, marker, DEFAULT_BOUNDS } from "./new-thread-contract.ts";
+import { writeStandIn } from "./stand-in.ts";
 
 const TASK = "Fictional private task. Done when the example passes.";
 
@@ -18,7 +19,7 @@ const TASK = "Fictional private task. Done when the example passes.";
 async function world(options: { mode?: "manual" | "automatic"; storedMode?: unknown; program?: "present" | "missing"; hook?: "absent" | "refused"; setups?: number; cli?: string } = {}) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "keepgoing-new-thread-")));
   const program = join(dir, "keepgoing-stand-in");
-  await writeFile(program, "#!/bin/sh\n[ \"$1\" = version ] && exit 0\nexit 9\n", { mode: 0o700 });
+  await writeStandIn(program, "#!/bin/sh\n[ \"$1\" = version ] && exit 0\nexit 9\n");
   // BB creates the thread after the control asks for its request. The margin
   // keeps that order true however slowly this test runs.
   const created = Date.now() + 60_000;

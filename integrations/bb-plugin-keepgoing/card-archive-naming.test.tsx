@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JSDOM } from "jsdom";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import { writeStandIn } from "./stand-in.ts";
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://example.com" });
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
@@ -21,7 +22,7 @@ const card = (loops: object[]) => renderSlot(app.threadContextCardRows[0]!, { th
 async function forThread(status: object) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "keepgoing-archive-")));
   const program = join(dir, "stand-in");
-  await writeFile(program, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(status)}\nJSON\n`, { mode: 0o700 });
+  await writeStandIn(program, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(status)}\nJSON\n`);
   const { bb, harness } = createFakePluginHost({ pluginId: "keepgoing", settings: { keepgoingPath: program, configs: join(dir, "looptender.yaml") } });
   await plugin(bb);
   try { return await harness.behavior.callRpc("forThread", { threadId: "thr_example" }) as { loops: { details: any; displayName?: string; loop: string }[]; errors: string[] }; }
