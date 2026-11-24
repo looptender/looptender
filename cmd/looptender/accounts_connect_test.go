@@ -277,10 +277,17 @@ func TestAccountsConnectDirectoryChangedDuringSignIn(t *testing.T) {
 	for name, change := range map[string]func(dir string) error{
 		"readable by others": func(dir string) error { return os.Chmod(dir, 0755) },
 		"replaced by another directory": func(dir string) error {
+			// Made while the first still exists, so it cannot be given the
+			// first one's identity again, as a file system may do for a
+			// directory made after the removal.
+			other := dir + "-other"
+			if err := os.Mkdir(other, 0700); err != nil {
+				return err
+			}
 			if err := os.Remove(dir); err != nil {
 				return err
 			}
-			return os.Mkdir(dir, 0700)
+			return os.Rename(other, dir)
 		},
 		"replaced by a link": func(dir string) error {
 			if err := os.Remove(dir); err != nil {
