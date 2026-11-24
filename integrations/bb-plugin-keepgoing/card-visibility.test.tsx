@@ -44,10 +44,10 @@ test("with several held loops the resume sentence is said once and each loop kee
   const held = (name: string) => loop({ loop: name, configPath: `/private/example/${name}/looptender.yaml`, controlState: "paused" });
   const ui = card([held("first-example"), held("second-example"), held("third-example"), loop({ loop: "fourth-example", configPath: "/private/example/fourth/looptender.yaml", controlState: "superseded" })]);
   try {
-    await ui.findByText(/^A person resumes a held loop from an ordinary terminal/);
-    assert.equal(ui.getAllByText(/A person resumes/).length, 1);
-    assert.equal(ui.container.querySelectorAll("code").length, 3, "one command per held loop; none for the superseded one");
-    assert.equal(ui.getAllByText("Command to resume (run in a terminal)").length, 3);
+    await ui.findAllByText("Paused. Resume it from the looptender panel or a terminal on your computer.");
+    assert.equal(ui.getAllByText(/^Paused\. Resume it from the looptender panel or a terminal on your computer\.$/).length, 3, "each held loop says it once, in its own words");
+    assert.equal(ui.container.querySelectorAll("code").length, 3, "one command per held loop, in its Details; none for the superseded one");
+    assert.equal(ui.container.querySelectorAll("details code").length, 3);
     assert.ok(ui.getByText(/Resume is refused for a superseded loop/));
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
@@ -64,7 +64,7 @@ test("the expanded banner is a labelled list per loop with the state word once, 
     const region = within(await one.findByRole("region", { name: "Loop example-loop" }));
     assert.ok(region.getByRole("list", { name: "Why" })); assert.ok(region.getByRole("list", { name: "Details" }));
     assert.equal((region.getByRole("list", { name: "Details" }).textContent ?? "").includes("Note:"), false, "the note is in the reasons only");
-    assert.equal((one.container.textContent ?? "").split("looptender: awaiting user").length - 1, 1, "state word once");
+    assert.equal((one.container.textContent ?? "").split("looptender: awaiting user").length - 1, 0, "the chip says the state; the details do not say it again");
   } finally { one.lifecycle.unmount(); cleanup(); }
 });
 

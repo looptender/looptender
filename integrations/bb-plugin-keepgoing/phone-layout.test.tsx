@@ -25,11 +25,14 @@ const done = (...uis: { lifecycle: { unmount(): void } }[]) => { for (const u of
 test("the collapsed chip says the state and, when a person is needed, the reason, in words and not only in a tooltip", async () => {
   const cases: [object, string][] = [
     [loop({}, { disk: { level: "low", message: "the volume is filling" } }), "looptender: enabled · disk low"],
-    [loop({ controlState: "awaiting user", note: "Needs a decision in /private/example/path." }), "looptender: awaiting user · waiting for a person"],
+    [loop({ controlState: "awaiting user", note: "Needs a decision in /private/example/path." }), "looptender: awaiting user"],
     [loop({ controlState: "awaiting user", note: "x" }, { deadline: { at: "2026-01-01T00:00:00Z", reached: true } }), "looptender: awaiting user · deadline passed"],
     [loop({}, { sends: { max: 40, used: 40, remaining: 0, reached: true } }), "looptender: enabled · send limit reached"],
     [loop({}, { limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false } }), "looptender: enabled · waiting on a usage limit"],
     [loop({}), "looptender: enabled"],
+    // One reason, the one that matters most now: a limit before a passed deadline before a build difference.
+    [loop({ controlState: "paused" }, { deadline: { at: "2026-01-01T00:00:00Z", reached: true }, limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false }, runtime: { ...base.runtime, recordedBuild: "v0.2.0-dev.1111111", binaryComparison: "different" } }), "looptender: paused · waiting on a usage limit"],
+    [loop({ controlState: "paused" }, { deadline: { at: "2026-01-01T00:00:00Z", reached: true }, runtime: { ...base.runtime, recordedBuild: "v0.2.0-dev.1111111", binaryComparison: "different" } }), "looptender: paused · deadline passed"],
   ];
   for (const [l, text] of cases) {
     const ui = mount([l]);
@@ -47,7 +50,7 @@ test("a differing build says so in two words on the chip; a long note is cut", a
   try { await ui.summary.findByRole("button", { name: "looptender: paused · build differs" }); } finally { done(ui.summary, ui.details); }
   const long = mount([loop({ controlState: "awaiting user", note: "SECRET-PATH /private/example " .repeat(8) })]);
   try {
-    const chip = await long.summary.findByRole("button", { name: "looptender: awaiting user · waiting for a person" });
+    const chip = await long.summary.findByRole("button", { name: "looptender: awaiting user" });
     assert.equal(/SECRET-PATH/.test(chip.title), false, "the raw note is not in the chip's title");
     assert.equal(/SECRET-PATH/.test(long.summary.container.textContent ?? ""), false);
     assert.ok(await long.details.findByText(/SECRET-PATH/), "the expanded details carry the note");
@@ -75,7 +78,7 @@ test("expanded banner: reason and Pause first, full-width under the text; the re
     const section = await narrow.details.findByRole("region", { name: "Loop example-loop" });
     assert.ok(within(section).getByText(/Disk: the volume that holds the state directory is filling/));
     assert.equal((section.querySelector("details") as HTMLDetailsElement).open, false);
-    const order = [...section.querySelectorAll("[aria-label=Why], .kg-actions, details")].map(e => e.tagName === "DETAILS" ? "details" : e.getAttribute("aria-label") ?? e.className);
+    const order = [...section.querySelectorAll("[aria-label=Why], .kg-actions, :scope > details")].map(e => e.tagName === "DETAILS" ? "details" : e.getAttribute("aria-label") ?? e.className);
     assert.deepEqual(order, ["Why", "kg-actions", "details"]);
     // Pause is not beside the text in a flex row.
     assert.equal((section as HTMLElement).style.display, "grid");
@@ -94,9 +97,12 @@ test("long names, versions and paths wrap: every text container allows a break a
     assert.equal((chip as HTMLElement).style.overflowWrap, "anywhere"); assert.equal((chip as HTMLElement).style.minWidth, "0px");
     const section = await ui.details.findByRole("region", { name: /Loop a-very-long/ });
     assert.equal((section as HTMLElement).style.overflowWrap, "anywhere");
-    const resume = section.querySelector(".kg-actions span") as HTMLElement;
-    assert.match(resume.textContent ?? "", /looptender resume -c/);
-    assert.equal(resume.style.overflowWrap, "anywhere"); assert.equal(resume.style.minWidth, "0px");
+    const sentence = section.querySelector(".kg-actions .kg-t") as HTMLElement;
+    assert.match(sentence.textContent ?? "", /^Held for you\. Resume it from the looptender panel or a terminal on your computer\./);
+    assert.equal(sentence.style.overflowWrap, "anywhere"); assert.equal(sentence.style.minWidth, "0px");
+    // The command, a long path, is in Details, in a list that may break anywhere.
+    assert.equal((section.querySelector("details code") as HTMLElement).textContent?.startsWith("looptender resume -c "), true);
+    assert.equal((section.querySelector("details ul") as HTMLElement).style.overflowWrap, "anywhere");
   } finally { done(ui.summary, ui.details); }
 });
 
