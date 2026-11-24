@@ -116,3 +116,14 @@ func TestReportEnvNamesAreTheReportsOwn(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+// No test switch reaches a launched daemon, whatever its name, and its name
+// is listed with the others it did not get.
+func TestLaunchEnvironmentDropsTestSwitches(t *testing.T) {
+	got, dropped := launchEnvironment([]string{"PATH=/example/bin", "LOOPTENDER_TEST_FIXED_HOST=1", "KEEPGOING_TEST_ADAPTER_EXIT=3", "LOOPTENDER_SESSION_DIR=/example/sessions"},
+		map[string]bool{"LOOPTENDER_TEST_FIXED_HOST": true})
+	if !reflect.DeepEqual(got, []string{"PATH=/example/bin", "LOOPTENDER_SESSION_DIR=/example/sessions"}) ||
+		!reflect.DeepEqual(dropped, []string{"LOOPTENDER_TEST_FIXED_HOST", "KEEPGOING_TEST_ADAPTER_EXIT"}) {
+		t.Fatalf("%v %v", got, dropped)
+	}
+}

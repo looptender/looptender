@@ -12,12 +12,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/envvar"
+	"github.com/looptender/looptender/internal/lock"
 )
 
 // A background daemon started inside a BB thread is a child of that
@@ -149,6 +152,21 @@ func startLaunched(e env, executable, path string, cfg *config.Config, allowShar
 	if allowShare {
 		child = append(child, "--allow-second-loop")
 	}
+	// One start at a time for this loop, from its clean-up to its daemon's
+	// acknowledgement, so one start never takes another's launch for stale.
+	launchLock, err := acquireLaunchLock(e.ctx, stateDir)
+	if errors.Is(err, lock.ErrHeld) {
+		e.errf("start: another start of this loop is still launching; try again shortly")
+		return exitFailed, true
+	}
+	if err != nil {
+		e.errf("start: could not take the launch lock: %v", err)
+		return exitFailed, true
+	}
+	defer launchLock.Release()
+	if runtime.GOOS == "darwin" {
+		clearStaleLaunches(stateDir, os.Getuid(), time.Now())
+	}
 	plan, found := backgroundLaunch(runtime.GOOS, exec.LookPath, label, child, os.Getuid(), stateDir)
 	if !found {
 		return 0, false
@@ -167,7 +185,7 @@ func startLaunched(e env, executable, path string, cfg *config.Config, allowShar
 	if os.WriteFile(envFile, b, 0o600) != nil {
 		return 0, false
 	}
-	ctx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(e.ctx, launchAckWait)
 	defer cancel()
 	if out, err := exec.CommandContext(ctx, plan.Argv[0], plan.Argv[1:]...).CombinedOutput(); err != nil {
 		removeLaunchFiles(plan)
@@ -195,9 +213,20 @@ func startLaunched(e env, executable, path string, cfg *config.Config, allowShar
 		e.errf("start: invalid startup acknowledgement; its job was removed")
 		return exitFailed, true
 	}
-	if len(dropped) > 0 {
-		// Names only, never values.
-		e.errf("start: warning: the daemon does not get %s from this environment: they are named like credentials and this loop's report does not name them. Give a report its secret with secret_file in the configuration.", strings.Join(dropped, ", "))
+	var secrets, tests []string
+	for _, k := range dropped {
+		if strings.HasPrefix(k, envvar.Prefix+"TEST_") || strings.HasPrefix(k, envvar.LegacyPrefix+"TEST_") {
+			tests = append(tests, k)
+		} else {
+			secrets = append(secrets, k)
+		}
+	}
+	// Names only, never values.
+	if len(secrets) > 0 {
+		e.errf("start: warning: the daemon does not get %s from this environment: they are named like credentials and this loop's report does not name them. Give a report its secret with secret_file in the configuration.", strings.Join(secrets, ", "))
+	}
+	if len(tests) > 0 {
+		e.errf("start: warning: the daemon does not get %s from this environment: test switches are never passed to a supervisor.", strings.Join(tests, ", "))
 	}
 	if plan.Kind == "systemd" && !lingerOn() {
 		e.errf("start: warning: lingering is off for this user, so the user's systemd, and this daemon with it, stops at logout. Run loginctl enable-linger, or looptender service install.")
@@ -373,7 +402,13 @@ func launchEnvironment(env []string, report map[string]bool) (out, dropped []str
 			continue
 		}
 		ours := strings.HasPrefix(k, envvar.Prefix) || strings.HasPrefix(k, envvar.LegacyPrefix)
+		// Test switches (LOOPTENDER_TEST_*, KEEPGOING_TEST_*) are never passed:
+		// some are honoured by the shipped binary for the scenario tests, so a
+		// stray value in a person's shell would change a real supervisor.
+		test := strings.HasPrefix(k, envvar.Prefix+"TEST_") || strings.HasPrefix(k, envvar.LegacyPrefix+"TEST_")
 		switch {
+		case test:
+			dropped = append(dropped, k)
 		case keep[k] || strings.HasPrefix(k, "LC_") || report[k]:
 			out = append(out, kv)
 		case ours && !launchSecretName(k):
@@ -423,25 +458,55 @@ func recordLaunchJob(stateDir string) func() {
 }
 
 // readLaunchJob is the daemon's launch job, for status and doctor; nil when
-// it runs in none, or when its service manager no longer has the job (a
-// daemon killed outright leaves its record behind).
+// it runs in none, or when its job is not running: the service manager no
+// longer has it, or has it with no process (a daemon or its job script
+// killed outright leaves the record, and on macOS the job, behind).
 func readLaunchJob(stateDir string) *launchJob {
 	j := readLaunchJobRecord(stateDir)
-	if j == nil || !launchJobExists(*j) {
+	if j == nil || !launchJobRunning(*j) {
 		return nil
 	}
 	return j
 }
 
-// launchJobExists asks the service manager whether it still has the job.
-// It is a stand-in in tests.
-var launchJobExists = func(j launchJob) bool {
+// launchctlPrint is launchctl print of a service target: its output, and
+// whether launchd has the job at all. It is a stand-in in tests.
+var launchctlPrint = func(target string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	p, err := exec.LookPath("launchctl")
+	if err != nil {
+		return "", false
+	}
+	out, err := exec.CommandContext(ctx, p, "print", target).Output()
+	return string(out), err == nil
+}
+
+var launchdPIDLine = regexp.MustCompile(`(?m)^\s*pid = ([0-9]+)\s*$`)
+
+// launchdPID is the job's process in launchctl print's output; 0 when the
+// job has none.
+func launchdPID(out string) int {
+	m := launchdPIDLine.FindStringSubmatch(out)
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
+
+// launchJobRunning asks the service manager whether the job is there and
+// has a process.
+var launchJobRunning = func(j launchJob) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	switch j.Kind {
 	case "launchd":
-		p, err := exec.LookPath("launchctl")
-		return err == nil && j.Target != "" && exec.CommandContext(ctx, p, "print", j.Target).Run() == nil
+		if j.Target == "" {
+			return false
+		}
+		out, ok := launchctlPrint(j.Target)
+		return ok && launchdPID(out) > 0
 	case "systemd":
 		p, err := exec.LookPath("systemctl")
 		return err == nil && exec.CommandContext(ctx, p, "--user", "is-active", "--quiet", j.Label+".service").Run() == nil
@@ -466,4 +531,132 @@ func launchStopCommand(kind, label, target string) string {
 		return "systemctl --user stop " + label + ".service"
 	}
 	return "launchctl bootout " + target
+}
+
+// clearStaleLaunches removes what an earlier launch left when its job
+// script was killed before its last lines (SIGKILL, power loss): the
+// property list and script in the state directory, the job registered in
+// launchd with no process, and the launch-job record. The caller holds the
+// launch lock, so no other start of this loop is between its launch and
+// its acknowledgement. It touches only what is certainly stale:
+//   - nothing at all while the loop's daemon lock is held: a live
+//     supervisor, whatever launchctl says;
+//   - only labels of this loop's own shape (launchJobLabelFor), never a
+//     path outside the state directory;
+//   - never files younger than the acknowledgement wait, which may belong
+//     to a start still in progress;
+//   - a job is booted out only when launchctl print positively says it is
+//     not running; unclear output leaves it alone.
+func clearStaleLaunches(stateDir string, uid int, now time.Time) {
+	// Taken only to learn that no daemon holds it, and held for the
+	// clean-up's few milliseconds. A daemon started at that instant by
+	// something else (a service, a terminal) is refused as already running,
+	// a clear refusal it can retry.
+	l, err := lock.AcquireNamed(stateDir, lock.Daemon)
+	if err != nil {
+		return // held: a live supervisor; or unknowable: leave it
+	}
+	defer l.Release()
+	labels := map[string]bool{}
+	plists, _ := filepath.Glob(filepath.Join(stateDir, "launch-dev.looptender.loop.*.plist"))
+	scripts, _ := filepath.Glob(filepath.Join(stateDir, "launch-dev.looptender.loop.*.sh"))
+	for _, f := range append(plists, scripts...) {
+		name := strings.TrimPrefix(filepath.Base(f), "launch-")
+		labels[strings.TrimSuffix(strings.TrimSuffix(name, ".plist"), ".sh")] = true
+	}
+	if j := readLaunchJobRecord(stateDir); j != nil && j.Kind == "launchd" {
+		labels[j.Label] = true
+	}
+	for label := range labels {
+		if !launchJobLabelFor(stateDir, label) {
+			continue
+		}
+		files := []string{filepath.Join(stateDir, "launch-"+label+".plist"), filepath.Join(stateDir, "launch-"+label+".sh")}
+		young := false
+		for _, f := range files {
+			if st, err := os.Lstat(f); err == nil && now.Sub(st.ModTime()) < launchAckWait {
+				young = true
+			}
+		}
+		if young {
+			continue
+		}
+		target := fmt.Sprintf("user/%d/%s", uid, label)
+		out, registered := launchctlPrint(target)
+		if registered && !launchdNotRunning(out) {
+			continue // running, or unclear: leave it
+		}
+		if registered {
+			launchctlBootout(target)
+		}
+		for _, f := range files {
+			removeInside(stateDir, f)
+		}
+		if j := readLaunchJobRecord(stateDir); j != nil && j.Label == label {
+			removeInside(stateDir, filepath.Join(stateDir, launchJobName))
+		}
+	}
+}
+
+// launchAckWait is how long a start waits for its service manager to take
+// the job and its daemon to acknowledge startup, together: long enough for a
+// busy machine, where a daemon can take well over ten seconds to start.
+const launchAckWait = 30 * time.Second
+
+var launchJobLabel = regexp.MustCompile(`^dev\.looptender\.loop\.([0-9a-f]{12})\.[0-9a-f]{6}$`)
+
+// launchJobLabelFor: label is one launchLabel makes for this state
+// directory: exactly dev.looptender.loop.<12 hex>.<6 hex>, the hex being
+// the directory's own hash. Anything else is not this loop's job.
+func launchJobLabelFor(stateDir, label string) bool {
+	m := launchJobLabel.FindStringSubmatch(label)
+	if m == nil {
+		return false
+	}
+	sum := sha256.Sum256([]byte(stateDir))
+	return m[1] == hex.EncodeToString(sum[:6])
+}
+
+// removeInside removes path only when it is directly inside dir, as a file
+// or link, resolved: never anything elsewhere.
+func removeInside(dir, path string) {
+	clean := filepath.Clean(path)
+	if filepath.Dir(clean) != filepath.Clean(dir) {
+		return
+	}
+	if st, err := os.Lstat(clean); err != nil || st.IsDir() {
+		return
+	}
+	_ = os.Remove(clean)
+}
+
+var launchdStateLine = regexp.MustCompile(`(?m)^\s*state = (.+?)\s*$`)
+
+// launchdNotRunning: launchctl print says, in so many words, that the job
+// has no process: a "state = not running" line and no pid line.
+func launchdNotRunning(out string) bool {
+	m := launchdStateLine.FindStringSubmatch(out)
+	return m != nil && m[1] == "not running" && launchdPID(out) == 0
+}
+
+// launchctlBootout boots a job out; a stand-in in tests.
+var launchctlBootout = func(target string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if p, err := exec.LookPath("launchctl"); err == nil {
+		_ = exec.CommandContext(ctx, p, "bootout", target).Run()
+	}
+}
+
+// acquireLaunchLock takes the loop's launch lock, waiting a little for
+// another start to finish its launch.
+func acquireLaunchLock(ctx context.Context, stateDir string) (*lock.Lock, error) {
+	deadline := time.Now().Add(launchAckWait + 5*time.Second)
+	for {
+		l, err := lock.AcquireNamed(stateDir, lock.Launch)
+		if err == nil || !errors.Is(err, lock.ErrHeld) || time.Now().After(deadline) || ctx.Err() != nil {
+			return l, err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
