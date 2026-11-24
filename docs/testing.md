@@ -680,9 +680,9 @@ Capability/documentation review covers README, configuration, adapter reference,
 - Once the session had one turn, the ask reached delivery and failed. The lab service could not confirm the login from its own `HOME`. looptender recorded `failed`, counted it as a send, and `doctor`'s `wake` check showed nothing outstanding.
 
 **What did not behave as the fixtures assume.**
-- **A failed wake was sent again on every following check while the session still read idle:** five attempts in about a minute, until the loop was paused. The adapter does not retry, but the decision does. The stand-in tests never followed a fast failure with another check.
+- **A failed wake was sent again on every following check while the session still read idle:** five attempts in about a minute, until the loop was paused. The adapter does not retry, but the decision did. The stand-in tests never followed a fast failure with another check. Fixed with this record: after a wake that did not get through, the next waits for the session's next turn event or `min_wake_interval`. `TestRefusedWakeIsTriedOncePerInterval` sends a second attempt on the very next check without the fix.
 - **A headless `claude -p` session sends `session.ended` with its last turn,** so it reads as gone, never as idle. Only a session that stays open (an interactive one, or `--input-format stream-json` with stdin held) can be woken.
-- **Stopping an observed loop sends no `stop` report,** because no stop action is taken.
+- **Stopping an observed loop sends no `stop` report,** because no stop action is taken. This is kept, and now documented: the report says a session was stopped.
 
 **Reporting.** With `loop.report.format: sessionpipe`, `report test` delivered a two-event tier-0 batch (`session.started`, `looptender.test`) to the stand-in receiver. An `await_user` hold on an ended session arrived as `attention.needed` of kind `error`. Both carried opaque ids and no text.
 

@@ -203,9 +203,21 @@ loop:
     counts as not sent, and none of sessionpipe's words are kept.
   - **Still running then:** the wake is a delivery under way.
   - **Failed without a refusal code:** whether it reached the session is
-    unknown. Send does not retry it, but the next check sends another wake
-    while the session still reads idle; this was seen live, and a fix is
-    pending.
+    unknown, and it is not retried at once.
+- **After a wake that did not get through** (refused, failed, or of unknown
+  outcome), the next waits until the session's next turn event or
+  `loop.progress.min_wake_interval` after that wake (default 60 minutes),
+  whichever comes first.
+  - The turn event is the design's own rule: a session that has moved on can
+    be woken again. The interval keeps a fixed refusal (asking turned on, a
+    folder allowed) from holding an idle session for good.
+  - While held, every check records "last wake refused: <code>, next attempt
+    after <time> or the session's next turn", and nothing is run. `status`
+    prints it on its `wake:` line (`sessionpipeWake.held` in JSON), and
+    doctor's `wake` check warns with what to change.
+  - Every attempt, refused and failed ones included, counts against
+    `loop.limits.max_sends` like any send: the send is reserved before
+    sessionpipe is run.
 - **One wake at a time.** While the previous wake's command is still running
   (that is, the agent is still answering), the next is not sent.
   - The record, `targets/<id>/sessionpipe-ask.json`, holds the process ID and
@@ -274,9 +286,27 @@ Without the `sessionpipe` command, doctor warns and still checks the file.
   started, working and ended read as expected, and doctor's steps matched.
   No wake has been delivered to a real session yet. Everything else is
   tested with fixture files and a stand-in for the sessionpipe command.
-- **Headless sessions end with their turn.** A `claude -p` session sends
-  `session.ended` with its last turn, so it reads as gone. Only a session that
-  stays open can be woken.
+- **A headless `claude -p` session cannot be woken.** It ends with its turn:
+  it sends `session.ended` in the same second as `turn.ended`, so it reads as
+  gone and the loop holds for a person. Only a session that stays open (an
+  interactive one, or `claude -p --input-format stream-json` with its input
+  kept open) is ever idle.
+- **Two cases in which sessionpipe refuses a wake with `harness`** ("no Claude
+  Code session … on this machine"), seen live:
+  - Its background service does not know the session's Claude Code
+    configuration directory. It looks in `~/.claude`, the `~/.claude-*` folders
+    and its own `CLAUDE_CONFIG_DIR`, so a session run with another directory
+    (BB's is one) is not found.
+  - The session has never had a turn: until then Claude Code has written no
+    transcript for sessionpipe to find it by.
+- **No wake has yet been delivered to a real session.** In the live run, once
+  both cases above were out of the way, sessionpipe's service failed the
+  delivery: running with the lab's own `HOME`, it could not confirm the
+  session's login. A service running as the person, with their keychain, has
+  not been tried.
+- **Stopping an observed loop sends no `stop` report.** That report says a
+  session was stopped, and an observed session never is; the stop ends the
+  checks only.
 
 ## Setup
 

@@ -1559,7 +1559,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	if st.Target() == state.Primary {
 		out.TargetAgent, out.TargetConfigured = out.PrimaryAgent, true
 		if l.Agent.WakesObserved() {
-			out.SessionpipeWake = pendingSessionpipeWake(l.StateDir, state.Primary, now)
+			out.SessionpipeWake = pendingSessionpipeWake(l.StateDir, state.Primary, now, l.Progress.MinWakeInterval.Duration)
 		}
 	} else if c, ok := effectiveRoutes(cfg, st).Find(st.Target()); ok && !c.Disabled {
 		// A fallback that starts a new thread at handoff is a target only

@@ -136,8 +136,10 @@ type readState struct {
 	Seen    bool  `json:"seen,omitempty"`
 	HasSeq  bool  `json:"hasSeq,omitempty"`
 	LastSeq int64 `json:"lastSeq,omitempty"`
-	// LastAt is the newest applied event's time.
-	LastAt time.Time `json:"lastAt,omitzero"`
+	// LastAt is the newest applied event's time; LastTurnAt the newest
+	// turn.started or turn.ended's.
+	LastAt     time.Time `json:"lastAt,omitzero"`
+	LastTurnAt time.Time `json:"lastTurnAt,omitzero"`
 	// Phase is idle, active, error or ended.
 	Phase      string `json:"phase,omitempty"`
 	Background int    `json:"background,omitempty"`
@@ -393,6 +395,9 @@ func (a *Adapter) apply(line []byte, s *readState) error {
 	s.Seen = true
 	if at.After(s.LastAt) {
 		s.LastAt = at
+	}
+	if (e.Type == "turn.started" || e.Type == "turn.ended") && at.After(s.LastTurnAt) {
+		s.LastTurnAt = at
 	}
 	return nil
 }
