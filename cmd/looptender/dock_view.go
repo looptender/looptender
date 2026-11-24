@@ -82,6 +82,9 @@ type dockReport struct {
 	Volumes []dockVolume `json:"volumes,omitempty"`
 	// Notices is the one list of events a person is told about (notices.go).
 	Notices []panelNotice `json:"notices"`
+	// Notify is the shared notification settings and whether the menu is
+	// notifying on this computer (notify_settings.go).
+	Notify *notifyState `json:"notify,omitempty"`
 	// Host is the computer's login session and load.
 	Host  *hostStatus `json:"host,omitempty"`
 	Loops []dockLoop  `json:"loops"`

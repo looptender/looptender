@@ -694,6 +694,8 @@ func panelCommand(e env, args []string) int {
 			return panelStopCommand(e, args[1:])
 		case "list":
 			return panelListCommand(e, args[1:])
+		case "notify":
+			return panelNotifyCommand(e, args[1:])
 		}
 	}
 	if !panelSupported() {
@@ -1031,6 +1033,8 @@ type panelList struct {
 	// Host is the computer's login session and load.
 	Host    *hostStatus   `json:"host,omitempty"`
 	Notices []panelNotice `json:"notices"`
+	// Notify: as in the dock report.
+	Notify *notifyState `json:"notify,omitempty"`
 	// CanAll is which changes can be made to every loop at once
 	// (client review|apply --all): pause and stop, while any loop can be.
 	CanAll []string `json:"canAll"`
@@ -1135,6 +1139,7 @@ func buildPanelList(r dockReport) panelList {
 	out.AccountQuotas = panelQuotaSummary(r)
 	out.Volumes = r.Volumes
 	out.Notices = r.Notices
+	out.Notify = r.Notify
 	out.Host = r.Host
 	if out.Notices == nil {
 		out.Notices = []panelNotice{}

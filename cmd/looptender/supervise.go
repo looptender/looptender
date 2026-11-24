@@ -185,7 +185,7 @@ func daemonOf(ctx context.Context) supervise.DaemonInfo {
 func tickOptions(e env, cfg *config.Config, dryRun bool) supervise.Options {
 	return supervise.Options{Version: version, DryRun: dryRun, Reporter: reporter(e, cfg), Routine: suppliedRoutine(e.ctx),
 		RoutineIgnored: e.ctx.Value(routineIgnoredKey{}) != nil, Daemon: daemonOf(e.ctx), Executable: checkExecutable(), ExecutableImage: processExecutableImage,
-		CommandPrefix: initCommandPrefix(), UsageRead: tickUsageRead}
+		CommandPrefix: initCommandPrefix(), UsageRead: tickUsageRead, AccountCheck: tickAccountCheck}
 }
 
 // Capture once during process initialization, before a command or check starts.
@@ -312,15 +312,28 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 	ctx, cancel := context.WithCancel(e.ctx)
 	e.ctx = ctx
 	defer cancel()
+	defer recordLaunchJob(cfg.Loop.StateDir)() // removed after the stopped record below
 	defer enableDaemonShutdown(monitor, cfg, cfgPath, lease, cancel)()
-	state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "started"})
+	started := state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "started"}
+	if j := readLaunchJobRecord(cfg.Loop.StateDir); j != nil {
+		started.Extra = map[string]any{"launch": j.Kind}
+	}
+	state.Append(cfg.Loop.StateDir, started)
 	if hostFixedByEnv() {
 		state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "host_readings_fixed", Error: hostcheck.FixedMessage})
 	}
 	clearStartRefused(cfg.Loop.StateDir) // a supervisor is running now
 	monitor.SetAdoption(adopter.followMode(cfg))
 	adopter.watch(monitor)
-	defer state.Append(cfg.Loop.StateDir, state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "stopped"})
+	defer func() {
+		// Which signal ended it, when one did: a person, a service
+		// manager, or BB quitting (SIGTERM or SIGHUP from the app).
+		stopped := state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "stopped"}
+		if s := stopSignal(); s != "" {
+			stopped.Extra = map[string]any{"signal": s}
+		}
+		state.Append(cfg.Loop.StateDir, stopped)
+	}()
 	var disk *diskWatch
 	if !dryRun {
 		disk = &diskWatch{}
@@ -610,6 +623,9 @@ type statusOut struct {
 	// UsageWatch is the usage watch's setting (looptender usage-watch);
 	// nil while it is off.
 	UsageWatch *usageWatchView `json:"usageWatch,omitempty"`
+	// LaunchJob is the service-manager job the daemon runs in when it was
+	// started from a BB thread (start_launch.go); nil otherwise.
+	LaunchJob *launchJob `json:"launchJob,omitempty"`
 	// SharedWith lists, in words, other enabled loops that share this loop's
 	// session, a fallback's session, its working directory or a repository.
 	SharedWith []string `json:"sharedWith,omitempty"`
@@ -1008,6 +1024,9 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	fmt.Fprintf(w, "progress flag: %s\n", noProgressText(out.NoProgress, loopHeld(out.Control, out.controlUnreadable)))
 	printUsageWatch(w, out.UsageWatch)
 	printUsageBurn(w, out.UsageBurn)
+	if j := out.LaunchJob; j != nil {
+		fmt.Fprintf(w, "daemon job: %s %s, since %s (end it with %s)\n", j.Kind, j.Label, j.Since.Format(time.RFC3339), launchStopCommand(j.Kind, j.Label, j.Target))
+	}
 	if !out.stateUnreadable {
 		printTurnRetry(w, out.TurnRetry)
 		printContext(w, out.ContextWindow)
@@ -1407,6 +1426,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.NoProgress = noProgressOf(cfg, flagState, ctl, journal, graph, now)
 	out.UsageBurn = describeUsageBurn(l.StateDir, now)
 	out.UsageWatch = describeUsageWatch(l.StateDir)
+	out.LaunchJob = readLaunchJob(l.StateDir)
 	if file := unreadableFile(out); file != "" {
 		// The flag needs both records; computed from an empty one it would
 		// say the loop is off, or that no check has run.
