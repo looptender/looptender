@@ -83,7 +83,7 @@ var migrateLockWait = 3 * time.Second
 // looked at nor held while those directories move.
 var migrateLockNames = func() map[string]bool {
 	names := map[string]bool{}
-	for _, n := range []string{lock.Tick, lock.Daemon, lock.Control, lock.Service, lock.Launch, "turn", panelOpenLock, panelServerLock, "routes", registry.LockName, "incident", "delivery", report.SessionpipeLock, "graph", clientsLock, "telegram", telegramPollLock} {
+	for _, n := range []string{lock.Tick, lock.Daemon, lock.Control, lock.Service, lock.Launch, "turn", panelOpenLock, panelServerLock, notifyMenuLock, "routes", registry.LockName, "incident", "delivery", report.SessionpipeLock, "graph", clientsLock, "telegram", telegramPollLock} {
 		names[n+".lock"] = true
 	}
 	return names

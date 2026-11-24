@@ -654,7 +654,7 @@ func TestMigrateSmallCases(t *testing.T) {
 // "._tick.lock" is not a lock, is never opened, and the move goes ahead.
 // Other names that merely end in ".lock" are not opened either.
 func TestMigrateTakesOnlyTheToolsOwnLockFiles(t *testing.T) {
-	for _, name := range []string{"tick.lock", "daemon.lock", "registry.lock", "routes.lock", "panel-server.lock", "clients.lock", "0123456789abcdef0123456789abcdef.lock", "0123456789abcdef0123456789abcdef-record.lock"} {
+	for _, name := range []string{"tick.lock", "daemon.lock", "registry.lock", "routes.lock", "panel-server.lock", "panel-open.lock", "menu-notifying.lock", "clients.lock", "0123456789abcdef0123456789abcdef.lock", "0123456789abcdef0123456789abcdef-record.lock"} {
 		if !migrateIsLock(name) {
 			t.Errorf("%s is not taken for a lock", name)
 		}
@@ -765,5 +765,16 @@ func TestMigrateRefusesALockThatCannotBeTriedInTime(t *testing.T) {
 	defer mu.Unlock()
 	if tried != 2 { // one lock in each of the two runs migrateRun makes
 		t.Fatalf("%d locks tried", tried)
+	}
+}
+
+// Every lock file kept in the panel directory is listed, so a move of the
+// per-user directories holds it: a new lock name added to panel code must be
+// added here and to migrateLockNames together.
+func TestMigrateListsEveryPanelDirectoryLock(t *testing.T) {
+	for _, n := range []string{panelOpenLock, panelServerLock, notifyMenuLock, clientsLock} {
+		if !migrateIsLock(n + ".lock") {
+			t.Errorf("%s.lock is a lock file in the panel directory and is not in migrateLockNames", n)
+		}
 	}
 }

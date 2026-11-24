@@ -29,6 +29,10 @@ const (
 	// minute (five when reads fail) and beats after each.
 	notifyMenuFresh = 6 * time.Minute
 	notifyPath      = "api/v1/notify"
+	// notifyMenuLock is the lock file around the heartbeat's ownership check
+	// and write. It is listed in migrateLockNames (migrate.go), as every lock
+	// file in the panel directory must be.
+	notifyMenuLock = "menu-notifying"
 )
 
 type notifySettings struct {
@@ -159,7 +163,7 @@ func notifyBeatLock(dir string) (*lock.Lock, error) {
 	var err error
 	for i := 0; i < 100; i++ {
 		var l *lock.Lock
-		if l, err = lock.AcquireNamed(dir, "menu-notifying"); err == nil {
+		if l, err = lock.AcquireNamed(dir, notifyMenuLock); err == nil {
 			return l, nil
 		}
 		time.Sleep(20 * time.Millisecond)

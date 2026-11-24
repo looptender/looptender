@@ -139,6 +139,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let launchPath: String
     let updater: MenuUpdater?
     var tracker = NoticeTracker()
+    var heartbeatSaid = SaidOnce()
     /// The shared settings as the last read gave them (the CLI keeps them in one place).
     var notify: PanelNotify? { if case .read(let list, _) = reading { return list.notify }; return nil }
     /// Work the menu must not quit under: a change being read, confirmed (its
@@ -589,7 +590,15 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         notifier.refreshPermission()
         let notifying = HeartbeatPolicy.notifying(running: running, canPost: notifier.canPost, permission: notifier.permission)
         let pid = ProcessInfo.processInfo.processIdentifier
-        DispatchQueue.global(qos: .utility).async { [client] in try? client.open(.notifyHeartbeat(notifying: notifying, pid: pid)) }
+        DispatchQueue.global(qos: .utility).async { [client] in
+            let failed = (try? client.open(.notifyHeartbeat(notifying: notifying, pid: pid))) == nil
+            DispatchQueue.main.async { [self] in
+                // Said once, not every minute: the panel may then notify too, and this is why.
+                if heartbeatSaid.shouldLog(failed: failed) {
+                    fputs("KeepgoingMenu: the heartbeat could not be saved, so the panel may not know this menu is notifying (run: looptender panel notify heartbeat)\n", stderr)
+                }
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

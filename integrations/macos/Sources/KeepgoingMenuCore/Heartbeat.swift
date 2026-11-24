@@ -15,3 +15,16 @@ public enum HeartbeatPolicy {
         running && canPost && permission == .authorized
     }
 }
+
+/// Says a problem once: the first failure of a run of failures is logged, the
+/// rest are not, and the next failure after a success is logged again. So a
+/// heartbeat that cannot be saved is never silent and never a line every minute.
+public struct SaidOnce {
+    private var failing = false
+    public init() {}
+    /// True when this result should be logged.
+    public mutating func shouldLog(failed: Bool) -> Bool {
+        defer { failing = failed }
+        return failed && !failing
+    }
+}
