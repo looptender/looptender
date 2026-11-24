@@ -670,10 +670,42 @@
             "required": [
               "sessionpipe"
             ],
-            "description": "an observed target: looptender never sends to, wakes or stops it",
+            "description": "an observed target: looptender never sends to, wakes or stops it unless sessionpipe.send is wake_only, which wakes it when idle and never stops it",
+            "if": {
+              "properties": {
+                "sessionpipe": {
+                  "required": [
+                    "send"
+                  ],
+                  "properties": {
+                    "send": {
+                      "const": "wake_only"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "anyOf": [
+                {
+                  "required": [
+                    "prompt"
+                  ]
+                },
+                {
+                  "required": [
+                    "prompt_file"
+                  ]
+                }
+              ]
+            },
+            "else": {
+              "properties": {
+                "prompt": false,
+                "prompt_file": false
+              }
+            },
             "properties": {
-              "prompt": false,
-              "prompt_file": false,
               "fallbacks": {
                 "const": ""
               },
@@ -995,7 +1027,13 @@
         "cli": {
           "type": "string",
           "default": "sessionpipe",
-          "description": "run only by doctor, for its version and sink checks"
+          "description": "run by doctor for its checks and, with send, by a wake (sessionpipe ask); never to observe"
+        },
+        "send": {
+          "enum": [
+            "wake_only"
+          ],
+          "description": "opt in to waking the session when it is idle, through sessionpipe ask; absent never sends"
         }
       }
     },

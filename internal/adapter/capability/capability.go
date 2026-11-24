@@ -398,7 +398,7 @@ const (
 	spDoc      = "docs/sessionpipe.md#observed-sessions-in-unreleased"
 	spDecide   = "internal/decide/observed_test.go"
 	spConfig   = "internal/config/sessionpipe_test.go"
-	spObserved = "Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it."
+	spObserved = "Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only)."
 )
 
 // sessionpipeCells is the column for an observed sessionpipe target. A row

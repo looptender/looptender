@@ -6,6 +6,7 @@ package decide
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -181,7 +182,13 @@ type Input struct {
 	// target). No rule may send to it, re-prompt it, stop it or move it; the
 	// state is recorded, a gone target is held for a person, and nothing else
 	// is done.
-	ObservedOnly      bool
+	ObservedOnly bool
+	// ObservedWake: with ObservedOnly, the loop opted in to waking the
+	// session (sessionpipe.send: wake_only). The ordinary rules run, and only
+	// an ordinary wake of an idle session, and the holds, survive: a nudge,
+	// a re-prompt, a child-error or assignment wake, a stop, a handoff and a
+	// switch-back are still never made.
+	ObservedWake      bool
 	Obs               Observation
 	Control           Control
 	InWindow          bool
@@ -469,6 +476,59 @@ const HandoffDeferredReason = "handoff deferred: no fallback could be confirmed 
 
 // Decide applies the rules in priority order. Stop and pause always win.
 func Decide(in Input) Decision {
+	if in.ObservedOnly && in.ObservedWake {
+		return observedWake(in)
+	}
+	return decideRules(in)
+}
+
+// ObservedWakeSuffix ends the reason a woken-on-opt-in observed target gets
+// when a rule wanted something other than a wake.
+const ObservedWakeSuffix = "; observed with wake only: looptender wakes this session when it is idle and never nudges, re-prompts, stops or moves it"
+
+// observedWake runs the ordinary rules for a target that may be woken and
+// keeps only what such a target allows.
+func observedWake(in Input) Decision {
+	if in.Control.Stop {
+		return none(ObservedStopReason)
+	}
+	ordinary := in
+	ordinary.ObservedOnly, ordinary.ObservedWake = false, false
+	d := decideRules(ordinary)
+	switch {
+	case d.Action == None, d.Action == AwaitUser:
+		return d
+	case OrdinaryIdleWake(d):
+		return d
+	}
+	s := observedReason(in.Obs)
+	return none(strings.TrimSuffix(s, ObservedReasonSuffix) + ObservedWakeSuffix)
+}
+
+// IdleWakeReason is the reason of the ordinary wake of an idle session.
+const IdleWakeReason = "idle"
+
+// OrdinaryIdleWake reports whether d is the ordinary wake of an idle
+// session (the "idle" rule) and nothing more: IdleWake is set and no other
+// flag of the Decision whose name ends in Wake is, so a notice wake (child
+// errors, a usage warning, an overloaded computer, an assignment) is not, and
+// neither is any wake kind added later. It is an allow-list: only this one
+// wake is sent to an observed session that opted in.
+func OrdinaryIdleWake(d Decision) bool {
+	if d.Action != Wake || !d.IdleWake || d.Reason != IdleWakeReason {
+		return false
+	}
+	v := reflect.ValueOf(d)
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Type().Field(i)
+		if f.Name != "IdleWake" && strings.HasSuffix(f.Name, "Wake") && f.Type.Kind() == reflect.Bool && v.Field(i).Bool() {
+			return false
+		}
+	}
+	return true
+}
+
+func decideRules(in Input) Decision {
 	c := in.Control
 	o := in.Obs
 	if c.Stop && in.ObservedOnly {
@@ -587,7 +647,7 @@ func Decide(in Input) Decision {
 			}
 			return Decision{Action: Wake, Reason: "independent assignments need coordinator", IdleWake: true, AssignmentWake: true}
 		}
-		return Decision{Action: Wake, Reason: "idle", IdleWake: true}
+		return Decision{Action: Wake, Reason: IdleWakeReason, IdleWake: true}
 	case Active:
 		// A turn that went silent before a network outage and stayed silent
 		// after it may be hung. Nothing is sent into it: a nudge would only

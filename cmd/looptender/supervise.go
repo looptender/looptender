@@ -737,7 +737,11 @@ type statusOut struct {
 	Moved         *movedStatus   `json:"moved,omitempty"`
 	Schedule      scheduleStatus `json:"schedule"`
 	TargetSession *sessionStatus `json:"targetSession,omitempty"`
-	Daemon        daemonStatus   `json:"daemon"`
+	// SessionpipeWake is set while a wake of an observed sessionpipe session
+	// is still running: since when, and how long that has been. The next wake
+	// waits for it; sessionpipe has no cancel.
+	SessionpipeWake *sessionpipeWakeStatus `json:"sessionpipeWake,omitempty"`
+	Daemon          daemonStatus           `json:"daemon"`
 	// BuildAdoption is the daemon's last switch to an installed build, or
 	// refusal of one; absent when none is recorded.
 	BuildAdoption *buildAdoptionStatus `json:"buildAdoption,omitempty"`
@@ -907,6 +911,9 @@ type agentRef struct {
 	// stops it.
 	Session  string `json:"session,omitempty"`
 	Observed bool   `json:"observed,omitempty"`
+	// Wakes: an observed target the loop may wake (sessionpipe.send:
+	// wake_only), only when it is idle.
+	Wakes bool `json:"wakes,omitempty"`
 	// Account is the accounts-catalog entry the route names, as stated by
 	// a person, or the derived account context of one that names none. Only
 	// status sets it.
@@ -928,6 +935,7 @@ func refOf(a config.Agent) agentRef {
 		r.Session = a.Sessionpipe.Session
 	}
 	r.Observed = config.ObservedOnly(a.Adapter)
+	r.Wakes = r.Observed && a.WakesObserved()
 	return r
 }
 
@@ -1079,7 +1087,10 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	}
 	fmt.Fprintln(w)
 	if out.TargetAgent.Observed {
-		fmt.Fprintln(w, "observed:  "+sessionpipeObservedNotice)
+		fmt.Fprintln(w, "observed:  "+observedNotice(out.TargetAgent.Wakes))
+	}
+	if pw := out.SessionpipeWake; pw != nil {
+		fmt.Fprintf(w, "wake:      %s\n", pw.Text)
 	}
 	if s := out.TargetSession; s != nil {
 		fmt.Fprintf(w, "session:   %s", s.State)
@@ -1547,6 +1558,9 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.PrimaryAgent.Account = routeAccountOf(l.Agent, "")
 	if st.Target() == state.Primary {
 		out.TargetAgent, out.TargetConfigured = out.PrimaryAgent, true
+		if l.Agent.WakesObserved() {
+			out.SessionpipeWake = pendingSessionpipeWake(l.StateDir, state.Primary, now)
+		}
 	} else if c, ok := effectiveRoutes(cfg, st).Find(st.Target()); ok && !c.Disabled {
 		// A fallback that starts a new thread at handoff is a target only
 		// once its thread exists.
@@ -1585,7 +1599,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		out.NewThreads.Active = &created
 	}
 	out.TaskSource = "inline"
-	if config.ObservedOnly(l.Adapter) {
+	if config.ObservedOnly(l.Adapter) && !l.Agent.WakesObserved() {
 		out.TaskSource = "none"
 	}
 	if l.PromptFile != "" {

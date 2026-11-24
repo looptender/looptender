@@ -62,9 +62,9 @@ Agent tools have their own loops, retries and background agents, and each of the
 | An agent defined in configuration, or any program with status and resume commands | released (v0.2.0); definitions tested with stand-ins only |
 | The panel: one local page for every loop | released (v0.2.0) |
 | Antigravity CLI, as the first route only | in source |
-| Observing a sessionpipe session; Telegram, Slack, Discord, ntfy and Pushover alerts | in source |
+| Observing a sessionpipe session, and opt-in waking of it when idle; Telegram, Slack, Discord, ntfy and Pushover alerts | in source |
 | macOS menu | in source (developer build) |
-| Loops across devices; waking an observed sessionpipe session | planned |
+| Loops across devices | planned |
 
 What has been verified for each, and what is still open, is in [availability](docs/availability.md).
 

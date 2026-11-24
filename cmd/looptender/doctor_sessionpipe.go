@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/looptender/looptender/internal/adapter/sessionpipe"
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/state"
 )
 
 // sessionpipeMinVersion is the oldest sessionpipe whose tier-0 file sink and
@@ -23,6 +25,18 @@ const sessionpipeMinVersion = "0.18.0"
 // sessionpipeObservedNotice is what doctor, status and the dock say about an
 // observed target.
 const sessionpipeObservedNotice = "Observed, never woken: looptender reads this session's tier-0 sessionpipe events and never sends to, wakes, re-prompts or stops it. Pause and resume change only whether looptender checks it; nothing is ever sent. A stop ends the checks and leaves the session alone."
+
+// sessionpipeWakeNotice is the same for a loop with sessionpipe.send:
+// wake_only.
+const sessionpipeWakeNotice = "Observed, woken only when idle: looptender reads this session's tier-0 sessionpipe events and, because this loop opted in, wakes it through sessionpipe ask when it is between turns, within the loop's send limits and holds. It never nudges, re-prompts or stops it, and never reads the answer. Pause stops checks and wakes; resume starts them again. A stop ends the checks and leaves the session alone."
+
+// observedNotice is the sentence for an observed agent.
+func observedNotice(wakes bool) string {
+	if wakes {
+		return sessionpipeWakeNotice
+	}
+	return sessionpipeObservedNotice
+}
 
 // sessionpipeSinkCommand is the one line the person runs to add the sink.
 func sessionpipeSinkCommand() string {
@@ -38,7 +52,7 @@ func sessionpipeSinkCommand() string {
 // then the events file. The last check, next, names the first that failed and
 // its next step, or says every check passed.
 func doctorSessionpipe(ctx context.Context, r *doctorReport, prefix string, s *config.Sessionpipe, offline bool, timeout time.Duration, run doctorRun) {
-	r.add(prefix+".observed", "ok", sessionpipeObservedNotice, "")
+	r.add(prefix+".observed", "ok", observedNotice(s.Send == config.SessionpipeSendWakeOnly), "")
 	start := len(r.Checks)
 	sink := doctorSessionpipeTool(ctx, r, prefix, s, offline, timeout, run)
 	doctorSessionpipeFileStep(r, prefix+".events_file", s.EventsFile, sink)
@@ -105,6 +119,10 @@ func doctorSessionpipeTool(ctx context.Context, r *doctorReport, prefix string, 
 		r.add(prefix+".version", "error", "sessionpipe "+v+" is older than "+sessionpipeMinVersion+", the oldest version this target reads.", "Update sessionpipe (sessionpipe update), then run doctor again.")
 	default:
 		r.add(prefix+".version", "ok", "sessionpipe "+v+" (this target needs "+sessionpipeMinVersion+" or later).", "")
+	}
+	if s.Send == config.SessionpipeSendWakeOnly {
+		out, err := call("ask", "status")
+		doctorSessionpipeAsk(r, prefix+".send", out, err)
 	}
 	out, err = call("status", "--json")
 	if err != nil {
@@ -268,4 +286,71 @@ func versionBefore(v, min string) bool {
 		}
 	}
 	return false
+}
+
+// doctorSessionpipeAsk checks what a wake needs from sessionpipe: asking on,
+// and its background service running. It reads `sessionpipe ask status`, a
+// page for a person, by its two fixed lines only; nothing else is printed.
+func doctorSessionpipeAsk(r *doctorReport, id string, out []byte, err error) {
+	if err != nil {
+		r.add(id, "unavailable", "sessionpipe ask status failed, timed out, or exceeded its output limit, so whether a wake can be delivered is unknown.", "Run sessionpipe ask status yourself.")
+		return
+	}
+	var on, off, running, stopped bool
+	for _, l := range strings.Split(string(out), "\n") {
+		l = strings.TrimSpace(l)
+		switch {
+		case l == "ask: on":
+			on = true
+		case strings.HasPrefix(l, "ask: off"):
+			off = true
+		case strings.HasPrefix(l, "daemon: running"):
+			running = true
+		case strings.HasPrefix(l, "daemon: not running"):
+			stopped = true
+		}
+	}
+	switch {
+	case off:
+		r.add(id, "error", "sessionpipe.send is wake_only, but asking is off in sessionpipe, so every wake would be refused (ask_off).", "Turn it on yourself, at this computer's terminal: sessionpipe ask on. looptender never runs it.")
+	case stopped:
+		r.add(id, "error", "sessionpipe.send is wake_only, but sessionpipe's background service is not running, so a wake cannot be delivered.", "Start it as sessionpipe describes (sessionpipe ask on installs it); looptender never starts it.")
+	case on && running:
+		r.add(id, "ok", "Wakes are on: asking is on in sessionpipe and its background service is running. A wake still needs the session's folder on sessionpipe control folders; a refusal says so by its code.", "")
+	default:
+		r.add(id, "unavailable", "sessionpipe ask status printed an unrecognized page, so whether a wake can be delivered is unknown; raw output is withheld.", "Run sessionpipe ask status yourself.")
+	}
+}
+
+// sessionpipeWakeStatus is an outstanding wake, for status and doctor.
+type sessionpipeWakeStatus struct {
+	Since      time.Time `json:"since"`
+	ForSeconds int64     `json:"forSeconds"`
+	Text       string    `json:"text"`
+}
+
+// pendingSessionpipeWake reads the target's wake record; nil when no wake is
+// running.
+func pendingSessionpipeWake(stateDir, target string, now time.Time) *sessionpipeWakeStatus {
+	since, pending := sessionpipe.PendingWake(filepath.Join(stateDir, "targets", target), now)
+	if !pending {
+		return nil
+	}
+	d := now.Sub(since).Round(time.Second)
+	return &sessionpipeWakeStatus{Since: since, ForSeconds: int64(d / time.Second),
+		Text: fmt.Sprintf("a wake has been running since %s (%s): the agent has not finished answering it, so the next wake waits. sessionpipe has no cancel; a wake still running after a day no longer holds the next one back.", since.Local().Format(time.RFC3339), d)}
+}
+
+// doctorSessionpipeWake reports an outstanding wake: a warning once it has
+// run for an hour, since every later wake waits for it.
+func doctorSessionpipeWake(r *doctorReport, id, stateDir string, now time.Time) {
+	pw := pendingSessionpipeWake(stateDir, state.Primary, now)
+	switch {
+	case pw == nil:
+		r.add(id, "ok", "No wake is outstanding.", "")
+	case time.Duration(pw.ForSeconds)*time.Second >= time.Hour:
+		r.add(id, "warning", "A wake has been outstanding for a long time: "+pw.Text, "Look at the session: sessionpipe delivered the wake and the agent is still answering, or the delivery is stuck in sessionpipe. Wakes resume once it ends.")
+	default:
+		r.add(id, "ok", "A wake is being answered: "+pw.Text, "")
+	}
 }
