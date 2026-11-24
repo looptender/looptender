@@ -32,7 +32,7 @@ func accountsDirectory(path string) (string, error) {
 }
 func accountsCommand(e env, args []string, run accountRun) int {
 	if len(args) == 0 {
-		e.errf("usage: accounts list|add|update|check|usage [flags]")
+		e.errf("usage: accounts list|add|update|check|usage|connect|disconnect [flags]")
 		return exitUsage
 	}
 	op := args[0]
@@ -58,13 +58,15 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	fs.Visit(func(f *flag.Flag) { supplied[f.Name] = true })
 	for k := range supplied {
 		allowed := k == "directory" || k == "json" || ((op == "check" || op == "update" || op == "usage") && k == "id") ||
-			((op == "add" || op == "update") && (k == "label" || k == "provider" || k == "selection" || k == "cli" || k == "account-dir" || k == "workdir" || (op == "update" && k == "expect")))
+			((op == "add" || op == "update") && (k == "label" || k == "provider" || k == "selection" || k == "cli" || k == "account-dir" || k == "workdir" || (op == "update" && k == "expect"))) ||
+			(op == "connect" && (k == "label" || k == "provider" || k == "cli" || k == "workdir" || k == "id")) ||
+			(op == "disconnect" && (k == "label" || k == "id"))
 		if !allowed {
 			e.errf("accounts: flag not allowed for this operation")
 			return exitUsage
 		}
 	}
-	if op != "list" && op != "add" && op != "update" && op != "check" && op != "usage" {
+	if op != "list" && op != "add" && op != "update" && op != "check" && op != "usage" && op != "connect" && op != "disconnect" {
 		return exitUsage
 	}
 	path, err := accountsDirectory(*dir)
@@ -74,6 +76,12 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	}
 	if op == "usage" {
 		return accountsUsage(e, path, *id, *asJSON)
+	}
+	if op == "connect" {
+		return accountsConnect(e, path, accountConnectOptions{provider: *provider, label: *label, like: *id, cli: *cli, workdir: *workdir, asJSON: *asJSON}, accountConnectDefaults())
+	}
+	if op == "disconnect" {
+		return accountsDisconnect(e, path, *id, *label, *asJSON)
 	}
 	now := time.Now().UTC()
 	caller := os.Getenv("BB_THREAD_ID")

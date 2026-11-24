@@ -808,6 +808,66 @@ registry/route-list plus 64 detailed quota fixture requires the existing main
 1 MiB response. Native remains bounded to 1 MiB.
 
 
+## Connect a subscription from a terminal (unreleased)
+
+One command connects another subscription of a provider you already use:
+
+```sh
+looptender accounts connect --provider claude-code --label "spare"
+looptender accounts connect --provider codex --label "spare"
+```
+
+What it does, in order:
+
+1. It makes a new private directory for the login inside the account catalog's
+   directory. It never uses a directory a session already runs in.
+2. It runs the provider's own sign-in in that directory (`claude auth login`,
+   or Codex's sign-in). You finish it in your browser. looptender does not see,
+   ask for or copy the login. For Codex it prints the provider's sign-in
+   address in case no browser opens.
+3. It asks the provider's tool whether the sign-in worked.
+4. It adds the directory to the catalog under your label, as an
+   `explicit_directory` entry.
+
+- **Where the executable comes from:** the first entry of that provider already
+  in the catalog supplies the executable and working directory; `--id` names
+  another entry to take them from, and `--cli` and `--workdir` name them
+  directly, which is how the first entry of a provider is connected.
+- **It refuses, before any sign-in:**
+  - a label another account has;
+  - a shell that sets a provider's authentication variable (run it from a plain
+    terminal);
+  - a provider executable it cannot admit. For Claude Code that is any build
+    other than the one this release was checked against; the message names it
+    and says how to sign in yourself and use `accounts add` instead.
+- **Antigravity:** a second account cannot be connected. Antigravity keeps one
+  login per computer, and the command says so.
+- **Not checked yet:** whether the new login is a different account from the
+  ones already connected. Signing in twice with the same account gives two
+  entries for one quota. The command says this every time.
+- **If the sign-in fails, is cancelled or takes longer than ten minutes:**
+  nothing is added. The private directory is kept, because the provider may
+  have written into it, and the message says where it is.
+- **Platforms:** as for the panel's Connect: Codex on macOS and Linux, Claude
+  Code on macOS arm64. Not Windows.
+
+To take a subscription out of the list:
+
+```sh
+looptender accounts disconnect --label "spare"
+```
+
+This removes the entry from the catalog and nothing else. It does not sign the
+login out and does not delete its directory: it prints the provider's own
+sign-out command for that directory, for you to run. A route that still names
+the account is reported by `looptender doctor`.
+
+`looptender accounts list` shows each entry with its provider, label and the
+last reported login state; `accounts check` refreshes that state and `accounts
+usage` reads a subscription's usage windows.
+
+Tested with stand-ins only. No real sign-in was run for this change.
+
 ## Connect an account in the panel (unreleased)
 
 The Accounts row offers **Connect Claude** or **Connect Codex** when quota is unavailable. This is an action, not a diagnosis: a missing quota reading can also mean an unsupported source or a failed request. A structured missing-login observation is shown separately as **Sign-in required**.
