@@ -587,7 +587,7 @@
   var NOTICE_KINDS = [
     ["needs_you", "A loop needs you"], ["limit", "A usage limit is hit"], ["supervisor_gone", "A supervisor stops answering"],
     ["lane_failed", "A lane fails"], ["hold", "A hold is set or lifted"], ["install", "An install is adopted or refused"],
-    ["disk", "The disk is low"], ["bound", "A deadline or send limit is reached"], ["host", "This computer's session or load"]
+    ["disk", "The disk is low"], ["bound", "A deadline or send limit is reached"], ["host", "This computer's session or load"], ["model_step", "A conversation is stepped to another model"]
   ];
   var NOTICE_DEFAULT_ON = { needs_you: true, limit: true, supervisor_gone: true, host: true };
   var NOTICE_RECENT = 10;
