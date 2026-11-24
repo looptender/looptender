@@ -527,6 +527,9 @@ type Card struct {
 	FailedCheckAt *time.Time `json:"failedCheckAt,omitempty"`
 	Uses          string     `json:"uses"`
 	Identity      string     `json:"identity"`
+	// Login is what the login fingerprint shows (logins.go); nil when the
+	// entry's login was never fingerprinted.
+	Login *LoginView `json:"login,omitempty"`
 	// NeedsPerson is true only when the card shows something a person must
 	// act on, named by Attention: no_login (the selected CLI reports no
 	// login), check_failed (the latest check did not establish a result) or
@@ -717,6 +720,9 @@ func ReadView(dir string, now time.Time) View {
 	}
 	v := Project(f, now)
 	AttachQuota(&v, QuotaViews(dir, f, os.Environ(), now))
+	if logins, err := LoadLogins(dir); err == nil {
+		AttachLogins(&v, logins)
+	}
 	return v
 }
 

@@ -77,12 +77,17 @@ type Options struct {
 	BacklogQuery prbacklog.Query // nil uses fixed read-only gh query when opted in
 	// UsageRead reads an account's quota for the loop's usage watch; nil
 	// reads nothing, so the watch never warns.
-	UsageRead   UsageReadFunc
-	Fingerprint func([]string) (string, error)
-	NewAdapter  factory.Func
-	Probe       ProbeFunc
-	Reporter    report.Reporter
-	Busy        func(ctx context.Context, y config.Yield) (bool, error)
+	UsageRead UsageReadFunc
+	// AccountCheck runs the accounts catalog's own login check (the CLI's
+	// version and auth status: no model request) of an entry, so its login
+	// fingerprint is current. Called when the active target is at a usage
+	// limit and its route states the entry; nil checks nothing.
+	AccountCheck func(ctx context.Context, account string)
+	Fingerprint  func([]string) (string, error)
+	NewAdapter   factory.Func
+	Probe        ProbeFunc
+	Reporter     report.Reporter
+	Busy         func(ctx context.Context, y config.Yield) (bool, error)
 	// Online reports connectivity once. Nil uses the loop's network settings;
 	// a loop with the check off is never checked.
 	Online func(ctx context.Context) bool
@@ -951,6 +956,7 @@ func (t *tick) run() error {
 		res.ResetsAt = &r
 	}
 	t.noteUsageLimit(target, agent, obs)
+	t.limitAccountCheck(agent, obs)
 	inWindow, why, err := window.Inside(loop.Window, t.now)
 	if err != nil {
 		return err
