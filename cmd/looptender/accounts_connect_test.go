@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -28,6 +29,11 @@ type connectRig struct {
 
 func newConnectRig(t *testing.T, provider string) *connectRig {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		// The real command refuses there before anything else
+		// (panelConnectSupported); these tests replace that check.
+		t.Skip("connecting an account is not supported on Windows")
+	}
 	dir, template := accountFixture(t, provider)
 	g := &connectRig{dir: dir, template: template}
 	g.deps = accountConnectDeps{
@@ -294,6 +300,14 @@ func TestAccountsDisconnect(t *testing.T) {
 // other operations.
 func TestAccountsConnectThroughTheCommand(t *testing.T) {
 	dir, _ := accountFixture(t, "codex")
+	if runtime.GOOS == "windows" {
+		// Unsupported there: the command says so and starts nothing.
+		var out, errs bytes.Buffer
+		code := accountsCommand(env{ctx: context.Background(), stdout: &out, stderr: &errs}, []string{"connect", "--directory", dir, "--provider", "codex", "--label", "Example spare"}, nil)
+		if code != exitFailed || !strings.Contains(errs.String(), "not supported on this system") {
+			t.Fatalf("exit %d, said %q", code, errs.String())
+		}
+	}
 	var out, errs bytes.Buffer
 	e := env{ctx: context.Background(), stdout: &out, stderr: &errs}
 	if code := accountsCommand(e, []string{"connect", "--directory", dir, "--provider", "antigravity", "--label", "Example spare"}, nil); code != exitFailed || !strings.Contains(errs.String(), accountConnectAntigravity) {
