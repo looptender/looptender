@@ -2036,10 +2036,16 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 		}
 		text, usageCarried := t.usageWarningText(d, text)
 		if d.HostOverloadWake {
+			// A notice-only wake carries nothing else: the usage warning it
+			// replaced is not told yet, and goes with the next ordinary wake.
 			text = prompt.HostOverloadOnly(t.decisionInput.Obs.ActiveChildren)
+			usageCarried = false
 		}
 		var stepCarried bool
-		text.Text, stepCarried = t.withModelStepNote(text.Text)
+		if !text.NoticeOnly {
+			// The model-step line waits for an ordinary wake, too.
+			text.Text, stepCarried = t.withModelStepNote(text.Text)
+		}
 		var backlogNotice *backlogDelivery
 		if d.Action == decide.Wake && !d.AssignmentWake && !text.NoticeOnly && loop.PRBacklog != nil {
 			var allowed bool

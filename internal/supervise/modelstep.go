@@ -152,6 +152,15 @@ func (t *tick) stepBack(ms adapter.ModelSetter, rec state.ModelStep, obs decide.
 		return nil
 	}
 	switch {
+	case setting != nil && obs.TurnModel == "" && t.now.Sub(rec.ResetsAt) >= state.UnconfirmedFor:
+		// A day past the reset and still no model reported: stop asking.
+		rec.StoodDown, rec.StoodDownAt, rec.StoodDownWhy = true, t.now, "looptender could not confirm the conversation's model"
+		if err := state.SaveModelStep(t.loop.StateDir, &rec); err != nil {
+			t.warn("the model step-down record could not be saved: %v", err)
+		}
+		t.res.ModelStep = "stood_down"
+		t.warn("model step-down: not moved back to %s: BB reported no model for the conversation for a day after the reset, so it could not be confirmed; it stays on the model it is on", rec.From)
+		return nil
 	case setting != nil && obs.TurnModel == "":
 		t.res.ModelStep = "step_back_unconfirmed"
 		// Said as a warning: the check's own decision follows and sets the reason.
@@ -161,7 +170,7 @@ func (t *tick) stepBack(ms adapter.ModelSetter, rec state.ModelStep, obs decide.
 		t.clearModelStep() // already back, by a person or the agent
 		return nil
 	case setting == nil || now != state.ModelFamily(rec.To):
-		rec.StoodDown = true
+		rec.StoodDown, rec.StoodDownAt = true, t.now
 		if err := state.SaveModelStep(t.loop.StateDir, &rec); err != nil {
 			t.warn("the model step-down record could not be saved: %v", err)
 		}

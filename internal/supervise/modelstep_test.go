@@ -237,3 +237,28 @@ func TestModelStepBackComparesFamiliesAndWaitsWhenUnknown(t *testing.T) {
 		}
 	}
 }
+
+// When BB never reports a model, the step back waits a day past the reset,
+// then stands down saying it could not confirm the model.
+func TestModelStepBackStandsDownADayWithoutAModel(t *testing.T) {
+	reset := t0.Add(30 * time.Hour)
+	w, s := steppingWorld(t, decide.Observation{State: decide.Idle})
+	if err := state.SaveModelStepSetting(w.dir, &state.ModelStepSetting{Models: []string{"opus", "sonnet"}, SetAt: t0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveModelStep(w.dir, &state.ModelStep{From: "opus", To: "sonnet", Window: "seven_day_opus", ResetsAt: reset}); err != nil {
+		t.Fatal(err)
+	}
+	if res := stepTick(t, w, s, reset.Add(23*time.Hour)); res.ModelStep != "step_back_unconfirmed" {
+		t.Fatalf("%+v", res)
+	}
+	res := stepTick(t, w, s, reset.Add(state.UnconfirmedFor+time.Minute))
+	rec, _ := state.LoadModelStep(w.dir)
+	if res.ModelStep != "stood_down" || len(s.models) != 0 || rec == nil || !rec.StoodDown || !strings.Contains(rec.StoodDownWhy, "could not confirm") {
+		t.Fatalf("%+v %+v", res, rec)
+	}
+	// Asked no more.
+	if res := stepTick(t, w, s, reset.Add(state.UnconfirmedFor+time.Hour)); res.ModelStep != "" {
+		t.Fatalf("%+v", res)
+	}
+}

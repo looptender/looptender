@@ -77,7 +77,18 @@ type ModelStep struct {
 	// model (or step-down was off), so it was not moved back; it stays on
 	// the model it is on. Cleared by the next step-down or model-step --off.
 	StoodDown bool `json:"stoodDown,omitempty"`
+	// StoodDownAt is when it stood down; StoodDownWhy is fixed words for
+	// why, when it is not the usual reason.
+	StoodDownAt  time.Time `json:"stoodDownAt,omitempty"`
+	StoodDownWhy string    `json:"stoodDownWhy,omitempty"`
 }
+
+// UnconfirmedFor is how long after the reset a step back waits for BB to
+// report the conversation's model before it stands down.
+const UnconfirmedFor = 24 * time.Hour
+
+// StoodDownShown is how long a stand-down is said in the notice list.
+const StoodDownShown = 24 * time.Hour
 
 // ModelStepNoteName holds the one line the agent is told with its next
 // message after its model was changed, so it knows which model it is on and
