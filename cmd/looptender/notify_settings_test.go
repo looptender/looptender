@@ -36,7 +36,7 @@ func TestNotifyStateDefaultsChoicesAndTheMenusHeartbeat(t *testing.T) {
 		t.Fatalf("choices: %+v", st)
 	}
 	// The menu's heartbeat: notifying while fresh, not after, and its last time is kept.
-	if err := notifyBeat(dir, true, now); err != nil {
+	if err := notifyBeat(dir, true, 0, now); err != nil {
 		t.Fatal(err)
 	}
 	if st = readNotifyState(dir, now.Add(time.Minute)); !st.Menu.Notifying || st.Menu.LastRunningAt == nil || !st.Menu.LastRunningAt.Equal(now) {
@@ -45,7 +45,7 @@ func TestNotifyStateDefaultsChoicesAndTheMenusHeartbeat(t *testing.T) {
 	if st = readNotifyState(dir, now.Add(notifyMenuFresh+time.Second)); st.Menu.Notifying || st.Menu.LastRunningAt == nil {
 		t.Errorf("stale: %+v", st.Menu)
 	}
-	if err := notifyBeat(dir, false, now); err != nil {
+	if err := notifyBeat(dir, false, 0, now); err != nil {
 		t.Fatal(err)
 	}
 	if st = readNotifyState(dir, now); st.Menu.Notifying {
@@ -149,7 +149,7 @@ func TestPanelNotifyRouteWorksOnAReadOnlyPanelAndGuardsItself(t *testing.T) {
 func TestPanelListAndTheDockReportCarryTheNotifyState(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
-	_ = notifyBeat(dir, true, now)
+	_ = notifyBeat(dir, true, 0, now)
 	r := buildDockReport(nil, now, time.Minute, defaultStaleAfter, false, true, 0, true)
 	r.Notify = readNotifyState(dir, now)
 	b, _ := json.Marshal(buildPanelList(r))
@@ -182,5 +182,39 @@ func TestPanelNotifyCommandWritesTheSharedFilesAndRefusesBadArguments(t *testing
 		if code, _ := run(bad...); code != exitUsage {
 			t.Errorf("%v: %d", bad, code)
 		}
+	}
+}
+
+func TestAQuittingMenuCannotRetractTheMenuThatReplacedIt(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	_ = notifyBeat(dir, true, 100, now)
+	// The new menu (200) has beaten; the old one (100) quits late with "not notifying".
+	_ = notifyBeat(dir, true, 200, now.Add(2*time.Second))
+	_ = notifyBeat(dir, false, 100, now.Add(3*time.Second))
+	if st := readNotifyState(dir, now.Add(4*time.Second)); !st.Menu.Notifying {
+		t.Error("the old menu's late quit retracted the new menu's beat")
+	}
+	// A menu quitting while its own beat is the file's says so.
+	_ = notifyBeat(dir, false, 200, now.Add(5*time.Second))
+	if st := readNotifyState(dir, now.Add(6*time.Second)); st.Menu.Notifying {
+		t.Error("a menu that quits retracts its own beat")
+	}
+}
+
+func TestHostIsAKindThatIsOnByDefaultAndCanBeSwitched(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	if st := readNotifyState(dir, now); !st.Kinds[noticeHost] {
+		t.Fatalf("host is on by default: %+v", st.Kinds)
+	}
+	if err := setNotify(dir, noticeHost, nil, false, now); err != nil {
+		t.Fatal(err)
+	}
+	if st := readNotifyState(dir, now); st.Kinds[noticeHost] {
+		t.Error("host cannot be turned off")
+	}
+	if !notifyKindKnown("host") {
+		t.Error("host is not a known kind")
 	}
 }

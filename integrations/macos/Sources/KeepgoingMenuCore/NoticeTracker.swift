@@ -33,8 +33,10 @@ public enum NoticeKinds {
         ("install", "An install is adopted or refused"),
         ("disk", "The disk is low"),
         ("bound", "A deadline or send limit is reached"),
+        ("host", "This computer's session or load"),
+        ("model_step", "A conversation is stepped to another model"),
     ]
-    public static let defaultOn: Set<String> = ["needs_you", "limit", "supervisor_gone"]
+    public static let defaultOn: Set<String> = ["needs_you", "limit", "supervisor_gone", "host"]
 }
 
 /// The notification settings the CLI keeps in one place, shared by the menu,

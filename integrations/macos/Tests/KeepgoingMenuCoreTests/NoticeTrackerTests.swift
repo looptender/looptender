@@ -82,7 +82,10 @@ final class NoticeTrackerTests: XCTestCase {
     }
 
     func testSettingsAreTheSharedOnesAndDefaultWithoutThem() {
-        XCTAssertEqual(NoticeKinds.all.filter { NoticeSettings.isOn($0.kind, nil) }.map(\.kind), ["needs_you", "limit", "supervisor_gone"])
+        XCTAssertEqual(NoticeKinds.all.filter { NoticeSettings.isOn($0.kind, nil) }.map(\.kind), ["needs_you", "limit", "supervisor_gone", "host"])
+        XCTAssertEqual(NoticeKinds.all.first { $0.kind == "host" }?.label, "This computer's session or load", "host can be switched in the menu")
+        XCTAssertNotNil(NoticeKinds.all.first { $0.kind == "model_step" }, "so can a model step, and it is quiet by default")
+        XCTAssertFalse(NoticeSettings.isOn("model_step", nil))
         let shared = PanelNotify(kinds: ["needs_you": false, "disk": true])
         XCTAssertFalse(NoticeSettings.isOn("needs_you", shared))
         XCTAssertTrue(NoticeSettings.isOn("disk", shared))
@@ -95,8 +98,9 @@ final class NoticeTrackerTests: XCTestCase {
         XCTAssertEqual(MenuBuilder.arguments(.notifySet(kind: "limit", on: false)), ["panel", "notify", "set", "--kind", "limit", "--off"])
         XCTAssertNil(MenuBuilder.arguments(.notifySet(kind: "--on", on: true)), "only a known kind")
         XCTAssertNil(MenuBuilder.arguments(.notifySet(kind: "disk; rm", on: true)))
-        XCTAssertEqual(MenuBuilder.arguments(.notifyHeartbeat(notifying: true)), ["panel", "notify", "heartbeat", "--notifying=true"])
-        XCTAssertEqual(MenuBuilder.arguments(.notifyHeartbeat(notifying: false)), ["panel", "notify", "heartbeat", "--notifying=false"])
+        XCTAssertEqual(MenuBuilder.arguments(.notifyHeartbeat(notifying: true, pid: 4242)), ["panel", "notify", "heartbeat", "--notifying=true", "--pid=4242"])
+        XCTAssertEqual(MenuBuilder.arguments(.notifyHeartbeat(notifying: false, pid: 4242)), ["panel", "notify", "heartbeat", "--notifying=false", "--pid=4242"])
+        XCTAssertNil(MenuBuilder.arguments(.notifyHeartbeat(notifying: false, pid: 0)), "a beat always names the menu that wrote it")
     }
 
     func testAGroupIsToldByItsRealTotalNotOnlyByWhatIsNew() {
