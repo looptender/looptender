@@ -74,7 +74,7 @@ They are separate processes of the same `looptender` binary: `looptender router 
 
 ## Decisions
 
-Recorded 2026-11-24. The owner's answers are quoted exactly; where the owner delegated, the decision is the coordinator's.
+Recorded 2026-11-24. The owner's answers are quoted; where the owner delegated, the decision is the coordinator's.
 
 | # | Question | Decision | By |
 |---|---|---|---|
@@ -103,7 +103,7 @@ The pool's mechanism is in use and was exercised in the lab, so where this desig
 | Pointing Claude Code at a local address | `ANTHROPIC_BASE_URL` in the `env` block of `settings.json`, read at session start | source | The same. |
 | Keeping the client's first-party behaviour behind a custom address | `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1` in the same block | source | The same setting is part of the pointer, instead of hoping none is needed (V3 then checks that nothing else differs). |
 | Using another subscription for one request | Replace the request's `Authorization` with that subscription's access token | lab | The same. |
-| Saying which account a request is for | Rewrite the account part of the body's `metadata.user_id` to the serving account, keeping the session part | lab | **Adopted, replacing the earlier "the front never changes a body".** With another subscription's token and the home account's id, a request names two accounts; the rewrite makes it name the one that serves it. It is the only change the front makes to a body, it is made only on a routed request, and the account id is read with the token and kept in memory only. The catalog still stores no identity. |
+| Saying which account a request is for | Rewrite the account part of the body's `metadata.user_id` to the serving account, keeping the session part | lab | **Adopted, replacing the earlier "the front never changes a body".** With another subscription's token and the home account's id, a request names two accounts; the rewrite makes it name the one that serves it. It is the only change the front makes to a body, it is made only on a routed request, and the account id is read with the token and kept in memory only. The catalog still stores no identity. The limits on it are under [Hard rules](#hard-rules). |
 | Knowing a subscription's room | The `anthropic-ratelimit-unified-*` headers of each answer, passed through to the client | lab | The same, as the first source. |
 | Stickiness | The session id in `metadata.user_id` | lab | The same. |
 | A limit answer before the first byte | One retry on the next account; none after the first byte | lab | The same, plus a visible count when the retry also fails. |
@@ -128,7 +128,7 @@ This is the design if V1 is false: Claude Code, pointed at a custom address with
 - Nobody refreshes the home subscription's login any more, because the client has stopped using it. The idle-subscription problem then applies to every subscription, so reading the official store is not enough. Each subscription needs a long-lived token made by the official tool and kept by looptender in the system's secret store (the option left open in D-Open). That is a decision for the owner at that point, since looptender would hold credentials.
 - The front must be able to serve without the router. At start, and again before expiry, it is given each client's home token and keeps it in memory; if the router has never answered, it reads its own clients' home tokens from the secret store itself. That one read-only reader is the only addition to the front.
 
-**What replaces the first rule:** "A pointed session survives everything that stops sessionpipe's pool except the loss of the front itself." Concretely:
+**What replaces the first rule:** "A pointed session survives everything that stops sessionpipe's pool except the loss of the front, or of the home tokens the front holds." Concretely:
 
 | Situation | Session |
 |---|---|
@@ -142,6 +142,8 @@ This is the design if V1 is false: Claude Code, pointed at a custom address with
 - A pointed session depends on the front holding a valid token; its own login is no longer a fallback.
 - Whatever the client does only with its own login behaves as it does under the pool.
 - looptender holds long-lived tokens.
+- Losing the home tokens the front holds (the secret store unreadable when a token must be read again, a token revoked) stops a pointed session, where in the main design it would go on with its own login.
+- `router off` is no longer "off at once, without a restart". A running pointed session has no login of its own in its requests, so the front has to keep serving it on its home token until that session ends; only sessions started after `router off` are back on their own login. `router off` says how many sessions are still being served and that the front stays until they end.
 
 Everything else is unchanged: two processes, streams held by the front, the routing rules, the modes, the pointer check, the surfaces. In the code, the front's "own" decision becomes "the home token" and the secret is read from the bearer instead of a header.
 
@@ -163,7 +165,7 @@ To a person this is one switch: **switch subscriptions at a limit, on or off**. 
 | Step | When | What happens | What the person is told |
 |---|---|---|---|
 | 1 | A usage window is full on the subscription a conversation is on, and another subscription of the same provider has room | The conversation continues on that one (this design) | "Moved to <label>: <which limit> on <label>, back after <time>." |
-| 2 | Every subscription of that provider is full for the model in use, and model step-down is turned on for the loop (#512) | The conversation steps down to the next model, on the subscription with room for it | "All subscriptions are at the <model> limit. Stepped down to <model> until <time>." If step-down is off: "Step-down is off; `looptender model-step` turns it on." |
+| 2 | Every subscription of that provider is full for the model in use, and model step-down is turned on for the loop (#512) | The conversation steps down to the next model, on the subscription with room for it | "All subscriptions are at the <model> limit. Stepped down to <model> until <time>." If step-down is off: "Step-down is off; `looptender model-step` turns it on." The router relies on this step only once #512's open review findings about a step back that was not confirmed are settled. |
 | 3 | Nothing of that provider can serve, and a takeover to another provider is armed | A new conversation on the other provider takes over, with a brief | The existing takeover text, plus "every <provider> subscription is at its limit until <time>". If none is armed: the command that arms one. |
 | 4 | None of the above | The loop waits for the earliest reset | "All <n> subscriptions are at a limit; the first to have room is <label> at <time>." |
 
@@ -185,7 +187,7 @@ looptender accounts connect --provider claude-code --label spare
 2. It runs the provider's **official** sign-in for that directory. The person signs in in their browser. looptender never sees, asks for or copies the credential.
 3. It asks the official tool whether the sign-in worked.
 4. It checks that the new login is not one already connected, by comparing the keyed login fingerprint from PR #498 (never the identity itself). If it is the same account, it says so plainly: "This is the same account as <label>, so it adds no second quota. Kept nothing." and removes the entry it was about to add.
-5. It adds the entry to the catalog under the label, and to the router's set if switching is on.
+5. It adds the entry to the catalog under the label, and to the router's set if switching is on. A Codex login is not added to the router's set until X7 holds (reading that login from another program without a prompt); until then it is a catalog entry like any other.
 
 - **`looptender accounts disconnect --label spare`** takes the entry out of the catalog and the router's set and prints the official tool's own sign-out command for that directory. It does not sign out or delete the directory by itself.
 - **`looptender accounts list`** shows, per subscription: provider, label, whether the login still works, and its usage windows with their age.
@@ -413,7 +415,12 @@ A subscription nobody is running sessions in has nobody refreshing its token. Ac
 - Nothing of a request or response is logged or stored. The only per-request facts that leave the front are: conversation key, model name, status code, `Retry-After`, rate-limit header values. On disk the conversation id is kept only as a keyed hash.
 - Another subscription's token is attached only to the provider's message paths (an allowlist). Only the provider's API paths are forwarded at all (an allowlist of prefixes); on those, every path that is not a message path goes through unchanged on the session's own login. Paths that mint a credential (making a key, exchanging or granting a token), and billing paths, are always refused. The refusal is by what a path does, not by a name it contains: Claude Code also makes read-only calls with the session's own login under the provider's sign-in prefix (account settings, roles, file upload) [unverified which, V16], and refusing those would leave a pointed session worse off than without the router.
 - No credential is copied between stores. No token appears in `status`, `doctor`, a notice, the panel, the timeline or a report.
-- The front changes one thing in a body and nothing else: on a routed request, the account named in `metadata.user_id` becomes the serving subscription's (see [What is taken from sessionpipe's pool](#what-is-taken-from-sessionpipes-pool)). It never rewrites the model or the prompt, and never changes a request that goes on the session's own login.
+- The front changes one thing in a body and nothing else: on a routed request, the account named in `metadata.user_id` becomes the serving subscription's (see [What is taken from sessionpipe's pool](#what-is-taken-from-sessionpipes-pool)). It never rewrites the model or the prompt, and never changes a request that goes on the session's own login. The rewrite is bound by these rules:
+  - Only the account part inside the `user_id` string is replaced, in place. The body is never decoded and written out again: every other byte is identical, and a test holds that.
+  - A request is routed only when the rewrite is possible. A body that is not JSON, has no `user_id`, or has one of an unexpected shape goes on the session's own login, unchanged.
+  - A request whose body is over the size cap is never routed.
+  - An account id is never logged or stored, under the same rule as a token.
+  - The rewrite covers `user_id` and nothing else. Anything else in a request that names the home account is V13, and V13 failing stops routing; the front does not grow more rewrites to get around it.
 
 ## Routing
 
