@@ -144,8 +144,10 @@ final class NoticeTrackerTests: XCTestCase {
         let now = t0.addingTimeInterval(600)
         let view = NoticeView(recent: [RecentNotice(text: "example-api is asking you a question.", at: t0.addingTimeInterval(300))], on: ["needs_you": true, "disk": false])
         let rows = MenuBuilder.build(.unavailable, now: now, notices: view).rows
-        XCTAssertTrue(rows.contains { $0.title == "Recent" })
-        XCTAssertTrue(rows.contains { $0.title == "example-api is asking you a question. · 5 min ago" })
+        // Recent is one item with a submenu; the events and their age are inside it.
+        let recent = rows.first { $0.title == "Recent" }
+        XCTAssertEqual(recent?.submenu.map(\.title), ["example-api is asking you a question. · 5 min ago"])
+        XCTAssertFalse(rows.contains { $0.title.hasSuffix("5 min ago") }, "not listed at the top level")
         let parent = rows.first { $0.title == "Notify me when…" }
         XCTAssertEqual(parent?.submenu.count, NoticeKinds.all.count)
         XCTAssertEqual(parent?.submenu.first { $0.title == "A loop needs you" }?.detail, "on")
@@ -153,7 +155,7 @@ final class NoticeTrackerTests: XCTestCase {
         XCTAssertNil(MenuBuilder.arguments(.toggleNoticeKind("disk")))
         // No events yet: no Recent section, but the settings are there.
         let empty = MenuBuilder.build(.unavailable, now: now, notices: NoticeView(recent: [], on: [:])).rows
-        XCTAssertFalse(empty.contains { $0.title == "Recent" })
+        XCTAssertFalse(empty.contains { $0.title == "Recent" }, "no events, no Recent")
         XCTAssertTrue(empty.contains { $0.title == "Notify me when…" })
     }
 

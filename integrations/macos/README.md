@@ -17,6 +17,16 @@ integrations/macos/.build/debug/KeepgoingMenu --executable /path/to/keepgoing
 
 For a non-default registry, pass `--directory /private/example-registry` to the CLI registration and `--registry-directory /private/example-registry` to the menu executable. Executable and directory arguments must be absolute. The preview does not discover binaries, scan for loops, register loops, retain configuration, or start at login. Quitting the menu leaves supervision alone.
 
+## How the menu is laid out
+
+Narrow, grouped, and quiet about what does not matter. A row is the loop's display name (as the panel shows it, cut at its end at 32 characters, never in the middle) and one short state word. Where it runs, its model, its build and when it was last checked are in the row's submenu, above the choices.
+
+- **Needs you** lists only the loops a person can act on now, each with what it waits for (`Asked you`, `On hold`, `Checks stopped`). **Working** lists the rest that are running (including at a limit, offline or failing). One collapsed item, **Other loops (N)**, holds paused, off, stopped, finished, archived and replaced loops.
+- An archived or replaced loop never counts in "N loops need you" or the icon, whatever hold it kept, and never appears in the first two groups.
+- **Accounts** is one item with a submenu of all the accounts; only those at or above 80% used (at most two) are shown above it.
+- One grey line, "2 supervisors not on the installed build", appears only when that is so. **Recent** is a submenu.
+- At the bottom: Pause All, Stop All, Recent, Notify me when, Update automatically, Quit, and the status line. What each control does is unchanged.
+
 ## What the menu shows
 
 ```text
@@ -27,7 +37,7 @@ example-api     Waiting for you   >
 example-docs    Supervising       >
 example-site    Paused            >    Open in Panel
 ---------------------------------      -------------
-Open Panel with Controls…              Resume…
+                                       Resume…
 Stop the Panel Page   stops by…        Stop…
 Quit looptender Menu
 ---------------------------------

@@ -1177,6 +1177,9 @@ type panelListLoop struct {
 	Naming *loopNaming `json:"naming,omitempty"`
 	// Lineage: as on the page's loop.
 	Lineage *listLineage `json:"lineage,omitempty"`
+	// Superseded is set when the loop was replaced by a successor (its hold
+	// is superseded or its archive record names a successor).
+	Superseded bool `json:"superseded,omitempty"`
 }
 
 func buildPanelList(r dockReport) panelList {
@@ -1233,6 +1236,7 @@ func buildPanelList(r dockReport) panelList {
 		// The list carries no note (it never has): when, and the hold.
 		row.Archived, row.ArchiveLapsed = withoutNote(l.Archived), withoutNote(l.ArchiveLapsed)
 		row.Naming, row.Lineage = l.Naming, l.Lineage // already as lists carry them
+		row.Superseded = l.Hold.State == "superseded" || (l.Archived != nil && l.Archived.ContinuedIn != nil)
 		if row.Archived != nil {
 			out.Archived++
 		}
