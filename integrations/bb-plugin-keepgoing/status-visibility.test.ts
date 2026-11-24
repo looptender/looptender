@@ -136,7 +136,7 @@ test("an unpunctuated remedy is cut to 240 characters in the reasons", () => {
     unreadable: [{ file: "state.json", problem: "not_json", remedy: "word ".repeat(200).trim() }] };
   const line = reasonLines("enabled", null, d)[0]!;
   const remedy = line.slice("state.json could not be read (its content is not JSON). ".length);
-  assert.equal(remedy.length, 240); assert.ok(remedy.endsWith("…"));
+  assert.ok(remedy.length <= 240 && remedy.length > 200); assert.ok(remedy.endsWith("word…"), "cut at a whole word, with an ellipsis");
 });
 
 test("the listing says a low disk once, as disk=low, and nothing for an ok one", async () => {

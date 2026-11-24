@@ -52,3 +52,23 @@ test("status's buildFreshness and raised flag reach the card's details as sent; 
   const bad = await loopWith({ ...healthy, buildFreshness: "garbage", noProgress: [] });
   try { const d = (await bad.forThread()).loops[0]!.details; assert.deepEqual(d.unparsed, ["buildFreshness", "noProgress"]); assert.equal(d.buildFreshness, undefined); } finally { await bad.dispose(); }
 });
+
+test("a long freshness action is cut at a whole word with an ellipsis, not mid-word", async () => {
+  const action = ("end its process yourself and start it again with the daemon command in a terminal you leave open, ").repeat(8).trim();
+  const w = await loopWith({ ...healthy, buildFreshness: { state: "different", text: "Different build from the installed one", action } });
+  try {
+    const got = (await w.forThread()).loops[0]!.details.buildFreshness!.action!;
+    assert.ok(got.length <= 600 && got.endsWith("…"), got.slice(-30));
+    assert.ok(action.startsWith(got.slice(0, -1).trimEnd()) && /\s/.test(action[got.slice(0, -1).trimEnd().length]!), "ends on a whole word");
+  } finally { await w.dispose(); }
+});
+
+test("a wait in status reaches the card as its condition only; the sentence and the private note are not read", async () => {
+  const w = await loopWith({ ...healthy, controlState: "awaiting user", wait: { until: "limit-reset", since: "2026-01-01T00:00:00Z", expiresAt: "2026-01-02T00:00:00Z", text: "waits for a usage-limit reset since 01:00", note: "SECRET-NOTE" } });
+  try {
+    const d = (await w.forThread()).loops[0]!.details;
+    assert.deepEqual(d.wait, { until: "limit-reset", expiresAt: "2026-01-02T00:00:00Z" });
+  } finally { await w.dispose(); }
+  const bad = await loopWith({ ...healthy, wait: "x" });
+  try { const d = (await bad.forThread()).loops[0]!.details; assert.equal(d.wait, undefined); assert.ok(d.unparsed?.includes("wait")); } finally { await bad.dispose(); }
+});

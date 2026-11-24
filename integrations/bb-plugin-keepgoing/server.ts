@@ -3,7 +3,7 @@
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
 import { BUILD_LABEL } from "./build-label.ts";
-import { recordsUnreadable, isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, limitWaitListingTag, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
+import { cutAtWord, recordsUnreadable, isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, limitWaitListingTag, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract } from "./host-contract.ts";
@@ -52,7 +52,7 @@ const statusSchema = z.object({
   targetAgent: agentRef.optional(),
   // Fields status adds later. Each is checked on its own in `lenient`: one that is
   // malformed is named in details.unparsed, never taken for "nothing to say".
-  archived: z.unknown().optional(), archiveLapsed: z.unknown().optional(), naming: z.unknown().optional(), buildFreshness: z.unknown().optional(), noProgress: z.unknown().optional(),
+  wait: z.unknown().optional(), archived: z.unknown().optional(), archiveLapsed: z.unknown().optional(), naming: z.unknown().optional(), buildFreshness: z.unknown().optional(), noProgress: z.unknown().optional(),
   deadline: z.unknown().optional(), deadlineReached: z.unknown().optional(), sendAllowance: z.unknown().optional(), sendRecord: z.unknown().optional(), diskSpace: z.unknown().optional(), unreadable: z.unknown().optional(),
 });
 
@@ -86,6 +86,7 @@ const unreadableShape = z.object({ file: z.string(), problem: z.string(), offset
 const noProgressShape = z.object({ availability: z.string(), text: z.string() });
 const archivedShape = z.object({ at: z.string().optional(), hold: z.string().optional(), unreadable: z.boolean().optional() }).passthrough();
 const freshnessShape = z.object({ state: z.string(), text: z.string(), detail: z.string().optional(), command: z.string().optional(), action: z.string().optional() });
+const waitShape = z.object({ until: z.string(), untilTime: z.string().optional(), expiresAt: z.string().optional() });
 const diskShape = z.object({ level: z.string(), message: z.string().optional() });
 
 /**
@@ -93,7 +94,7 @@ const diskShape = z.object({ level: z.string(), message: z.string().optional() }
  * and named in `unparsed`, so the card says it could not be read; it is never
  * dropped as though there were nothing to say, and never costs the loop.
  */
-function lenient(s: { archived?: unknown; archiveLapsed?: unknown; buildFreshness?: unknown; noProgress?: unknown; control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown }) {
+function lenient(s: { wait?: unknown; archived?: unknown; archiveLapsed?: unknown; buildFreshness?: unknown; noProgress?: unknown; control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown }) {
   const unparsed: string[] = [];
   const pick = <T>(name: string, schema: z.ZodType<T>, raw: unknown): T | undefined => {
     if (raw === undefined) return undefined;
@@ -112,6 +113,7 @@ function lenient(s: { archived?: unknown; archiveLapsed?: unknown; buildFreshnes
     else { archived = { unreadable: true }; if (!a.success) unparsed.push("archived"); }
   }
   const archiveLapsed = pick("archiveLapsed", z.object({ at: z.string().optional() }).passthrough(), s.archiveLapsed);
+  const wait = pick("wait", waitShape, s.wait);
   const freshness = pick("buildFreshness", freshnessShape, s.buildFreshness);
   const noProgress = pick("noProgress", noProgressShape, s.noProgress);
   const supersededBy = pick("supersededBy", z.string(), s.control?.supersededBy);
@@ -130,7 +132,7 @@ function lenient(s: { archived?: unknown; archiveLapsed?: unknown; buildFreshnes
       if (unreadable.length !== s.unreadable.length) unparsed.push("unreadable");
     }
   }
-  return { archived, archiveLapsed, freshness, noProgress, supersededBy, deadline, deadlineReached, sends, sendRecord, disk, unreadable, unparsed };
+  return { wait, archived, archiveLapsed, freshness, noProgress, supersededBy, deadline, deadlineReached, sends, sendRecord, disk, unreadable, unparsed };
 }
 
 /** The loop's display name from status --json naming.displayName, when it is a readable name that differs from the slug. */
@@ -300,9 +302,10 @@ export default async function plugin(bb: BbPluginApi) {
       ...(f.unreadable.length ? { unreadable: f.unreadable.slice(0, 8).map(u => ({ file: u.file.slice(0, 64), problem: u.problem.slice(0, 40), ...(u.offset !== undefined ? { offset: u.offset } : {}), remedy: u.remedy.slice(0, 1200) })) } : {}),
       ...(f.unparsed.length ? { unparsed: f.unparsed.slice(0, 8) } : {}),
       ...(f.noProgress?.availability === "flagged" ? { noProgress: { text: f.noProgress.text.slice(0, 400) } } : {}),
+      ...(f.wait ? { wait: { until: f.wait.until.slice(0, 60), ...(f.wait.untilTime ? { untilTime: f.wait.untilTime.slice(0, 40) } : {}), ...(f.wait.expiresAt ? { expiresAt: f.wait.expiresAt.slice(0, 40) } : {}) } } : {}),
       ...(f.archived ? { archived: { ...(f.archived.at ? { at: f.archived.at.slice(0, 40) } : {}), ...(f.archived.hold ? { hold: f.archived.hold.slice(0, 40) } : {}), ...(f.archived.unreadable ? { unreadable: true } : {}) } } : {}),
       ...(f.archiveLapsed ? { archiveLapsed: { ...(f.archiveLapsed.at ? { at: f.archiveLapsed.at.slice(0, 40) } : {}) } } : {}),
-      ...(f.freshness ? { buildFreshness: { state: f.freshness.state.slice(0, 24), text: f.freshness.text.slice(0, 200), ...(f.freshness.detail ? { detail: f.freshness.detail.slice(0, 600) } : {}), ...(f.freshness.command ? { command: f.freshness.command.slice(0, 400) } : {}), ...(f.freshness.action ? { action: f.freshness.action.slice(0, 300) } : {}) } } : {}),
+      ...(f.freshness ? { buildFreshness: { state: f.freshness.state.slice(0, 24), text: cutAtWord(f.freshness.text, 200), ...(f.freshness.detail ? { detail: cutAtWord(f.freshness.detail, 600) } : {}), ...(f.freshness.command ? { command: f.freshness.command.slice(0, 400) } : {}), ...(f.freshness.action ? { action: cutAtWord(f.freshness.action, 600) } : {}) } } : {}),
     },
     ...(BUILD_LABEL && isBuildLabel(BUILD_LABEL) ? { pluginBuild: BUILD_LABEL } : {}),
     loop: s.loop,

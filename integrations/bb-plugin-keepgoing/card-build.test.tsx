@@ -36,7 +36,7 @@ test("a command is shown only when looptender sent one, otherwise its words; nei
   } finally { withCommand.lifecycle.unmount(); cleanup(); }
   const withAction = card([loop({}, { buildFreshness: { state: "different", text: "Different build from the installed one", action: "Restart supervision the way it was started." } })]);
   try {
-    assert.ok(await withAction.findByText("Different build from the installed one")); assert.ok(withAction.getByText(/Restart supervision the way it was started\./));
+    assert.ok(await withAction.findByText("Different build from the installed one")); assert.ok(within(withAction.getByLabelText("Build")).getByText(/Restart supervision the way it was started\./));
     assert.equal(withAction.container.querySelector("code"), null);
   } finally { withAction.lifecycle.unmount(); cleanup(); }
 });
@@ -53,7 +53,7 @@ test("a current build shows only its version; a looptender that sends no freshne
 
 test("the plugin's own build is named apart from the supervisor's when they differ", async () => {
   const ui = card([loop({ pluginBuild: "v0.2.0-dev.bbbbbbbbbbbb" })]);
-  try { assert.ok(await within(await ui.findByRole("list", { name: "Details" })).findByText(/^Plugin build: v0\.2\.0-dev\.bbbbbbbbbbbb \(the code drawing this card\); the builds above are each supervisor's/)); } finally { ui.lifecycle.unmount(); cleanup(); }
+  try { assert.ok(await within(await ui.findByRole("list", { name: "Technical details" })).findByText(/^Plugin build: v0\.2\.0-dev\.bbbbbbbbbbbb \(the code drawing this card\); the builds above are each supervisor's/)); } finally { ui.lifecycle.unmount(); cleanup(); }
   const same = card([loop({ pluginBuild: "v0.2.0-dev.aaaaaaaffff" })]);
   try { await same.findByText(/^looptender: enabled/); assert.equal(same.queryByText(/Plugin build:/), null); } finally { same.lifecycle.unmount(); cleanup(); }
 });
@@ -67,7 +67,7 @@ test("Pause is a real target with the loop in its name, a focus ring, and its de
     assert.ok(pause.hasAttribute("data-kg"));
     const details = ui.container.querySelector("details")!;
     assert.equal(details.querySelector("summary")?.textContent, "Details");
-    assert.ok(within(details as HTMLElement).getByText("Last check state: error (the listing's last= field)"));
+    assert.ok(within(details as HTMLElement).getByText("Last check state: error (the word looptender status lists after last=)"));
     assert.ok(within(details as HTMLElement).getByText(/^Last recorded action: none · succeeded/));
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
@@ -81,7 +81,7 @@ test("a raised no-progress flag is on the card, qualified for a held loop", asyn
 test("a note never hides the resume command; an archived loop gets none and says how to use it again", async () => {
   for (const note of ["This thread is retired; do not resume this loop.", "Needs a decision on whether to remove the retired endpoints", "This is NOT retired; please resume"]) {
     const ui = card([loop({ controlState: "awaiting user", note })]);
-    try { await ui.findByText(/A person resumes this from an ordinary terminal/); assert.equal(ui.container.querySelectorAll("code").length, 1, note); } finally { ui.lifecycle.unmount(); cleanup(); }
+    try { await ui.findByText("Held for you. Resume it from the looptender panel (looptender panel), or from a terminal outside BB with looptender resume."); assert.equal(ui.container.querySelectorAll("code").length, 1, note); } finally { ui.lifecycle.unmount(); cleanup(); }
   }
   const at = "2026-01-01T00:00:00Z";
   const archived = card([loop({ controlState: "awaiting user", note: "continued elsewhere" }, { archived: { at, hold: "awaiting user" } })]);
