@@ -348,6 +348,18 @@ func TestForgedWaitRecordClearsNothing(t *testing.T) {
 	if h, _ := control.LoadSelfHold(dir, control.WaitFileName); h != nil {
 		t.Fatal("forged wait kept")
 	}
+	// One already past its time does not rewrite the note either.
+	cur = ctlOf(t, f)
+	if err := control.SaveSelfHold(dir, control.WaitFileName, control.SelfHold{Caller: "terminal", SetAt: past, Until: "host-session", ExpiresAt: &past, After: cur}); err != nil {
+		t.Fatal(err)
+	}
+	f.tick()
+	if c := ctlOf(t, f); !c.AwaitingUser || c.Note != "a person's fictional question" {
+		t.Fatalf("a forged expired wait rewrote a person's note: %+v", c)
+	}
+	if h, _ := control.LoadSelfHold(dir, control.WaitFileName); h != nil {
+		t.Fatal("forged expired wait kept")
+	}
 }
 
 // The journal is the source of who set the hold: a later control record

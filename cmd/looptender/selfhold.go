@@ -251,6 +251,11 @@ func settleWait(e env, cfg *config.Config, now time.Time) {
 		return
 	}
 	switch {
+	case !lastControlIs(dir, "wait"):
+		// The history does not show a wait as the last control change: the
+		// record was not made by looptender wait, so it ends nothing and
+		// changes nothing, its note included.
+		_ = control.RemoveSelfHold(dir, control.WaitFileName)
 	case h.ExpiresAt != nil && !now.Before(*h.ExpiresAt):
 		_, err = updateControlAnnotated(dir, "wait_expired", func(f *control.File) error {
 			if !h.Unchanged(*f) {
@@ -270,10 +275,6 @@ func settleWait(e env, cfg *config.Config, now time.Time) {
 		if err == nil || errors.Is(err, errControlHistory) {
 			_ = state.Append(dir, state.Event{Loop: cfg.Loop.Name, Event: "control", Action: "wait_expired", Reason: h.Until})
 		}
-		_ = control.RemoveSelfHold(dir, control.WaitFileName)
-	case !lastControlIs(dir, "wait"):
-		// The history does not show a wait as the last control change: the
-		// record was not made by looptender wait, so it ends nothing.
 		_ = control.RemoveSelfHold(dir, control.WaitFileName)
 	case waitMet(e.ctx, cfg, h, now):
 		_, err = updateControlAnnotated(dir, "wait_cleared", func(f *control.File) error { return h.Restore(f) }, nil)
