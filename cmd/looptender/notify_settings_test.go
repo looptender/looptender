@@ -218,3 +218,42 @@ func TestHostIsAKindThatIsOnByDefaultAndCanBeSwitched(t *testing.T) {
 		t.Error("host is not a known kind")
 	}
 }
+
+func TestTheHeartbeatsOwnershipCheckAndWriteAreOneStepAgainstAConcurrentBeat(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	_ = notifyBeat(dir, true, 100, now)
+	// A holder of the lock (a new menu in the middle of its own beat) makes the
+	// old menu's retraction wait for it, and then see the new owner.
+	held, err := notifyBeatLock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- notifyBeat(dir, false, 100, now.Add(time.Second)) }()
+	time.Sleep(100 * time.Millisecond)
+	if err := notifyWrite(dir, notifyMenuFile, notifyMenuBeat{Version: 1, At: now.Add(time.Second), Notifying: true, PID: 200}); err != nil {
+		t.Fatal(err)
+	}
+	held.Release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var beat notifyMenuBeat
+	if !notifyRead(dir, notifyMenuFile, &beat) || beat.PID != 200 || !beat.Notifying {
+		t.Errorf("the old menu's retraction landed over the new menu's beat: %+v", beat)
+	}
+	// A lock that is never let go makes a beat give up with an error, not write unguarded.
+	held2, _ := notifyBeatLock(dir)
+	defer held2.Release()
+	start := time.Now()
+	if err := notifyBeat(dir, false, 200, now.Add(time.Minute)); err == nil {
+		t.Error("a beat wrote without the lock")
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Error("a beat waited too long for the lock")
+	}
+	if !notifyRead(dir, notifyMenuFile, &beat) || !beat.Notifying {
+		t.Error("an unguarded write changed the beat")
+	}
+}

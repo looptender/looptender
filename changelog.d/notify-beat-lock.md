@@ -1,0 +1,1 @@
+- The menu's heartbeat takes a lock around checking who wrote the last beat and writing its own, so a new menu's first beat cannot land between a quitting menu's check and its write. A menu built before this still retracts its "notifying" unconditionally when it quits, so for one relaunch from such a build the old behaviour remains.
