@@ -89,6 +89,8 @@ export const detailsSchema = z.object({
   archived: z.object({ at: z.string().max(40).optional(), hold: z.string().max(40).optional(), unreadable: z.boolean().optional() }).optional(),
   // A record left on a loop that supervises again (status --json archiveLapsed); it has no effect.
   archiveLapsed: z.object({ at: z.string().max(40).optional() }).optional(),
+  // status --json wait (looptender wait): what the loop waits for. Its sentence and note are not read.
+  wait: z.object({ until: z.string().max(60), untilTime: z.string().max(40).optional(), expiresAt: z.string().max(40).optional() }).optional(),
   buildFreshness: z.object({ state: z.string().max(24), text: z.string().max(200), detail: z.string().max(600).optional(), command: z.string().max(400).optional(), action: z.string().max(600).optional() }).optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
@@ -127,18 +129,24 @@ export function pluginBuildLine(built: string | null, running: string | null): s
   return `Plugin: built from looptender ${built}; the looptender it runs is ${running}. These are different builds. If one of them was installed recently, BB may still be serving the plugin from before it; see the plugin README, "After installing a new build".`;
 }
 
-/** Text cut at the last whole word that fits, with an ellipsis; never mid-word. Short enough text is returned as it is. */
+/** Text cut at the last whole word that fits, with an ellipsis; never mid-word, never inside a character. Short enough text is returned as it is. */
 export function cutAtWord(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const room = text.slice(0, max - 1);
+  const chars = Array.from(text); // by code point: a surrogate pair is never split
+  if (chars.length <= max) return text;
+  const room = chars.slice(0, max - 1).join("");
   const at = room.lastIndexOf(" ");
   return `${(at > max / 2 ? room.slice(0, at) : room).trimEnd().replace(/[,;:\u2014-]+$/, "").trimEnd()}…`;
 }
 
-/** The first sentence of a text, cut at a word if it is still long. */
+const ABBREVIATIONS = /(?:^|[\s(])(?:e\.g|i\.e|etc|vs|dr|mr|mrs|ms|prof|inc|ltd|no|approx|st|cf|fig)\.$/i;
+/** The first sentence of a text. A full stop after a common abbreviation does not end it, and a first "sentence" that is only a few characters falls back to a cut at a word. */
 export function firstSentenceOf(text: string, max = 200): string {
-  const m = /^.*?[.!?](?=\s|$)/s.exec(text.trim());
-  return cutAtWord((m ? m[0] : text.trim()).replace(/\s+/g, " "), max);
+  const t = text.replace(/\s+/g, " ").trim();
+  const end = /[.!?](?=\s|$)/g;
+  let m: RegExpExecArray | null, cut = -1;
+  while ((m = end.exec(t))) { if (!ABBREVIATIONS.test(t.slice(0, m.index + 1))) { cut = m.index + 1; break; } }
+  const one = cut < 0 ? t : t.slice(0, cut);
+  return cutAtWord(Array.from(one).length < 8 && one.length < t.length ? t : one, max);
 }
 
 /** A control note cut to one short line for a listing; the full note stays in the loop's own detail. */

@@ -31,7 +31,11 @@ test("the collapsed chip says the state and, when a person is needed, the reason
     [loop({}, { limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false } }), "looptender: enabled · waiting on a usage limit"],
     [loop({}), "looptender: enabled"],
     // One reason, the one that matters most now: a limit before a passed deadline before a build difference.
-    [loop({ controlState: "paused" }, { deadline: { at: "2026-01-01T00:00:00Z", reached: true }, limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false }, runtime: { ...base.runtime, recordedBuild: "v0.2.0-dev.1111111", binaryComparison: "different" } }), "looptender: paused · waiting on a usage limit"],
+    [loop({ controlState: "paused" }, { deadline: { at: "2026-01-01T00:00:00Z", reached: true }, limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false }, runtime: { ...base.runtime, recordedBuild: "v0.2.0-dev.1111111", binaryComparison: "different" } }), "looptender: paused · deadline passed"],
+    [loop({ controlState: "paused" }, { sends: { max: 40, used: 40, remaining: 0, reached: true }, deadline: { at: "2026-01-01T00:00:00Z", reached: true }, disk: { level: "low", message: "x" } }), "looptender: paused · send limit reached"],
+    [loop({ controlState: "paused" }, { disk: { level: "low", message: "x" }, limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false } }), "looptender: paused · disk low"],
+    [loop({ controlState: "paused" }, { limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false }, runtime: { ...base.runtime, recordedBuild: "v0.2.0-dev.1111111", binaryComparison: "different" } }), "looptender: paused · waiting on a usage limit"],
+    [loop({ controlState: "awaiting user" }, { wait: { until: "network" } }), "looptender: waiting for the network"],
     [loop({ controlState: "paused" }, { deadline: { at: "2026-01-01T00:00:00Z", reached: true }, runtime: { ...base.runtime, recordedBuild: "v0.2.0-dev.1111111", binaryComparison: "different" } }), "looptender: paused · deadline passed"],
   ];
   for (const [l, text] of cases) {
@@ -98,7 +102,7 @@ test("long names, versions and paths wrap: every text container allows a break a
     const section = await ui.details.findByRole("region", { name: /Loop a-very-long/ });
     assert.equal((section as HTMLElement).style.overflowWrap, "anywhere");
     const sentence = section.querySelector(".kg-actions .kg-t") as HTMLElement;
-    assert.match(sentence.textContent ?? "", /^Held for you\. Resume it from the looptender panel or a terminal on your computer\./);
+    assert.match(sentence.textContent ?? "", /^Held for you\. Resume it from the looptender panel \(looptender panel\), or from a terminal outside BB with looptender resume\./);
     assert.equal(sentence.style.overflowWrap, "anywhere"); assert.equal(sentence.style.minWidth, "0px");
     // The command, a long path, is in Details, in a list that may break anywhere.
     assert.equal((section.querySelector("details code") as HTMLElement).textContent?.startsWith("looptender resume -c "), true);

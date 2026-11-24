@@ -16,13 +16,14 @@ const base = { readAt: "2026-01-01T00:00:00Z", completed: false, targetThread: "
 const loop = (over: object = {}, d: object = {}) => ({ loop: "example-loop", configPath: "/private/example/looptender.yaml", controlState: "enabled", note: null, target: "primary", supervising: true, lastState: "ok", lastWakeAt: "0001-01-01T00:00:00Z", checkedAt: null, handoffs: 0, fallbacks: null, referenceSource: "plugin_setting", details: { ...base, ...d }, ...over });
 let n = 0;
 const details = (loops: object[]) => renderSlot({ component: seg.details! }, { threadId: `thr_held_${++n}`, projectId: "proj_example", environment: null, segments: [], isExpanded: true, onToggle() {} }, { rpc: { forThread: () => ({ loops, errors: [] }) } });
-const WHERE = "from the looptender panel or a terminal on your computer";
+const WHERE = "from the looptender panel (looptender panel), or from a terminal outside BB with looptender resume";
 
 test("a held loop says it once, in its own state's words, with the same structure; the command is in Details", async () => {
   const cases: [string, string][] = [
     ["awaiting user", `Held for you. Resume it ${WHERE}.`],
     ["paused", `Paused. Resume it ${WHERE}.`],
-    ["stop requested", `Stop requested. It stays stopped until a person lifts the stop ${WHERE}.`],
+    ["stop requested", `Stop requested. It stays stopped until a person resumes it ${WHERE}; resuming lifts the stop.`],
+    ["completed", `Marked finished. Resuming it reopens it ${WHERE}.`],
   ];
   for (const [controlState, sentence] of cases) {
     const ui = details([loop({ controlState })]);
@@ -35,15 +36,17 @@ test("a held loop says it once, in its own state's words, with the same structur
       const command = ui.container.querySelector("details code") as HTMLElement;
       assert.equal(command.textContent, 'looptender resume -c "/private/example/looptender.yaml"');
       assert.equal(ui.container.querySelector(".kg-actions code"), null, "no command in the sentence");
-      assert.equal(heldSentence(controlState), sentence);
+      assert.equal(heldSentence(loop({ controlState }) as never), sentence);
     } finally { ui.lifecycle.unmount(); cleanup(); }
   }
-  assert.equal(heldSentence("enabled"), null);
+  assert.equal(heldSentence(loop() as never), null);
 });
 
 test("the stop sentence differs from the pause sentence: a stop is not resumed like a pause", () => {
-  assert.notEqual(heldSentence("stop requested"), heldSentence("paused"));
-  assert.match(heldSentence("stop requested")!, /stays stopped until a person lifts the stop/);
+  const stop = heldSentence(loop({ controlState: "stop requested" }) as never)!;
+  assert.notEqual(stop, heldSentence(loop({ controlState: "paused" }) as never));
+  assert.match(stop, /stays stopped until a person resumes it .*resuming lifts the stop/);
+  assert.equal(heldSentence(loop({ controlState: "disabled" }) as never), "Switched off. Turn it on from the looptender panel (looptender panel), or from a terminal outside BB with looptender enable.");
 });
 
 test("the phone path slot renders nothing until a phone path is configured, and is a link, never a button", async () => {
@@ -86,5 +89,49 @@ test("jargon lines are under Technical details, in plain words where they stay i
     assert.equal(ui.container.textContent?.includes("the listing's last= field"), false);
     assert.equal(plain.queryByText(/^Check evidence: /), null); assert.equal(plain.queryByText(/^Daemon answered: /), null);
     assert.ok(plain.getByText(/^Current target: /)); assert.ok(plain.getByText(/^Last sent/));
+  } finally { ui.lifecycle.unmount(); cleanup(); }
+});
+
+test("a wait is not held for a person: its own sentence, the state said as a wait, no resume command or phone link", async () => {
+  const waiting = loop({ controlState: "awaiting user", note: "waiting" }, { wait: { until: "limit-reset", expiresAt: "2099-01-01T00:00:00Z" } });
+  assert.equal(heldSentence(waiting as never), "Waiting for a usage-limit reset. It carries on by itself; nothing to do.");
+  for (const [until, phrase] of [["host-session", "the login session"], ["network", "the network"], ["time:2099-01-01T00:00:00Z", "a time"], ["odd", "a condition"]]) {
+    assert.equal(heldSentence(loop({ controlState: "awaiting user" }, { wait: { until } }) as never), `Waiting for ${phrase}. It carries on by itself; nothing to do.`);
+  }
+  const ui = details([waiting]);
+  try {
+    const section = within(await ui.findByRole("region", { name: "Loop example-loop" }));
+    assert.ok(section.getByText("Waiting for a usage-limit reset. It carries on by itself; nothing to do."));
+    assert.equal(ui.container.textContent?.includes("Held for you"), false);
+    assert.equal(ui.container.querySelector("code"), null, "nothing to run");
+  } finally { ui.lifecycle.unmount(); cleanup(); }
+  // Without a wait record the same control state is a hold for a person.
+  assert.match(heldSentence(loop({ controlState: "awaiting user" }) as never)!, /^Held for you\./);
+});
+
+test("the phone link takes only an https URL", () => {
+  for (const url of ["http://example.com/x", "javascript:alert(1)", "data:text/html,x", "//example.com", "not a url", ""]) {
+    const r = render(React.createElement(PhoneResumeLink, { loop: loop() as never, url })); assert.equal(r.container.innerHTML, "", url); r.unmount();
+  }
+  const ok = render(React.createElement(PhoneResumeLink, { loop: loop() as never, url: "https://example.com/r" })); assert.ok(ok.container.querySelector("a")); ok.unmount(); cleanup();
+});
+
+test("cutAtWord never splits a character; firstSentenceOf skips abbreviations and short openings", () => {
+  const e = "😀 ".repeat(10).trim();
+  for (let max = 2; max < 22; max++) { const c = cutAtWord(e, max); assert.equal(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(c), false, `${max}: ${JSON.stringify(c)}`); }
+  assert.equal(cutAtWord("😀😀😀😀😀😀", 4).includes("\ud83d…"), false);
+  assert.equal(firstSentenceOf("See e.g. the docs for the long form. Then go on."), "See e.g. the docs for the long form.");
+  assert.equal(firstSentenceOf("Dr. Smith is away until Monday. Wait for them."), "Dr. Smith is away until Monday.");
+  assert.equal(firstSentenceOf("Ok. Then restart the supervisor from a terminal you leave open."), "Ok. Then restart the supervisor from a terminal you leave open.");
+  assert.equal(firstSentenceOf("Restart it. Then wait."), "Restart it.");
+});
+
+test("Goal and Task completion are plain facts in Details, not under Technical details", async () => {
+  const ui = details([loop({ controlState: "paused" })]);
+  try {
+    await ui.findByRole("region", { name: "Loop example-loop" });
+    const plain = within(ui.getByRole("list", { name: "Details" })), tech = within(ui.getByRole("list", { name: "Technical details" }));
+    assert.ok(plain.getByText(/^Goal: /)); assert.ok(plain.getByText(/^Task completion: /));
+    assert.equal(tech.queryByText(/^Goal: /), null); assert.equal(tech.queryByText(/^Task completion: /), null);
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });

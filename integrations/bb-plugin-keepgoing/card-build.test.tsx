@@ -81,7 +81,7 @@ test("a raised no-progress flag is on the card, qualified for a held loop", asyn
 test("a note never hides the resume command; an archived loop gets none and says how to use it again", async () => {
   for (const note of ["This thread is retired; do not resume this loop.", "Needs a decision on whether to remove the retired endpoints", "This is NOT retired; please resume"]) {
     const ui = card([loop({ controlState: "awaiting user", note })]);
-    try { await ui.findByText("Held for you. Resume it from the looptender panel or a terminal on your computer."); assert.equal(ui.container.querySelectorAll("code").length, 1, note); } finally { ui.lifecycle.unmount(); cleanup(); }
+    try { await ui.findByText("Held for you. Resume it from the looptender panel (looptender panel), or from a terminal outside BB with looptender resume."); assert.equal(ui.container.querySelectorAll("code").length, 1, note); } finally { ui.lifecycle.unmount(); cleanup(); }
   }
   const at = "2026-01-01T00:00:00Z";
   const archived = card([loop({ controlState: "awaiting user", note: "continued elsewhere" }, { archived: { at, hold: "awaiting user" } })]);

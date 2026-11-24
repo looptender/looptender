@@ -16,7 +16,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
 import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, archivedLine, firstSentenceOf } from "./status-details";
 import { lineageDue, type LineageEntry } from "./lineage";
-import { heldSentence, resumeCommand, PhoneResumeLink } from "./held-card";
+import { heldSentence, isWait, waitFor, resumeCommand, PhoneResumeLink } from "./held-card";
 import { SetupPanel } from "./setup-panel";
 import { SetupStyles } from "./setup-style";
 import { AttachPanel } from "./attach-panel";
@@ -116,6 +116,7 @@ function stateLabel(loop: LoopView): string {
   if (loop.imported && loop.controlState === "enabled" && ((loop.details?.failedChecks ?? 0) > 0 || ["failed", "error"].includes(loop.details?.lastCheck?.outcome ?? ""))) return "looptender: checks failing";
   if (loop.imported && loop.controlState === "enabled" && !loop.details?.lastCheck) return "looptender: no check recorded";
   if (loop.controlState === "enabled" && loop.details?.schedule?.overdue) return "looptender: checks have stopped";
+  if (isWait(loop)) return `looptender: waiting for ${waitFor(loop.details!.wait!.until)}`;
   if (loop.details?.moved?.held && loop.controlState === "awaiting user") return "looptender: moved, resume to start";
   if (loop.controlState === "enabled") return loop.supervising ? "looptender: enabled" : `looptender: watching ${loop.details?.targetThread ?? loop.target}`;
   return `looptender: ${loop.controlState}`;
@@ -244,7 +245,7 @@ function ResumeNote({ loop }: { loop: LoopView }) {
     return <span className="kg-t" style={wrap}>Resume is refused for a superseded loop; its successor continues the work{successor ? ` (${successor})` : ""}.</span>;
   }
   // The same structure for every held state, each with its own true sentence; the command is in Details.
-  return <span className="kg-t" style={{ ...wrap, display: "grid", gap: 8 }}><span>{heldSentence(loop.controlState)}</span><PhoneResumeLink loop={loop} /></span>;
+  return <span className="kg-t" style={{ ...wrap, display: "grid", gap: 8 }}><span>{heldSentence(loop)}</span>{!isWait(loop) && <PhoneResumeLink loop={loop} />}</span>;
 }
 
 function ThreadSetup({ threadId, onChanged, hideStart = false }: { threadId: string; onChanged(): void; hideStart?: boolean }) {
@@ -323,12 +324,12 @@ function detailLines(l: LoopView, reasons: string[]): string[] {
 }
 
 // Lines about how looptender works inside (records, ids, daemon, build comparison): kept, behind "Technical details".
-const TECHNICAL = ["Reference", "Last explicit CLI menu publication", "CLI menu publication", "Status read:", "Goal:", "Task completion:", "Check evidence:", "Daemon answered:", "Plugin build:", "Last check state:", "Build note:"];
+const TECHNICAL = ["Reference", "Last explicit CLI menu publication", "CLI menu publication", "Status read:", "Check evidence:", "Daemon answered:", "Plugin build:", "Last check state:", "Build note:"];
 
 /** The details of one loop: plain lines, the technical ones apart, and the resume command a held loop's person runs. */
 function splitDetails(l: LoopView, reasons: string[]) {
   const all = detailLines(l, reasons);
-  const command = needsResume(l) && heldSentence(l.controlState) ? resumeCommand(l) : undefined;
+  const command = needsResume(l) && !isWait(l) && heldSentence(l) ? resumeCommand(l) : undefined;
   return { lines: all.filter(x => !TECHNICAL.some(p => x.startsWith(p))), technical: all.filter(x => TECHNICAL.some(p => x.startsWith(p))), command };
 }
 
@@ -418,16 +419,18 @@ function summaryTitle(loops: LoopView[]): string {
 
 // The one reason worth a few words beside the state on a collapsed chip: the one
 // that matters most now, from a fixed set of phrases, never free text (a note may
-// carry paths, ids or names; the expanded card holds it). Most blocking first: a
-// limit that has to reset, before a deadline that has passed or a build that differs.
+// carry paths, ids or names; the expanded card holds it). A reason that needs a
+// person comes before one that resolves by itself: a send limit, a passed
+// deadline (held until a person acts, and it wins over a limit wait), a low disk,
+// then a usage limit that resets on its own, then a build that differs.
 function shortReason(loop: LoopView): string {
   const d = loop.details;
-  if (recordsUnreadable(d) || d?.archived) return "";
+  if (recordsUnreadable(d) || d?.archived || isWait(loop)) return "";
   if (d?.sends?.reached) return "send limit reached";
-  const wait = d?.limitWait;
-  if (wait && wait.state !== "none" && !wait.resetPassed) return "waiting on a usage limit";
   if (d?.deadline?.reached === true) return "deadline passed";
   if (d?.disk) return "disk low";
+  const wait = d?.limitWait;
+  if (wait && wait.state !== "none" && !wait.resetPassed) return "waiting on a usage limit";
   if (buildSummary(d?.runtime).differs) return "build differs";
   return "";
 }

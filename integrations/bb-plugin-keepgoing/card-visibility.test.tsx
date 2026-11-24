@@ -44,8 +44,8 @@ test("with several held loops the resume sentence is said once and each loop kee
   const held = (name: string) => loop({ loop: name, configPath: `/private/example/${name}/looptender.yaml`, controlState: "paused" });
   const ui = card([held("first-example"), held("second-example"), held("third-example"), loop({ loop: "fourth-example", configPath: "/private/example/fourth/looptender.yaml", controlState: "superseded" })]);
   try {
-    await ui.findAllByText("Paused. Resume it from the looptender panel or a terminal on your computer.");
-    assert.equal(ui.getAllByText(/^Paused\. Resume it from the looptender panel or a terminal on your computer\.$/).length, 3, "each held loop says it once, in its own words");
+    await ui.findAllByText("Paused. Resume it from the looptender panel (looptender panel), or from a terminal outside BB with looptender resume.");
+    assert.equal(ui.getAllByText(/^Paused\. Resume it from the looptender panel \(looptender panel\), or from a terminal outside BB with looptender resume\.$/).length, 3, "each held loop says it once, in its own words");
     assert.equal(ui.container.querySelectorAll("code").length, 3, "one command per held loop, in its Details; none for the superseded one");
     assert.equal(ui.container.querySelectorAll("details code").length, 3);
     assert.ok(ui.getByText(/Resume is refused for a superseded loop/));

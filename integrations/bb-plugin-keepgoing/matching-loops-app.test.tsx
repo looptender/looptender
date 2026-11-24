@@ -25,7 +25,7 @@ test("card retains retired, active and completed matches; pending controls follo
     await ui.findByRole("region", { name: `Loop ${active.loop}` });
     assert.equal(ui.getAllByRole("region").length, 3);
     // Each held loop says it once in its own words, and keeps its own command in its Details.
-    assert.equal(ui.getAllByText(/Resume it from the looptender panel or a terminal on your computer\./).length, 2);
+    assert.equal(ui.getAllByText(/from the looptender panel \(looptender panel\), or from a terminal outside BB with looptender resume/).length, 2);
     assert.ok(region(retired.loop).getByText(/looptender resume -c "\/example\/retired-example\/looptender.yaml"/)); assert.equal(ui.queryAllByText(/A person resumes this/).length, 0);
     assert.ok(region(completed.loop).getByText("looptender: completed"));
     assert.equal(ui.queryByRole("button", { name: "Resume" }), null);

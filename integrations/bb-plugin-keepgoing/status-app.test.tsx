@@ -24,15 +24,15 @@ test("card shows completion and evidence; failed refresh labels retained data an
     assert.match(title, /Current target: thr_example/); assert.match(title, /Last recorded action: wake · failed/);
     assert.match(title, /running supervisor not confirmed/); assert.match(title, /Last sent: unavailable/);
     // A held loop says where a person resumes it; the plugin offers no Resume.
-    assert.ok(ui.getByText(/^Held\. Resume it from the looptender panel or a terminal on your computer\./)); assert.equal(ui.queryByRole("button", { name: "Resume" }), null);
+    assert.ok(ui.getByText(/^Marked finished\. Resuming it reopens it from the looptender panel \(looptender panel\), or from a terminal outside BB with looptender resume\./)); assert.equal(ui.queryByRole("button", { name: "Resume" }), null);
     assert.ok(ui.getByText('looptender resume -c "/private/example/keepgoing.yaml"'));
     phase = "lost"; await ui.behavior.emitRealtime("changed", {});
     await ui.findByRole("alert"); assert.ok(ui.getByText(/previous snapshot/));
-    assert.equal(ui.queryByText(/Resume it from the looptender panel/), null);
+    assert.equal(ui.queryByText(/from the looptender panel \(looptender panel\), or from a terminal outside BB with looptender resume/), null);
     assert.equal(ui.queryByRole("button", { name: "Add to Looptender" }), null);
     assert.ok(!ui.container.textContent?.includes("PRIVATE"));
     phase = "ready"; fireEvent.click(ui.getByRole("button", { name: "Refresh status" }));
-    await ui.findByText(/Resume it from the looptender panel/); assert.equal(ui.queryByRole("alert"), null);
+    await ui.findByText(/from the looptender panel \(looptender panel\), or from a terminal outside BB with looptender resume/); assert.equal(ui.queryByRole("alert"), null);
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
 
