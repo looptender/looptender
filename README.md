@@ -10,7 +10,7 @@
 
 looptender wakes an idle session, handles structured failures with bounded retries, and can hand off to a fallback you configured that passed a small test request. The agent does the work; looptender never edits, commits to or merges a repository.
 
-Latest release: **v0.2.0** (14 November 2026). Every capability below is labelled **Released in v0.2.0**, **In source, not yet released**, or **Planned**.
+Latest release: **v0.3.0** (26 November 2026; [release notes](docs/releases/v0.3.0.md)). Every capability below is labelled **Released in v0.3.0**, **Released in v0.2.0**, **In source, not yet released**, or **Planned**.
 
 ## How it works
 
@@ -54,22 +54,22 @@ Supervision runs on the same machine as the agents from a single binary (macOS, 
 ## When a usage limit hits: takeover
 
 - **Handoff into a new conversation** (*Released in v0.2.0*): For a BB loop, an opt-in fallback (`bb.new_thread`) can start a new conversation on another configured provider when a usage limit hits and move supervision to that conversation. Creation is opt-in per loop, capped per loop and spaced at least an hour apart, and covered by offline fixtures only.
-- **Ownership, child lanes and setup default** (*In source, not yet released*): The new conversation also takes over loop ownership, takes the old conversation's direct child lanes, and starts successor lanes for lanes blocked by the limit. The setup wizard offers this takeover by default when BB reports another usable provider.
+- **Ownership, child lanes and setup default** (*Released in v0.3.0*): The new conversation also takes over loop ownership, takes the old conversation's direct child lanes, and starts successor lanes for lanes blocked by the limit. The setup panel offers opt-in takeover when BB reports another usable provider, and quota `switch_at` thresholds can trigger fallback checks before exhaustion.
 
 Takeover moves supervision to a new conversation; it does not mean work is never lost or duplicated. The previous conversation is left untouched and may still be retried by BB after its limit resets.
 
 ## What you see
 
-- **The panel** (*Released in v0.2.0*; controls without a flag *In source, not yet released*): One local page for every registered loop, served on `127.0.0.1` only with a per-run token. Read-only by default in v0.2.0; `--allow-changes` enables reviewed pause, stop and resume. Tested with fixtures only. [Panel](docs/dock.md).
-- **Plugin card** (*Plugin v0.3.0 released in v0.2.0*; card details *In source, not yet released*): BB plugin v0.3.0 ships from the v0.2.0 tag as a separate installation and shows loop state in BB. Newer card text in source adds a short "Why" list explaining why a loop is held or waiting, alongside the build that ran its last check.
-- **macOS menu** (*In source, not yet released*): Developer build only; not included in release archives. Lists registered loops, opens the panel, and pauses, stops or resumes a loop after a native confirmation. Checks locally for a newer installed build and offers to relaunch.
-- **Accounts and routes view** (*In source, not yet released*): Lists explicitly named accounts, retained subscription-quota summaries, and route order in the panel without discovering accounts automatically or refreshing providers on page load. [Accounts](docs/accounts.md).
+- **The panel** (*Released in v0.3.0*): One local page for every registered loop, served on `127.0.0.1` only with a per-run token and session cookie. Reviewed **Pause**, **Stop**, and **Resume** are enabled by default (`--read-only` disables all controls; `--allow-changes` adds routes, accounts, quotas, send-allowance editing, and binary adoption). Tested with offline fixtures and `jsdom`. [Panel](docs/dock.md).
+- **Plugin card** (*Plugin v0.4.0 released in v0.3.0*): BB plugin v0.4.0 ships from the v0.3.0 tag as a separate installation, adding the compact **Add to Looptender** modal, **Continue existing**, reboot-persistent service startup, single-line composer chips, weekly-limit status, build freshness lines, and sessionpipe visibility.
+- **macOS menu** (*In source, not yet released as a separate app archive*): Developer build only; not included in CLI release archives. Grouped loop list, **Archive**, sessionpipe & quota summaries, panel opener, notifications, and build self-update checks.
+- **Accounts, Routes and Account Router** (*Released in v0.3.0*): Lists explicitly named accounts, local file login hints (plus bounded `--allow-changes` status checks and selection recovery), subscription quotas, guided route configuration, and a read-only **Account Router** overview card for `looptender router`. [Accounts](docs/accounts.md).
 
 ## Keeps running while you update
 
-*In source, not yet released*
+*Released in v0.3.0*
 
-- **In-place build adoption:** On macOS and Linux, a running daemon whose start path now points to a newly installed build checks file ownership, permissions, handover support, state format and configuration validation, then replaces itself in place. State, holds, owner and send counts stay untouched, and a build that fails any check is refused while the daemon carries on. Windows daemons keep their build.
+- **In-place build adoption:** On macOS and Linux, a running daemon whose start path now points to a newly installed build checks file ownership, permissions, handover support, state format and configuration validation, then replaces itself in place (`daemon-shutdown`). State, holds, owner and send counts stay untouched, and a build that fails any check is refused while the daemon carries on. Windows daemons keep their build.
 - **Low-disk notices and whole-line writes:** Warns when the state volume falls below the larger of 1 GiB or 2% free space and reports an error below 100 MiB, sending one notice per episode with a recovery margin so free space hovering at a threshold does not repeat alerts. Append logs take a lock and write whole lines only, saved session records are replaced whole, and build adoption waits while the volume is nearly full.
 
 ## What it never does
@@ -105,26 +105,26 @@ Supervision runs on the same machine as the agent tool. None of these adapters a
 | **Claude Code** | Released in v0.2.0 | Headless sessions started and resumed by exact session ID, with wakes, bounded re-prompts, fallbacks, limits and reports (no lane support). |
 | **Codex** | Released in v0.2.0 | Headless sessions started and resumed by exact session ID, with wakes, bounded re-prompts, fallbacks, limits and reports (no lane support). |
 | **Cursor CLI** | Released in v0.2.0 | Primary-only standalone runner with exact session resume; failures stay unclassified and it cannot be a fallback. |
-| **Antigravity CLI** | In source, not yet released | Primary-only ACP adapter with exact session resume and model-free quota reads; cannot be a fallback. [Details](docs/antigravity.md). |
-| **sessionpipe** | In source, not yet released (nudges, re-prompts, stop & takeover: Planned) | Reports tier-0 loop state to a sessionpipe receiver; observes a tier-0 session file with opt-in idle waking (`wake_only`), surfaced in the panel, macOS menu and BB plugin. [Details](docs/sessionpipe.md). |
+| **Antigravity CLI** | Released in v0.3.0 | Primary-only ACP adapter with exact session resume and model-free `/usage` quota reads; cannot be a fallback. [Details](docs/antigravity.md). |
+| **sessionpipe** | Released in v0.3.0 (nudges, re-prompts, stop & takeover: Planned) | Reports tier-0 loop state to a sessionpipe receiver; observes a tier-0 session file with opt-in idle waking (`wake_only`), surfaced in the panel, macOS menu and BB plugin. [Details](docs/sessionpipe.md). |
 | **Agents defined in configuration** | Released in v0.2.0 | Describe another command-line agent (`adapter: custom`) by its status and resume commands; tested with stand-ins only. |
-| **Remote alerts** | In source, not yet released | Telegram, Slack, Discord, ntfy and Pushover presets; local fixtures only. [Telegram](docs/telegram.md). |
+| **Remote alerts** | Released in v0.3.0 (`TG5` chat steering: Planned) | Telegram bot pairing/topics/reviewed controls (`TG1`–`TG4`), plus Slack, Discord, ntfy and Pushover presets; local fixtures only. [Telegram](docs/telegram.md). |
 | **Loops across devices** | Planned | Cross-device fleet coordination and remote panel access; design-only and not built. [Roadmap](docs/roadmap.md). |
 
 What has been verified for each, and what is still open, is in [availability](docs/availability.md).
 
 ## Install
 
-*Released in v0.2.0*
+*Released in v0.3.0*
 
-The latest published release is **v0.2.0** (14 November 2026). Install with Homebrew:
+The latest release is **v0.3.0** (26 November 2026; [release notes](docs/releases/v0.3.0.md)). Install with Homebrew:
 
 ```sh
 brew install looptender/tap/looptender
 looptender version
 ```
 
-macOS on Apple silicon is the verified installation path; Intel macOS and Linux installations remain unverified. For other platforms, download archives and SHA-256 checksums from the [v0.2.0 release page](https://github.com/looptender/looptender/releases/tag/v0.2.0). Installing a release does not install the BB plugin or the macOS menu, and does not upgrade an already running supervisor.
+macOS on Apple silicon is the verified installation path; Intel macOS and Linux installations remain unverified. For other platforms, download archives and SHA-256 checksums from the [v0.3.0 release page](https://github.com/looptender/looptender/releases/tag/v0.3.0). Installing a release does not install the BB plugin or the macOS menu, and does not upgrade an already running supervisor.
 
 Or build from source with Go 1.24 or newer:
 
@@ -132,7 +132,7 @@ Or build from source with Go 1.24 or newer:
 go install github.com/looptender/looptender/cmd/looptender@main
 ```
 
-That installs unreleased source as `looptender`. The v0.2.0 release archives, and the pinned v0.2.0 `go install` path, carry the executable under its earlier name; see [installing looptender](docs/install.md) for those, development builds and the BB plugin.
+That installs source from `main` as `looptender`. Release archives up through `v0.2.0` carried the binary under its earlier name alongside symlink aliases; see [installing looptender](docs/install.md) for development builds and the BB plugin.
 
 ## Quick start
 
@@ -161,8 +161,8 @@ looptender complete -c /private/example-loop/looptender.yaml --note "Task verifi
 
 ## Where it stands
 
-- **Latest release:** v0.2.0 (14 November 2026). Preparation notes for v0.2.1 exist in source; v0.2.1 has not been released.
-- **Verification evidence:** Most recovery, fallback and panel behaviours are tested offline against fixtures and stand-in agents. The full live walkthrough (setup through multiple turns, hold, restart, recovery and completion) remains unfinished.
+- **Latest release:** v0.3.0 (26 November 2026; [notes](docs/releases/v0.3.0.md), folding the earlier unpublished v0.2.1 preparation).
+- **Verification evidence:** Most recovery, router, Telegram, fallback, and panel behaviours are tested offline against fixtures and stand-in agents. The full live walkthrough (setup through multiple turns, hold, restart, recovery and completion) remains unfinished.
 - **Observed network outage:** One unplanned real outage was observed on 14 November 2026 on one machine (down 1h 21m 57s): four checks waited and sent nothing, and the first check after recovery sent one re-prompt. Lane recovery and the full network-cut procedure remain unverified.
 - **Cross-device fleet and remote access:** Planned, not built. Today supervision and the panel run only on the machine where the agents live.
 

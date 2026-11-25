@@ -10,6 +10,38 @@ Every release archive is checked for three things:
 - **Third-party notices.** `THIRD_PARTY_NOTICES` reproduces the terms of the Go runtime and standard library and of every module linked into the executable. `scripts/build-release.sh` runs `scripts/third-party-notices.sh --check` first and stops when the file does not match the modules of the six release targets, so a module added without its notice cannot be released. Pull-request CI runs the same check. After adding or updating a module, run `scripts/third-party-notices.sh`, read the result and commit it.
 - **Homebrew formula.** The tap is a separate repository. Its license field names the Sustainable Use License, and its install check confirms these files are present ([v0.2.0 evidence](#v020-release-and-package-evidence)).
 
+## v0.3.0 release preparation
+
+**v0.3.0** collects everything merged since v0.2.0 (folding the unpublished v0.2.1 preparation into [v0.3.0 release notes](releases/v0.3.0.md) and [CHANGELOG.md](../CHANGELOG.md)) and prepares **BB plugin v0.4.0** from the same tag. This is the pre-release candidate record prior to tagging or publication.
+
+**Scope.** Branched from `origin/main` (`562c98d6`, after #499), preparing documentation, changelog consolidation, BB plugin version `0.4.0`, and candidate packaging checks without modifying `LICENSE` or `LICENSING.md` or checking off unverified roadmap items.
+
+Candidate evidence collected locally on macOS arm64:
+- **Notices and formatting.** `scripts/third-party-notices.sh --check`, `gofmt -l .`, and `go vet ./...` all passed.
+- **Build.** `scripts/build-release.sh v0.3.0` built all six release archives cleanly.
+- **Checksums.** All six matched `checksums.txt` via `shasum -a 256 -c checksums.txt`:
+  - `keepgoing_0.3.0_darwin_amd64.tar.gz` (`38938d747d97f3b0b1838da4f8ffad7550587038468b73eb928bcc32fa355ba3`)
+  - `keepgoing_0.3.0_darwin_arm64.tar.gz` (`d784284c8305a37f0d549e8845302550968fcefe9f922317338d3656bbdfb06c`)
+  - `keepgoing_0.3.0_linux_amd64.tar.gz` (`6513f5c511db335219c9bb96062f2d6ece37473c51f66e1855891a0e009f6e33`)
+  - `keepgoing_0.3.0_linux_arm64.tar.gz` (`7a9ac3875de6802f0583925f02161e37939bb574db493ea99383f5d0beafd6a5`)
+  - `keepgoing_0.3.0_windows_amd64.zip` (`6a6a0bd001963f5af7e5d7d13f5fbf01c633ba94ce850f70c80ca237081c3a9d`)
+  - `keepgoing_0.3.0_windows_arm64.zip` (`e89be97e31c8021611c11358d671408afd77917e41512557f6ec878f0f22be37`)
+- **Archive inventory.** `tar -ztf` and `unzip -Z1` confirmed all six archives contain only the executable (`keepgoing` / `keepgoing.exe`), `README.md`, `LICENSE`, `LICENSING.md`, `LICENSES/Apache-2.0.txt`, and `THIRD_PARTY_NOTICES` (no AppleDouble or stray files), and `unzip -tq` reported zero errors in both Windows ZIPs.
+- **The macOS executable.** The unpacked macOS arm64 binary reported `v0.3.0` with SHA-256 `aaae4e0a69576e370d4f1e2fbbb4ff407e7af93a7ac3ccb8a451e60b4e7f2b88`.
+- **`scripts/smoke-release.py`.** Against that unpacked binary in an isolated temporary `HOME`/`XDG_*`, all six setup variants passed (`bb-prompt`, `bb-goal`, `claude-prompt`, `claude-goal`, `codex-prompt`, `codex-goal`) with zero provider invocations.
+- **`scripts/smoke-recovery.py --include-cursor`.** All five journeys passed (`bb`, `process`, `claude`, `codex`, `cursor`), covering failure recovery, alert rejection, held-daemon `SIGKILL`/restart recovery, completion idempotency, send-allowance accounting, and owner preservation.
+- **BB plugin (`v0.4.0`).** `npm run typecheck` passed cleanly and `npm test` ran 290 cases (286 passed, 0 failed, 4 skipped where a pre-built optional host CLI fixture or platform precondition was absent).
+
+**Not run:**
+- the full `go test ./...` suite in this release-prep run (PR CI and the release workflow run it on Linux, macOS, and Windows);
+- `bb plugin build` bundle generation for plugin `v0.4.0` and live Git plugin installation from the `v0.3.0` tag;
+- native execution of the Linux, Windows, and Intel macOS archives;
+- downloaded-asset verification against published GitHub release artifacts;
+- the Homebrew tap formula update and fresh-install check;
+- any live provider walkthroughs or unanswered live-acceptance checks tracked in [availability](availability.md) and [the roadmap](roadmap.md).
+
+These are local pre-release artifacts; the release workflow builds and publishes the official archives once the `v0.3.0` tag is pushed after owner sign-off.
+
 ## v0.2.0 release and package evidence
 
 [v0.2.0](https://github.com/connorburgess/keepgoing-agents/releases/tag/v0.2.0) tags `d6bcd054de3cfcbe461c0a1542f88339922bf163`, the merge of #226 (the README version guide). It was published on 2026-11-14. Its code is the final candidate's below; since that candidate, only the README and this record have changed. The [six-job PR run](https://github.com/connorburgess/keepgoing-agents/actions/runs/43562312454) passed on #226's head `a3017970577b2b506d523185115e80ed185371d6`: build and tests on Ubuntu and macOS, both Windows access diagnostics jobs, and the BB plugin typecheck. The [contribution metadata check](https://github.com/connorburgess/keepgoing-agents/actions/runs/43562312437) passed too. The tag's [Build and publish job](https://github.com/connorburgess/keepgoing-agents/actions/runs/43563608418) passed: the release-notes check, `go test ./...`, the six archive builds, archive verification with the native Linux amd64 package smoke check, and publication.

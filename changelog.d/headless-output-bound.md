@@ -1,1 +1,0 @@
-- Bound headless Claude Code and Codex observation reads to 8 MiB using the existing runner limit; oversized turns remain unknown without parsing partial session or limit evidence. Private output files and process lifecycle are unchanged.

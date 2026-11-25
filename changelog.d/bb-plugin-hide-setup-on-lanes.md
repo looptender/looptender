@@ -1,1 +1,0 @@
-- The BB plugin no longer offers "Add to Looptender" on a child thread. When an ancestor has a loop it shows one quiet line, "Covered by <loop>", linking to that thread; either way setup stays reachable under a collapsed "Set up a loop for this thread anyway". The composer's chip is unchanged: BB's composer scope does not say whether a new thread is a child.

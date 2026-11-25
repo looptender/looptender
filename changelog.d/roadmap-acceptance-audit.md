@@ -1,1 +1,0 @@
-- Add a dated whole-roadmap acceptance inventory, explicit missing native/live and coordinator evaluation gates, and fictional command regressions for assignment inventory reorder, rename, replacement and reparenting. Passing offline subsets do not close roadmap acceptance or certify installed rollout.

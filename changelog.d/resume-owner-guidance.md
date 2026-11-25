@@ -1,1 +1,0 @@
-- Explain how a person can resume a loop when the command carries a conflicting BB thread identity, instead of suggesting an ownership takeover. Keep ownership, holds and self-resume safeguards unchanged on refusal.

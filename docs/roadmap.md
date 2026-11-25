@@ -1,6 +1,6 @@
 # Roadmap
 
-For current installation and command names, see the [README](../README.md#install). The published CLI is v0.2.0; merged source-only features below remain **unreleased**. Earlier milestone and verification records retain their original package labels. Documentation and packaging changes do not close live acceptance gaps.
+For current installation and command names, see the [README](../README.md#install). Release **v0.3.0** preparation ([notes](releases/v0.3.0.md), including BB plugin **v0.4.0**) is in progress ahead of tagging; earlier published CLI archives are **v0.2.0**. Earlier milestone and verification records retain their original package labels. Documentation and packaging changes do not close live acceptance gaps.
 
 ## Done
 
@@ -148,9 +148,9 @@ Use the [tagged release and package evidence](release-verification.md#v020-relea
 | Goal records/context, BB transfer CLI, registry and client controls | Released in v0.1.4 CLI archives and Homebrew | Offline fixtures; package installation does not verify live provider adoption or transfer |
 | Goal-aware setup, send provenance and goal-help correction | Released in CLI v0.1.5 and matching Homebrew | Offline fixtures and package checks; live onboarding remains open |
 | Recovery and reliability changes, the panel, run discovery, defined agents, Cursor | Released in CLI v0.2.0 and matching Homebrew | Offline fixtures and package checks; network-aware recovery observed once in a real outage ([record](testing.md#observed-once-a-real-outage-2026-11-14)), lanes and the full procedure not; see the [v0.2.0 notes](releases/v0.2.0.md#what-is-fixture-tested-and-what-is-live) |
-| BB plugin goal setup/transfer/status additions, and the stopped-checks card | v0.3.0 published in the v0.2.0 tag (v0.2.0 in the v0.1.5 tag); separate Git installation | SDK/DOM fixtures and bundle checks; live deployment remains unverified |
+| BB plugin goal setup/transfer/status additions, Continue-existing, and service startup | v0.4.0 prepared for v0.3.0 tag (v0.3.0 in v0.2.0; v0.2.0 in v0.1.5); separate Git installation | SDK/DOM fixtures and bundle checks; live deployment remains unverified |
 | Native macOS menu preview | Developer build; pauses, stops and resumes a loop after a native confirmation showing the panel's review; no packaged installer | Native build, unit and real-CLI fixture checks; no confirmation answered by a person; accessibility and live adoption remain incomplete |
-| Telegram remote channel | Unreleased source (`TG1`–`TG4`): `looptender telegram setup\|status\|test\|poll\|topics\|disconnect` and outbound `loop.report.format: telegram`; `TG5` planned ([design](telegram.md)) | Offline HTTP stand-ins and independent terminal QR decoding only; phone scanning, background service wiring and live Telegram Bot API verification remain open; opt-in local `doctor --telegram` pairing diagnostics are implemented |
+| Telegram remote channel | Included in v0.3.0 candidate (`TG1`–`TG4`): `looptender telegram setup\|status\|test\|poll\|topics\|service\|disconnect` and outbound `loop.report.format: telegram`; `TG5` planned ([design](telegram.md)) | Offline HTTP stand-ins and independent terminal QR decoding only; phone scanning, background service wiring and live Telegram Bot API verification remain open; opt-in local `doctor --telegram` pairing diagnostics are implemented |
 | Full BB pilot and headless recovery journey | Acceptance unfinished | Existing partial live observations do not close the walkthrough gates |
 
 Existing user authorization and repository merge policy remain in effect. Review workflows may require stronger gates for explicitly designated sensitive work, but a model recommendation or a timeout never grants new authority. This reassessment does not add a blanket human-approval requirement to already authorized routine work.

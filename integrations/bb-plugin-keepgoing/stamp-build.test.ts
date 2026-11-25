@@ -12,33 +12,33 @@ const semver = /^\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
 
 test("each looptender build gives a distinct, valid plugin version", () => {
   for (const [label, want] of [
-    ["v0.2.0-dev.ccd2310fd946", "0.3.1-build.v0-2-0-dev-ccd2310fd946"],
-    ["b1293f2b2115", "0.3.1-build.b1293f2b2115"],
-    ["12345678", "0.3.1-build.b12345678"],
-    ["0b4e12399667-dirty", "0.3.1-build.0b4e12399667-dirty"],
+    ["v0.2.0-dev.ccd2310fd946", "0.4.0-build.v0-2-0-dev-ccd2310fd946"],
+    ["b1293f2b2115", "0.4.0-build.b1293f2b2115"],
+    ["12345678", "0.4.0-build.b12345678"],
+    ["0b4e12399667-dirty", "0.4.0-build.0b4e12399667-dirty"],
   ] as const) {
-    const v = stampedVersion("0.3.1", label);
+    const v = stampedVersion("0.4.0", label);
     assert.equal(v, want); assert.match(v, semver);
   }
-  assert.notEqual(stampedVersion("0.3.1", "aaa1111"), stampedVersion("0.3.1", "bbb2222"));
+  assert.notEqual(stampedVersion("0.4.0", "aaa1111"), stampedVersion("0.4.0", "bbb2222"));
   // Stamping twice from a stamped version starts again from the base.
-  assert.equal(stampedVersion("0.3.1-build.old", "new1"), "0.3.1-build.new1");
-  assert.throws(() => stampedVersion("0.3", "x")); assert.throws(() => labelIdentifier("///"));
+  assert.equal(stampedVersion("0.4.0-build.old", "new1"), "0.4.0-build.new1");
+  assert.throws(() => stampedVersion("0.4", "x")); assert.throws(() => labelIdentifier("///"));
   assert.throws(() => labelSource("a b")); assert.throws(() => labelSource('x"; evil'));
 });
 
 test("stamping rewrites only the staged copy's version and label", () => {
   const dir = mkdtempSync(join(tmpdir(), "stamp-"));
   try {
-    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "x", version: "0.3.1", engines: { bb: ">=0.48" } }));
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "x", version: "0.4.0", engines: { bb: ">=0.48" } }));
     writeFileSync(join(dir, "build-label.ts"), "export const BUILD_LABEL: string | null = null;\n");
-    assert.equal(stamp(dir, "v0.2.0-dev.abc1234"), "0.3.1-build.v0-2-0-dev-abc1234");
+    assert.equal(stamp(dir, "v0.2.0-dev.abc1234"), "0.4.0-build.v0-2-0-dev-abc1234");
     const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-    assert.equal(pkg.version, "0.3.1-build.v0-2-0-dev-abc1234"); assert.deepEqual(pkg.engines, { bb: ">=0.48" });
+    assert.equal(pkg.version, "0.4.0-build.v0-2-0-dev-abc1234"); assert.deepEqual(pkg.engines, { bb: ">=0.48" });
     assert.match(readFileSync(join(dir, "build-label.ts"), "utf8"), /BUILD_LABEL: string \| null = "v0\.2\.0-dev\.abc1234";/);
     // The command line does the same and refuses a bad call.
     const script = new URL("./stamp-build.mjs", import.meta.url).pathname;
-    assert.equal(execFileSync("node", [script, "zzz9999"], { cwd: dir }).toString().trim(), "0.3.1-build.zzz9999");
+    assert.equal(execFileSync("node", [script, "zzz9999"], { cwd: dir }).toString().trim(), "0.4.0-build.zzz9999");
     assert.throws(() => execFileSync("node", [script], { cwd: dir, stdio: "pipe" }));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -50,20 +50,20 @@ test("stamping refuses a git work tree, in the directory or any parent", () => {
     const nested = join(root, "a", "b");
     mkdirSync(nested, { recursive: true });
     for (const dir of [root, nested]) {
-      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "x", version: "0.3.1" }));
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "x", version: "0.4.0" }));
       assert.equal(insideGitWorkTree(dir), true);
       assert.throws(() => stamp(dir, "abc1234"), /refusing to stamp inside a git work tree/);
-      assert.equal(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version, "0.3.1");
+      assert.equal(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version, "0.4.0");
     }
     const script = new URL("./stamp-build.mjs", import.meta.url).pathname;
     assert.throws(() => execFileSync("node", [script, "abc1234"], { cwd: nested, stdio: "pipe" }));
-    assert.equal(JSON.parse(readFileSync(join(nested, "package.json"), "utf8")).version, "0.3.1");
+    assert.equal(JSON.parse(readFileSync(join(nested, "package.json"), "utf8")).version, "0.4.0");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("labels differing only in case, punctuation or after 48 characters give one version", () => {
-  assert.equal(stampedVersion("0.3.1", "ABC.1"), stampedVersion("0.3.1", "abc-1"));
-  assert.equal(stampedVersion("0.3.1", "x".repeat(60) + "1"), stampedVersion("0.3.1", "x".repeat(60) + "2"));
+  assert.equal(stampedVersion("0.4.0", "ABC.1"), stampedVersion("0.4.0", "abc-1"));
+  assert.equal(stampedVersion("0.4.0", "x".repeat(60) + "1"), stampedVersion("0.4.0", "x".repeat(60) + "2"));
 });
 
 // In a stamped staged copy this checks nothing: the repository copy is what

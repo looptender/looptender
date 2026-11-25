@@ -1,1 +1,0 @@
-- Successful explicit CLI enable/start publishes a local discovery reference so open dock/panel readers can find the loop. Publication failures warn separately without replaying control operations; reads never import loops.

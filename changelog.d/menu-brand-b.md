@@ -1,1 +1,0 @@
-- The macOS menu uses the looptender mark as its menu bar icon, and tints the state symbols in the brand colours (supervising, waiting on a limit, failing, and amber only for a loop that needs you). Symbol shapes, text and order are unchanged.

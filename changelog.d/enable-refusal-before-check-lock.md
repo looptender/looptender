@@ -1,1 +1,0 @@
-- `enable` from a thread that no longer owns the loop is now refused with the ownership message (naming the supervisor's handoff when there was one) even while the loop's supervisor holds the check lock, instead of exiting 75 with "lock held by another process".
