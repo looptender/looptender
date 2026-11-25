@@ -229,6 +229,13 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	return exitOK
 }
 func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, now time.Time) error {
+	return accountCheckWithEnv(ctx, dir, id, caller, run, os.Environ, now)
+}
+
+func accountCheckWithEnv(ctx context.Context, dir, id, caller string, run accountRun, getEnv func() []string, now time.Time) error {
+	if getEnv == nil {
+		getEnv = os.Environ
+	}
 	f, err := accounts.Load(dir)
 	if err != nil {
 		return err
@@ -252,7 +259,7 @@ func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, n
 	if current == nil || current.Revision != selected.Revision {
 		return accounts.ErrChanged
 	}
-	effective := os.Environ()
+	effective := getEnv()
 	fingerprint := ""
 	o := accounts.Observation{Revision: selected.Revision, Context: selected.Context, At: now, Auth: "unavailable", Caller: caller}
 	bound, accepted := accounts.Bound(f, selected, effective)
@@ -315,7 +322,7 @@ func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, n
 			return accounts.ErrChanged
 		}
 		if o.Reason != "context_changed" {
-			if now, ok := accounts.Bound(*latest, *e, os.Environ()); !accountContextExists(*e) || !ok || now != o.Context {
+			if now, ok := accounts.Bound(*latest, *e, getEnv()); !accountContextExists(*e) || !ok || now != o.Context {
 				return accounts.ErrChanged
 			}
 		}

@@ -1742,7 +1742,7 @@
     return wrap;
   }
   var failedChecks = {
-    context_changed: "could not be compared: the context differs from the selection",
+    context_changed: "was saved in a different shell, context, or CLI path",
     timeout: "timed out",
     cancelled: "was cancelled",
     version_unavailable: "could not read the CLI version",
@@ -1753,7 +1753,11 @@
   // the last good check, or unavailable when there was none.
   function failedCheckLine(c) {
     return "Last check" + (c.failedCheckAt ? " " + fmt(secFmt, c.failedCheckAt) : "") + " " + (failedChecks[c.reason] || "did not complete") + "." +
-      (c.attention === "context_changed" ? " Review and update the selection before checking again." : "");
+      (c.attention === "context_changed"
+        ? (changesOn() && state.server && state.server.accountSelectionReview
+            ? " Review selection for this panel before checking again."
+            : " Open a panel with --allow-changes or update the selection before checking again.")
+        : "");
   }
   // What on a card needs a person, in words; the warning style is kept for
   // these and never used for age alone. A failed check or a changed context
@@ -1924,8 +1928,76 @@
         render(false, true);
         focusOn(request.preview ? "quota-cancel-" + c.id : "quota-result-" + c.id);
         if (request.result) announce(request.result.text);
-        if (confirm) { clearTimeout(state.timer); load(true); }
+        if (confirm) {
+          if (recovery && typeof accountChecks !== "undefined") delete accountChecks.attempted[c.id];
+          clearTimeout(state.timer); load(true);
+        }
       });
+  }
+  var accountChecks = { active: false, done: 0, total: 0, attempted: Object.create(null), notice: "" };
+  function accountCheckSupported(c) {
+    return changesOn() && !!(state.server && state.server.accountCheck) && (!c || c.provider === "claude-code" || c.provider === "codex");
+  }
+  function accountCheckEligible(c) {
+    if (!c || (c.provider !== "claude-code" && c.provider !== "codex")) return false;
+    if (c.attention === "context_changed" || c.reason === "context_changed" || c.reason === "unsupported") return false;
+    return true;
+  }
+  function accountNeedsAutoCheck(c) {
+    if (!accountCheckEligible(c)) return false;
+    if (c.auth && c.auth.state === "unchecked") return true;
+    return !!((c.auth && c.auth.checkAgain) || (c.plan && c.plan.checkAgain));
+  }
+  function accountCheckPost(id, form) {
+    var abort = new AbortController(), timer = setTimeout(function () { abort.abort(); }, 15000);
+    return fetch("api/v1/account-checks/" + encodeURIComponent(id) + "/run", {
+      method: "POST", cache: "no-store", credentials: "same-origin", signal: abort.signal,
+      headers: { "Content-Type": "application/json", Accept: "application/json", "X-Keepgoing-Form": form },
+      body: JSON.stringify({ action: "account_check" })
+    }).then(function (r) {
+      if (!r.ok) { var e = new Error("status " + r.status); e.status = r.status; throw e; }
+      return r.json();
+    }).then(function (d) {
+      if (!d || d.schemaVersion !== 1 || !d.result || typeof d.result.text !== "string") throw new Error("account check reply");
+      return d;
+    }).finally(function () { clearTimeout(timer); });
+  }
+  function runAccountChecks(cards, manual) {
+    if (!accountCheckSupported() || accountChecks.active || document.hidden || state.paused || route().view !== "accounts") return;
+    var queue = list(cards).filter(accountCheckEligible).slice(0, 16);
+    if (!queue.length) return;
+    queue.forEach(function (c) { accountChecks.attempted[c.id] = true; });
+    accountChecks.active = true;
+    accountChecks.done = 0;
+    accountChecks.total = queue.length;
+    accountChecks.notice = "";
+    render(false, true);
+    var lastText = "";
+    function next(i) {
+      if (i >= queue.length || route().view !== "accounts" || document.hidden || state.paused || !accountCheckSupported()) {
+        accountChecks.active = false;
+        if (manual && lastText) accountChecks.notice = queue.length === 1 ? lastText : "Checked " + accountChecks.done + " of " + accountChecks.total + " accounts.";
+        render(false, true);
+        if (accountChecks.done > 0) { savedAccounts.status = ""; savedAccounts.data = null; clearTimeout(state.timer); load(true); }
+        return;
+      }
+      accountCheckPost(queue[i].id, state.server.form)
+        .then(function (d) { lastText = d.result.text; })
+        .catch(function () { lastText = "Account check could not complete."; })
+        .then(function () {
+          accountChecks.done = i + 1;
+          render(false, true);
+          next(i + 1);
+        });
+    }
+    next(0);
+  }
+  function maybeAutoCheckAccounts(cards) {
+    if (!accountCheckSupported() || accountChecks.active || document.hidden || state.paused || route().view !== "accounts") return;
+    var due = list(cards).filter(function (c) {
+      return accountNeedsAutoCheck(c) && !accountChecks.attempted[c.id];
+    });
+    if (due.length) runAccountChecks(due, false);
   }
   function accountQuotaReason(reason) {
     return ({ not_checked: "No subscription quota reading is saved for this selection.", selection_review_required: "Review this unchanged selection for the panel, then refresh quota. Saved quota was not reused.", context_changed: "The selected context changed. Review it before refreshing quota.", cache_unavailable: "Private quota evidence could not be read. No usage is assumed.",
@@ -2096,7 +2168,7 @@
       } else review.appendChild(el("p", "sub", current.recovery ? "Preparing selection review…" : "Preparing quota review…"));
       box.appendChild(review);
     }
-    var needsSelectionReview = q.reason === "selection_review_required";
+    var needsSelectionReview = q.reason === "selection_review_required" || q.reason === "context_changed" || c.attention === "context_changed";
     if (needsSelectionReview) {
       if (changesOn() && state.server.accountSelectionReview) {
         if (!current) box.appendChild(button("Review selection for this panel…", "selection-review-" + c.id, "", function () { accountQuotaRequest(c, false, true); }));
@@ -2253,9 +2325,19 @@
       return;
     }
     pane.appendChild(el("p", "account-count", cards.length + (cards.length === 1 ? " selected account" : " selected accounts")));
-    var templates = cards.filter(accountConnectSupported);
-    if (templates.length) {
+    var templates = cards.filter(accountConnectSupported), eligibleChecks = accountCheckSupported() ? cards.filter(accountCheckEligible) : [];
+    if (templates.length || eligibleChecks.length) {
       var add = el("div", "account-quota-actions");
+      if (eligibleChecks.length) {
+        var checkAllLabel = accountChecks.active
+          ? "Checking accounts (" + Math.min(accountChecks.done + 1, accountChecks.total) + " of " + accountChecks.total + ")…"
+          : "Check accounts";
+        var checkAllBtn = button(checkAllLabel, "account-check-all", "", function () {
+          eligibleChecks.forEach(function (item) { delete accountChecks.attempted[item.id]; });
+          runAccountChecks(eligibleChecks, true);
+        }, accountChecks.active);
+        add.appendChild(checkAllBtn);
+      }
       ["claude-code", "codex"].forEach(function (provider) {
         var template = templates.find(function (c) { return c.provider === provider; });
         if (!template) return;
@@ -2265,6 +2347,15 @@
       });
       pane.appendChild(add);
     } else pane.appendChild(addAccountBox(!cards.length));
+    if (accountChecks.active) {
+      var checkProg = el("p", "sub account-check-status", "Checking local account status (" + Math.min(accountChecks.done + 1, accountChecks.total) + " of " + accountChecks.total + ")…");
+      checkProg.setAttribute("role", "status");
+      pane.appendChild(checkProg);
+    } else if (accountChecks.notice) {
+      var checkNotice = el("p", "sub account-check-status", accountChecks.notice);
+      checkNotice.setAttribute("role", "status");
+      pane.appendChild(checkNotice);
+    }
     if (!d.complete || (d.registry || {}).availability !== "available") pane.appendChild(el("p", "sub", "Not every loop could be read, so some routes may be missing here."));
     var ul = el("ul", "accounts-list"), retained = Object.create(null);
     cards.forEach(function (c) {
@@ -2277,7 +2368,15 @@
       var identity = el("span", "account-title"); identity.appendChild(name); identity.appendChild(provider);
       identity.appendChild(el("span", "sub", c.selection === "inherited" ? "Inherited context" : c.selection === "explicit_directory" ? "Selected context" : "External context"));
       summary.appendChild(identity);
-      var status = el("span", "account-status"); status.appendChild(accountEvidence(c.auth));
+      var status = el("span", "account-status");
+      if (c.auth && c.auth.state === "unchecked" && c.localAuth) {
+        var localWrap = el("div", "account-evidence");
+        localWrap.appendChild(el("span", null, c.localAuth === "file_present" ? "Local login file present" : c.localAuth === "file_expired" ? "Local login file expired" : "No local login file"));
+        localWrap.appendChild(el("span", "sub", c.localAuth === "file_present" ? "Credential file found; CLI check has not run" : c.localAuth === "file_expired" ? "Saved token expired; sign in again and check" : "Not checked with CLI yet"));
+        status.appendChild(localWrap);
+      } else {
+        status.appendChild(accountEvidence(c.auth));
+      }
       // The login and plan shown are the last good check; say when and why the
       // latest one failed, once, with the warning when it needs a person.
       var failed = c.attention === "check_failed" || c.attention === "context_changed" || !!c.failedCheckAt;
@@ -2293,10 +2392,26 @@
       var plan = el("span", "account-plan");
       plan.appendChild(el("span", "sub", "Reported plan"));
       var auth = c.auth || {}, sameCheck = !!(c.plan && c.plan.observedAt && c.plan.observedAt === auth.observedAt && c.plan.source === auth.source);
-      plan.appendChild(accountEvidence(c.plan, sameCheck)); summary.appendChild(plan);
+      var suppressDupPlan = c.plan && !c.plan.value && ((c.plan.missing === "not_checked" && auth.state !== "reported_present") || (auth.state === "unavailable" && c.plan.text === "Unavailable"));
+      if (suppressDupPlan) {
+        var dash = el("span", "sub", "—");
+        dash.setAttribute("aria-label", auth.state === "unchecked" ? "Reported plan unavailable until checked" : "Reported plan unavailable");
+        plan.appendChild(dash);
+      } else {
+        plan.appendChild(accountEvidence(c.plan, sameCheck));
+      }
+      summary.appendChild(plan);
       var qs = accountQuotaSummary(c);
       var compact = el("span", "quota-compact");
-      if (qs && qs.state === "reported") {
+      if (c.attention === "context_changed" && changesOn() && state.server && state.server.accountSelectionReview && (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity")) {
+        var reviewBtn = button("Review selection…", "selection-review-summary-" + c.id, "", function (event) {
+          event.preventDefault(); event.stopPropagation();
+          state.accountOpen[c.id] = true;
+          accountQuotaRequest(c, false, true);
+        });
+        reviewBtn.setAttribute("aria-label", "Review selection for " + c.label);
+        compact.appendChild(reviewBtn);
+      } else if (qs && qs.state === "reported") {
         list(qs.rows).filter(function (w) { return typeof w.usedPercent === "number"; }).slice(0, 2).forEach(function (w) {
           var item = el("span", "quota-chip"); item.appendChild(el("span", "sub", w.name));
           item.appendChild(el("strong", null, w.ended ? "Window ended" : w.usedPercent + "% used")); compact.appendChild(item);
@@ -2352,7 +2467,7 @@
         facts.appendChild(fact("Actual response model", accountEvidence(c.observedModel)));
       }
       var reasons = {
-        context_changed: "The effective context differs from the selection. Review and update it before checking again.",
+        context_changed: "This selection was saved under a different shell, context, or CLI path (such as Terminal vs an agent session or an updated binary). Review it for this panel or run looptender accounts update before checking again.",
         unsupported: "Authentication is externally managed or unsupported here. Use the provider's own controls.",
         timeout: "The latest status check timed out. It did not establish a current login.",
         cancelled: "The latest status check was cancelled.",
@@ -2360,6 +2475,14 @@
         status_unavailable: "The latest status command did not establish a recognized login result."
       };
       if (c.reason) body.appendChild(el("p", "account-note", reasons[c.reason] || "The latest account check is unavailable."));
+      if (accountCheckSupported(c) && accountCheckEligible(c)) {
+        var cardActions = el("div", "account-quota-actions");
+        cardActions.appendChild(button(accountChecks.active ? "Checking…" : "Check login now", "account-check-" + c.id, "", function () {
+          delete accountChecks.attempted[c.id];
+          runAccountChecks([c], true);
+        }, accountChecks.active));
+        body.appendChild(cardActions);
+      }
       var removeBox = accountRemoveBox(c);
       if (removeBox) body.appendChild(removeBox);
       details.appendChild(body);
@@ -2376,11 +2499,12 @@
     // One footnote for the page, naming the command. With one card its ID
     // fills in as on the card's own hint.
     var note = el("p", "sub account-footnote");
-    note.appendChild(document.createTextNode("Login and plan reports do not verify quota, model access or continuing availability. Nothing checks again on its own: the age shown is when the last explicit check ran, and after a day the card suggests checking again. To record another observation, run "));
+    note.appendChild(document.createTextNode("Login and plan reports do not verify quota, model access or continuing availability. Opening Accounts in a panel with changes allowed runs one bounded check for unchecked or older accounts; to check again manually, run "));
     if (!cards.length) return;
     note.appendChild(accountCheckCommand(cards.length === 1 ? cards[0] : null));
     note.appendChild(document.createTextNode(cards.length === 1 && state.identifiers ? "." : state.identifiers ? " with the card's connection ID." : " with the card's connection ID (Show identifiers to see it)."));
     pane.appendChild(note);
+    maybeAutoCheckAccounts(cards);
   }
 
   // ---- How to add an account, add a route and change the order ----

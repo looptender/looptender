@@ -444,6 +444,7 @@ func (h *panelHandler) served(w http.ResponseWriter) func(session string) {
 			out.AccountQuota = true
 			out.AccountQuotaProviders = panelQuotaProvidersFor(runtime.GOOS, runtime.GOARCH)
 			out.AccountSelectionReview = true
+			out.AccountCheck = true
 			out.AccountRemove = true
 			out.SendAllowanceEdit = h.changes.caller == ""
 			out.AccountConnectProviders = panelConnectProvidersFor(runtime.GOOS, runtime.GOARCH)

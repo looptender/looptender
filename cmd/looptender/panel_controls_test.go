@@ -28,7 +28,7 @@ func TestTheDefaultPanelPausesStopsAndResumesOnly(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &served); err != nil {
 		t.Fatal(err)
 	}
-	if served.Changes != "on" || served.Form == "" || served.RouteChanges != "" || served.AccountQuota || served.AccountSelectionReview || served.SendAllowanceEdit || len(served.AccountConnectProviders) != 0 ||
+	if served.Changes != "on" || served.Form == "" || served.RouteChanges != "" || served.AccountQuota || served.AccountSelectionReview || served.AccountCheck || served.AccountRemove || served.SendAllowanceEdit || len(served.AccountConnectProviders) != 0 ||
 		!strings.HasPrefix(served.ChangesText.render(dockNow), "Pause, stop and resume allowed for") || !strings.Contains(served.ChangesText.render(dockNow), "need looptender panel --allow-changes") {
 		t.Fatalf("served: %s", body)
 	}
@@ -53,7 +53,7 @@ func TestTheDefaultPanelPausesStopsAndResumesOnly(t *testing.T) {
 		t.Fatalf("build replacement offered: %d %+v", resp.StatusCode, p)
 	}
 	// The other changes' endpoints answer nothing.
-	for _, prefix := range []string{panelRoutesPrefix, panelAccountConnectPrefix, panelAccountSelectionPrefix, panelAccountQuotaPrefix, panelAccountRemovePrefix, panelSendAllowancePrefix} {
+	for _, prefix := range []string{panelRoutesPrefix, panelAccountConnectPrefix, panelAccountSelectionPrefix, panelAccountQuotaPrefix, panelAccountCheckPrefix, panelAccountRemovePrefix, panelSendAllowancePrefix} {
 		req, _ := http.NewRequest(http.MethodPost, w.page+prefix+"x/prepare", strings.NewReader(`{}`))
 		req.Header.Set("Origin", w.origin)
 		req.Header.Set("Sec-Fetch-Site", "same-origin")

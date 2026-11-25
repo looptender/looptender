@@ -53,7 +53,7 @@ func TestDockReadsTimeOutG2(t *testing.T) {
 	// increment. Each bounded read must retain its own deadline, signal, cleanup
 	// and failure path; generic reviewed changes deliberately keep unknown-save
 	// semantics without automatic timeout/replay.
-	owners := []string{"function getJSON(url) {", "function loadUsage() {", "function loadSavedAccounts(retry) {", "function accountQuotaPost(id, step, form, recovery) {", "function post(path, form, body) {", "function accountConnectPost(c, step, form, attempt) {", "function allowancePost(key, step, form, amount) {", "function saveNotify(body) {"}
+	owners := []string{"function getJSON(url) {", "function loadUsage() {", "function loadSavedAccounts(retry) {", "function accountQuotaPost(id, step, form, recovery) {", "function accountCheckPost(id, form) {", "function post(path, form, body) {", "function accountConnectPost(c, step, form, attempt) {", "function allowancePost(key, step, form, amount) {", "function saveNotify(body) {"}
 	ownedFetches := 0
 	for _, head := range owners {
 		source := jsFunction(t, js, head)
@@ -77,6 +77,7 @@ func TestDockReadsTimeOutG2(t *testing.T) {
 		{"function allowancePost(key, step, form, amount) {", []string{"new AbortController()", "abort.abort()", "15000", "signal: abort.signal", "if (!r.ok)", "allowanceReply(d, key, step)", ".finally(function () { clearTimeout(timer); });"}},
 		{"function saveNotify(body) {", []string{"new AbortController()", "ctl.abort()", "15000", "signal: ctl.signal", "if (!r.ok)", ".finally(function () { clearTimeout(timer); });"}},
 		{"function accountQuotaPost(id, step, form, recovery) {", []string{"new AbortController()", "abort.abort()", "15000", "signal: abort.signal", "if (!r.ok)", ".finally(function () { clearTimeout(timer); });"}},
+		{"function accountCheckPost(id, form) {", []string{"new AbortController()", "abort.abort()", "15000", "signal: abort.signal", "if (!r.ok)", ".finally(function () { clearTimeout(timer); });"}},
 	} {
 		source := jsFunction(t, js, tc.head)
 		for _, want := range tc.required {
@@ -131,8 +132,8 @@ func TestDockQuotaOnlyReadsAfterExplicitReview(t *testing.T) {
 	}
 	for _, head := range []string{"function load(byHand) {", "function loadServer() {", "function loadUsage() {", "function loadSavedAccounts(retry) {", "function schedule() {"} {
 		source := jsFunction(t, js, head)
-		if strings.Contains(source, "accountQuotaPost(") || strings.Contains(source, "accountQuotaRequest(") {
-			t.Errorf("automatic quota read in %s", head)
+		if strings.Contains(source, "accountQuotaPost(") || strings.Contains(source, "accountQuotaRequest(") || strings.Contains(source, "accountCheckPost(") || strings.Contains(source, "maybeAutoCheckAccounts(") {
+			t.Errorf("automatic quota or account check in %s", head)
 		}
 	}
 }
