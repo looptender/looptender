@@ -71,7 +71,7 @@ Local client discovery:
   client pause|stop        Save a restrictive hold for a registered loop
   client prepare-resume    Prepare a short-lived snapshot/ticket for review
   client resume            Clear holds using an unchanged prepared ticket
-  accounts list|add|update|check|usage  Select private account contexts; explicit status only, no model calls
+  accounts list|add|update|remove|check|usage  Select private account contexts; explicit status only, no model calls
   accounts connect|disconnect  Connect a subscription: a new private directory, the provider's own sign-in, a label; or take one out of the list
   registry add|list|remove|reconcile  Register private loop references; never start supervision
   migrate                  Say what moving the per-user directories from keepgoing/ to looptender/ would do;

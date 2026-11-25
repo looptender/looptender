@@ -458,3 +458,76 @@ func TestAccountsCheckRebindsAnEarlierBuildsContext(t *testing.T) {
 		t.Fatal("a rebound entry accepted a real change")
 	}
 }
+
+func TestAccountsRemoveCLIFlowAndReferences(t *testing.T) {
+	t.Setenv("BB_THREAD_ID", "")
+	dir, first := accountFixture(t, "claude-code")
+	credDir := filepath.Join(t.TempDir(), "claude-explicit")
+	if err := os.MkdirAll(credDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	credFile := filepath.Join(credDir, ".credentials.json")
+	if err := os.WriteFile(credFile, []byte(`{"example":"secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var second accounts.Entry
+	if err := accounts.Update(dir, func(f *accounts.File) error {
+		second = accounts.NewEntry(*f, accounts.Entry{
+			Label:     "Example duplicate",
+			Provider:  "claude-code",
+			Mode:      "explicit_directory",
+			Directory: credDir,
+			CLI:       first.CLI,
+			Workdir:   first.Workdir,
+		}, "thr_example_actual", time.Now().UTC(), os.Environ())
+		f.Entries = append(f.Entries, second)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Missing --id is usage error; unknown --revision fails without modifying catalog.
+	var out, errs bytes.Buffer
+	if code := accountsCommand(env{context.Background(), &out, &errs}, []string{"remove", "--directory", dir}, accountExec); code != exitUsage {
+		t.Fatalf("missing --id: exit %d (%s)", code, errs.String())
+	}
+	out.Reset()
+	errs.Reset()
+	if code := accountsCommand(env{context.Background(), &out, &errs}, []string{"remove", "--directory", dir, "--id", second.ID, "--revision", strings.Repeat("00", 16)}, accountExec); code != exitFailed || !strings.Contains(errs.String(), "changed") {
+		t.Fatalf("bad revision: exit %d %q", code, errs.String())
+	}
+	out.Reset()
+	errs.Reset()
+
+	// accountsRemove surfaces loop route references in text and JSON while touching zero files on disk.
+	refs := []string{"loop example-loop, route spare"}
+	code := accountsRemove(env{context.Background(), &out, &errs}, dir, second.ID, second.Revision, false, func(_, _ string) ([]string, bool) {
+		return refs, true
+	})
+	if code != exitOK {
+		t.Fatalf("remove text exit %d: %s", code, errs.String())
+	}
+	if !strings.Contains(out.String(), "not touched") || !strings.Contains(out.String(), "loop example-loop, route spare") {
+		t.Fatalf("expected safety + reference warning in output:\n%s", out.String())
+	}
+	if b, err := os.ReadFile(credFile); err != nil || string(b) != `{"example":"secret"}` {
+		t.Fatalf("provider directory/file must not be modified: err=%v bytes=%q", err, b)
+	}
+
+	// JSON output for removing the remaining entry.
+	out.Reset()
+	errs.Reset()
+	code = accountsRemove(env{context.Background(), &out, &errs}, dir, first.ID, first.Revision, true, func(_, _ string) ([]string, bool) {
+		return []string{"loop another-loop, route primary"}, true
+	})
+	if code != exitOK {
+		t.Fatalf("remove json exit %d: %s", code, errs.String())
+	}
+	var parsed accountRemoveOut
+	if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+		t.Fatalf("invalid remove JSON: %v %s", err, out.String())
+	}
+	if !parsed.Removed || parsed.ID != first.ID || !parsed.ReferencesComplete || len(parsed.References) != 1 || len(parsed.Accounts.Cards) != 0 {
+		t.Fatalf("unexpected remove JSON: %+v", parsed)
+	}
+}
