@@ -730,11 +730,54 @@
     document.title = (needs ? "(" + needs + ") " : "") + "looptender" + (unread ? " · " + unread + " new" : "");
   }
 
+  function routerServiceText(svc) {
+    switch (svc) {
+      case "loaded": return "service loaded";
+      case "not_installed": return "service not installed";
+      case "absent": return "service not loaded";
+      case "partial": return "service partially loaded";
+      case "unknown": return "service status unknown";
+      default: return "service unavailable";
+    }
+  }
+
+  function routerBox(r) {
+    if (!r || typeof r !== "object") return null;
+    var isEnabled = !!r.enabled;
+    var isAnswering = !!r.answering;
+    var pointed = typeof r.pointedCount === "number" && r.pointedCount >= 0 ? r.pointedCount : 0;
+    var needsAttention = (isEnabled || pointed > 0) && !isAnswering;
+    var tone = needsAttention ? "attn" : (isAnswering && (isEnabled || pointed > 0) ? "good" : "calm");
+    var stateLabel = isAnswering ? "Answering" : "Not answering";
+    var wrap = el("section", "panel router-card" + (needsAttention ? " is-attn" : ""));
+    wrap.setAttribute("aria-label", "Account Router");
+    var head = el("div", "router-head");
+    head.appendChild(el("h2", "router-title", "Account Router"));
+    var pill = el("span", "state tone-" + tone);
+    pill.appendChild(el("span", "dot dot-" + tone));
+    pill.appendChild(el("span", null, stateLabel));
+    head.appendChild(pill);
+    wrap.appendChild(head);
+    var meta = [
+      isEnabled ? "Enabled" : "Off",
+      pointed + " pointed",
+      routerServiceText(r.service)
+    ];
+    if (r.directory && r.directory !== "private") meta.push("directory " + r.directory);
+    wrap.appendChild(el("p", "sub router-meta", meta.join(" \u00B7 ")));
+    if (needsAttention) {
+      wrap.appendChild(el("p", "router-warning", "Router is enabled or pointed while its socket is not answering. Check looptender router status, start the router, or run looptender router off."));
+    }
+    return wrap;
+  }
+
   function renderHome(d, pane) {
     pane.appendChild(paneHead("Overview"));
     var group = groupBox(d);
     if (group) pane.appendChild(group);
+    var router = routerBox(d.router);
     if (d.registry.availability !== "available") {
+      if (router) pane.appendChild(router);
       pane.appendChild(el("p", "lede", "Unknown."));
       pane.appendChild(emptyBox("The registry could not be read.", "Nothing is shown rather than guessing. Check it with looptender registry list."));
       return;
@@ -742,6 +785,7 @@
     var needs = list(d.needsYou);
     if (d.lede) pane.appendChild(el("p", "lede", d.lede));
     if (d.buildFreshness && d.buildFreshness.text && list(d.loops).length) pane.appendChild(el("p", "sub fresh-summary", d.buildFreshness.text));
+    if (router) pane.appendChild(router);
     pane.appendChild(noticeArea());
     if (!list(d.loops).length) {
       pane.appendChild(emptyBox("No loops are registered yet.", "Register one with looptender registry add -c path/to/looptender.yaml (or keepgoing.yaml), and it appears here on the next read."));

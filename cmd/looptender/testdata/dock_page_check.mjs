@@ -206,6 +206,35 @@ const expectations = [
   }),
     [{ hash: "#/", fn: (w) => (/Observed, woken only when idle/.test(text(w, "#pane .work-tree .work-observed")) && /Wake: last wake refused: folder/.test(text(w, "#pane .work-tree .sessionpipe-wake")) ? null : "the Overview row lacks the wake_only label or wake line") },
      { hash: "loop", fn: (w, h) => h.endsWith(fixture.dock.loops[0].key) ? (/Observed, woken only when idle/.test(text(w, "#pane .pane-head .work-observed")) && /Wake: last wake refused: folder/.test(text(w, "#pane .sessionpipe-wake")) ? null : "loop page lacks wake_only label or wake line") : null }]],
+  ["unconfigured router renders nothing on the Overview", (d) => { delete d.router; return d; },
+    [{ hash: "#/", fn: (w) => (!w.document.querySelector("#pane .router-card") ? null : "router card appeared when report.router was absent") }]],
+  ["null router renders nothing on the Overview", (d) => { d.router = null; return d; },
+    [{ hash: "#/", fn: (w) => (!w.document.querySelector("#pane .router-card") ? null : "router card appeared when report.router was null") }]],
+  ["configured answering router renders status, counts, and service without warning", (d) => {
+    d.router = { directory: "private", answering: true, enabled: true, pointedCount: 2, service: "loaded" };
+    return d;
+  },
+    [{ hash: "#/", fn: (w) => {
+      const card = w.document.querySelector("#pane .router-card");
+      if (!card) return "router card missing when configured";
+      if (card.classList.contains("is-attn") || card.querySelector(".router-warning")) return "unexpected warning when router is answering";
+      const t = card.textContent;
+      return /Account Router/.test(t) && /Answering/.test(t) && /Enabled/.test(t) && /2 pointed/.test(t) && /service loaded/.test(t)
+        ? null : "answering router card missing expected fields: " + t;
+    } }]],
+  ["configured router enabled/pointed while not answering renders advisory warning", (d) => {
+    d.router = { directory: "private", answering: false, enabled: true, pointedCount: 1, service: "not_installed" };
+    return d;
+  },
+    [{ hash: "#/", fn: (w) => {
+      const card = w.document.querySelector("#pane .router-card");
+      if (!card) return "router card missing when configured";
+      if (!card.classList.contains("is-attn")) return "missing is-attn class on not-answering router card";
+      const warn = text(w, "#pane .router-card .router-warning");
+      const t = card.textContent;
+      return /Not answering/.test(t) && /Enabled/.test(t) && /1 pointed/.test(t) && /service not installed/.test(t) && /socket is not answering/.test(warn)
+        ? null : "not-answering router card missing expected fields or warning: " + t;
+    } }]],
 ];
 for (const [name, mutate, checks, server] of expectations) await render(name, scenario(mutate), checks, server || fixture.server);
 

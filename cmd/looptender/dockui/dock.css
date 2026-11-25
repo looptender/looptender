@@ -701,6 +701,15 @@ details[open] > .how-summary::before { transform: rotate(45deg); }
 .fresh-pending, .fresh-older, .fresh-different, .fresh-refused { font-weight: 600; }
 .fresh-summary { margin: 0.25rem 0 0.75rem; }
 
+/* Read-only Account Router card on the Overview; rendered only when report.router is present. */
+.router-card { margin-top: 0.75rem; padding: 0.75rem 1.05rem; }
+.router-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 0.75rem; }
+.router-title { font-size: 0.95rem; font-weight: 650; }
+.router-meta { margin: 0.3rem 0 0; font-size: 0.8125rem; }
+.router-warning { margin: 0.45rem 0 0; font-size: 0.875rem; color: var(--ink); max-width: 68ch; }
+.router-card.is-attn { background: var(--attn-soft); border-color: var(--attn-line); }
+.router-card.is-attn .router-meta { color: var(--ink); }
+
 .notices { margin: 0.5rem 0 1rem; }
 .notices summary { cursor: pointer; font-weight: 600; }
 .notice-list { list-style: none; margin: 0.5rem 0; padding: 0; }
