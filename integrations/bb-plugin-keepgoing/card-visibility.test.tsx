@@ -4,7 +4,7 @@ import { JSDOM } from "jsdom";
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://example.com" });
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true });
 Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
-const { cleanup, within } = await import("@testing-library/react");
+const { cleanup, fireEvent, waitFor, within } = await import("@testing-library/react");
 const { loadPluginApp, renderSlot } = await import("@get-bb/plugin-sdk/testing/app");
 const app = await loadPluginApp(() => import("./app.tsx"));
 const details = { readAt: "2026-01-01T00:00:00Z", completed: false, targetThread: "thr_example", targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null };
@@ -127,4 +127,154 @@ test("checks have stopped banner chip stays single-line without build differs wh
   try {
     await expanded.findByText("Different build from the installed one");
   } finally { expanded.lifecycle.unmount(); cleanup(); }
+});
+
+test("clicking Start checks updates the composer chip immediately to starting checks, preserves #541 chip styles, and clears when the next check lands", async () => {
+  const overdueLoop = loop({ controlState: "enabled" }, { schedule: { overdue: true, message: "No check has run for 2 hours." }, daemon: { state: "not_recorded" }, lastCheck: { at: "2026-01-01T00:00:00Z", target: "primary", action: "none", outcome: "ok" } });
+  let current = overdueLoop;
+  let forThreadCalls = 0;
+  let holdImmediateRefresh: (() => void) | null = null;
+  const props = { threadId: `thr_vis_${++n}`, projectId: "proj_example", environment: null, segments: [], isExpanded: true, onToggle() {} };
+  const rpc = {
+    forThread: () => {
+      forThreadCalls++;
+      if (forThreadCalls === 2 && holdImmediateRefresh) {
+        return new Promise(resolve => {
+          const done = holdImmediateRefresh!;
+          holdImmediateRefresh = () => { done(); resolve({ loops: [current], errors: [] }); };
+        });
+      }
+      return { loops: [current], errors: [] };
+    },
+    startChecks: () => ({ ok: true, message: "Checks started via user service (survives reboot)." }),
+    newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }),
+    lineage: () => ({ child: false }),
+  };
+  const summary = renderSlot({ component: app.threadContextSegments[0]!.summary }, props, { rpc });
+  const details = renderSlot({ component: app.threadContextSegments[0]!.details! }, props, { rpc });
+  try {
+    const chip = await summary.findByRole("button", { name: "looptender: checks have stopped" });
+    const startBtn = await details.findByRole("button", { name: "Start checks example-loop" });
+    const initialCalls = forThreadCalls;
+
+    // Hold the immediate post-startChecks forThread response to verify the chip updates
+    // immediately on startChecks success before status refresh even resolves.
+    holdImmediateRefresh = () => {};
+    current = loop({ controlState: "enabled" }, { schedule: { overdue: true, message: "No check has run for 2 hours." }, daemon: { state: "responsive" }, lastCheck: { at: "2026-01-01T00:00:00Z", target: "primary", action: "none", outcome: "ok" } });
+    fireEvent.click(startBtn);
+
+    await summary.findByRole("button", { name: "looptender: starting checks" });
+    await waitFor(() => assert.ok(forThreadCalls > initialCalls, "immediately triggers status refresh"));
+
+    // Preserve #541 single-line ellipsis + 8px left-padding constraints.
+    assert.equal(chip.style.whiteSpace, "nowrap");
+    assert.equal(chip.style.overflow, "hidden");
+    assert.equal(chip.style.textOverflow, "ellipsis");
+    assert.equal(chip.style.minWidth, "0px");
+    assert.equal(chip.style.maxWidth, "100%");
+    assert.equal(chip.style.flexShrink, "1");
+    assert.equal(chip.style.paddingLeft, "8px");
+    const chipSpan = chip.querySelector("span") as HTMLElement;
+    assert.ok(chipSpan);
+    assert.equal(chipSpan.style.whiteSpace, "nowrap");
+    assert.equal(chipSpan.style.overflow, "hidden");
+    assert.equal(chipSpan.style.textOverflow, "ellipsis");
+
+    // Immediate refresh arrives with daemon responsive, but overdue still true (no fresh check yet):
+    // stays truthfully on "looptender: starting checks".
+    holdImmediateRefresh!();
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(chip.textContent, "looptender: starting checks");
+
+    // Once the first check lands and clears schedule.overdue, chip updates to enabled.
+    current = loop({ controlState: "enabled" }, { schedule: { overdue: false }, daemon: { state: "responsive" }, lastCheck: { at: "2026-01-01T02:00:00Z", target: "primary", action: "none", outcome: "ok" } });
+    await summary.behavior.emitRealtime("changed", {});
+    await summary.findByRole("button", { name: "looptender: enabled" });
+  } finally {
+    summary.lifecycle.unmount();
+    details.lifecycle.unmount();
+    cleanup();
+  }
+});
+
+test("starting checks clears truthfully on a later stopped refresh, a hold, or a status error, and reverts with error if startChecks fails", async () => {
+  const overdueLoop = loop({ controlState: "enabled" }, { schedule: { overdue: true, message: "No check has run for 2 hours." }, daemon: { state: "not_recorded" } });
+
+  // 1. startChecks returns ok:false -> never shows starting checks, shows alert error, allows retry.
+  {
+    let calls = 0;
+    const ui = renderSlot(app.threadContextCardRows[0]!, { threadId: `thr_vis_${++n}`, projectId: "proj_example", environment: null }, {
+      rpc: {
+        forThread: () => { calls++; return { loops: [overdueLoop], errors: [] }; },
+        startChecks: () => ({ ok: false, message: "Could not install user service; inspect looptender service status on the host." }),
+      },
+    });
+    try {
+      await ui.findByText("looptender: checks have stopped");
+      const before = calls;
+      fireEvent.click(ui.getByRole("button", { name: "Start checks example-loop" }));
+      const alert = await ui.findByRole("alert");
+      assert.match(alert.textContent ?? "", /Could not install user service/);
+      assert.ok(ui.getByText("looptender: checks have stopped"));
+      assert.equal(ui.queryByText("looptender: starting checks"), null);
+      assert.equal((ui.getByRole("button", { name: "Start checks example-loop" }) as HTMLButtonElement).disabled, false);
+      await waitFor(() => assert.ok(calls > before));
+    } finally { ui.lifecycle.unmount(); cleanup(); }
+  }
+
+  // 2. startChecks rejects -> shows fallback alert error and keeps checks have stopped.
+  {
+    const ui = renderSlot(app.threadContextCardRows[0]!, { threadId: `thr_vis_${++n}`, projectId: "proj_example", environment: null }, {
+      rpc: {
+        forThread: () => ({ loops: [overdueLoop], errors: [] }),
+        startChecks: () => Promise.reject(new Error("rpc down")),
+      },
+    });
+    try {
+      await ui.findByText("looptender: checks have stopped");
+      fireEvent.click(ui.getByRole("button", { name: "Start checks example-loop" }));
+      const alert = await ui.findByRole("alert");
+      assert.match(alert.textContent ?? "", /Could not start checks/);
+      assert.ok(ui.getByText("looptender: checks have stopped"));
+      assert.equal(ui.queryByText("looptender: starting checks"), null);
+    } finally { ui.lifecycle.unmount(); cleanup(); }
+  }
+
+  // 3. startChecks succeeds, immediate refresh still overdue & not_recorded -> shows starting checks;
+  //    later refresh still stopped -> reverts to checks have stopped and re-shows Start checks.
+  {
+    const ui = renderSlot(app.threadContextCardRows[0]!, { threadId: `thr_vis_${++n}`, projectId: "proj_example", environment: null }, {
+      rpc: {
+        forThread: () => ({ loops: [overdueLoop], errors: [] }),
+        startChecks: () => ({ ok: true, message: "Checks started in background." }),
+      },
+    });
+    try {
+      await ui.findByText("looptender: checks have stopped");
+      fireEvent.click(ui.getByRole("button", { name: "Start checks example-loop" }));
+      await ui.findByText("looptender: starting checks");
+      await new Promise(r => setTimeout(r, 20));
+      assert.ok(ui.getByText("looptender: starting checks"));
+      await ui.behavior.emitRealtime("changed", {});
+      await ui.findByText("looptender: checks have stopped");
+      assert.ok(ui.getByRole("button", { name: "Start checks example-loop" }));
+    } finally { ui.lifecycle.unmount(); cleanup(); }
+  }
+
+  // 4. startChecks succeeds, then refresh reports a hold -> never claims hold cleared.
+  {
+    let current = overdueLoop;
+    const ui = renderSlot(app.threadContextCardRows[0]!, { threadId: `thr_vis_${++n}`, projectId: "proj_example", environment: null }, {
+      rpc: {
+        forThread: () => ({ loops: [current], errors: [] }),
+        startChecks: () => { current = loop({ controlState: "awaiting user" }, { schedule: { overdue: true } }); return { ok: true, message: "Checks started." }; },
+      },
+    });
+    try {
+      await ui.findByText("looptender: checks have stopped");
+      fireEvent.click(ui.getByRole("button", { name: "Start checks example-loop" }));
+      await ui.findByText("looptender: awaiting user");
+      assert.equal(ui.queryByText("looptender: starting checks"), null);
+    } finally { ui.lifecycle.unmount(); cleanup(); }
+  }
 });
