@@ -1,1 +1,0 @@
-- The README says what looptender does with sessionpipe at each stage: reporting (in the changelog's 0.2.1 section), observing a session (unreleased source, never woken), and sending or takeover (planned, and why), with a row in the availability table.

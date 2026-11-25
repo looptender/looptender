@@ -1,1 +1,0 @@
-- When the dock/panel reference has no default place because the user configuration directory is not defined (APPDATA on Windows, HOME or XDG_CONFIG_HOME elsewhere), `registry add` now says so instead of reporting that the path must be private and outside Git checkouts, and the warning from `enable` and `start` that the reference could not be saved now carries that reason.

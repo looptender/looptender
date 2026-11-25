@@ -13,7 +13,7 @@ import { constants } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 
 // The plugin's version. A test keeps it equal to package.json's.
-export const PLUGIN_VERSION = "0.3.1";
+export const PLUGIN_VERSION = "0.4.0";
 
 export const clientArgs = (): string[] => ["--client", `bb-plugin@${PLUGIN_VERSION}`];
 

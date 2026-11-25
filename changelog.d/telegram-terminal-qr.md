@@ -1,1 +1,0 @@
-- Add opt-in `telegram setup --qr` terminal rendering of the existing one-time pairing link, with a persistent text fallback and no extra requests or bot token in the QR. Verified with an independent offline decoder; phone scanning and live Telegram pairing remain unverified.

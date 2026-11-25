@@ -8,10 +8,10 @@ The plugin reports its version with `--client bb-plugin@VERSION` when it reads a
 
 ## Install
 
-Use **CLI v0.2.0 + plugin v0.3.0** (its labels say keepgoing). Verify that the [v0.2.0 tag and release](https://github.com/looptender/looptender/releases/tag/v0.2.0) are available before using this pinned installation command:
+Use **CLI v0.3.0 + plugin v0.4.0** (matching `looptender`). Verify that the [v0.3.0 tag and release](https://github.com/looptender/looptender/releases/tag/v0.3.0) are available before using this pinned installation command:
 
 ```sh
-bb plugin install git:https://github.com/looptender/looptender.git@v0.2.0 --plugin keepgoing
+bb plugin install git:https://github.com/looptender/looptender.git@v0.3.0 --plugin keepgoing
 bb plugin config keepgoing set looptenderPath /absolute/path/to/looptender
 ```
 
@@ -36,13 +36,13 @@ bb plugin config keepgoing set configs "/absolute/path/to/keepgoing.yaml"
 bb plugin install path:/absolute/path/to/looptender/builds/<build>/bb-plugin-keepgoing --yes
 ```
 
-Installing a local path for an id already installed from another path moves it and keeps its settings (`bb guide plugins`). **That install step has not been run on a live install** (nor has BB been shown to accept a stamped prerelease version such as `0.3.1-build.<label>` for a path install), and the cause above is an inference from observation, not from BB's source. Try it first with a throwaway plugin id if you can. **Quitting and reopening BB is the way that is known to load a new bundle**: it restarts the process that holds the old modules. To stamp each build, run this in the staged copy before `bb plugin build`:
+Installing a local path for an id already installed from another path moves it and keeps its settings (`bb guide plugins`). **That install step has not been run on a live install** (nor has BB been shown to accept a stamped prerelease version such as `0.4.0-build.<label>` for a path install), and the cause above is an inference from observation, not from BB's source. Try it first with a throwaway plugin id if you can. **Quitting and reopening BB is the way that is known to load a new bundle**: it restarts the process that holds the old modules. To stamp each build, run this in the staged copy before `bb plugin build`:
 
 ```sh
 node stamp-build.mjs <looptender build label>   # package.json becomes <base>-build.<label>; build-label.ts records the label
 ```
 
-A stamped build is a distinct plugin version (`0.3.1-build.<label>`; labels that differ only in case, in `.` against `-`, or after their first 48 characters give the same version string, though the install path still differs), and `bb looptender status` ends with a line saying which looptender build the plugin was built from and the one it runs. When they differ it says only that they are different builds and that, if one was installed recently, BB may still be serving the plugin from before it; either side can be the newer one (after a rollback, or when `keepgoingPath` points at an older build), and the line never says which. The running build is printed only if it has the shape of a build label. A source build is not stamped and says so. `stamp-build.mjs` refuses to run inside a git work tree, so the repository's own copy cannot be stamped, and `client-flag.ts`'s `PLUGIN_VERSION` stays the base version. The tests run on the repository copy: in a stamped staged copy the version comparison in `client-flag.test.ts` uses the base version and the "not stamped" test skips itself, so run the tests before staging.
+A stamped build is a distinct plugin version (`0.4.0-build.<label>`; labels that differ only in case, in `.` against `-`, or after their first 48 characters give the same version string, though the install path still differs), and `bb looptender status` ends with a line saying which looptender build the plugin was built from and the one it runs. When they differ it says only that they are different builds and that, if one was installed recently, BB may still be serving the plugin from before it; either side can be the newer one (after a rollback, or when `keepgoingPath` points at an older build), and the line never says which. The running build is printed only if it has the shape of a build label. A source build is not stamped and says so. `stamp-build.mjs` refuses to run inside a git work tree, so the repository's own copy cannot be stamped, and `client-flag.ts`'s `PLUGIN_VERSION` stays the base version. The tests run on the repository copy: in a stamped staged copy the version comparison in `client-flag.test.ts` uses the base version and the "not stamped" test skips itself, so run the tests before staging.
 
 `configs` takes one existing server-local configuration file path per line (`looptender.yaml`, or `keepgoing.yaml` from releases up to v0.2.0). Those loops, setups created through the UI, and explicitly imported registry references (unreleased source) are shown and controlled. UI-created setups are registered separately with their host and configuration path in private plugin storage. A path sent from the browser is checked against this list, so the plugin never runs looptender against an arbitrary file. The plugin needs a looptender build whose `status --json` includes `primaryAgent` and `targetAgent`, which is any build after 0.1.0.
 

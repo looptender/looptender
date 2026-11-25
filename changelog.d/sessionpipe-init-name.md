@@ -1,1 +1,0 @@
-- `init --agent sessionpipe` no longer needs `--name`: without it the loop is named after the session (`observed-<harness>-<eight hex digits of a SHA-256 of the session id>`, for example `observed-claude-code-b3bc2e23`), so sessions started together with time-ordered ids still get different names, and the interactive setup asks for the session first and offers that name.

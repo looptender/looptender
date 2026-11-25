@@ -1,1 +1,0 @@
-- Appenders of `runs.jsonl` and the routes history wait at most 3 seconds for the log's lock, so one stuck process cannot stall a check; past that a line is appended without the lock, and a `runs.jsonl` event written that way says so (`appendLock: not_obtained`). A volume becoming nearly full is now reported at once, even within an hour of its "filling" report.

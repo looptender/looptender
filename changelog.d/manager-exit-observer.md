@@ -1,1 +1,0 @@
-- Add an internal Darwin no-signal exit observer for a prearmed process incarnation. A timeout, exec or lost handle remains unknown; the API runs no manager command and starts no replacement. Native macOS evidence covers owned fictional pipe-exit and alive cases only.

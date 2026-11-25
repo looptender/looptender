@@ -1,1 +1,0 @@
-- Show recognized saved Antigravity ACP session IDs and manual continuation guidance in CLI status and offline doctor, without launching the provider or changing supervision holds.
