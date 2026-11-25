@@ -15,7 +15,7 @@ export interface SetupDependencies {
   init(bin: string, target: SetupTarget, name: string, task: string, dryRun: boolean, withGoal: boolean, bounds?: Bounds, followStandard?: boolean, takeover?: TakeoverChoice, succeeds?: string): Promise<{ plan: SetupPlan; registration?: Publication; warnings?: string[] } | { refused: Refusal } | { noRoutes: true } | { failed: SetupFailure }>;
   // Whether the host's looptender has a standard route list with routes.
   standardRoutes(bin: string, target: SetupTarget): Promise<boolean>;
-  command(bin: string, record: SetupRecord, operation: "status" | "doctor" | "start", json?: true): Promise<{ code: number; data: unknown; registration?: Publication }>;
+  command(bin: string, record: SetupRecord, operation: "status" | "doctor" | "start", json?: true): Promise<{ code: number; data: unknown; registration?: Publication; method?: "service" | "background" }>;
   // What BB's metadata for the thread says about whether it has had a turn.
   // Optional: absent means "unknown", and the built-in task covers that.
   conversation?(threadId: string): Promise<"none" | "unknown">;
@@ -113,7 +113,10 @@ export function createSetupController(d: SetupDependencies) {
           result = { ...result, record: updated };
         } catch { publicationSaved = false; }
       }
-      return { ...result, canStart: false, ok: confirmed, started: confirmed, message: confirmed ? "Background supervision started. Existing timers were not changed." + publicationMessage(start.registration) + (publicationSaved ? "" : " The plugin could not record this publication result; inspect references separately before retrying anything.") : "Start could not be confirmed. Check loop status before retrying; no holds were cleared." };
+      const startedText = start.method === "service"
+        ? "Background supervision started (user service installed; survives reboot). Existing timers were not changed."
+        : "Background supervision started. Existing timers were not changed.";
+      return { ...result, canStart: false, ok: confirmed, started: confirmed, message: confirmed ? startedText + publicationMessage(start.registration) + (publicationSaved ? "" : " The plugin could not record this publication result; inspect references separately before retrying anything.") : "Start could not be confirmed. Check loop status before retrying; no holds were cleared." };
     }
     if (existing) throw new SetupPolicyError("This thread already has a saved setup. Use its diagnostics and controls.");
     await d.guard(input.threadId);

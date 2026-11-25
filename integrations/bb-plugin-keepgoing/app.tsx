@@ -187,6 +187,37 @@ function FocusStyle() {
 const isPhone = () => typeof matchMedia === "function" && matchMedia(PHONE).matches;
 const kg = { "data-kg": "" } as const;
 
+function canStartChecks(loop: LoopView): boolean {
+  return (
+    !loop.imported &&
+    loop.controlState === "enabled" &&
+    !recordsUnreadable(loop.details) &&
+    !loop.details?.archived &&
+    loop.details?.schedule?.overdue === true &&
+    loop.details?.daemon?.state !== "responsive"
+  );
+}
+
+function StartChecksButton({ loop, threadId, onDone }: { loop: LoopView; threadId: string; onDone: () => void }) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!canStartChecks(loop)) return null;
+  const act = () => {
+    setBusy(true);
+    setError("");
+    rpc
+      .call("startChecks", { configPath: loop.configPath, ...(loop.managedId ? { managedId: loop.managedId } : {}), expectedThreadId: threadId })
+      .then(result => { if (!result.ok) setError(result.message); })
+      .catch(() => setError("Could not start checks. Refresh status before retrying."))
+      .finally(() => { setBusy(false); onDone(); });
+  };
+  return <>
+    <button type="button" {...kg} aria-label={`Start checks ${nameOf(loop)}`} title="Install user service (or start background checks) so checks resume and survive reboot" disabled={busy} onClick={act} style={buttonStyle}>{busy ? "Starting…" : "Start checks"}</button>
+    {error && <span role="alert">{error}</span>}
+  </>;
+}
+
 function ToggleButton({ loop, threadId, onDone }: { loop: LoopView; threadId: string; onDone: () => void }) {
   const rpc = useRpc<typeof rpcContract>();
   const [busy, setBusy] = useState(false);
@@ -371,7 +402,7 @@ function CardLoop({ loop, name, threadId, refresh, failed, created, showName }: 
     <ReferenceDetails loop={loop} name={name} />
     <ContextRow icon="Repeat" label={failed ? "looptender: status unavailable (previous snapshot)" : created ?? label(loop)}
       title={boundedTitle(describe(loop).filter(line => !line.startsWith("Note: ")).join("\n"), 800)} trailing={loop.handoffs > 0 ? `${loop.handoffs} handoffs` : undefined}
-      action={<>{!failed && created !== KEEPING_GOING && <ToggleButton loop={loop} threadId={threadId} onDone={refresh} />}</>} />
+      action={<>{!failed && created !== KEEPING_GOING && <><StartChecksButton loop={loop} threadId={threadId} onDone={refresh} /><ToggleButton loop={loop} threadId={threadId} onDone={refresh} /></>}</>} />
     {!failed && <BuildFreshness loop={loop} />}
     {!failed && <Reasons loop={loop} />}
     {/* Everything the tooltip holds, in the card itself: reachable by keyboard and touch. */}
@@ -492,7 +523,7 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
           {reasons.length > 0 && <ul aria-label="Why" style={{ ...plainList, paddingTop: 4 }}>{reasons.map((line, i) => <li key={i}>{line}</li>)}</ul>}
         </div>
         {/* Under the reason, full width on a phone: not beside the text, where it takes a fifth of the column. */}
-        {!failed && !(l === loop && created === KEEPING_GOING) && <div className="kg-actions" style={actionsStyle}><ToggleButton loop={l} threadId={threadId} onDone={refresh} /></div>}
+        {!failed && !(l === loop && created === KEEPING_GOING) && <div className="kg-actions" style={actionsStyle}><StartChecksButton loop={l} threadId={threadId} onDone={refresh} /><ToggleButton loop={l} threadId={threadId} onDone={refresh} /></div>}
         <LoopDetails {...split} padding="0" />
       </section>;
     })}

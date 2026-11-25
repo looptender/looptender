@@ -5,9 +5,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -496,5 +498,57 @@ func TestServiceRemovalWaitsForDaemonExit(t *testing.T) {
 	l.Release()
 	if c, o, e := f.call(t, "remove"); c != 0 {
 		t.Fatalf("retry %d %s %s", c, o, e)
+	}
+}
+
+func TestServiceInstallCleansStaleLaunches(t *testing.T) {
+	f := newServiceFixture(t)
+	f.host.platform = "darwin"
+	dir, err := canonicalFuturePath(f.cfg.Loop.StateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(dir))
+	label := fmt.Sprintf("dev.looptender.loop.%x.000001", sum[:6])
+	old := time.Now().Add(-time.Hour)
+	for _, ext := range []string{".plist", ".sh"} {
+		p := filepath.Join(dir, "launch-"+label+ext)
+		if err := os.WriteFile(p, []byte("stale"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, launchJobName), []byte(`{"kind":"launchd","label":"`+label+`","since":"2026-03-04T12:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	savedPrint, savedBootout := launchctlPrint, launchctlBootout
+	t.Cleanup(func() { launchctlPrint, launchctlBootout = savedPrint, savedBootout })
+	var booted []string
+	launchctlPrint = func(target string) (string, bool) {
+		if strings.HasSuffix(target, "/"+label) {
+			return "\tstate = not running\n", true
+		}
+		return "", false
+	}
+	launchctlBootout = func(target string) { booted = append(booted, target) }
+
+	if c, o, e := f.call(t, "install"); c != 0 {
+		t.Fatalf("install: %d %s %s", c, o, e)
+	}
+	if len(booted) != 1 || !strings.HasSuffix(booted[0], "/"+label) {
+		t.Fatalf("expected stale launch bootout, got %v", booted)
+	}
+	for _, ext := range []string{".plist", ".sh"} {
+		if _, err := os.Stat(filepath.Join(dir, "launch-"+label+ext)); !os.IsNotExist(err) {
+			t.Fatalf("stale launch file %s kept", ext)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, launchJobName)); !os.IsNotExist(err) {
+		t.Fatalf("stale launch-job.json kept")
 	}
 }

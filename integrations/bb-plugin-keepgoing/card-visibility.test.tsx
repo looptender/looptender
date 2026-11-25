@@ -76,3 +76,31 @@ test("records status could not describe still read as unreadable on the card, wi
     assert.equal(ui.queryByRole("button", { name: /pause/i }), null);
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
+
+test("Start checks button appears only on enabled, unheld, non-archived overdue loops without a running daemon", async () => {
+  const overdue = loop({ controlState: "enabled" }, { schedule: { overdue: true, message: "No check has run for 2 hours." }, daemon: { state: "not_recorded" } });
+  const ui = card([overdue]);
+  try {
+    await ui.findByText("looptender: checks have stopped");
+    assert.ok(ui.getByRole("button", { name: "Start checks example-loop" }));
+  } finally { ui.lifecycle.unmount(); cleanup(); }
+
+  for (const [label, candidate] of [
+    ["paused", loop({ controlState: "paused" }, { schedule: { overdue: true } })],
+    ["stop requested", loop({ controlState: "stop requested" }, { schedule: { overdue: true } })],
+    ["awaiting user", loop({ controlState: "awaiting user" }, { schedule: { overdue: true } })],
+    ["completed", loop({ controlState: "completed" }, { schedule: { overdue: true } })],
+    ["disabled", loop({ controlState: "disabled" }, { schedule: { overdue: true } })],
+    ["superseded", loop({ controlState: "superseded" }, { schedule: { overdue: true } })],
+    ["archived", loop({ controlState: "enabled" }, { schedule: { overdue: true }, archived: { at: "2026-01-01T00:00:00Z" } })],
+    ["records unreadable", loop({ controlState: "enabled" }, { schedule: { overdue: true }, unparsed: ["unreadable"] })],
+    ["daemon responsive", loop({ controlState: "enabled" }, { schedule: { overdue: true }, daemon: { state: "responsive" } })],
+    ["imported", loop({ controlState: "enabled", imported: true }, { schedule: { overdue: true } })],
+  ] as const) {
+    const neg = card([candidate]);
+    try {
+      await neg.findByRole("region", { name: /Loop example-loop/ });
+      assert.equal(neg.queryByRole("button", { name: /Start checks/ }), null, `${label} must not offer Start checks`);
+    } finally { neg.lifecycle.unmount(); cleanup(); }
+  }
+});

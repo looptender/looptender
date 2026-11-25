@@ -557,6 +557,10 @@ func clearStaleLaunches(stateDir string, uid int, now time.Time) {
 		return // held: a live supervisor; or unknowable: leave it
 	}
 	defer l.Release()
+	clearStaleLaunchesUnderDaemonLock(stateDir, uid, now)
+}
+
+func clearStaleLaunchesUnderDaemonLock(stateDir string, uid int, now time.Time) {
 	labels := map[string]bool{}
 	plists, _ := filepath.Glob(filepath.Join(stateDir, "launch-dev.looptender.loop.*.plist"))
 	scripts, _ := filepath.Glob(filepath.Join(stateDir, "launch-dev.looptender.loop.*.sh"))

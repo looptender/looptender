@@ -4,7 +4,7 @@
 
 ## The recommended way to keep checks running
 
-On macOS and Linux, `keepgoing service install` is the recommended way to keep a loop's checks running: the operating system restarts the service, and it does not depend on another scheduler's failure counting. `init` prints the command. A `start --background` daemon and an external scheduler, including a BB automation, stay supported; an external scheduler can disable itself, and the [overdue rule](operations.md#external-schedulers-can-stop-on-their-own) says so when it does.
+On macOS and Linux, `keepgoing service install` is the recommended way to keep a loop's checks running: the operating system restarts the service, and it does not depend on another scheduler's failure counting. `init` prints the command, and the BB plugin uses `service install` + `enable` when starting supervision on macOS and Linux (falling back to `start --background` on Windows or when user services are unsupported). `archive` does not remove an installed user service and notes its `service remove` command when one is recorded. A `start --background` daemon and an external scheduler, including a BB automation, stay supported; an external scheduler can disable itself, and the [overdue rule](operations.md#external-schedulers-can-stop-on-their-own) says so when it does.
 
 **Moving a loop from a BB automation to the service.** Nothing does this for you. For a loop whose checks a BB script automation runs:
 
