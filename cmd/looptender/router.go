@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/router/channel"
 	"github.com/looptender/looptender/internal/router/pointer"
 	"github.com/looptender/looptender/internal/userdir"
@@ -140,9 +141,13 @@ func routerStatusCommand(e env, args []string) int {
 	return exitOK
 }
 
+func supervisedCaller() bool {
+	return os.Getenv("BB_THREAD_ID") != "" || os.Getenv(control.SupervisedLoopVar) != ""
+}
+
 func routerOnCommand(e env, args []string) int {
-	if os.Getenv("BB_THREAD_ID") != "" {
-		e.errf("router: refused inside a BB thread; run from an ordinary terminal")
+	if supervisedCaller() {
+		e.errf("router: refused inside a supervised session or BB thread; run from an ordinary terminal")
 		return exitFailed
 	}
 	fs := flag.NewFlagSet("router on", flag.ContinueOnError)
@@ -192,13 +197,12 @@ func routerOnCommand(e env, args []string) int {
 		}
 	}
 
+	psPath := filepath.Join(dir, pointerStateFileName)
+	prevPointerBytes, prevPointerErr := os.ReadFile(psPath)
 	ps, err := readPointerState(dir)
 	if err != nil {
 		e.errf("router: cannot read pointer state: %v", err)
 		return exitFailed
-	}
-	if ps.Entries == nil {
-		ps.Entries = map[string]pointerEntry{}
 	}
 
 	var applied []pointerEntry
@@ -206,6 +210,11 @@ func routerOnCommand(e env, args []string) int {
 		for i := len(applied) - 1; i >= 0; i-- {
 			a := applied[i]
 			_ = pointer.RemoveFile(a.Path, a.Record, a.OriginalMode)
+		}
+		if os.IsNotExist(prevPointerErr) {
+			_ = os.Remove(psPath)
+		} else if prevPointerErr == nil {
+			_ = writePrivateBytes(psPath, prevPointerBytes)
 		}
 	}
 
@@ -262,8 +271,8 @@ func routerOnCommand(e env, args []string) int {
 }
 
 func routerOffCommand(e env, args []string) int {
-	if os.Getenv("BB_THREAD_ID") != "" {
-		e.errf("router: refused inside a BB thread; run from an ordinary terminal")
+	if supervisedCaller() {
+		e.errf("router: refused inside a supervised session or BB thread; run from an ordinary terminal")
 		return exitFailed
 	}
 	fs := flag.NewFlagSet("router off", flag.ContinueOnError)
@@ -297,19 +306,22 @@ func routerOffCommand(e env, args []string) int {
 	var failed int
 	for path, entry := range ps.Entries {
 		nextRec, err := pointer.UnpointFile(entry.Path, entry.Record, &ps.Clients, entry.ClientID)
-		if err != nil && !errors.Is(err, pointer.ErrChanged) {
+		if err != nil {
+			if errors.Is(err, pointer.ErrChanged) {
+				_ = ps.Clients.Rotate(entry.ClientID)
+				delete(ps.Entries, path)
+				continue
+			}
 			failed++
 			e.errf("router: could not unpoint %s: %v", path, err)
 			continue
 		}
-		if err == nil {
-			if rerr := pointer.RemoveFile(entry.Path, nextRec, entry.OriginalMode); rerr != nil {
-				failed++
-				e.errf("router: could not remove pointer from %s: %v", path, rerr)
-				entry.Record = nextRec
-				ps.Entries[path] = entry
-				continue
-			}
+		if rerr := pointer.RemoveFile(entry.Path, nextRec, entry.OriginalMode); rerr != nil {
+			failed++
+			e.errf("router: could not remove pointer from %s: %v", path, rerr)
+			entry.Record = nextRec
+			ps.Entries[path] = entry
+			continue
 		}
 		delete(ps.Entries, path)
 	}
@@ -344,6 +356,9 @@ func validateLoopbackURL(raw string) error {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return errors.New("front-url must be an http or https loopback URL")
 	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return errors.New("front-url must not include userinfo, path, query, or fragment")
+	}
 	host := u.Hostname()
 	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
 		return errors.New("front-url must target loopback")
@@ -369,8 +384,8 @@ func readRouterState(dir string) (routerStateFile, error) {
 	return out, err
 }
 
-func readPointerState(dir string) (pointerStateFile, error) {
-	var out pointerStateFile
+func readPointerState(dir string) (*pointerStateFile, error) {
+	out := &pointerStateFile{Entries: map[string]pointerEntry{}}
 	b, err := os.ReadFile(filepath.Join(dir, pointerStateFileName))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -378,8 +393,13 @@ func readPointerState(dir string) (pointerStateFile, error) {
 		}
 		return out, err
 	}
-	err = json.Unmarshal(b, &out)
-	return out, err
+	if err := json.Unmarshal(b, out); err != nil {
+		return out, err
+	}
+	if out.Entries == nil {
+		out.Entries = map[string]pointerEntry{}
+	}
+	return out, nil
 }
 
 func writePrivateJSON(path string, v any) error {
@@ -388,6 +408,10 @@ func writePrivateJSON(path string, v any) error {
 		return err
 	}
 	b = append(b, '\n')
+	return writePrivateBytes(path, b)
+}
+
+func writePrivateBytes(path string, b []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".looptender-router-*")
 	if err != nil {
 		return err

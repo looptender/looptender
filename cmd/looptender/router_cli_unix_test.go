@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/router/pointer"
 )
 
@@ -91,16 +92,23 @@ func TestRouterOnOffPointerAndRollback(t *testing.T) {
 	}
 	settingsNew := filepath.Join(settingsNewDir, "settings.json")
 
-	// Refused inside a BB thread.
+	// Refused inside a BB thread or supervised loop.
 	t.Setenv("BB_THREAD_ID", "thr_example_supervised")
-	if code, _, stderr := runRouterCLI(t, "on", "--dir", routerDir, "--allow-unstarted"); code != exitFailed || !strings.Contains(stderr, "BB thread") {
+	if code, _, stderr := runRouterCLI(t, "on", "--dir", routerDir, "--allow-unstarted"); code != exitFailed || !strings.Contains(stderr, "supervised") {
 		t.Fatalf("expected BB_THREAD_ID refusal for on, got %d %q", code, stderr)
 	}
-	if code, _, stderr := runRouterCLI(t, "off", "--dir", routerDir); code != exitFailed || !strings.Contains(stderr, "BB thread") {
+	if code, _, stderr := runRouterCLI(t, "off", "--dir", routerDir); code != exitFailed || !strings.Contains(stderr, "supervised") {
 		t.Fatalf("expected BB_THREAD_ID refusal for off, got %d %q", code, stderr)
 	}
-
 	t.Setenv("BB_THREAD_ID", "")
+	t.Setenv(control.SupervisedLoopVar, "example-loop")
+	if code, _, stderr := runRouterCLI(t, "on", "--dir", routerDir, "--allow-unstarted"); code != exitFailed || !strings.Contains(stderr, "supervised") {
+		t.Fatalf("expected %s refusal for on, got %d %q", control.SupervisedLoopVar, code, stderr)
+	}
+	if code, _, stderr := runRouterCLI(t, "off", "--dir", routerDir); code != exitFailed || !strings.Contains(stderr, "supervised") {
+		t.Fatalf("expected %s refusal for off, got %d %q", control.SupervisedLoopVar, code, stderr)
+	}
+	t.Setenv(control.SupervisedLoopVar, "")
 
 	// Without --allow-unstarted and no running router, `router on` refuses.
 	if code, _, _ := runRouterCLI(t, "on", "--dir", routerDir); code != exitFailed {
@@ -193,5 +201,103 @@ func TestRouterOnOffPointerAndRollback(t *testing.T) {
 	cancel()
 	if c := <-runDone; c != exitOK {
 		t.Fatalf("router run exit = %d: %s", c, runOut.String())
+	}
+}
+
+func TestValidateLoopbackURL(t *testing.T) {
+	valid := []string{
+		"http://127.0.0.1:43123",
+		"https://127.0.0.1:43123/",
+		"http://localhost:8080",
+		"http://[::1]:8080",
+	}
+	for _, u := range valid {
+		if err := validateLoopbackURL(u); err != nil {
+			t.Errorf("validateLoopbackURL(%q) = %v, want nil", u, err)
+		}
+	}
+	invalid := []string{
+		"",
+		"ftp://127.0.0.1:8080",
+		"http://example.com:8080",
+		"http://user:pass@127.0.0.1:8080",
+		"http://127.0.0.1:8080/v1",
+		"http://127.0.0.1:8080?x=1",
+		"http://127.0.0.1:8080#frag",
+	}
+	for _, u := range invalid {
+		if err := validateLoopbackURL(u); err == nil {
+			t.Errorf("validateLoopbackURL(%q) = nil, want error", u)
+		}
+	}
+}
+
+func TestRouterOffRotatesDigestOnChangedAndOnRollsBackPointerState(t *testing.T) {
+	t.Setenv("BB_THREAD_ID", "")
+	t.Setenv(control.SupervisedLoopVar, "")
+	base := t.TempDir()
+	routerDir := filepath.Join(base, "router")
+	if err := os.MkdirAll(routerDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settingsDir := filepath.Join(base, "claude")
+	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settingsFile := filepath.Join(settingsDir, "settings.json")
+	orig := []byte("{\"theme\":\"light\"}\n")
+	if err := os.WriteFile(settingsFile, orig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Point via router on --allow-unstarted.
+	if code, _, stderr := runRouterCLI(t, "on", "--dir", routerDir, "--allow-unstarted", "--front-url", "http://127.0.0.1:43123", "--settings", settingsFile); code != exitOK {
+		t.Fatalf("router on failed: %d %s", code, stderr)
+	}
+	psBefore, err := readPointerState(routerDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absSettings, _ := filepath.Abs(settingsFile)
+	entry := psBefore.Entries[absSettings]
+	digestBefore := psBefore.Clients.Digests[entry.ClientID]
+	if digestBefore == "" {
+		t.Fatal("missing initial client digest")
+	}
+
+	// Simulate manual edit (ErrChanged) and run router off: entry must be dropped and digest rotated.
+	if err := os.WriteFile(settingsFile, []byte("{\"edited\":true}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := runRouterCLI(t, "off", "--dir", routerDir); code != exitOK {
+		t.Fatalf("router off failed: %d %s", code, stderr)
+	}
+	psAfter, err := readPointerState(routerDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(psAfter.Entries) != 0 {
+		t.Fatalf("expected 0 entries after off, got %d", len(psAfter.Entries))
+	}
+	if psAfter.Clients.Digests[entry.ClientID] == digestBefore {
+		t.Fatal("expected client digest to rotate on ErrChanged")
+	}
+
+	// Simulate router.json write failure (directory at router.json): router on must roll back pointer-state.json.
+	if err := os.Remove(filepath.Join(routerDir, routerStateFileName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(routerDir, routerStateFileName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := runRouterCLI(t, "on", "--dir", routerDir, "--allow-unstarted", "--front-url", "http://127.0.0.1:43123", "--settings", settingsFile); code != exitFailed {
+		t.Fatalf("expected router on failure when router.json is a directory, got %d", code)
+	}
+	psRolled, err := readPointerState(routerDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(psRolled.Entries) != 0 {
+		t.Fatalf("expected pointer-state.json rolled back to 0 entries, got %d", len(psRolled.Entries))
 	}
 }
