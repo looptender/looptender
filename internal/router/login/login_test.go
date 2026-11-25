@@ -303,6 +303,27 @@ func TestCodexFileStore(t *testing.T) {
 		assertNoSecretLeak(t, err, jwt, refresh, acct)
 	})
 
+	t.Run("table-scoped cli_auth_credentials_store is ignored", func(t *testing.T) {
+		dir := t.TempDir()
+		jwt := makeJWT(t, map[string]any{"exp": exp})
+		writeAuth(t, dir, 0o600, jwt, acct)
+		cfg := "[profiles.work]\ncli_auth_credentials_store = \"keyring\"\n"
+		if err := os.WriteFile(filepath.Join(dir, codexConfigFile), []byte(cfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		r := New(Config{
+			Now:           func() time.Time { return now },
+			Subscriptions: []Subscription{{ID: "codex-main", Provider: ProviderCodex, Dir: dir}},
+		})
+		got, err := r.Login(context.Background(), "codex-main")
+		if err != nil {
+			t.Fatalf("Login() error = %v, want nil when cli_auth_credentials_store is only under a table header", err)
+		}
+		if got.Account != acct {
+			t.Fatalf("Account = %q, want %q", got.Account, acct)
+		}
+	})
+
 	t.Run("expired JWT returns ErrExpired", func(t *testing.T) {
 		dir := t.TempDir()
 		jwt := makeJWT(t, map[string]any{"exp": now.Add(-time.Second).Unix()})
