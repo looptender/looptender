@@ -554,3 +554,7 @@ Switch-back only happens when all of these hold:
 The primary then gets a short brief saying its limit has reset and the loop is back with it, and a `switch_back` report is sent. If the probe fails, the fallback keeps working and switch-back tries again later.
 
 `loop.probe` takes the same fields as a candidate's `probe`. Its kind defaults from `loop.provider`. Switch-back needs `loop.fallbacks`, and it needs a way to probe the primary.
+
+## Proactive quota switch (`switch_at`, unreleased)
+
+Optional per-target `switch_at` (a fraction in `(0, 1]`, `0` by default) on `loop` in `looptender.yaml`, a candidate in `fallbacks.yaml`, or a route in `routes.yaml` switches to the next confirmed fallback at turn end (`idle`) when the active route's recorded usage reading meets or exceeds `switch_at` on any non-reset window. Missing, stale (older than `probe.ttl` or after reset), or identity-mismatched readings never switch; stop, pause, holds, refusals, and restrictions keep precedence, and keepgoing never reads credentials to obtain a reading.
