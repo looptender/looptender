@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -551,14 +552,21 @@ func TestTelegramTopicSendNoFallbackOnNonBadRequest(t *testing.T) {
 	})
 
 	t.Run("network error does not retry DM", func(t *testing.T) {
-		var attempts int
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			attempts++
-		}))
-		url := srv.URL
-		srv.Close() // Force immediate connection-refused network error.
-
-		client, err := telegram.NewClient(telegram.ClientConfig{Token: tok, BaseURL: url})
+		var attempts []int64
+		client, err := telegram.NewClient(telegram.ClientConfig{
+			Token:   tok,
+			BaseURL: "https://api.telegram.org",
+			HTTPClient: &http.Client{
+				Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					var msg tgSentRecord
+					if r.Body != nil {
+						_ = json.NewDecoder(r.Body).Decode(&msg)
+					}
+					attempts = append(attempts, msg.MessageThreadID)
+					return nil, errors.New("dial tcp: connection refused")
+				}),
+			},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -570,11 +578,15 @@ func TestTelegramTopicSendNoFallbackOnNonBadRequest(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected network error")
 		}
-		if attempts != 0 {
-			t.Fatalf("expected closed server to handle 0 requests, got %d", attempts)
+		if len(attempts) != 1 || attempts[0] != 999 {
+			t.Fatalf("expected single topic attempt without DM fallback on transport error, got attempts=%v", attempts)
 		}
 	})
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestTelegramStatusSurfacesUsageLimitWaitAndOverdue(t *testing.T) {
 	const tok = "123456789:EXAMPLE_LIMIT_WAIT_STATUS_TOKEN"

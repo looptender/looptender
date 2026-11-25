@@ -504,14 +504,24 @@ test("Minimize button works on form, preview, saved, and started states; Supervi
   } finally { cleanup(); }
 });
 
-test("setup mode tablist supports ArrowLeft/ArrowRight switching, roving tabIndex, and ARIA tabpanel linkage", async () => {
+test("setup mode tablist supports ArrowLeft/ArrowRight switching, roving tabIndex, ARIA tabpanel linkage, and unique IDs across instances", async () => {
   const call = async (): Promise<SetupResult> => ({ ok: true, message: "Nothing set up yet" });
-  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  const ui = render(<>
+    <SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />
+    <SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />
+  </>);
   try {
-    await ui.findByText("Nothing set up yet");
-    const newTab = ui.getByRole("tab", { name: "New loop" }) as HTMLButtonElement;
-    const continueTab = ui.getByRole("tab", { name: /Continue existing/ }) as HTMLButtonElement;
-    const tabpanel = ui.getByRole("tabpanel");
+    await ui.findAllByText("Nothing set up yet");
+    const newTabs = ui.getAllByRole("tab", { name: "New loop" }) as HTMLButtonElement[];
+    const continueTabs = ui.getAllByRole("tab", { name: /Continue existing/ }) as HTMLButtonElement[];
+    const tabpanels = ui.getAllByRole("tabpanel");
+    const newTab = newTabs[0]!;
+    const continueTab = continueTabs[0]!;
+    const tabpanel = tabpanels[0]!;
+
+    assert.notEqual(newTabs[0]!.id, newTabs[1]!.id);
+    assert.notEqual(continueTabs[0]!.id, continueTabs[1]!.id);
+    assert.notEqual(tabpanels[0]!.id, tabpanels[1]!.id);
 
     assert.equal(newTab.getAttribute("aria-selected"), "true");
     assert.equal(newTab.tabIndex, 0);
@@ -539,16 +549,17 @@ test("setup mode tablist supports ArrowLeft/ArrowRight switching, roving tabInde
   } finally { cleanup(); }
 });
 
-test("Refresh diagnostics on Supervision started view preserves started state and updates checks", async () => {
+test("Refresh diagnostics on Supervision started view preserves user service label and exits when inspect reports canStart", async () => {
   let inspectCount = 0;
   const call = async (input: { action: string }): Promise<SetupResult> => {
     if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket" };
     if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [{ id: "c1", status: "ok", message: "Initial" }] };
-    if (input.action === "start") return { ok: true, message: "Background supervision started", record, canStart: false, started: true, checks: [{ id: "c1", status: "ok", message: "Initial" }] };
+    if (input.action === "start") return { ok: true, message: "Background supervision started (user service installed; survives reboot).", record, canStart: false, started: true, checks: [{ id: "c1", status: "ok", message: "Initial" }] };
     if (input.action === "inspect") {
       inspectCount++;
       if (inspectCount === 1) return { ok: true, message: "Nothing set up yet" };
-      return { ok: true, message: "Refreshed", record, checks: [{ id: "c2", status: "ok", message: "Refreshed check" }] };
+      if (inspectCount === 2) return { ok: true, message: "Refreshed", record, canStart: false, checks: [{ id: "c2", status: "ok", message: "Refreshed check" }] };
+      return { ok: true, message: "Saved disabled again", record, canStart: true, checks: [{ id: "c3", status: "ok", message: "Stopped externally" }] };
     }
     return { ok: true, message: "Nothing set up yet" };
   };
@@ -561,10 +572,19 @@ test("Refresh diagnostics on Supervision started view preserves started state an
     await ui.findByRole("button", { name: "Start background supervision" });
     fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
     await ui.findByText("Supervision started");
+    assert.ok(ui.getByText("user service installed"));
 
+    // First refresh still running (canStart: false): stays on Supervision started and preserves "user service installed".
     fireEvent.click(ui.getByRole("button", { name: "Refresh diagnostics" }));
     await ui.findByText("ok: Refreshed check");
     assert.ok(ui.getByText("Supervision started"));
+    assert.ok(ui.getByText("user service installed"));
     assert.equal(ui.queryByRole("button", { name: "Start background supervision" }), null);
+
+    // Second refresh reports canStart: true (e.g. stopped externally): exits Supervision started so Start is shown again.
+    fireEvent.click(ui.getByRole("button", { name: "Refresh diagnostics" }));
+    await ui.findByRole("button", { name: "Start background supervision" });
+    assert.equal(ui.queryByText("Supervision started"), null);
+    assert.ok(ui.getByText("ok: Stopped externally"));
   } finally { cleanup(); }
 });

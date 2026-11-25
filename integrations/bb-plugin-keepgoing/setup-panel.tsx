@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { goalLabel } from "./status-details.ts";
 import { fallbackSlug, slugFromPredecessor, slugFromTitle, type ContinuationCandidate, type SetupResult, type ThreadSetupMeta } from "./setup-contract.ts";
 import type { z } from "zod";
@@ -51,13 +51,15 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
   // True from a create that saved a record until the panel is left: what was
   // just made is said as made and switched off, not as an existing setup.
   const [created, setCreated] = useState(false);
+  const [startMode, setStartMode] = useState<"service" | "background" | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const doneRef = useRef<HTMLHeadingElement>(null);
   const newTabRef = useRef<HTMLButtonElement>(null);
   const continueTabRef = useRef<HTMLButtonElement>(null);
-  const newTabId = `kgs-tab-new-${threadId}`;
-  const continueTabId = `kgs-tab-continue-${threadId}`;
-  const panelId = `kgs-tabpanel-${threadId}`;
+  const uid = useId();
+  const newTabId = `kgs-tab-new-${uid}`;
+  const continueTabId = `kgs-tab-continue-${uid}`;
+  const panelId = `kgs-tabpanel-${uid}`;
   useEffect(() => {
     let mounted = true;
     call({ action: "inspect", threadId }).then(r => {
@@ -140,21 +142,30 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
       });
       if (r.plan?.takeoverOffer) setOffer(r.plan.takeoverOffer);
       if (r.threadMeta) setThreadMeta(r.threadMeta);
+      const keepStarted = action === "inspect" && result?.started === true && r.started === undefined && !r.canStart;
+      if (r.started === true) {
+        setStartMode(/user service installed/i.test(r.message) ? "service" : "background");
+      } else if (!keepStarted) {
+        setStartMode(null);
+      }
       setResult({
         ...r,
         ...(!r.ok && action === "create" && !r.record ? { plan: result?.plan } : {}),
         ...(!r.record && (action === "inspect" || action === "start") ? { record: result?.record } : {}),
-        ...(action === "inspect" && result?.started && r.started === undefined ? { started: true } : {}),
+        ...(keepStarted ? { started: true } : {}),
       });
       if (r.record) { setTask(""); setNote(""); onChanged(); if (action === "create") setCreated(true); }
-    } catch (e) { setResult({ ok: false, record: result?.record, plan: result?.plan, ...(action === "inspect" && result?.started ? { started: true } : {}), message: lostMessage(action, e, Math.round((Date.now() - began) / 1000), name) }); }
+    } catch (e) {
+      if (action !== "inspect" || !result?.started) setStartMode(null);
+      setResult({ ok: false, record: result?.record, plan: result?.plan, ...(action === "inspect" && result?.started ? { started: true } : {}), message: lostMessage(action, e, Math.round((Date.now() - began) / 1000), name) });
+    }
     finally { setBusy(false); }
   }
   // Moving the preview or the finished card into view for a keyboard or
   // screen-reader user: focus follows the step that just appeared.
   useEffect(() => { if (result?.ticket && !busy) previewRef.current?.focus(); }, [result?.ticket, busy]);
   useEffect(() => { if (created && result?.record) doneRef.current?.focus(); }, [created, result?.record]);
-  const edit = () => setResult(undefined);
+  const edit = () => { setResult(undefined); setStartMode(null); };
   const following = followStandard && standardRoutes;
   const threadSummary = formatThreadSetup(result?.threadMeta ?? threadMeta);
   const message = result && <p className="msg" role={result.ok ? "status" : "alert"}>{result.message}</p>;
@@ -166,7 +177,9 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
   if (result?.record) {
     const started = result.started === true;
     const savedSetup = threadSummary ?? result.record.provider;
-    const runningSummary = /user service installed/i.test(result.message) ? "user service installed" : "background supervisor launched";
+    const runningSummary = (startMode === "service" || /user service installed/i.test(result.message))
+      ? "user service installed"
+      : "background supervisor launched";
     if (started) {
       return <section className="kgs" aria-label="Set up thread supervision">
         <SetupStyles />
