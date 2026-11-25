@@ -121,6 +121,11 @@ extension MenuBuilder {
         return "\(s / 86_400) d ago"
     }
 
+    static func observedRole(_ loop: PanelLoop) -> String {
+        guard loop.observed == true else { return "" }
+        return loop.observedWakes == true ? "Observed, woken only when idle" : "Observed, never woken"
+    }
+
     /// What goes in a loop's submenu above its choices: where it runs, the build,
     /// when it was last checked and what it waits for. Fixed words and labels
     /// only: no thread ID, path, note or account identity.
@@ -130,6 +135,8 @@ extension MenuBuilder {
         let reason = loop.reason.map(Contract.text) ?? ""
         if !reason.isEmpty { rows.append(status(reason)) }
         if !flag.isEmpty { rows.append(status(flag)) }
+        let role = observedRole(loop)
+        if !role.isEmpty { rows.append(status(role)) }
         let target = targetText(loop)
         if !target.isEmpty { rows.append(status(target)) }
         let build = buildText(loop, installed: installed)

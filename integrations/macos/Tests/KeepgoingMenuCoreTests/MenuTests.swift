@@ -494,4 +494,27 @@ final class MenuTests: XCTestCase {
         XCTAssertTrue(larger.isTemplate)
         XCTAssertEqual(larger.size, NSSize(width: 24, height: 24))
     }
+
+    func testObservedSessionpipeLoopsShowRoleLabelCheckingActionsAndOmitStop() throws {
+        let json = """
+        {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":false,"needsYou":1,"unread":0,"omitted":0,
+         "loops":[
+           {"key":"l000000000001","name":"observed-claude-code-11111111","state":"supervising","phrase":"Supervising","needsYou":false,"can":["pause","stop"],"observed":true,"observedWakes":false,"provider":"sessionpipe"},
+           {"key":"l000000000002","name":"observed-claude-code-22222222","state":"waiting_for_you","phrase":"Waiting for you","needsYou":true,"can":["pause","resume","stop"],"observed":true,"observedWakes":true,"provider":"sessionpipe","reason":"It is held for a person."}
+         ]}
+        """
+        let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
+        let model = MenuBuilder.build(.read(decoded, at: now), now: now)
+
+        let neverWoken = try XCTUnwrap(model.rows.first { $0.title == "observed-claude-code-11111111" })
+        XCTAssertTrue(neverWoken.submenu.contains { $0.title == "Observed, never woken" })
+        XCTAssertTrue(neverWoken.submenu.contains { $0.title == "Pause checking…" && $0.command == .review(.pause, key: "l000000000001") })
+        XCTAssertFalse(neverWoken.submenu.contains { $0.title.hasPrefix("Stop") || $0.command == .review(.stop, key: "l000000000001") })
+
+        let wakeOnly = try XCTUnwrap(model.rows.first { $0.title == "observed-claude-code-22222222" })
+        XCTAssertTrue(wakeOnly.submenu.contains { $0.title == "Observed, woken only when idle" })
+        XCTAssertTrue(wakeOnly.submenu.contains { $0.title == "Pause checking…" })
+        XCTAssertTrue(wakeOnly.submenu.contains { $0.title == "Resume checking…" && $0.command == .review(.resume, key: "l000000000002") })
+        XCTAssertFalse(wakeOnly.submenu.contains { $0.title.hasPrefix("Stop") || $0.command == .review(.stop, key: "l000000000002") })
+    }
 }

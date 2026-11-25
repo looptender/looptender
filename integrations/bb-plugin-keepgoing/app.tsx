@@ -14,9 +14,9 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
-import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, archivedLine, firstSentenceOf } from "./status-details";
+import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, archivedLine, firstSentenceOf, observedRoleLabel } from "./status-details";
 import { lineageDue, type LineageEntry } from "./lineage";
-import { heldSentence, isWait, waitFor, resumeCommand, PhoneResumeLink } from "./held-card";
+import { heldSentence, isWait, isObserved, waitFor, resumeCommand, PhoneResumeLink } from "./held-card";
 import { SetupPanel } from "./setup-panel";
 import { SetupStyles } from "./setup-style";
 import { AttachPanel } from "./attach-panel";
@@ -118,7 +118,10 @@ function stateLabel(loop: LoopView): string {
   if (loop.controlState === "enabled" && loop.details?.schedule?.overdue) return "looptender: checks have stopped";
   if (isWait(loop)) return `looptender: waiting for ${waitFor(loop.details!.wait!.until)}`;
   if (loop.details?.moved?.held && loop.controlState === "awaiting user") return "looptender: moved, resume to start";
-  if (loop.controlState === "enabled") return loop.supervising ? "looptender: enabled" : `looptender: watching ${loop.details?.targetThread ?? loop.target}`;
+  if (loop.controlState === "enabled") {
+    if (isObserved(loop)) return loop.details?.observedWakes ? "looptender: observed (idle wakes)" : "looptender: observed";
+    return loop.supervising ? "looptender: enabled" : `looptender: watching ${loop.details?.targetThread ?? loop.target}`;
+  }
   return `looptender: ${loop.controlState}`;
 }
 
@@ -233,6 +236,7 @@ function ToggleButton({ loop, threadId, onDone }: { loop: LoopView; threadId: st
   const watching = !paused && !loop.supervising;
   // A full-width 44 px Pause is one stray tap away, and only a person at a terminal undoes it: on a phone, ask first, as for another thread's loop.
   const askFirst = watching || isPhone();
+  const pauseVerb = isObserved(loop) ? "Pause checking" : "Pause";
   const act = () => {
     setBusy(true);
     setError("");
@@ -254,13 +258,13 @@ function ToggleButton({ loop, threadId, onDone }: { loop: LoopView; threadId: st
       ? <ResumeNote loop={loop} />
       : askFirst && confirming
         ? <span role="group" aria-label={`Confirm pausing ${nameOf(loop)}`} style={{ display: "grid", gap: 8 }}>
-            <span>Pause loop {nameOf(loop)}? {!watching ? "A person resumes it from a terminal." : loop.details?.targetThread ? `It supervises ${loop.details.targetThread}, not this thread.` : `Its current target is ${loop.details?.targetAdapter ?? loop.target}, not this thread.`}</span>
+            <span>{isObserved(loop) ? `Pause checking ${nameOf(loop)}?` : `Pause loop ${nameOf(loop)}?`} {!watching ? "A person resumes it from a terminal." : loop.details?.targetThread ? `It supervises ${loop.details.targetThread}, not this thread.` : `Its current target is ${loop.details?.targetSession ?? loop.details?.targetAdapter ?? loop.target}, not this thread.`}</span>
             <span className="kg-actions" style={actionsStyle}>
-              <button type="button" {...kg} disabled={busy} onClick={act} style={buttonStyle}>Pause loop {nameOf(loop)}</button>
+              <button type="button" {...kg} disabled={busy} onClick={act} style={buttonStyle}>{isObserved(loop) ? `Pause checking ${nameOf(loop)}` : `Pause loop ${nameOf(loop)}`}</button>
               <button type="button" {...kg} disabled={busy} onClick={() => setConfirming(false)} style={buttonStyle}>Cancel</button>
             </span>
           </span>
-        : <button type="button" {...kg} aria-label={`${askFirst ? "Pause…" : "Pause"} ${nameOf(loop)}`} disabled={busy} onClick={askFirst ? () => setConfirming(true) : act} style={buttonStyle}>{askFirst ? "Pause…" : "Pause"}</button>}
+        : <button type="button" {...kg} aria-label={`${askFirst ? `${pauseVerb}…` : pauseVerb} ${nameOf(loop)}`} disabled={busy} onClick={askFirst ? () => setConfirming(true) : act} style={buttonStyle}>{askFirst ? `${pauseVerb}…` : pauseVerb}</button>}
     {error && <span role="alert">{error}</span>}
   </>;
 }
@@ -396,6 +400,12 @@ function LoopDetails({ lines, technical = [], command, padding = "0 12px 6px" }:
   </details>;
 }
 
+function ObservedRole({ loop }: { loop: LoopView }) {
+  const role = observedRoleLabel(loop.details);
+  if (!role) return null;
+  return <div className="kg-t" style={{ margin: 0, padding: "0 12px 4px 12px", fontSize: 12, opacity: 0.85, overflowWrap: "anywhere" }}>{role}</div>;
+}
+
 function CardLoop({ loop, name, threadId, refresh, failed, created, showName }: { loop: LoopView; name: string; threadId: string; refresh(): void; failed: boolean; created: string | null; showName: boolean }) {
   return <section aria-label={`Loop ${name}`} style={{ overflowWrap: "anywhere", minWidth: 0 }}>
     {(showName || loop.displayName) && <strong style={{ fontSize: 12 }}>{name}<Slug loop={loop} /></strong>}
@@ -403,6 +413,7 @@ function CardLoop({ loop, name, threadId, refresh, failed, created, showName }: 
     <ContextRow icon="Repeat" label={failed ? "looptender: status unavailable (previous snapshot)" : created ?? label(loop)}
       title={boundedTitle(describe(loop).filter(line => !line.startsWith("Note: ")).join("\n"), 800)} trailing={loop.handoffs > 0 ? `${loop.handoffs} handoffs` : undefined}
       action={<>{!failed && created !== KEEPING_GOING && <><StartChecksButton loop={loop} threadId={threadId} onDone={refresh} /><ToggleButton loop={loop} threadId={threadId} onDone={refresh} /></>}</>} />
+    {!failed && <ObservedRole loop={loop} />}
     {!failed && <BuildFreshness loop={loop} />}
     {!failed && <Reasons loop={loop} />}
     {/* Everything the tooltip holds, in the card itself: reachable by keyboard and touch. */}
@@ -557,6 +568,7 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
         <div className="kg-t" style={{ minWidth: 0, opacity: 0.9 }}>
           {failed && <div>Previous snapshot</div>}
           <div><strong>Loop {name}</strong><Slug loop={l} />{loops.length > 1 || failed ? <>: {l === loop ? created ?? label(l) : label(l)}</> : null}</div>
+          {!failed && observedRoleLabel(l.details) && <div>{observedRoleLabel(l.details)}</div>}
           <ReferenceDetails loop={l} name={name} />
           <BuildFreshness loop={l} />
           {reasons.length > 0 && <ul aria-label="Why" style={{ ...plainList, paddingTop: 4 }}>{reasons.map((line, i) => <li key={i}>{line}</li>)}</ul>}

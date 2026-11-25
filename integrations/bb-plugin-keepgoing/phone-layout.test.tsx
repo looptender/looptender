@@ -212,6 +212,8 @@ test("every composer-bar chip variant shares the single-line ellipsis and left-s
     ["checking status", { forThread: () => new Promise(() => {}), newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }), lineage: () => ({ child: false }) }, "looptender: checking status"],
     ["status unavailable", { forThread: () => { throw new Error("offline"); }, newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }), lineage: () => ({ child: false }) }, "looptender: status unavailable"],
     ["multiple loops", { forThread: () => ({ loops: [loop({ loop: "one", configPath: "/private/example/1.yaml" }), loop({ loop: "two", configPath: "/private/example/2.yaml" })], errors: [] }), lineage: () => ({ child: false }) }, "looptender: 2 matching loops"],
+    ["observed never woken", { forThread: () => ({ loops: [loop({ supervising: false }, { targetAdapter: "sessionpipe", targetThread: null, observed: true, targetSession: "claude-code:example" })], errors: [] }), lineage: () => ({ child: false }) }, "looptender: observed"],
+    ["observed wake_only", { forThread: () => ({ loops: [loop({ supervising: false }, { targetAdapter: "sessionpipe", targetThread: null, observed: true, observedWakes: true, targetSession: "claude-code:example" })], errors: [] }), lineage: () => ({ child: false }) }, "looptender: observed (idle wakes)"],
   ];
   for (const [kind, rpc, name] of variants) {
     const ui = renderSlot({ component: seg.summary }, props(`thr_chip_${++n}`), { rpc });
@@ -222,5 +224,22 @@ test("every composer-bar chip variant shares the single-line ellipsis and left-s
       done(ui);
     }
     void kind;
+  }
+});
+
+test("observed sessionpipe loops show their role in expanded details, use Pause checking, and omit Stop", async () => {
+  const obsLoop = loop(
+    { supervising: false, controlState: "enabled" },
+    { targetAdapter: "sessionpipe", targetThread: null, observed: true, observedWakes: false, targetSession: "claude-code:8c132906" },
+  );
+  const ui = mount([obsLoop]);
+  try {
+    await ui.summary.findByRole("button", { name: "looptender: observed" });
+    await ui.details.findByText("Observed, never woken");
+    await ui.details.findByText(/Current target: claude-code:8c132906 \(primary\); Observed, never woken/);
+    assert.ok(await ui.details.findByRole("button", { name: "Pause checking… example-loop" }));
+    assert.equal(ui.details.queryByRole("button", { name: /Stop/i }), null);
+  } finally {
+    done(ui.summary, ui.details);
   }
 });

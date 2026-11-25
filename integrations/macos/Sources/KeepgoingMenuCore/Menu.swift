@@ -54,8 +54,15 @@ public struct PanelLoop: Decodable, Equatable {
     /// Set when the loop was replaced by a successor: out of the way,
     /// whatever hold it kept. Absent from a CLI that predates it.
     public var superseded: Bool? = nil
+    /// Set when the loop's target is an observed sessionpipe session:
+    /// looptender never sends to, wakes, re-prompts or stops it unless
+    /// observedWakes is true (woken only when idle).
+    public var observed: Bool? = nil
+    public var observedWakes: Bool? = nil
 
-    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil, naming: PanelNaming? = nil, archived: PanelArchived? = nil, checkedAt: String? = nil, reason: String? = nil, waiting: PanelWaiting? = nil, superseded: Bool? = nil) {
+    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil, naming: PanelNaming? = nil, archived: PanelArchived? = nil, checkedAt: String? = nil, reason: String? = nil, waiting: PanelWaiting? = nil, superseded: Bool? = nil, observed: Bool? = nil, observedWakes: Bool? = nil) {
+        self.observed = observed
+        self.observedWakes = observedWakes
         self.superseded = superseded
         self.waiting = waiting
         self.naming = naming
@@ -613,14 +620,17 @@ public enum MenuBuilder {
     static func loopChoices(_ loop: PanelLoop) -> [MenuRow] {
         let rows = [action("Open in Panel", .openLoop(key: loop.key), symbol: "macwindow", help: "Opens this loop in the panel.")]
         let can = Set(loop.can ?? [])
+        let obs = loop.observed == true
         var changes: [MenuRow] = []
         if can.contains("pause") {
-            changes.append(action("Pause…", .review(.pause, key: loop.key), symbol: "pause.circle", help: "Shows what pausing does, then asks you to confirm."))
+            changes.append(action(obs ? "Pause checking…" : "Pause…", .review(.pause, key: loop.key), symbol: "pause.circle",
+                                  help: obs ? "Shows what pausing checking does, then asks you to confirm." : "Shows what pausing does, then asks you to confirm."))
         }
         if can.contains("resume") {
-            changes.append(action("Resume…", .review(.resume, key: loop.key), symbol: "play.circle", help: "Shows what resuming clears, then asks you to confirm."))
+            changes.append(action(obs ? "Resume checking…" : "Resume…", .review(.resume, key: loop.key), symbol: "play.circle",
+                                  help: obs ? "Shows what resuming checking clears, then asks you to confirm." : "Shows what resuming clears, then asks you to confirm."))
         }
-        if can.contains("stop") {
+        if !obs && can.contains("stop") {
             changes.append(action("Stop…", .review(.stop, key: loop.key), symbol: "stop.circle", help: "Shows what stopping does, then asks you to confirm."))
         }
         return changes.isEmpty ? rows : rows + [separator] + changes

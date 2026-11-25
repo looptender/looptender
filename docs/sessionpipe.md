@@ -164,7 +164,9 @@ dock does. The web panel renders a plain "Observed, never woken" (or "Observed,
 woken only when idle") label on the row and loop page, shows `observedNote`
 beside the routes card, labels the controls "Pause checking…" and "Resume
 checking…" (with no Stop button), and states in hold advice and action previews
-that resuming continues checking without sending directly.
+that resuming continues checking without sending directly. The macOS menu and BB
+plugin similarly show "Observed, never woken" or "Observed, woken only when
+idle", omit Stop, and label pause/resume actions as checking controls.
 `looptender stop` is still accepted: it ends the checks and leaves the session
 alone.
 
