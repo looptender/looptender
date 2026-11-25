@@ -1,4 +1,4 @@
-# keepgoing Contributor License Agreement
+# looptender Contributor License Agreement
 
 I give Connor Burgess permission to license my contributions on any terms they like. I am giving them this license in order to make it possible for them to accept my contributions into their project.
 

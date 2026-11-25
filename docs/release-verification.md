@@ -4,11 +4,11 @@ Release preparation and live compatibility are separate evidence. A successful f
 
 ## Archive contents and packaging from the next release
 
-Releases through v0.1.5 are Apache-2.0 and their archives hold the executable, `README.md` and `LICENSE`; the records below describe them as published. The first release cut after the [license change](../LICENSING.md) differs in three ways, and its verification must check each:
+Every release archive is checked for three things:
 
 - **Archive inventory.** Every archive holds exactly: the executable, `README.md`, `LICENSE` (Sustainable Use License 1.0), `LICENSING.md`, `LICENSES/Apache-2.0.txt` and `THIRD_PARTY_NOTICES`. Nothing else.
 - **Third-party notices.** `THIRD_PARTY_NOTICES` reproduces the terms of the Go runtime and standard library and of every module linked into the executable. `scripts/build-release.sh` runs `scripts/third-party-notices.sh --check` first and stops when the file does not match the modules of the six release targets, so a module added without its notice cannot be released. Pull-request CI runs the same check. After adding or updating a module, run `scripts/third-party-notices.sh`, read the result and commit it.
-- **Homebrew formula.** The tap is a separate repository. Up to v0.1.5 its license field was Apache-2.0. The v0.2.0 update changed that field with the URLs and checksums, and its install check confirms the new files are present ([v0.2.0 evidence](#v020-release-and-package-evidence)).
+- **Homebrew formula.** The tap is a separate repository. Its license field names the Sustainable Use License, and its install check confirms these files are present ([v0.2.0 evidence](#v020-release-and-package-evidence)).
 
 ## v0.2.0 release and package evidence
 
