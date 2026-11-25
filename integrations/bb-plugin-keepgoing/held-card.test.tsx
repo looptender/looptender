@@ -69,6 +69,17 @@ test("text is cut at a whole word with an ellipsis, or to its first sentence, ne
   assert.ok(firstSentenceOf("word ".repeat(100), 40).endsWith("word…"));
 });
 
+test("observed sessionpipe loops never say resuming sends directly", () => {
+  const obs = (controlState: string, wakes = false) =>
+    loop({ controlState }, { targetAdapter: "sessionpipe", observed: true, ...(wakes ? { observedWakes: true } : {}) });
+  assert.equal(heldSentence(obs("awaiting user", false) as never), `Held for you. Resume checking (nothing is sent) ${WHERE}.`);
+  assert.equal(heldSentence(obs("paused", false) as never), `Paused. Resume checking (nothing is sent) ${WHERE}.`);
+  assert.equal(heldSentence(obs("stop requested", false) as never), `Stop requested (checking ends; session is left alone). Resume checking (nothing is sent) ${WHERE}.`);
+  assert.equal(heldSentence(obs("awaiting user", true) as never), `Held for you. Resume checking (nothing is sent by resuming; idle wakes continue afterwards) ${WHERE}.`);
+  assert.equal(heldSentence(obs("paused", true) as never), `Paused. Resume checking (idle wakes continue afterwards) ${WHERE}.`);
+  assert.equal(heldSentence(obs("enabled", false) as never), null);
+});
+
 test("an older-build note shows its first sentence on the card, whole, and the rest under Technical details", async () => {
   const action = "This supervisor was built before it could be asked to exit, so no command ends it: end its process yourself. Until you start it again with looptender daemon -c CONFIG in a terminal you leave open (it starts supervision with the loop's controls as they are, and ends with the terminal; start would ena";
   const ui = details([loop({ controlState: "paused" }, { buildFreshness: { state: "different", text: "Different build from the installed one", action } })]);

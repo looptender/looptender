@@ -12,10 +12,31 @@ const WHERE = "from the looptender panel (looptender panel), or from a terminal 
 const WAIT_FOR: Record<string, string> = { "host-session": "the login session", network: "the network", time: "a time", "limit-reset": "a usage-limit reset" };
 export const waitFor = (until: string): string => WAIT_FOR[until.split(":")[0]!] ?? "a condition";
 
+/** True when the loop observes an external sessionpipe session. */
+export const isObserved = (loop: LoopView): boolean => !!loop.details?.observed || loop.details?.targetAdapter === "sessionpipe";
+
 /** One plain sentence for a held loop, true for its own state. Null for a loop that is not held. */
 export function heldSentence(loop: LoopView): string | null {
   // A wait is saved as an awaiting-user hold but needs nobody: it carries on by itself.
   if (loop.details?.wait && loop.controlState === "awaiting user") return `Waiting for ${waitFor(loop.details.wait.until)}. It carries on by itself; nothing to do.`;
+  if (isObserved(loop)) {
+    const wakes = !!loop.details?.observedWakes;
+    switch (loop.controlState) {
+      case "enabled": return null;
+      case "awaiting user": return wakes
+        ? `Held for you. Resume checking (nothing is sent by resuming; idle wakes continue afterwards) ${WHERE}.`
+        : `Held for you. Resume checking (nothing is sent) ${WHERE}.`;
+      case "paused": return wakes
+        ? `Paused. Resume checking (idle wakes continue afterwards) ${WHERE}.`
+        : `Paused. Resume checking (nothing is sent) ${WHERE}.`;
+      case "stop requested": return wakes
+        ? `Stop requested (checking ends; session is left alone). Resume checking ${WHERE}.`
+        : `Stop requested (checking ends; session is left alone). Resume checking (nothing is sent) ${WHERE}.`;
+      case "completed": return `Marked finished. Resume checking ${WHERE}.`;
+      case "disabled": return "Switched off. Turn it on from the looptender panel (looptender panel), or from a terminal outside BB with looptender enable.";
+      default: return wakes ? `Held. Resume checking ${WHERE}.` : `Held. Resume checking (nothing is sent) ${WHERE}.`;
+    }
+  }
   switch (loop.controlState) {
     case "enabled": return null;
     case "awaiting user": return `Held for you. Resume it ${WHERE}.`;

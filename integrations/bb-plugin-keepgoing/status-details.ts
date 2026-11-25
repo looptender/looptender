@@ -92,6 +92,10 @@ export const detailsSchema = z.object({
   // status --json wait (looptender wait): what the loop waits for. Its sentence and note are not read.
   wait: z.object({ until: z.string().max(60), untilTime: z.string().max(40).optional(), expiresAt: z.string().max(40).optional() }).optional(),
   buildFreshness: z.object({ state: z.string().max(24), text: z.string().max(200), detail: z.string().max(600).optional(), command: z.string().max(400).optional(), action: z.string().max(600).optional() }).optional(),
+  observed: z.boolean().optional(),
+  observedWakes: z.boolean().optional(),
+  targetSession: z.string().max(160).optional(),
+  sessionpipeWake: z.object({ text: z.string().max(400), held: z.boolean().optional(), outcome: z.string().max(32).optional(), code: z.string().max(32).optional() }).optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
 
@@ -237,6 +241,12 @@ export function freshnessToShow(d: StatusDetails | undefined): NonNullable<Statu
   return f && f.state !== "current" ? f : undefined;
 }
 
+/** Plain role sentence for an observed sessionpipe loop, or undefined for ordinary targets. */
+export function observedRoleLabel(d: StatusDetails | undefined): string | undefined {
+  if (!d?.observed && d?.targetAdapter !== "sessionpipe") return undefined;
+  return d?.observedWakes ? "Observed, woken only when idle" : "Observed, never woken";
+}
+
 /** status reported unreadable records, whether or not their details could be read. */
 export const recordsUnreadable = (d: StatusDetails | undefined): boolean => !!d?.unreadable?.length || !!d?.unparsed?.includes("unreadable");
 const unparsedLine = (names: readonly string[]) => `Status could not be read for: ${names.join(", ")}`;
@@ -263,6 +273,7 @@ export function reasonLines(controlState: string, note: string | null, d: Status
       : `Long limit wait: no handoff possible; resets ${dateLabel(wait.resetsAt)}${wait.resetIn ? ` (in ${wait.resetIn})` : ""}; the loop sends nothing until then${resetAfterDeadline(d) ? `; ${AFTER_DEADLINE}` : ""}`);
   }
   if (d?.schedule?.overdue) out.push(`Needs you: ${d.schedule.message ?? "no check has run for longer than usual"}`);
+  if (d?.sessionpipeWake?.text) out.push(`Wake: ${firstSentence(d.sessionpipeWake.text)}`);
   const np = noProgressLine(controlState, d);
   if (np) out.push(np);
   if (note && controlState !== "enabled") out.push(`Note: ${shortNote(note, 160)}`);
@@ -276,11 +287,16 @@ export function boundedTitle(text: string, max = 600): string {
 
 export function diagnosticLines(d: StatusDetails | undefined, target: string, supervising: boolean): string[] {
   if (!d) return ["Detailed status unavailable from this build"];
+  const role = observedRoleLabel(d);
+  const targetName = role && d.targetSession ? d.targetSession : (d.targetThread ?? d.targetAdapter);
+  const targetScope = role ?? (supervising ? "this thread" : "not this thread");
   const lines = [
     `Status read: ${dateLabel(d.readAt)} (snapshot)`,
     goalLabel(d.goal, d.goalState),
     `Task completion: ${d.completed ? "declared; not independently verified" : "not declared"}`,
-    `Current target: ${d.targetThread ?? d.targetAdapter} (${target})${supervising ? "; this thread" : "; not this thread"}${d.targetConfigured === false ? "; missing or disabled in config" : ""}`,
+    `Current target: ${targetName} (${target}); ${targetScope}${d.targetConfigured === false ? "; missing or disabled in config" : ""}`,
+    ...(role ? [`Mode: ${role}`] : []),
+    ...(d.sessionpipeWake?.text ? [`Wake: ${d.sessionpipeWake.text}`] : []),
     `Build: ${buildSummary(d.runtime).text}${d.runtime?.installedBuild && !buildSummary(d.runtime).differs ? ` · installed ${d.runtime.installedBuild}` : ""}`,
     ...(d.targetProvider ? [`Provider: ${d.targetProvider}${d.targetModel ? ` · model ${d.targetModel}` : ""} (configured)`] : []),
     ...(d.moved ? [`Moved: ${d.moved.text}`] : []),

@@ -21,7 +21,15 @@ import { withClientFlag } from "./client-flag.ts";
 import { configuredProgram, execProgram } from "./executable.ts";
 
 /** The subset of `keepgoing status --json` this plugin reads. */
-const agentRef = z.object({ adapter: z.string(), bbThread: z.string().optional(), provider: z.string().optional(), model: z.string().optional() });
+const agentRef = z.object({
+  adapter: z.string(),
+  bbThread: z.string().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  session: z.string().optional(),
+  observed: z.boolean().optional(),
+  wakes: z.boolean().optional(),
+});
 const statusSchema = z.object({
   goal: z.unknown().optional(), goalError: z.unknown().optional(),
   loop: z.string(),
@@ -53,7 +61,7 @@ const statusSchema = z.object({
   // Fields status adds later. Each is checked on its own in `lenient`: one that is
   // malformed is named in details.unparsed, never taken for "nothing to say".
   wait: z.unknown().optional(), archived: z.unknown().optional(), archiveLapsed: z.unknown().optional(), naming: z.unknown().optional(), buildFreshness: z.unknown().optional(), noProgress: z.unknown().optional(),
-  deadline: z.unknown().optional(), deadlineReached: z.unknown().optional(), sendAllowance: z.unknown().optional(), sendRecord: z.unknown().optional(), diskSpace: z.unknown().optional(), unreadable: z.unknown().optional(),
+  deadline: z.unknown().optional(), deadlineReached: z.unknown().optional(), sendAllowance: z.unknown().optional(), sendRecord: z.unknown().optional(), diskSpace: z.unknown().optional(), unreadable: z.unknown().optional(), sessionpipeWake: z.unknown().optional(),
 });
 
 const loopSchema = z.object({
@@ -88,13 +96,22 @@ const archivedShape = z.object({ at: z.string().optional(), hold: z.string().opt
 const freshnessShape = z.object({ state: z.string(), text: z.string(), detail: z.string().optional(), command: z.string().optional(), action: z.string().optional() });
 const waitShape = z.object({ until: z.string(), untilTime: z.string().optional(), expiresAt: z.string().optional() });
 const diskShape = z.object({ level: z.string(), message: z.string().optional() });
+const sessionpipeWakeShape = z.object({
+  since: z.string().optional(),
+  forSeconds: z.number().int().nonnegative().optional(),
+  text: z.string().max(400),
+  held: z.boolean().optional(),
+  outcome: z.string().max(32).optional(),
+  code: z.string().max(32).optional(),
+  until: z.string().optional(),
+});
 
 /**
  * The fields status adds later, read one by one. A malformed one is left out
  * and named in `unparsed`, so the card says it could not be read; it is never
  * dropped as though there were nothing to say, and never costs the loop.
  */
-function lenient(s: { wait?: unknown; archived?: unknown; archiveLapsed?: unknown; buildFreshness?: unknown; noProgress?: unknown; control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown }) {
+function lenient(s: { wait?: unknown; archived?: unknown; archiveLapsed?: unknown; buildFreshness?: unknown; noProgress?: unknown; control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown; sessionpipeWake?: unknown }) {
   const unparsed: string[] = [];
   const pick = <T>(name: string, schema: z.ZodType<T>, raw: unknown): T | undefined => {
     if (raw === undefined) return undefined;
@@ -123,6 +140,7 @@ function lenient(s: { wait?: unknown; archived?: unknown; archiveLapsed?: unknow
   const sendRecord = pick("sendRecord", z.string(), s.sendRecord);
   const disk = pick("diskSpace", diskShape, s.diskSpace);
   if (disk && (disk.level === "low" || disk.level === "critical") && !disk.message) unparsed.push("diskSpace");
+  const sessionpipeWake = pick("sessionpipeWake", sessionpipeWakeShape, s.sessionpipeWake);
   // Entries are kept one by one: the well-formed ones are shown, and a bad one is named.
   let unreadable: z.infer<typeof unreadableShape>[] = [];
   if (s.unreadable !== undefined) {
@@ -132,7 +150,7 @@ function lenient(s: { wait?: unknown; archived?: unknown; archiveLapsed?: unknow
       if (unreadable.length !== s.unreadable.length) unparsed.push("unreadable");
     }
   }
-  return { wait, archived, archiveLapsed, freshness, noProgress, supersededBy, deadline, deadlineReached, sends, sendRecord, disk, unreadable, unparsed };
+  return { wait, archived, archiveLapsed, freshness, noProgress, supersededBy, deadline, deadlineReached, sends, sendRecord, disk, sessionpipeWake, unreadable, unparsed };
 }
 
 /** The loop's display name from status --json naming.displayName, when it is a readable name that differs from the slug. */
@@ -310,6 +328,9 @@ export default async function plugin(bb: BbPluginApi) {
       ...(f.archived ? { archived: { ...(f.archived.at ? { at: f.archived.at.slice(0, 40) } : {}), ...(f.archived.hold ? { hold: f.archived.hold.slice(0, 40) } : {}), ...(f.archived.unreadable ? { unreadable: true } : {}) } } : {}),
       ...(f.archiveLapsed ? { archiveLapsed: { ...(f.archiveLapsed.at ? { at: f.archiveLapsed.at.slice(0, 40) } : {}) } } : {}),
       ...(f.freshness ? { buildFreshness: { state: f.freshness.state.slice(0, 24), text: cutAtWord(f.freshness.text, 200), ...(f.freshness.detail ? { detail: cutAtWord(f.freshness.detail, 600) } : {}), ...(f.freshness.command ? { command: f.freshness.command.slice(0, 400) } : {}), ...(f.freshness.action ? { action: cutAtWord(f.freshness.action, 600) } : {}) } } : {}),
+      ...(target.observed || target.adapter === "sessionpipe" ? { observed: true, ...(target.wakes ? { observedWakes: true } : {}) } : {}),
+      ...(target.session ? { targetSession: target.session.slice(0, 160) } : {}),
+      ...(f.sessionpipeWake ? { sessionpipeWake: { text: cutAtWord(f.sessionpipeWake.text, 400), ...(f.sessionpipeWake.held ? { held: true } : {}), ...(f.sessionpipeWake.outcome ? { outcome: f.sessionpipeWake.outcome.slice(0, 32) } : {}), ...(f.sessionpipeWake.code ? { code: f.sessionpipeWake.code.slice(0, 32) } : {}) } } : {}),
     },
     ...(BUILD_LABEL && isBuildLabel(BUILD_LABEL) ? { pluginBuild: BUILD_LABEL } : {}),
     loop: s.loop,
