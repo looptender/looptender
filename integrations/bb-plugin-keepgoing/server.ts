@@ -495,6 +495,48 @@ export default async function plugin(bb: BbPluginApi) {
       const raw = (t.title ?? t.titleFallback ?? "").trim();
       return raw ? raw.slice(0, 200) : undefined;
     },
+    threadMeta: async threadId => {
+      const signal = AbortSignal.timeout(10_000);
+      const t = await bb.sdk.threads.get({ threadId, signal });
+      const provider = t.providerId.slice(0, 64);
+      let model: string | undefined;
+      let reasoningLevel: string | undefined;
+      try {
+        const opts = await bb.sdk.threads.defaultExecutionOptions({ threadId, signal });
+        if (opts?.model) model = opts.model.slice(0, 256);
+        if (opts?.reasoningLevel) reasoningLevel = opts.reasoningLevel.slice(0, 64);
+      } catch { /* optional metadata */ }
+      if (!model) {
+        try {
+          const proj = await bb.sdk.projects.defaultExecutionOptions({ projectId: t.projectId, signal });
+          if (proj && proj.providerId === provider && proj.model) {
+            model = proj.model.slice(0, 256);
+            if (!reasoningLevel && proj.reasoningLevel) reasoningLevel = proj.reasoningLevel.slice(0, 64);
+          }
+        } catch { /* optional metadata */ }
+      }
+      let providerLabel: string | undefined;
+      try {
+        const providers = await bb.sdk.providers.list({ signal });
+        const match = providers.find(p => p.id === provider);
+        if (match?.displayName) providerLabel = match.displayName.slice(0, 120);
+      } catch { /* optional metadata */ }
+      let modelLabel: string | undefined;
+      if (model && t.environmentId) {
+        try {
+          const res = await bb.sdk.providers.models({ environmentId: t.environmentId, providerId: provider, signal });
+          const match = res.models.find(m => m.id === model || m.model === model);
+          if (match?.displayName) modelLabel = match.displayName.slice(0, 120);
+        } catch { /* optional metadata */ }
+      }
+      return {
+        provider,
+        ...(providerLabel ? { providerLabel } : {}),
+        ...(model ? { model } : {}),
+        ...(modelLabel ? { modelLabel } : {}),
+        ...(reasoningLevel ? { reasoningLevel } : {}),
+      };
+    },
     continuationCandidates: async (bin, target) => {
       const recs = await records();
       const sameHostRecs = recs.filter(r => r.hostId === target.hostId);

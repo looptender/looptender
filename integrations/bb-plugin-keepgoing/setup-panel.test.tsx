@@ -231,29 +231,29 @@ test("on a thread with no turn yet, the typed task stays the default through pre
   } finally { cleanup(); }
 });
 
-test("the preview shows the takeover, and the person can turn it off and preview again", async () => {
+test("takeover is off by default, can be enabled in Options, and previewed", async () => {
   const sent: Array<string | undefined> = [];
   const offer = { provider: "claude-code", model: "example-claude-model" };
   const call = async (input: { action: string; takeover?: "on" | "off" }): Promise<SetupResult> => {
     if (input.action !== "preview") return { ok: true, message: "No loop is set up for this thread yet." };
     sent.push(input.takeover);
-    const takeover = input.takeover !== "off" ? { takeover: { ...offer, permission: "accept-edits", text: "On a usage limit on codex: a new conversation on claude-code takes over." } } : {};
-    return { ok: true, message: input.takeover === "off" ? "Preview without takeover" : "Preview with takeover", plan: { ...plan, ...takeover, takeoverOffer: offer }, ticket: "example-ticket" };
+    const takeover = input.takeover === "on" ? { takeover: { ...offer, permission: "accept-edits", text: "On a usage limit on codex: a new conversation on claude-code takes over." } } : {};
+    return { ok: true, message: input.takeover === "on" ? "Preview with takeover" : "Preview without takeover", plan: { ...plan, ...takeover, takeoverOffer: offer }, ticket: "example-ticket" };
   };
   const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
   try {
     await ui.findByText("No loop is set up for this thread yet.");
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
-    await ui.findByText("Preview with takeover");
-    assert.ok(ui.getByText("On a usage limit on codex: a new conversation on claude-code takes over."));
-    const box = ui.getByRole("checkbox", { name: "Take over on a usage limit" }) as HTMLInputElement;
-    assert.equal(box.checked, true);
-    fireEvent.click(box);
-    assert.equal(ui.queryByRole("button", { name: "Create setup" }), null, "turning it off invalidates the preview");
-    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByText("Preview without takeover");
     assert.ok(ui.getByText("No fallbacks; automatic handoff is off."));
-    assert.deepEqual(sent, ["on", "off"]);
+    const box = ui.getByRole("checkbox", { name: "Take over on a usage limit" }) as HTMLInputElement;
+    assert.equal(box.checked, false);
+    fireEvent.click(box);
+    assert.equal(ui.queryByRole("button", { name: "Create setup" }), null, "turning it on invalidates the preview");
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByText("Preview with takeover");
+    assert.ok(ui.getByText("On a usage limit on codex: a new conversation on claude-code takes over."));
+    assert.deepEqual(sent, ["off", "on"]);
   } finally { cleanup(); }
 });
 
@@ -408,4 +408,45 @@ test("Continue a loop mode selects a predecessor, derives slug, explains auto-ar
     assert.equal(createCall.succeeds, candidates[0]!.configPath);
     assert.equal(createCall.name, "auth-work-2");
   } finally { cleanup(); }
+});
+
+test("displays current provider and model for non-Claude threads without defaulting to Claude/Fable/Opus, and keeps modal compact with collapsed accordions", async () => {
+  const meta = { provider: "acp-antigravity", providerLabel: "Antigravity", model: "gemini-4-neon", modelLabel: "Gemini 4 Neon", reasoningLevel: "high" };
+  const agPlan = { ...plan, provider: "acp-antigravity" };
+  const agRecord = { ...record, provider: "acp-antigravity" };
+  const call = async (input: { action: string }): Promise<SetupResult> => {
+    if (input.action === "preview") return { ok: true, message: "Preview without takeover", plan: agPlan, threadMeta: meta, ticket: "ag-ticket", task: "Keep going" };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record: agRecord, canStart: true, checks: [{ id: "agent.primary.target", status: "ok", message: "Verified" }], threadMeta: meta };
+    return { ok: true, message: "No loop yet", threadMeta: meta };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  try {
+    await ui.findByText(/Running on Antigravity · Gemini 4 Neon \(high\)/);
+    assert.equal(/claude|fable|opus/i.test(ui.container.textContent ?? ""), false);
+    const details = [...ui.container.querySelectorAll("details")] as HTMLDetailsElement[];
+    assert.ok(details.length >= 1 && details.every(d => !d.open), "secondary Options accordion starts collapsed");
+
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    assert.equal(/claude|fable|opus/i.test(ui.container.textContent ?? ""), false);
+    assert.ok(ui.getAllByText(/Antigravity · Gemini 4 Neon \(high\)/).length >= 2);
+    const previewDetails = [...ui.container.querySelectorAll("details")] as HTMLDetailsElement[];
+    assert.ok(previewDetails.length >= 2 && previewDetails.every(d => !d.open), "preview path/task/limit details start collapsed");
+
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await ui.findByRole("button", { name: "Start background supervision" });
+    assert.equal(/claude|fable|opus/i.test(ui.container.textContent ?? ""), false);
+    const doneDetails = [...ui.container.querySelectorAll("details")] as HTMLDetailsElement[];
+    assert.ok(doneDetails.every(d => !d.open), "saved config path and diagnostics start collapsed");
+  } finally { cleanup(); }
+});
+
+test("modal styles bound height, tighten spacing, and avoid left-accent borders", async () => {
+  const { SetupStyles } = await import("./setup-style.tsx");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const css = renderToStaticMarkup(<SetupStyles />);
+  assert.match(css, /max-height:min\(76vh,620px\)/);
+  assert.match(css, /overflow-y:auto/);
+  assert.match(css, /min-height:68px/);
+  assert.equal(/border-left/i.test(css), false);
 });
