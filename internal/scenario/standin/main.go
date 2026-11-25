@@ -1,14 +1,15 @@
-// Command standin is a test-only stand-in for the bb, claude and codex CLIs, used by
-// the scenario suite in internal/scenario. It is compiled once per test run
-// and installed under each name it plays (bb, claude; with .exe on Windows),
-// so it runs natively on every platform without a POSIX shell. It picks its
-// part from the name it was run as.
+// Command standin is a test-only stand-in for the bb, claude, codex and agent
+// (Cursor) CLIs, used by the scenario suite in internal/scenario. It is
+// compiled once per test run and installed under each name it plays (bb,
+// claude, codex, agent; with .exe on Windows), so it runs natively on every
+// platform without a POSIX shell. It picks its part from the name it was run as.
 //
-// As claude or codex it answers probes and runs headless turns. A turn's
-// answer follows net.mode (online, offline or portal), unless headless.mode
-// says otherwise: online succeeds and reports the session; offline (or
-// "structured") fails with the CLI's structured error; portal prints a
-// sign-in page; silent exits 1 with no output, before any session exists.
+// As claude, codex or agent (Cursor) it answers probes (when supported) and
+// runs headless turns. A turn's answer follows net.mode (online, offline or
+// portal), unless headless.mode says otherwise: online succeeds and reports
+// the session; offline (or "structured") fails with the CLI's structured error
+// (or connection-reconnecting records for Cursor); portal prints a sign-in
+// page; silent exits 1 with no output, before any session exists.
 //
 // All state lives in the directory named by SCENARIO_WORLD, which the test
 // writes and reads:
@@ -147,6 +148,12 @@ func play(world, name string, args []string) int {
 			return codexProbe(world, args)
 		}
 		return turn(world, name, args)
+	case "agent":
+		if len(args) == 1 && args[0] == "--version" {
+			fmt.Println("2026.09.18-9a7762b")
+			return 0
+		}
+		return turn(world, "cursor", args)
 	}
 	if name == "example-agent" {
 		return exampleAgent(world, args)
@@ -584,7 +591,7 @@ func isClaudeTurn(args []string) bool {
 	return len(args) > 2 && args[0] == "-p" && args[1] == "--output-format" && args[2] == "json"
 }
 
-// turn runs one headless turn of claude or codex.
+// turn runs one headless turn of claude, codex or cursor.
 func turn(world, cli string, args []string) int {
 	prompt, _ := io.ReadAll(os.Stdin)
 	resumed := ""
@@ -594,6 +601,12 @@ func turn(world, cli string, args []string) int {
 	case "codex":
 		if len(args) > 2 && args[0] == "exec" && args[1] == "resume" {
 			resumed = args[len(args)-2] // the session comes before the final "-"
+		}
+	case "cursor":
+		for _, a := range args {
+			if strings.HasPrefix(a, "--resume=") {
+				resumed = strings.TrimPrefix(a, "--resume=")
+			}
 		}
 	}
 	appendLine(filepath.Join(world, "sends.jsonl"), map[string]string{"kind": "turn", "thread": cli, "mode": resumed, "message": string(prompt)})
@@ -618,18 +631,26 @@ func turn(world, cli string, args []string) int {
 		fmt.Println("<html><body>Fictional sign-in page</body></html>")
 		return 1
 	case "online":
-		if cli == "claude" {
+		switch cli {
+		case "claude":
 			fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"session_id":%q,"api_error_status":null}`+"\n", HeadlessSession)
-		} else {
+		case "cursor":
+			fmt.Printf(`{"type":"system","subtype":"init","session_id":%q}`+"\n"+`{"type":"result","subtype":"success","is_error":false,"session_id":%q}`+"\n", HeadlessSession, HeadlessSession)
+		default:
 			fmt.Printf(`{"type":"thread.started","thread_id":%q}`+"\n"+`{"type":"turn.completed","usage":{}}`+"\n", HeadlessSession)
 		}
 		return 0
 	}
-	// offline or structured: the CLI's structured failure, no recognised code
-	// for Claude Code, stream_disconnected for Codex.
-	if cli == "claude" {
+	// offline or structured: the CLI's structured failure (no recognised code
+	// for Claude Code, stream_disconnected for Codex, connection/reconnecting
+	// records for Cursor).
+	switch cli {
+	case "claude":
 		fmt.Printf(`{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":%q,"api_error_status":null}`+"\n", HeadlessSession)
-	} else {
+	case "cursor":
+		fmt.Printf(`{"type":"system","subtype":"init","session_id":%q}`+"\n"+`{"type":"connection","subtype":"reconnecting","session_id":%q,"attempt":1}`+"\n", HeadlessSession, HeadlessSession)
+		fmt.Fprintln(os.Stderr, "fictional: could not connect")
+	default:
 		fmt.Printf(`{"type":"thread.started","thread_id":%q}`+"\n"+`{"type":"turn.failed","error":{"type":"stream_disconnected"}}`+"\n", HeadlessSession)
 	}
 	return 1

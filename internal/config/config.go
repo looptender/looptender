@@ -110,6 +110,10 @@ type Loop struct {
 	// SwitchBack returns the loop to its primary after a handoff, once the
 	// primary's limit has reset and an exact probe of it passes. Off by default.
 	SwitchBack SwitchBack `yaml:"switch_back"`
+	// SwitchAt is the quota window share in (0, 1] at or above which the loop
+	// switches from the primary to a confirmed fallback at turn end. Zero
+	// disables it (the default).
+	SwitchAt float64 `yaml:"switch_at,omitempty"`
 	// Probe says how to confirm the primary works; used by switch-back.
 	Probe Probe `yaml:"probe"`
 	// Timing is usage-aware timing for the loop's first route. Off by
@@ -851,7 +855,7 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	if l.Prompt == "" && l.PromptFile == "" && !ObservedOnly(l.Adapter) {
+	if l.Prompt == "" && l.PromptFile == "" && (!ObservedOnly(l.Adapter) || l.Agent.WakesObserved()) {
 		add("one of loop.prompt or loop.prompt_file is required")
 	}
 	if l.Prompt != "" && l.PromptFile != "" {
@@ -1015,13 +1019,22 @@ func (c *Config) Validate() error {
 	}
 	if ObservedOnly(l.Adapter) {
 		if l.HasRouteList() || l.SwitchBack.Enabled {
-			add("a sessionpipe target is observed, never woken: it cannot have fallbacks, routes or switch-back")
+			add("a sessionpipe target is observed: it cannot have fallbacks, routes or switch-back")
 		}
 		if l.TimingOn() {
 			add("loop.timing is not supported for an observed sessionpipe target")
 		}
-		if l.Prompt != "" || l.PromptFile != "" {
-			add("a sessionpipe target is observed, never woken: looptender sends it nothing, so loop.prompt and loop.prompt_file must not be set")
+		if (l.Prompt != "" || l.PromptFile != "") && !l.Agent.WakesObserved() {
+			add("a sessionpipe target without sessionpipe.send: wake_only is observed, never woken: looptender sends it nothing, so loop.prompt and loop.prompt_file must not be set")
+		}
+	}
+	if err := validSwitchAt(l.SwitchAt); err != nil {
+		add("loop.switch_at %v", err)
+	} else if l.SwitchAt != 0 {
+		if ObservedOnly(l.Adapter) || l.Adapter == "cursor" || l.Adapter == "antigravity" {
+			add("loop.switch_at is not supported for %s loops", l.Adapter)
+		} else if !l.HasRouteList() {
+			add("loop.switch_at needs loop.fallbacks or loop.routes: standard")
 		}
 	}
 	if l.SwitchBack.Enabled {

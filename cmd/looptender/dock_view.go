@@ -80,10 +80,20 @@ type dockReport struct {
 	// filling or nearly full, said once for all the loops on it; absent
 	// when none is.
 	Volumes []dockVolume `json:"volumes,omitempty"`
-	Loops   []dockLoop   `json:"loops"`
+	// Notices is the one list of events a person is told about (notices.go).
+	Notices []panelNotice `json:"notices"`
+	// Notify is the shared notification settings and whether the menu is
+	// notifying on this computer (notify_settings.go).
+	Notify *notifyState `json:"notify,omitempty"`
+	// Host is the computer's login session and load.
+	Host  *hostStatus `json:"host,omitempty"`
+	Loops []dockLoop  `json:"loops"`
 	// Archived counts the loops in Loops whose State is "archived"; they are
-	// listed last, need nobody and are left out of Worth.
+	// listed last, need nobody and are left out of Worth. Inactive counts
+	// non-archived loops whose checks stopped or had no new check activity for
+	// at least 72 hours (3 days); they are folded out of NeedsYou and Worth.
 	Archived int `json:"archived"`
+	Inactive int `json:"inactive,omitempty"`
 	// Routes is the same data grouped by route: a model on an account at an
 	// effort level, as configured. Each loop's chain entries name their
 	// route by key, so the views are one feed.
@@ -104,6 +114,9 @@ type dockReport struct {
 	// withheld wakes across loops, as a plain count. The page itself is
 	// served from dockUsagePath, worded by the same read.
 	UsagePicker string `json:"usagePicker"`
+	// Router is a read-only summary of the local account router when its
+	// directory exists; nil when unconfigured so it adds zero bytes.
+	Router *routerSummary `json:"router,omitempty"`
 	// usage is that page, kept out of this response for its size.
 	usage dockUsagePage
 }
@@ -235,7 +248,8 @@ type dockLoop struct {
 	LoopArg string `json:"loopArg,omitempty"`
 	// State is one of supervising, waiting_for_you, waiting_on_limit,
 	// waiting_on_network, checks_failing, paused, stopped, finished, off,
-	// outside_hours, not_checked_recently, archived or unknown. Phrase is its label,
+	// outside_hours, not_checked_recently, waiting_on_condition, archived or
+	// unknown. Phrase is its label,
 	// Detail one sentence about it, PickerState the picker row's second line.
 	State       string `json:"state"`
 	Phrase      string `json:"phrase"`
@@ -286,6 +300,12 @@ type dockLoop struct {
 	// NoProgress is the no-progress flag, the same value status shows; nil
 	// when the loop's status could not be read. It is never a need.
 	NoProgress *noProgressView `json:"noProgress,omitempty"`
+	// ModelStep is the model step-down in force or failed, for the notice
+	// list only; status says it in full.
+	ModelStep *modelStepView `json:"-"`
+	// UsageBurn is the usage watch's projection, the same value status
+	// shows; nil when it has none.
+	UsageBurn *usageBurnView `json:"usageBurn,omitempty"`
 	// MigrationReview describes historical declarations, never execution,
 	// current lane activity, permission or a reason to change supervision.
 	MigrationReview dockMigrationReview `json:"migrationReview"`
@@ -336,16 +356,27 @@ type dockLoop struct {
 	Can []string `json:"can"`
 	// Observed is set when the loop's target is observed, never woken (a
 	// sessionpipe session): looptender never sends to, wakes, re-prompts or
-	// stops it. ObservedNote says so in a sentence for the page.
-	Observed     bool   `json:"observed,omitempty"`
-	ObservedNote string `json:"observedNote,omitempty"`
+	// stops it. ObservedWakes is set with Observed when the loop opted in
+	// with sessionpipe.send: wake_only. ObservedNote says so in a sentence
+	// for the page.
+	Observed      bool   `json:"observed,omitempty"`
+	ObservedWakes bool   `json:"observedWakes,omitempty"`
+	ObservedNote  string `json:"observedNote,omitempty"`
+	// SessionpipeWake is set while a wake of an observed sessionpipe session
+	// is being answered or is held after a wake that did not get through.
+	SessionpipeWake *sessionpipeWakeStatus `json:"sessionpipeWake,omitempty"`
 	// Archived is set while the loop is archived (State "archived"): when,
 	// the hold it had, and the note only where the report carries
 	// identifiers. ArchiveLapsed is a record the loop no longer honours.
+	// Inactive is set for non-archived loops with no check activity for at
+	// least dockInactiveAfter (72 hours / 3 days); view grouping only.
 	// Naming is what a list needs to show a readable name.
 	Archived      *archiveView `json:"archived,omitempty"`
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	Inactive      bool         `json:"inactive,omitempty"`
 	Naming        *loopNaming  `json:"naming,omitempty"`
+	// Wait is a wait in force (State waiting_on_condition).
+	Wait *waitView `json:"wait,omitempty"`
 	// Lineage: the count of earlier loops and the key of the one it
 	// continues; absent for a loop that continues none.
 	Lineage *listLineage `json:"lineage,omitempty"`
@@ -564,6 +595,7 @@ type dockChainEntry struct {
 	acct           dockAccountFacts
 	identity       string
 	probeOK        bool
+	probeClass     string
 }
 
 // dockRoute is one route across every loop that names it. keepgoing knows it
@@ -610,8 +642,12 @@ type dockRoute struct {
 	// is too old), or empty. Routes are listed with these first.
 	Attention string `json:"attention,omitempty"`
 	// Lanes is always unknown in this schema.
-	Lanes    string `json:"lanes"`
-	identity string
+	Lanes           string `json:"lanes"`
+	identity        string
+	probeClass      string
+	probeAt         *time.Time
+	probeOK         bool
+	probeFromActive bool
 }
 
 type dockRouteLoop struct {
@@ -702,8 +738,97 @@ func dockRouteMeta(tool, model, account, provider, effort, enter string) []strin
 	return out
 }
 
+// dockMaxUsageLimitAge is the longest rolling provider quota window (7 days);
+// an undated usage-limit record older than this is historical, not active.
+const dockMaxUsageLimitAge = 7 * 24 * time.Hour
+
+func dockLoopInactive(l dockLoop) bool {
+	if l.Archived != nil {
+		return true
+	}
+	switch l.State {
+	case "stopped", "finished", "off":
+		return true
+	}
+	return false
+}
+
+// dockLatestEndedReset returns the latest window reset time when every window
+// in u has already ended (Availability == "stale" with at least one reset).
+func dockLatestEndedReset(u dockUsageTarget) time.Time {
+	if u.Availability != "stale" || len(u.Windows) == 0 {
+		return time.Time{}
+	}
+	var latest time.Time
+	for _, w := range u.Windows {
+		if !w.Stale || w.ResetsAt == nil {
+			return time.Time{}
+		}
+		if w.ResetsAt.After(latest) {
+			latest = *w.ResetsAt
+		}
+	}
+	return latest
+}
+
+// dockUsageWindowEndedBefore reports whether u shows every recorded window has
+// ended and eventAt was not after the latest ended reset.
+func dockUsageWindowEndedBefore(u dockUsageTarget, eventAt *time.Time) bool {
+	latest := dockLatestEndedReset(u)
+	if latest.IsZero() {
+		return false
+	}
+	return eventAt == nil || !eventAt.After(latest)
+}
+
+// dockRateLimitExpired reports whether a rate_limit probe failure is historical
+// rather than an active limit.
+func dockRateLimitExpired(probeAt time.Time, u dockUsageTarget, now time.Time, fromActiveLoop bool, staleAfter time.Duration) (bool, string) {
+	if dockUsageWindowEndedBefore(u, &probeAt) {
+		return true, "that window has ended"
+	}
+	if u.Availability == "available" {
+		return false, ""
+	}
+	if !probeAt.IsZero() && now.Sub(probeAt) > dockMaxUsageLimitAge {
+		return true, "that limit window may have ended"
+	}
+	if !fromActiveLoop && staleAfter > 0 && !probeAt.IsZero() && now.Sub(probeAt) > staleAfter {
+		return true, "that limit is from a loop that is no longer running"
+	}
+	return false, ""
+}
+
+// dockDepartureExpired reports whether a dockLeftLimit departure is no longer
+// an active limit on the route.
+func dockDepartureExpired(d dockDeparture, u dockUsageTarget, probeOK bool, probeAt *time.Time, now time.Time, staleAfter time.Duration) (bool, string) {
+	if d.How != dockLeftLimit || d.ResetPassed {
+		return false, ""
+	}
+	if probeOK && probeAt != nil && (d.At == nil || probeAt.After(*d.At)) {
+		return true, "A later test passed."
+	}
+	if d.ResetsAt != nil || d.ResetFar {
+		return false, ""
+	}
+	if dockUsageWindowEndedBefore(u, d.At) {
+		return true, "That limit window has since ended."
+	}
+	if d.At != nil && now.Sub(*d.At) > dockMaxUsageLimitAge {
+		return true, "That limit window may have ended."
+	}
+	if d.loopInactive && staleAfter > 0 && (d.At == nil || now.Sub(*d.At) > staleAfter) {
+		return true, "The loop is no longer running."
+	}
+	return false, ""
+}
+
 // dockRoutes groups every loop's chain by route. Newest evidence wins.
 func dockRoutes(loops []dockLoop, now time.Time) ([]dockRoute, int) {
+	return dockRoutesWithStale(loops, now, defaultStaleAfter)
+}
+
+func dockRoutesWithStale(loops []dockLoop, now time.Time, staleAfter time.Duration) ([]dockRoute, int) {
 	index := map[string]int{}
 	routes := []dockRoute{}
 	omitted := 0
@@ -716,6 +841,7 @@ func dockRoutes(loops []dockLoop, now time.Time) ([]dockRoute, int) {
 		m[i].by[pos] = append(m[i].by[pos], ref)
 	}
 	for _, l := range loops {
+		inactive := dockLoopInactive(l)
 		for _, e := range l.Chain.Entries {
 			i, ok := index[e.Route]
 			if !ok {
@@ -734,6 +860,9 @@ func dockRoutes(loops []dockLoop, now time.Time) ([]dockRoute, int) {
 			switch {
 			case e.ProbeAge != nil && (n.ProbeAge == nil || *e.ProbeAge < *n.ProbeAge) && e.Readiness != "current":
 				n.Readiness, n.Phrase, n.ProbeAge = e.Readiness, e.Phrase, e.ProbeAge
+				n.probeClass, n.probeAt, n.probeOK, n.probeFromActive = e.probeClass, e.ProbedAt, e.probeOK, !inactive
+			case e.ProbeAge != nil && n.ProbeAge != nil && *e.ProbeAge == *n.ProbeAge && e.Readiness == n.Readiness && !inactive:
+				n.probeFromActive = true
 			case e.Position > 0 && n.ProbeAge == nil && n.Readiness == "unknown" && e.Readiness != "current":
 				// Never tested anywhere: say why (turned off, or not tested yet).
 				n.Readiness, n.Phrase = e.Readiness, e.Phrase
@@ -746,7 +875,7 @@ func dockRoutes(loops []dockLoop, now time.Time) ([]dockRoute, int) {
 			if a := l.Away; a != nil {
 				for _, d := range a.Departures {
 					if d.Position == e.Position {
-						d.Others, d.loop, d.key = a.departureText(d, l.Name, now), l.Name, l.Key
+						d.Others, d.loop, d.key, d.loopInactive = a.departureText(d, l.Name, now), l.Name, l.Key, inactive
 						n.LeftBy = append(n.LeftBy, d)
 					}
 				}
@@ -798,6 +927,24 @@ func dockRoutes(loops []dockLoop, now time.Time) ([]dockRoute, int) {
 	}
 	for i := range routes {
 		r := &routes[i]
+		if r.Readiness == "not_ready" && r.probeClass == "rate_limit" && r.probeAt != nil {
+			if expired, note := dockRateLimitExpired(*r.probeAt, r.Usage, now, r.probeFromActive, staleAfter); expired {
+				r.Readiness = "unknown"
+				r.Phrase = dockProbePhrase(false, "rate_limit", dockAgo(now, *r.probeAt)) + "; " + note
+			}
+		}
+		for k := range r.LeftBy {
+			d := &r.LeftBy[k]
+			if d.atLimit() {
+				if expired, note := dockDepartureExpired(*d, r.Usage, r.probeOK, r.probeAt, now, staleAfter); expired {
+					d.expired = true
+					if note != "" && d.expiredNote == "" {
+						d.expiredNote = note
+						d.Others = txt(d.Others, " "+note)
+					}
+				}
+			}
+		}
 		r.Standby, r.Unknown = group(stand[i], r), group(unknown[i], r)
 		if n := len(r.RunningNow); n > 0 {
 			r.UseText = dockPlural(n, "loop on it now", "loops on it now")
@@ -1194,6 +1341,12 @@ func dockShareAcrossLoops(loops []dockLoop, routes []dockRoute, now time.Time) {
 				e.Usage.FromAnotherLoop = true
 				e.Usage.ReadLine = "Usage read " + dockAgo(now, *u.ObservedAt) + ", by another loop on this route"
 			}
+			if e.Readiness == "not_ready" && e.probeClass == "rate_limit" && e.ProbedAt != nil {
+				if expired, note := dockRateLimitExpired(*e.ProbedAt, e.Usage, now, true, 0); expired {
+					e.Readiness = "unknown"
+					e.Phrase = dockProbePhrase(false, "rate_limit", dockAgo(now, *e.ProbedAt)) + "; " + note
+				}
+			}
 			newer := r.ProbeAge != nil && (e.ProbeAge == nil || *r.ProbeAge < *e.ProbeAge)
 			if newer && r.Phrase != e.Phrase && r.Readiness != "current" && r.Readiness != "main" && r.Readiness != "unknown" {
 				e.After = append(e.After, "Another loop tested it more recently ("+strings.ToLower(r.Phrase[:1])+r.Phrase[1:]+").")
@@ -1285,6 +1438,9 @@ type dockHold struct {
 //	           deadline, no-progress limits, refusals or a restricted
 //	           account, or a provider usage limit it waits out (By: check)
 //	checks     its checks have stopped (By: check)
+//	condition  a wait for a condition the supervisor checks itself (looptender
+//	           wait): it carries on by itself, needing nobody (By: the role
+//	           that set the wait)
 //	unreadable a record it needs cannot be read (By: unknown)
 //	unknown    the records do not say (By: unknown)
 //
@@ -1401,7 +1557,7 @@ func secondsSince(now, t time.Time) *int64 {
 }
 
 var dockStatePriority = map[string]int{
-	"waiting_for_you": 0, "unknown": 1, "checks_failing": 2, "not_checked_recently": 3, "waiting_on_limit": 4, "waiting_on_network": 4,
+	"waiting_for_you": 0, "unknown": 1, "checks_failing": 2, "not_checked_recently": 3, "waiting_on_limit": 4, "waiting_on_network": 4, "waiting_on_condition": 4,
 	"supervising": 5, "outside_hours": 6, "paused": 7, "off": 8, "stopped": 9, "finished": 10, "archived": 11,
 }
 
@@ -1411,7 +1567,7 @@ var dockStatePriority = map[string]int{
 func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time.Duration, identifiers, registryOK bool, omitted int, complete bool) dockReport {
 	r := dockReport{SchemaVersion: dockSchemaVersion, ReadOnly: true, ReadAt: now, RefreshSeconds: int(refresh / time.Second),
 		StaleAfterSeconds: int(staleAfter / time.Second), Identifiers: identifiers, NeedsYou: []dockNeed{}, Worth: []dockWorth{}, Loops: []dockLoop{},
-		Routes: []dockRoute{}, Allowances: []dockAllowance{}, Registry: dockRegistry{Availability: "unavailable"}, Complete: complete,
+		Routes: []dockRoute{}, Allowances: []dockAllowance{}, Notices: []panelNotice{}, Registry: dockRegistry{Availability: "unavailable"}, Complete: complete,
 		NeedsLine: "Needs you: unknown"}
 	r.RoutesSummary = dockRoutesLine{Picker: "No routes", Total: "No routes", InUseT: "0 running now", Problem: "none at a limit or failing its test"}
 	if !registryOK {
@@ -1441,6 +1597,8 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 	for _, l := range r.Loops {
 		if l.Archived != nil {
 			r.Archived++
+		} else if l.Inactive {
+			r.Inactive++
 		}
 	}
 	r.AllClear = complete && omitted == 0 && len(r.NeedsYou) == 0
@@ -1456,7 +1614,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 		}
 		return strings.ToLower(r.Loops[i].Name) < strings.ToLower(r.Loops[j].Name)
 	})
-	r.Routes, r.RoutesOmitted = dockRoutes(r.Loops, now)
+	r.Routes, r.RoutesOmitted = dockRoutesWithStale(r.Loops, now, staleAfter)
 	dockShareAcrossLoops(r.Loops, r.Routes, now)
 	r.Allowances, r.AllowancesOmitted = dockAllowances(r.Routes, r.Loops, now)
 	dockMarkOldUsage(&r, staleAfter)
@@ -1478,7 +1636,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 	r.usage = buildDockUsagePage(usage, now, complete)
 	quiet := map[string]bool{"supervising": true, "paused": true, "off": true, "stopped": true, "finished": true, "waiting_for_you": true, "unknown": true}
 	for _, l := range r.Loops {
-		if l.Archived != nil {
+		if l.Archived != nil || l.Inactive {
 			continue // put out of the way: nothing about it is worth a line
 		}
 		flagged := l.NoProgress != nil && l.NoProgress.Availability == "flagged"
@@ -1488,7 +1646,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 		// A loop held for a person, or paused and still waiting for one, is
 		// under "Needs you" already.
 		lanesFailed := l.LanesFailed != "" && l.State != "waiting_for_you" && l.AlsoWaiting == ""
-		if quiet[l.State] && l.Away == nil && !flagged && !otherBuild && !lanesFailed {
+		if quiet[l.State] && l.Away == nil && !flagged && !otherBuild && !lanesFailed && l.UsageBurn == nil {
 			continue
 		}
 		t := txt()
@@ -1515,6 +1673,12 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 			}
 			t = txt(t, l.NoProgress.Text)
 		}
+		if l.UsageBurn != nil {
+			if len(t) > 0 {
+				t = txt(t, " ")
+			}
+			t = txt(t, l.UsageBurn.Words)
+		}
 		if l.Build.Availability == "different" {
 			if len(t) > 0 {
 				t = txt(t, " ")
@@ -1535,6 +1699,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 		}
 		r.Worth = append(r.Worth, dockWorth{Key: l.Key, Loop: l.Name, State: l.State, Text: t})
 	}
+	r.Notices = reportNotices(r.Loops, r.NeedsYou, now)
 	return r
 }
 
@@ -1556,6 +1721,9 @@ func dockLede(r dockReport) string {
 	s := dockPlural(len(r.Loops)-r.Archived, "loop", "loops")
 	if sup > 0 {
 		s += fmt.Sprintf(", %d supervising", sup)
+	}
+	if r.Inactive > 0 {
+		s += fmt.Sprintf(", %d inactive (3d+)", r.Inactive)
 	}
 	if r.Archived > 0 {
 		s += fmt.Sprintf(", and %d archived", r.Archived)
@@ -1722,6 +1890,9 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		if snap.ControlState != "superseded" && (c.Paused || c.Stop || c.AwaitingUser || c.Completed) {
 			l.Can = append(l.Can, "resume")
 		}
+		if snap.Archived == nil {
+			l.Can = append(l.Can, "archive")
+		}
 	}
 	if identifiers {
 		l.Identifiers = &dockIdentifiers{RegistrationID: in.Entry.ID}
@@ -1746,7 +1917,10 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		l.CurrentRoute = dockTarget{Availability: "known", Role: dockRole(st.Target), Tool: dockTool(a.Adapter),
 			Provider: clip(a.Provider, dockMaxText), Model: clip(a.Model, dockMaxText)}
 		if a.Observed {
-			l.Observed, l.ObservedNote = true, sessionpipeObservedNotice
+			l.Observed, l.ObservedWakes, l.ObservedNote = true, a.Wakes, observedNotice(a.Wakes)
+		}
+		if st.SessionpipeWake != nil {
+			l.SessionpipeWake = st.SessionpipeWake
 		}
 		if identifiers {
 			l.CurrentRoute.Name = clip(st.Target, dockMaxText)
@@ -2026,6 +2200,8 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		// the hold, not current.
 		np.Text = noProgressText(np, loopHeld(st.Control, st.controlUnreadable))
 		l.NoProgress = &np
+		l.ModelStep = st.ModelStep
+		l.UsageBurn = st.UsageBurn
 		if r := st.Refusals; r.Total > 0 || r.Question != "" {
 			l.Refusals = &r
 		}
@@ -2079,19 +2255,63 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			c.ContinuedIn = &r
 			snap.Archived = &c
 		}
+		if wt := snap.Wait; wt != nil && snap.Archived == nil && snap.Controls != nil && !snap.Controls.Paused && !snap.Controls.Stop && !snap.Controls.Completed && snap.Controls.Enabled {
+			// A wait needs nobody: it ends by itself when its condition holds.
+			l.State, l.Phrase, l.PickerState = "waiting_on_condition", "Waiting for "+waitPhrase[wt.Until], "Waiting for "+waitPhrase[wt.Until]
+			l.Detail = "It " + wt.Text + "."
+			since := wt.Since
+			by := "unknown"
+			if in.Hold != nil && in.Hold.Caller != "" {
+				by = in.Hold.Caller
+			}
+			l.Waiting = &dockWaiting{Kind: "condition", By: by, Reason: "It waits for " + waitPhrase[wt.Until] + " and carries on by itself.", Since: &since}
+			l.Wait, l.AlsoWaiting = wt, ""
+			need = nil
+		}
 		if a := snap.Archived; a != nil {
-			// Archived: listed apart, needing nobody, with no control offered
+			// Archived: listed apart, needing nobody, offering only unarchive
 			// (resume is refused until it is unarchived, and a group pause or
 			// stop leaves it as it is). Its hold is still shown in Hold.
 			l.Archived = a
 			l.State, l.Phrase, l.PickerState = "archived", "Archived", "Archived"
 			l.Detail = "Archived " + archiveSince(a) + ". It needs nobody and no daemon checks it; looptender unarchive lists it normally again and resumes nothing."
 			// Nothing it waits on is shown: it waits on nobody.
-			l.Can, l.AlsoWaiting, l.Waiting = []string{}, "", nil
+			l.Can, l.AlsoWaiting, l.Waiting = []string{"unarchive"}, "", nil
 			need = nil
 		}
 	}
+	if dockLoopCheckInactive(l, snap, need, now) {
+		l.Inactive = true
+		need = nil
+	}
 	return l, need
+}
+
+const dockInactiveAfter = 72 * time.Hour
+
+// dockLoopCheckInactive reports whether a non-archived loop has stopped checking
+// or had no new check activity for at least dockInactiveAfter (3 days).
+// View grouping only: never mutates loop state or archive.json on disk.
+func dockLoopCheckInactive(l dockLoop, snap *clientSnapshot, need *dockNeed, now time.Time) bool {
+	if snap != nil && snap.Archived != nil {
+		return false
+	}
+	if l.Supervisor == "answering" {
+		return false
+	}
+	if need != nil && need.Kind == "unreadable" {
+		return false
+	}
+	if l.Moved != nil && snap != nil && snap.Runtime != nil && snap.Runtime.OverdueSince != nil && now.Sub(*snap.Runtime.OverdueSince) < dockInactiveAfter {
+		return false
+	}
+	if l.LastCheck.At != nil && !l.LastCheck.At.IsZero() {
+		return now.Sub(*l.LastCheck.At) >= dockInactiveAfter
+	}
+	if snap != nil && snap.Runtime != nil && snap.Runtime.OverdueSince != nil && !snap.Runtime.OverdueSince.IsZero() {
+		return now.Sub(*snap.Runtime.OverdueSince) >= dockInactiveAfter
+	}
+	return false
 }
 
 // dockDropUsedUp removes the used-up note when a limit departure already says
@@ -2316,7 +2536,53 @@ func dockHoldNeed(st *statusOut, hold *dockHold, identifiers bool) *dockNeed {
 		since := t
 		n.Since, n.SinceEvidence = &since, "control_changed"
 	}
+	if st.TargetConfigured && st.TargetAgent.Observed {
+		dockObservedHoldAdvice(n, st, cause)
+	}
 	return n
+}
+
+// dockObservedHoldAdvice keeps hold advice honest for an observed sessionpipe
+// loop: resume continues checking (and idle wakes when wake_only), never sends
+// directly, and stop is never offered as a hold recovery button.
+func dockObservedHoldAdvice(n *dockNeed, st *statusOut, cause string) {
+	if n == nil || st == nil {
+		return
+	}
+	gone := (cause == "" || cause == "other") && st.State.LastCheck != nil &&
+		st.State.LastCheck.Action == "await_user" && strings.HasPrefix(st.State.LastCheck.Reason, "target gone")
+	if gone {
+		n.Reason = "The observed session ended or was forgotten."
+	}
+	wakes := st.TargetAgent.Wakes
+	hasNote := strings.TrimSpace(st.Control.Note) != ""
+	if !wakes {
+		switch {
+		case gone:
+			n.Action = "Resume continues checking; nothing is sent."
+		case cause == "input":
+			n.Action = "Answer it in the session, then resume checking; nothing is sent."
+		case cause == "child_input":
+			n.Action = "Answer it in that conversation, then resume checking; nothing is sent."
+		case hasNote && n.Action == dockHoldAdviceNote:
+			n.Action = "See the note left with the hold and the session. Resume continues checking; nothing is sent."
+		case n.Action == dockHoldAdvice:
+			n.Action = "Look at the session, then resume checking when it is ready; nothing is sent."
+		}
+		return
+	}
+	switch {
+	case gone:
+		n.Action = "Resume continues checking and idle wakes; nothing is sent by resuming."
+	case cause == "input":
+		n.Action = "Answer it in the session, then resume checking; nothing is sent by resuming."
+	case cause == "child_input":
+		n.Action = "Answer it in that conversation, then resume checking; nothing is sent by resuming."
+	case hasNote && n.Action == dockHoldAdviceNote:
+		n.Action = "See the note left with the hold and the session. Resume continues checking and idle wakes; nothing is sent by resuming."
+	case n.Action == dockHoldAdvice:
+		n.Action = "Look at the session, then resume checking when it is ready; resume continues checking and idle wakes, and nothing is sent by resuming."
+	}
 }
 
 func dockChildWork(r runsLoop, known bool) dockChildren {
@@ -2804,6 +3070,12 @@ func dockHandoffChain(in *dockChainInput, use dockRouteUse, test dockTesting, f 
 			// health.Due: the scheduled tests allowed per day are spent.
 			notTested = "the day's tests are used up"
 		}
+		if ok && row.Last != nil {
+			e.probeClass = row.Last.ErrorClass
+		}
+		if ok {
+			e.Usage = dockUsageOf(row.Usage, now)
+		}
 		switch {
 		case cand.Disabled:
 			e.Readiness, e.Phrase = "disabled", "Turned off in its configuration"
@@ -2834,13 +3106,18 @@ func dockHandoffChain(in *dockChainInput, use dockRouteUse, test dockTesting, f 
 				}
 			}
 		default:
-			e.Readiness, e.Phrase = "not_ready", dockProbePhrase(row.Last.OK, row.Last.ErrorClass, age)
+			if row.Last.ErrorClass == "rate_limit" {
+				if expired, note := dockRateLimitExpired(row.Last.At, e.Usage, now, true, 0); expired {
+					e.Readiness, e.Phrase = "unknown", dockProbePhrase(row.Last.OK, row.Last.ErrorClass, age)+"; "+note
+				} else {
+					e.Readiness, e.Phrase = "not_ready", dockProbePhrase(row.Last.OK, row.Last.ErrorClass, age)
+				}
+			} else {
+				e.Readiness, e.Phrase = "not_ready", dockProbePhrase(row.Last.OK, row.Last.ErrorClass, age)
+			}
 			if row.Last.OK && notTested != "" {
 				e.Phrase += "; " + notTested
 			}
-		}
-		if ok {
-			e.Usage = dockUsageOf(row.Usage, now)
 		}
 		if e.Usage.Availability == "unavailable" {
 			e.Usage.Reason = dockUsageReason(cand, row, ok, e.Current)
@@ -2994,8 +3271,15 @@ func dockControlWord(snap *clientSnapshot) string {
 }
 
 // dockLoopPriority is the loop's place in the list: its state's, except that a
-// paused loop that is still waiting for a person sorts with those that need one.
+// paused loop that is still waiting for a person sorts with those that need one,
+// 3-day inactive loops follow finished loops, and archived loops sort last.
 func dockLoopPriority(l dockLoop) int {
+	if l.State == "archived" {
+		return dockStatePriority["archived"] + 1
+	}
+	if l.Inactive {
+		return dockStatePriority["archived"]
+	}
 	if l.State == "paused" && l.AlsoWaiting != "" {
 		return dockStatePriority["waiting_for_you"]
 	}
@@ -3081,3 +3365,6 @@ func dockNoteState(l dockLoop) string {
 	}
 	return l.State
 }
+
+// waitPhrase is a wait's condition in a few fixed words.
+var waitPhrase = map[string]string{"host-session": "the login session", "network": "the network", "time": "a time", "limit-reset": "a usage-limit reset"}

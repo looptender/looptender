@@ -77,7 +77,10 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 	fs.DurationVar(&o.noProgressTimeout, "no-progress-timeout", 0, "hold after this time without verified Git changes; zero disables")
 	fs.Int64Var(&o.maxSends, "max-sends", 0, "total automatic send attempts while this limit is enabled; zero disables")
 	fs.StringVar(&o.deadline, "deadline", "", "RFC3339 cutoff for future supervision; does not cancel running turns")
-	fs.StringVar(&o.agent, "agent", "", "bb, claude, codex, cursor, or antigravity; detects installed CLIs")
+	fs.StringVar(&o.agent, "agent", "", "bb, claude, codex, cursor, antigravity, or sessionpipe (an observed session, never woken); detects installed CLIs")
+	var spSession, spEventsFile string
+	fs.StringVar(&spSession, "session", "", "sessionpipe: the session to observe, as <harness>:<id>")
+	fs.StringVar(&spEventsFile, "events-file", "", "sessionpipe: the tier-0 events file sessionpipe writes (default: inside the new setup directory)")
 	fs.StringVar(&o.thread, "thread", "", "existing BB thread ID; required for bb")
 	fs.StringVar(&o.provider, "provider", "", "existing BB thread provider label; required for bb")
 	fs.StringVar(&o.account, "account-dir", "", "existing Claude Code or Codex account configuration directory")
@@ -123,6 +126,13 @@ func setupLoop(e env, args []string, input io.Reader, lookPath func(string) (str
 	}
 	visited := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
+	if o.agent == config.SessionpipeAdapter {
+		return setupSessionpipe(e, o, spSession, spEventsFile, input, visited, asJSON)
+	}
+	if visited["session"] || visited["events-file"] {
+		e.errf("init: --session and --events-file apply only to --agent sessionpipe")
+		return exitUsage
+	}
 	if err := collectInit(e, &o, input, lookPath, visited); err != nil {
 		e.errf("init: %v", err)
 		return exitUsage

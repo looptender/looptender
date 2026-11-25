@@ -37,7 +37,7 @@ func dockFixtureReader(t *testing.T) (*dockReader, string) {
 	root := t.TempDir()
 	dir := dockScratch(t, root, dockNow)
 	runsClock(t, dockNow)
-	return &dockReader{directory: dir, refresh: dockDefaultRefresh, staleAfter: defaultStaleAfter, query: inspectDaemon, now: func() time.Time { return dockNow }}, root
+	return &dockReader{directory: dir, refresh: dockDefaultRefresh, staleAfter: defaultStaleAfter, query: inspectDaemon, now: func() time.Time { return dockNow }, routerDir: filepath.Join(root, "router-absent")}, root
 }
 
 func dockLoopNamed(t *testing.T, r dockReport, name string) dockLoop {
@@ -1575,7 +1575,7 @@ func TestDockMaximalRegistryStaysUnderTheResponseBound(t *testing.T) {
 		if len(list) > 1<<20/2 || r.Loops[0].UsageLimit == nil {
 			t.Errorf("panel list %d bytes, over half the menu's 1 MiB cap, or no usage limit in the fixture", len(list))
 		}
-		if len(body) > dockMaxResponse*3/4 {
+		if sizeWithoutNotices(t, body) > dockResponseMargin {
 			t.Errorf("identifiers %t: %d bytes, over three quarters of the %d-byte bound", ids, len(body), dockMaxResponse)
 		}
 		if len(r.Routes) > dockMaxRoutes || r.RoutesOmitted == 0 {
@@ -1998,7 +1998,7 @@ func dockFourByteReport(t *testing.T, limited bool) {
 		t.Fatal(err)
 	}
 	t.Logf("usage limits %t: %d bytes, %d account route lists", limited, len(body), len(r.AccountUses))
-	if limit := dockMaxResponse * 3 / 4; !limited && len(body) > limit {
+	if !limited && sizeWithoutNotices(t, body) > dockResponseMargin {
 		t.Errorf("%d bytes, over three quarters of the %d-byte bound", len(body), dockMaxResponse)
 	}
 	if limit := dockMaxResponse * 4 / 5; limited && len(body) > limit {
@@ -2248,5 +2248,234 @@ func TestDockSupervisingNeedsASupervisor(t *testing.T) {
 	}()}, dockNow, time.Minute, defaultStaleAfter, false, true, 0, true)
 	if got := dockLede(r); !strings.Contains(got, "Not live") || !strings.Contains(got, "1 loop's supervisor answered just now") {
 		t.Errorf("lede %q", got)
+	}
+}
+
+// Expired usage limits (where every recorded window has ended, an undated limit
+// is older than a week, or an inactive loop left no future reset) are treated
+// as historical: they do not count in "at a limit or not ready", do not get
+// red limit banners, and do not sort ahead of healthy routes, while active limits
+// with a future reset (or recent undated limit on a supervising loop) still do.
+func TestDockRoutesExpiredUsageLimitsAreHistorical(t *testing.T) {
+	say := func(x dockText) string { return x.render(dockNow) }
+	oldProbeAt := dockNow.Add(-11 * 24 * time.Hour)
+	oldWindowEnded := dockNow.Add(-11*24*time.Hour + 5*time.Hour)
+	recentProbeAt := dockNow.Add(-20 * time.Minute)
+	futureReset := dockNow.Add(3 * time.Hour)
+
+	candWith := func(id, model string) config.Candidate {
+		return config.Candidate{
+			ID: id,
+			Agent: config.Agent{
+				Adapter:  "claude",
+				Provider: "claude-code",
+				Group:    id + "-group",
+				Claude:   &config.Claude{CLI: "nonexistent-provider-fixture", Workdir: ".", Model: model},
+			},
+		}
+	}
+
+	makeLoop := func(name string, ctl *clientControls, primary, current, fallbackA, fallbackB config.Candidate,
+		rows []candidateRow, tl *timelineReport, resetsAt time.Time, handoffAt time.Time) dockInput {
+		cands := []config.Candidate{}
+		if fallbackA.ID != "" {
+			cands = append(cands, fallbackA)
+		}
+		if fallbackB.ID != "" {
+			cands = append(cands, fallbackB)
+		}
+		in := dockEvidence{
+			controls: ctl,
+			status: func(s *statusOut) {
+				s.Target = current.ID
+				s.TargetConfigured = true
+				s.State.PrimaryResetsAt = resetsAt
+				s.State.LastHandoffAt = handoffAt
+			},
+		}.input()
+		in.Entry.ID = "loop_" + name
+		in.Entry.Loop = name
+		in.Client.Snapshot.Loop = name
+		in.Chain = &dockChainInput{
+			Primary:    primary,
+			Candidates: cands,
+			FailoverOn: []string{"rate_limit"},
+			ProbeEvery: 4 * time.Hour,
+			Summary:    &fallbacksOut{Candidates: rows},
+		}
+		in.Timeline = tl
+		return in
+	}
+
+	on := &clientControls{Enabled: true}
+	stopped := &clientControls{Enabled: true, Stop: true}
+
+	// Route 1: primary ready (with a healthy probe)
+	rPrimary := candWith(state.Primary, "claude-haiku-5-5")
+	// Route 2: claude-fable-5-2 (11d old departed limit without ResetsAt, 11d old rate_limit probe + ended window)
+	rExpiredBoth := candWith("expired-both", "claude-fable-5-2")
+	// Route 3: claude-opus-5-5 (11d old rate_limit probe + ended window, no departure)
+	rExpiredProbe := candWith("expired-probe", "claude-opus-5-5")
+	// Route 4: stopped loop's undated departure & rate_limit probe from 2h ago (> staleAfter)
+	rStopped := candWith("stopped-route", "claude-sonnet-stopped")
+	// Route 5: genuinely active rate-limit route (20 min ago, resets in +3h)
+	rActive := candWith("active-limit", "claude-sonnet-active")
+
+	move := func(at time.Time, from, to string) timelineEntry {
+		return timelineEntry{
+			At: at,
+			Incident: &incident.Record{
+				Kind:           "tick",
+				CheckStartedAt: at,
+				Action:         "handoff",
+				Outcome:        "succeeded",
+				TargetKey:      incident.TargetKey(from),
+				TargetKeyAfter: incident.TargetKey(to),
+				Observation:    incident.Observation{Availability: "observed", State: "error", ErrorClass: "rate_limit"},
+			},
+		}
+	}
+
+	// Active supervising loop that left rExpiredBoth (Primary) 11 days ago (no PrimaryResetsAt)
+	// onto rActive, plus has rExpiredProbe in its chain.
+	inHist := makeLoop("keepgoing-agents-chat", on, rExpiredBoth, rActive, rExpiredProbe, rActive,
+		[]candidateRow{
+			{
+				ID:   rExpiredBoth.ID,
+				Last: &probe.Result{At: oldProbeAt, OK: false, ErrorClass: "rate_limit"},
+				Usage: usageView{
+					State:      "stale",
+					ObservedAt: &oldProbeAt,
+					AgeSeconds: secondsSince(dockNow, oldProbeAt),
+					Windows:    []usageWindowView{{UsageWindow: probe.UsageWindow{Key: "five_hour", Used: 1, ResetsAt: &oldWindowEnded}, Stale: true}},
+					ProbesOnly: true,
+				},
+			},
+			{
+				ID:   rExpiredProbe.ID,
+				Last: &probe.Result{At: oldProbeAt, OK: false, ErrorClass: "rate_limit"},
+				Usage: usageView{
+					State:      "stale",
+					ObservedAt: &oldProbeAt,
+					AgeSeconds: secondsSince(dockNow, oldProbeAt),
+					Windows:    []usageWindowView{{UsageWindow: probe.UsageWindow{Key: "five_hour", Used: 1, ResetsAt: &oldWindowEnded}, Stale: true}},
+					ProbesOnly: true,
+				},
+			},
+		},
+		&timelineReport{Events: []timelineEntry{move(oldProbeAt, state.Primary, rActive.ID)}},
+		time.Time{}, oldProbeAt,
+	)
+
+	// Stopped loop whose fallback hit rate_limit 2h ago (> defaultStaleAfter=30m) with no usage reading
+	stoppedAt := dockNow.Add(-2 * time.Hour)
+	inStopped := makeLoop("stopped-loop", stopped, rStopped, rActive, rStopped, rActive,
+		[]candidateRow{
+			{ID: rStopped.ID, Last: &probe.Result{At: stoppedAt, OK: false, ErrorClass: "rate_limit"}, Usage: usageView{State: "unavailable", ProbesOnly: true}},
+		},
+		&timelineReport{Events: []timelineEntry{move(stoppedAt, state.Primary, rActive.ID)}},
+		time.Time{}, stoppedAt,
+	)
+
+	// Supervising loop with an ACTIVE limit on rActive (tested 20m ago, resets in +3h)
+	// and also an old 11d fallback probe + ended window for rExpiredBoth.
+	inActive := makeLoop("live-loop", on, rPrimary, rPrimary, rActive, rExpiredBoth,
+		[]candidateRow{
+			{ID: rActive.ID, Healthy: false, Last: &probe.Result{At: recentProbeAt, OK: false, ErrorClass: "rate_limit"},
+				Usage: usageView{
+					State:      "available",
+					ObservedAt: &recentProbeAt,
+					AgeSeconds: secondsSince(dockNow, recentProbeAt),
+					Windows:    []usageWindowView{{UsageWindow: probe.UsageWindow{Key: "five_hour", Used: 1, ResetsAt: &futureReset}}},
+					ProbesOnly: true,
+				}},
+			{ID: rExpiredBoth.ID, Last: &probe.Result{At: oldProbeAt, OK: false, ErrorClass: "rate_limit"},
+				Usage: usageView{
+					State:      "stale",
+					ObservedAt: &oldProbeAt,
+					AgeSeconds: secondsSince(dockNow, oldProbeAt),
+					Windows:    []usageWindowView{{UsageWindow: probe.UsageWindow{Key: "five_hour", Used: 1, ResetsAt: &oldWindowEnded}, Stale: true}},
+					ProbesOnly: true,
+				}},
+		},
+		nil, time.Time{}, time.Time{},
+	)
+
+	rep := buildDockReport([]dockInput{inHist, inStopped, inActive}, dockNow, time.Minute, defaultStaleAfter, true, true, 0, true)
+
+	byModel := map[string]dockRoute{}
+	for _, r := range rep.Routes {
+		byModel[r.Model] = r
+	}
+
+	// Only rActive should be in trouble and listed first!
+	if rep.RoutesSummary.Trouble != 1 || rep.RoutesSummary.Problem != "1 at a limit or not ready, listed first" {
+		t.Fatalf("routes summary: %+v", rep.RoutesSummary)
+	}
+	if rep.Routes[0].Model != "claude-sonnet-active" || rep.Routes[0].Attention != "limit" {
+		t.Fatalf("first route: %s attention=%q (want active limit first)", rep.Routes[0].Model, rep.Routes[0].Attention)
+	}
+
+	// Expired limit routes must not carry Attention, not_ready, or red limit notes.
+	for _, model := range []string{"claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-stopped"} {
+		r, ok := byModel[model]
+		if !ok {
+			t.Fatalf("missing route %s", model)
+		}
+		if r.Attention != "" || r.Readiness == "not_ready" {
+			t.Errorf("%s: got attention=%q readiness=%q phrase=%q, want cleared historical status", model, r.Attention, r.Readiness, r.Phrase)
+		}
+		for _, n := range r.Notes {
+			if n.Tone == "limit" {
+				t.Errorf("%s: expired departure still has limit tone note: %q", model, say(n.Text))
+			}
+		}
+	}
+	if !strings.Contains(byModel["claude-opus-5-5"].Phrase, "that window has ended") {
+		t.Errorf("claude-opus-5-5 phrase = %q, want window-ended explanation", byModel["claude-opus-5-5"].Phrase)
+	}
+	if !strings.Contains(byModel["claude-fable-5-2"].Phrase, "that window has ended") {
+		t.Errorf("claude-fable-5-2 phrase = %q, want window-ended explanation", byModel["claude-fable-5-2"].Phrase)
+	}
+
+	// Active limit still counts, highlights in red (Attention=="limit"), and keeps UsedUp note.
+	act := byModel["claude-sonnet-active"]
+	if act.Attention != "limit" || act.Readiness != "not_ready" || len(act.Notes) == 0 || act.Notes[0].Tone != "limit" {
+		t.Errorf("active limit route degraded: %+v", act)
+	}
+}
+
+// A rate_limit probe with no ended usage window still expires once older than a
+// week (rolling quota lifetime), whereas a recent undated rate_limit probe on an
+// active loop remains not_ready.
+func TestDockRateLimitProbeExpiryWithoutUsageWindow(t *testing.T) {
+	c := config.Candidate{
+		ID: "fallback-a",
+		Agent: config.Agent{
+			Adapter:  "codex",
+			Provider: "codex",
+			Codex:    &config.Codex{CLI: "nonexistent-provider-fixture", Workdir: "."},
+		},
+	}
+	primary := config.Candidate{ID: state.Primary, Agent: config.Agent{Adapter: "codex", Provider: "codex", Codex: &config.Codex{CLI: "nonexistent-provider-fixture", Workdir: "."}}}
+	build := func(probeAt time.Time) dockChain {
+		in := &dockChainInput{
+			Primary:    primary,
+			Candidates: []config.Candidate{c},
+			ProbeEvery: 4 * time.Hour,
+			Summary: &fallbacksOut{Candidates: []candidateRow{
+				{ID: c.ID, Healthy: false, Last: &probe.Result{At: probeAt, OK: false, ErrorClass: "rate_limit"}, Usage: usageView{State: "unavailable", ProbesOnly: true}},
+			}},
+		}
+		return dockHandoffChain(in, dockRouteUse{}, dockTesting{}, dockFallbacks{}, dockNow, false)
+	}
+
+	recent := build(dockNow.Add(-2 * time.Hour))
+	if e := recent.Entries[1]; e.Readiness != "not_ready" || e.Phrase != "Hit a usage limit when tested 2 h ago" {
+		t.Errorf("recent undated rate_limit: %q %q", e.Readiness, e.Phrase)
+	}
+	old := build(dockNow.Add(-8 * 24 * time.Hour))
+	if e := old.Entries[1]; e.Readiness != "unknown" || e.Phrase != "Hit a usage limit when tested 8 days ago; that limit window may have ended" {
+		t.Errorf("8d undated rate_limit: %q %q", e.Readiness, e.Phrase)
 	}
 }

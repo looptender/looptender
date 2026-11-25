@@ -403,3 +403,161 @@ test("an existing directory is 'exists'; 'files may already exist' is a possible
   const home = (await import("node:os")).homedir();
   assert.equal(firstErrorLine(`warning: x\ninit: cannot read ${home}/private/task.md`), "init: cannot read ~/private/task.md");
 });
+
+test("setupOnHost passes --succeeds without BB_THREAD_ID and surfaces init warnings", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "keepgoing-succeeds-host-")));
+  try {
+    const target = { threadId: "thr_next_example", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: root, provider: "codex" };
+    const oldConfig = "/private/example-old/looptender.yaml";
+    const reply = { schemaVersion: 1, outcome: "created", loop: "example-old-2", project: root, configPath: join(root, "outside", "looptender.yaml"), stateDir: join(root, "outside", "state"), primary: { agent: { adapter: "bb", bbThread: target.threadId, provider: target.provider } }, fallbacks: [], limits: { wakeEvery: "1h", interval: "5m", stallAfter: "30m", backoff: "10m", maxNudges: 3, maxReprompts: 3, failoverOn: [] } };
+    const seenThreads: string[] = [];
+    let seenArgs: string[] = [];
+    const run: Execute = async (_bin, args, _stdin, thread) => {
+      seenThreads.push(thread);
+      if (args[0] === "init") seenArgs = args;
+      return { code: 0, data: reply, stderr: "init: warning: the succession was not recorded: fictional reason\n" };
+    };
+    const r = await setupOnHost({ bin: "keepgoing", target, name: "example-old-2", task: "Continue example", dryRun: false, succeeds: oldConfig }, undefined, run);
+    assert.equal(seenThreads[0], "");
+    const idx = seenArgs.indexOf("--succeeds");
+    assert.ok(idx > 0 && seenArgs[idx + 1] === oldConfig);
+    assert.ok("plan" in r);
+    assert.deepEqual(r.warnings, ["init: warning: the succession was not recorded: fictional reason"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("continuationCandidatesOnHost lists and sorts same-project active loops first", async () => {
+  const { continuationCandidatesOnHost } = await import("./setup-host.ts");
+  const root = await realpath(await mkdtemp(join(tmpdir(), "keepgoing-cont-")));
+  const project = join(root, "example-project");
+  await mkdir(project);
+  try {
+    const target = { threadId: "thr_new", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project, provider: "codex" };
+    const statuses: Record<string, unknown> = {
+      "/p/other.yaml": { loop: "other-loop", controlState: "paused", naming: { displayName: "Other Work", project: "other-project" } },
+      "/p/arch.yaml": { loop: "arch-loop", controlState: "awaiting user", archived: { at: "2026-01-01T00:00:00Z" }, naming: { displayName: "Archived Work", project: "example-project" } },
+      "/p/same.yaml": { loop: "same-loop", controlState: "paused", naming: { displayName: "Same Project Work", project: "example-project" } },
+      "/p/superseded.yaml": { loop: "old-loop", controlState: "superseded", naming: { displayName: "Old Work", project: "example-project" } },
+    };
+    const run: Execute = async (_bin, args) => {
+      if (args[0] === "registry") return { code: 0, data: { entries: [{ loop: "other-loop", configPath: "/p/other.yaml" }, { loop: "arch-loop", configPath: "/p/arch.yaml" }] } };
+      if (args[0] === "status") {
+        const cfg = args[args.indexOf("-c") + 1]!;
+        return { code: 0, data: statuses[cfg] };
+      }
+      return { code: 1, data: null };
+    };
+    const res = await continuationCandidatesOnHost({ bin: "keepgoing", target, extraPaths: ["/p/same.yaml", "/p/superseded.yaml"] }, undefined, run);
+    assert.deepEqual(res.candidates.map(c => c.loop), ["same-loop", "other-loop", "arch-loop"]);
+    assert.equal(res.candidates[0]!.sameProject, true);
+    assert.equal(res.candidates[0]!.archived, false);
+    assert.equal(res.candidates[2]!.archived, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("startServiceOnHost installs user service + enables on macOS/Linux, and falls back to start --background when unsupported", async () => {
+  const { startServiceOnHost } = await import("./setup-host.ts");
+  const record = { id: "record", threadId: "thr_example", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: "/projects/example", provider: "codex", configPath: "/private/example/looptender.yaml", loop: "example-loop" };
+
+  // 1. Supported platform: service install + enable + registry add
+  const seen: string[][] = [];
+  const res = await startServiceOnHost({ bin: "keepgoing", record, enable: true, json: true }, undefined, async (_bin, args, _in, thread) => {
+    assert.equal(thread, record.threadId);
+    seen.push(args);
+    if (args[0] === "service") return { code: 0, data: { backend: "launchd", registration: "loaded" } };
+    if (args[0] === "enable") return { code: 0, data: null };
+    if (args[0] === "registry") return { code: 0, data: { entries: [{ id: "loop_0123456789abcdef0123456789abcdef" }] } };
+    return { code: 1, data: null };
+  });
+  assert.equal(res.code, 0);
+  assert.equal(res.method, "service");
+  assert.deepEqual(res.data, { schemaVersion: 1, outcome: "started" });
+  assert.deepEqual(seen.map(a => a[0]), ["service", "enable", "registry"]);
+
+  // 2. Unsupported platform (e.g. Windows): falls back cleanly to start --background
+  const fallbackSeen: string[][] = [];
+  const fb = await startServiceOnHost({ bin: "keepgoing", record, enable: true, json: true }, undefined, async (_bin, args) => {
+    fallbackSeen.push(args);
+    if (args[0] === "service") return { code: 1, data: null, stderr: "service: user-service management currently supports macOS GUI LaunchAgents and Linux systemd user services; use start or an external scheduler on this platform\n" };
+    if (args[0] === "start") return { code: 0, data: { schemaVersion: 1, outcome: "started" } };
+    if (args[0] === "registry") return { code: 0, data: { entries: [{ id: "loop_0123456789abcdef0123456789abcdef" }] } };
+    return { code: 1, data: null };
+  });
+  assert.equal(fb.code, 0);
+  assert.equal(fb.method, "background");
+  assert.deepEqual(fallbackSeen.map(a => a[0]), ["service", "start", "registry"]);
+
+  // 3. Ownership / preflight failure on service install: fails closed without enabling or falling back
+  const failSeen: string[][] = [];
+  const failed = await startServiceOnHost({ bin: "keepgoing", record, enable: true, json: true }, undefined, async (_bin, args) => {
+    failSeen.push(args);
+    return { code: 1, data: null, stderr: "service: ownership mismatch" };
+  });
+  assert.equal(failed.code, 1);
+  assert.deepEqual(failSeen.map(a => a[0]), ["service"]);
+
+  // 4. enable: false (Start checks on already-enabled loop) skips enable
+  const checksSeen: string[][] = [];
+  const checks = await startServiceOnHost({ bin: "keepgoing", record, enable: false }, undefined, async (_bin, args) => {
+    checksSeen.push(args);
+    if (args[0] === "service") return { code: 0, data: { backend: "launchd", registration: "loaded" } };
+    if (args[0] === "registry") return { code: 0, data: { entries: [{ id: "loop_0123456789abcdef0123456789abcdef" }] } };
+    return { code: 1, data: null };
+  });
+  assert.equal(checks.code, 0);
+  assert.deepEqual(checksSeen.map(a => a[0]), ["service", "registry"]);
+
+  // 5. already recorded with no responding daemon: removes and reinstalls cleanly
+  const reSeen: string[][] = [];
+  let installAttempts = 0;
+  const re = await startServiceOnHost({ bin: "keepgoing", record, enable: false }, undefined, async (_bin, args) => {
+    reSeen.push([args[0]!, args[1] ?? ""]);
+    if (args[0] === "service" && args[1] === "install") {
+      installAttempts++;
+      return installAttempts === 1
+        ? { code: 1, data: null, stderr: "service: already recorded; use status or remove before reinstalling\n" }
+        : { code: 0, data: { backend: "launchd", registration: "loaded" } };
+    }
+    if (args[0] === "status") return { code: 0, data: { daemon: { state: "not_recorded" } } };
+    if (args[0] === "service" && args[1] === "remove") return { code: 0, data: { registration: "absent" } };
+    if (args[0] === "registry") return { code: 0, data: { entries: [{ id: "loop_0123456789abcdef0123456789abcdef" }] } };
+    return { code: 1, data: null };
+  });
+  assert.equal(re.code, 0);
+  assert.equal(re.method, "service");
+  assert.deepEqual(reSeen, [["service", "install"], ["status", "--json"], ["service", "remove"], ["service", "install"], ["registry", "reconcile"]]);
+
+  // 6. already recorded with responsive daemon: does not remove
+  const liveSeen: string[][] = [];
+  const live = await startServiceOnHost({ bin: "keepgoing", record, enable: false }, undefined, async (_bin, args) => {
+    liveSeen.push([args[0]!, args[1] ?? ""]);
+    if (args[0] === "service" && args[1] === "install") return { code: 1, data: null, stderr: "service: already recorded; use status or remove before reinstalling\n" };
+    if (args[0] === "status") return { code: 0, data: { daemon: { state: "responsive" } } };
+    return { code: 1, data: null };
+  });
+  assert.equal(live.code, 1);
+  assert.deepEqual(liveSeen, [["service", "install"], ["status", "--json"]]);
+
+  // 6b. already recorded when status --json fails: fails closed without removing
+  const errSeen: string[][] = [];
+  const statusErr = await startServiceOnHost({ bin: "keepgoing", record, enable: false }, undefined, async (_bin, args) => {
+    errSeen.push([args[0]!, args[1] ?? ""]);
+    if (args[0] === "service" && args[1] === "install") return { code: 1, data: null, stderr: "service: already recorded; use status or remove before reinstalling\n" };
+    if (args[0] === "status") return { code: 1, data: null };
+    return { code: 1, data: null };
+  });
+  assert.equal(statusErr.code, 1);
+  assert.deepEqual(errSeen, [["service", "install"], ["status", "--json"]]);
+
+  // 7. enable failure rolls back by calling service remove
+  const rbSeen: string[][] = [];
+  const rb = await startServiceOnHost({ bin: "keepgoing", record, enable: true }, undefined, async (_bin, args) => {
+    rbSeen.push([args[0]!, args[1] ?? ""]);
+    if (args[0] === "service" && args[1] === "install") return { code: 0, data: { backend: "launchd", registration: "loaded" } };
+    if (args[0] === "enable") return { code: 1, data: null, stderr: "enable refused: loop other-loop already supervises this thread's session\n" };
+    if (args[0] === "service" && args[1] === "remove") return { code: 0, data: { registration: "absent" } };
+    return { code: 1, data: null };
+  });
+  assert.equal(rb.code, 1);
+  assert.deepEqual(rbSeen, [["service", "install"], ["enable", "-c"], ["service", "remove"]]);
+});

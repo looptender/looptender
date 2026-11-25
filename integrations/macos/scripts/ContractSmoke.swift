@@ -26,12 +26,14 @@ import Foundation
             fatalError("panel list contract mismatch")
         }
         let model = MenuBuilder.build(.read(list, at: Date()), now: Date())
-        guard model.badge.isEmpty, model.rows.contains(where: { $0.kind == .loop && $0.title == "example-menu-loop" && $0.detail == "Off" }) else {
+        // An Off loop is in the collapsed "Other loops" group, one level down.
+        let everyRow = model.rows + model.rows.flatMap(\.submenu)
+        guard model.badge.isEmpty, model.rows.contains(where: { $0.title == "Other loops (1)" }), everyRow.contains(where: { $0.kind == .loop && $0.title == "example-menu-loop" && $0.detail == "Off" }) else {
             fatalError("menu model mismatch")
         }
         // The loop's choices come from the CLI's own list of what fits.
-        let row = model.rows.first { $0.kind == .loop }!
-        guard list.loops[0].can == ["pause", "stop"], row.submenu.compactMap(\.command) == [.openLoop(key: list.loops[0].key), .review(.pause, key: list.loops[0].key), .review(.stop, key: list.loops[0].key)] else {
+        let row = everyRow.first { $0.kind == .loop }!
+        guard list.loops[0].can == ["pause", "stop", "archive"], row.submenu.compactMap(\.command) == [.openLoop(key: list.loops[0].key), .review(.pause, key: list.loops[0].key), .review(.stop, key: list.loops[0].key), .review(.archive, key: list.loops[0].key)] else {
             fatalError("loop choices mismatch")
         }
         // A review reads and changes nothing; the caller checks the files.

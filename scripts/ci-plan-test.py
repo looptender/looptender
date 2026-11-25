@@ -16,35 +16,100 @@ NEVER = lambda: None
 
 
 class PlanTests(unittest.TestCase):
-    def test_draft_pull_request_skips_macos_only(self):
-        for files in (['cmd/looptender/main.go'], ['docs/testing.md', 'scripts/ci-plan.py'], ['integrationsmacos/x.swift'],
-                      ['integrations/bb-plugin-keepgoing/a.ts'], ['notintegrations/macos/x.swift']):
+    def test_draft_pull_request_skips_macos_unless_macos_menu_changed(self):
+        for files in (['cmd/looptender/main.go'], ['integrationsmacos/x.swift'], ['notintegrations/macos/x.swift']):
             with self.subTest(files=files):
                 got = plan.plan('pull_request', 'true', NEVER, lambda: files)
                 self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.UBUNTU_ONLY))
+                self.assertEqual(got[4]['run_race'], True)
 
-    def test_draft_that_changes_the_swift_menu_runs_other_checks_on_macos_but_not_the_race_partitions(self):
-        for files in (['integrations/macos/Sources/KeepgoingMenu/App.swift'],
-                      ['cmd/looptender/main.go', 'integrations/macos/Package.swift'],
-                      ['integrations/macos/scripts/smoke-contract.py', 'README.md']):
-            with self.subTest(files=files):
-                got = plan.plan('pull_request', 'true', NEVER, lambda: files)
-                self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.FULL))
-                self.assertIn('integrations/macos/', got[2])
+    def test_docs_only_pr_skips_race_windows_plugin_and_macos_on_draft_and_ready(self):
+        for draft in ('true', 'false'):
+            for files in (['docs/testing.md', 'README.md'], ['changelog.d/fix.md'], ['LICENSES/MIT.txt']):
+                with self.subTest(draft=draft, files=files):
+                    got = plan.plan('pull_request', draft, NEVER, lambda: files)
+                    self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.UBUNTU_ONLY))
+                    self.assertEqual(got[4]['scope'], 'docs')
+                    self.assertFalse(got[4]['run_race'])
+                    self.assertTrue(got[4]['run_checks'])
+                    self.assertFalse(got[4]['run_bb_plugin'])
+                    self.assertFalse(got[4]['run_windows'])
 
-    def test_a_draft_whose_files_are_unknown_empty_or_too_many_runs_everything(self):
+    def test_bb_plugin_only_pr_runs_only_bb_plugin_job(self):
+        got = plan.plan('pull_request', 'false', NEVER, lambda: ['integrations/bb-plugin-keepgoing/src/index.ts', 'docs/testing.md'])
+        self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.UBUNTU_ONLY))
+        self.assertEqual(got[4]['scope'], 'bb-plugin')
+        self.assertTrue(got[4]['run_bb_plugin'])
+        self.assertFalse(got[4]['run_checks'])
+        self.assertFalse(got[4]['run_race'])
+        self.assertFalse(got[4]['run_windows'])
+
+    def test_dockui_only_pr_skips_race_windows_and_macos(self):
+        got = plan.plan('pull_request', 'false', NEVER, lambda: ['cmd/looptender/dockui/dock.js', 'docs/dock.md'])
+        self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.UBUNTU_ONLY))
+        self.assertEqual(got[4]['scope'], 'dockui')
+        self.assertTrue(got[4]['run_bb_plugin'])
+        self.assertTrue(got[4]['run_checks'])
+        self.assertFalse(got[4]['run_race'])
+        self.assertFalse(got[4]['run_windows'])
+
+    def test_macos_only_pr_skips_race_windows_and_plugin_and_runs_swift_on_macos(self):
+        for draft in ('true', 'false'):
+            got = plan.plan('pull_request', draft, NEVER, lambda: ['integrations/macos/Sources/KeepgoingMenu/App.swift', 'README.md'])
+            self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.FULL))
+            self.assertEqual(got[4]['scope'], 'macos-only')
+            self.assertTrue(got[4]['run_checks'])
+            self.assertTrue(got[4]['run_swift'])
+            self.assertFalse(got[4]['run_race'])
+            self.assertFalse(got[4]['run_windows'])
+            self.assertFalse(got[4]['run_bb_plugin'])
+
+    def test_draft_with_macos_menu_and_go_runs_macos_other_checks_and_ubuntu_race(self):
+        got = plan.plan('pull_request', 'true', NEVER, lambda: ['cmd/looptender/main.go', 'integrations/macos/Package.swift'])
+        self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.FULL))
+        self.assertTrue(got[4]['run_race'])
+        self.assertTrue(got[4]['run_swift'])
+
+    def test_ready_portable_internal_pr_skips_macos_until_merge_queue(self):
+        got = plan.plan('pull_request', 'false', NEVER, lambda: ['internal/decide/decide.go'])
+        self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.UBUNTU_ONLY))
+        self.assertEqual(got[4]['scope'], 'go-no-macos')
+        self.assertTrue(got[4]['run_race'])
+        self.assertTrue(got[4]['run_windows'])
+        self.assertFalse(got[4]['run_bb_plugin'])
+
+    def test_ready_unix_only_pr_skips_windows_but_runs_macos(self):
+        got = plan.plan('pull_request', 'false', NEVER, lambda: ['cmd/looptender/router_processes_unix.go'])
+        self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.FULL))
+        self.assertFalse(got[4]['run_windows'])
+        self.assertTrue(got[4]['run_macos_race'])
+
+    def test_ready_testexec_or_darwin_cmd_pr_runs_macos_race(self):
+        for changed in ('internal/testexec/testexec.go', 'cmd/looptender/legacy_retire.go', 'cmd/looptender/panel_claude_quota_test.go'):
+            with self.subTest(changed=changed):
+                got = plan.plan('pull_request', 'false', NEVER, lambda: [changed])
+                self.assertEqual(got[3], plan.FULL)
+                self.assertTrue(got[4]['run_macos_race'])
+
+    def test_ready_for_review_skips_duplicate_when_no_macos_needed_and_sha_passed(self):
+        got = plan.plan('pull_request', 'false', NEVER, lambda: ['docs/testing.md'],
+                        action='ready_for_review', passed_pull_request=lambda: 888)
+        self.assertTrue(got[1])
+        self.assertIn('888', got[2])
+
+    def test_ready_for_review_runs_when_macos_is_needed(self):
+        got = plan.plan('pull_request', 'false', NEVER, lambda: ['cmd/looptender/main.go'],
+                        action='ready_for_review', passed_pull_request=lambda: 888)
+        self.assertEqual((got[1], got[3]), (False, plan.FULL))
+
+    def test_pr_whose_files_are_unknown_empty_or_too_many_runs_everything(self):
         def broken():
             raise OSError('api down')
         for files in (broken, lambda: [], lambda: ['a.go'] * plan.FILE_LIST_LIMIT, None):
             with self.subTest(files=files):
                 got = plan.plan('pull_request', 'true', NEVER, files)
-                self.assertEqual((got[0], got[1], got[3]), (plan.FULL, False, plan.FULL))
-
-    def test_only_a_draft_reads_the_file_list(self):
-        def trap():
-            raise AssertionError('listed files for a run that does not need them')
-        for event, draft in [('pull_request', 'false'), ('merge_group', ''), ('push', '')]:
-            plan.plan(event, draft, lambda: None, trap)
+                self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.FULL))
+                self.assertEqual(got[4]['scope'], 'full')
 
     def test_an_error_body_or_odd_shape_is_doubt_never_a_list_of_names(self):
         import json, os
@@ -55,11 +120,8 @@ class PlanTests(unittest.TestCase):
                 try:
                     with self.assertRaises(ValueError):
                         plan.pull_request_files('o/r', 1)
-                    # And a draft whose list raises runs everything.
-                    def listed():
-                        return plan.pull_request_files('o/r', 1)
-                    got = plan.plan('pull_request', 'true', NEVER, listed)
-                    self.assertEqual((got[0], got[3]), (plan.FULL, plan.FULL))
+                    got = plan.plan('pull_request', 'true', NEVER, lambda: plan.pull_request_files('o/r', 1))
+                    self.assertEqual((got[0], got[3]), (plan.UBUNTU_ONLY, plan.FULL))
                 finally:
                     del os.environ['CI_PLAN_FILES_JSON']
 
@@ -72,23 +134,28 @@ class PlanTests(unittest.TestCase):
             del os.environ['CI_PLAN_FILES_JSON']
 
     def test_everything_else_runs_everything(self):
-        for event, draft in [('pull_request', 'false'), ('pull_request', ''), ('merge_group', ''), ('merge_group', 'true'),
+        for event, draft in [('pull_request', ''), ('pull_request', 'unknown'), ('merge_group', ''), ('merge_group', 'true'),
                              ('workflow_dispatch', ''), ('push', '')]:
             with self.subTest(event=event, draft=draft):
-                self.assertEqual(plan.plan(event, draft, NEVER)[:2], (plan.FULL, False))
+                got = plan.plan(event, draft, NEVER, lambda: ['README.md'])
+                self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.FULL))
+                self.assertTrue(got[4]['run_macos_race'])
 
     def test_merge_queue_never_skips_or_narrows(self):
-        # Even with a draft flag or a passed run to find: the queue runs everything.
-        self.assertEqual(plan.plan('merge_group', 'true', lambda: 123)[:2], (plan.FULL, False))
+        got = plan.plan('merge_group', 'true', lambda: 123, lambda: ['README.md'])
+        self.assertEqual((got[0], got[1], got[3]), (plan.UBUNTU_ONLY, False, plan.FULL))
+        self.assertEqual(got[4]['scope'], 'full')
+        self.assertTrue(got[4]['run_macos_race'])
+        self.assertTrue(got[4]['run_swift'])
 
     def test_push_is_a_duplicate_only_when_the_same_commit_passed_the_queue(self):
-        self.assertEqual(plan.plan('push', '', lambda: 77)[:2], (plan.FULL, True))
-        self.assertEqual(plan.plan('push', '', lambda: None)[:2], (plan.FULL, False))
+        self.assertEqual(plan.plan('push', '', lambda: 77)[:2], (plan.UBUNTU_ONLY, True))
+        self.assertEqual(plan.plan('push', '', lambda: None)[:2], (plan.UBUNTU_ONLY, False))
 
     def test_any_error_on_a_push_runs_everything(self):
         def broken():
             raise OSError('api down')
-        self.assertEqual(plan.plan('push', '', broken)[:2], (plan.FULL, False))
+        self.assertEqual(plan.plan('push', '', broken)[:2], (plan.UBUNTU_ONLY, False))
 
     def test_only_a_successful_merge_group_run_of_the_same_commit_counts(self):
         import os
@@ -123,15 +190,30 @@ class OutputTests(unittest.TestCase):
             finally:
                 os.environ.clear(); os.environ.update(old)
             lines = out.read_text().splitlines()
-            self.assertEqual(lines, ['os=["ubuntu-24.04"]', 'checks_os=["ubuntu-24.04"]', 'duplicate=false'])
-            # Every line of a file GitHub reads must be name=value; stdout is a sentence.
+            self.assertEqual(lines, [
+                'os=["ubuntu-24.04"]',
+                'checks_os=["ubuntu-24.04"]',
+                'duplicate=false',
+                'scope=go-no-macos',
+                'run_race=true',
+                'run_checks=true',
+                'run_bb_plugin=false',
+                'run_windows=true',
+                'run_swift=false',
+                'run_smoke=true',
+                'run_macos_race=false',
+            ])
             self.assertNotIn('=', captured.getvalue().split(':')[0])
             self.assertTrue(all('=' in l for l in lines))
 
 
 def needs(**results):
     plan_out = results.pop('_duplicate', 'false')
-    base = {'plan': {'result': 'success', 'outputs': {'duplicate': plan_out}}}
+    outputs = {'duplicate': plan_out}
+    for key in list(results):
+        if key.startswith('_run_'):
+            outputs[key[1:]] = results.pop(key)
+    base = {'plan': {'result': 'success', 'outputs': outputs}}
     base.update({k: {'result': v} for k, v in results.items()})
     return base
 
@@ -140,15 +222,18 @@ class GateTests(unittest.TestCase):
     def test_all_success_passes(self):
         self.assertTrue(gate.verdict(needs(race='success', checks='success'))[0])
 
-    def test_any_failure_cancelled_or_skipped_fails(self):
+    def test_any_failure_cancelled_or_unplanned_skip_fails(self):
         for bad in ('failure', 'cancelled', 'skipped'):
             with self.subTest(bad=bad):
                 self.assertFalse(gate.verdict(needs(race='success', checks=bad))[0])
 
-    def test_skipped_is_accepted_only_for_a_duplicate_run(self):
+    def test_skipped_is_accepted_for_a_duplicate_or_explicit_plan_skip(self):
         self.assertTrue(gate.verdict(needs(race='skipped', checks='skipped', _duplicate='true'))[0])
+        self.assertTrue(gate.verdict(needs(race='skipped', checks='success', _run_race='false'))[0])
+        self.assertTrue(gate.verdict(needs(**{'race': 'skipped', 'bb-plugin': 'skipped', 'windows-acl': 'skipped', 'windows-processes': 'skipped', 'checks': 'success',
+                                              '_run_race': 'false', '_run_bb_plugin': 'false', '_run_windows': 'false'}))[0])
+        self.assertFalse(gate.verdict(needs(race='skipped', checks='skipped', _run_race='false'))[0])
         self.assertFalse(gate.verdict(needs(race='failure', checks='skipped', _duplicate='true'))[0])
-        self.assertFalse(gate.verdict(needs(race='cancelled', checks='skipped', _duplicate='true'))[0])
 
     def test_a_failed_or_missing_plan_fails(self):
         self.assertFalse(gate.verdict({'plan': {'result': 'failure'}, 'race': {'result': 'success'}})[0])

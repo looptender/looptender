@@ -56,6 +56,14 @@ internal/scenario           test-only scenario suite that drives the built binar
 internal/daemoninfo         private loopback diagnostics and authenticated shutdown transport for a running daemon
 internal/netretry           retry only while the network is down
 internal/ciwait             wait for CI on an exact commit
+internal/router/route       the account router's decision, pure: which subscription serves a request of a conversation; nothing uses it yet (design/router.md)
+internal/router/front       the account router's forwarding front: one fixed upstream, a bounded wait for a decision, unchanged pass-through on any failure; what it knows of a provider is a Profile (Claude Code, and Codex on paper); standard library only, reads and writes no file; nothing starts it yet
+internal/router/limits      a provider's limit headers, as the front reports them, read into the routing decision's windows; pure
+internal/router/core        the account router's deciding process without the outside: the routing decision, what the front reports, and an interface for logins that nothing here implements
+internal/router/channel     the private channel between the front and the router: a Unix socket in a directory closed to everyone else, the peer checked to be the same user; Unix only
+internal/router/loopcert    the front's loopback certificate: a self-signed leaf that cannot sign others, valid for loopback names only
+internal/router/pointer     the settings that send a session to the front, as text edits of a settings file: point, un-point by rewriting (the secret taken out and rotated), remove with the original bytes restored; nothing calls it yet
+internal/router/standin     test-only stand-in for a provider's API that records header names and the shape of a credential, never a value
 ```
 
 ## A tick, end to end
@@ -177,7 +185,7 @@ Runtime records live in `state_dir`, outside any repository. Managed service def
 | `daemon-endpoint.json` | daemon | private loopback endpoint and random verification key; removed on clean exit, stale records do not prove liveness |
 | `service-launchd.json`, `service-systemd.json` | service commands | private backend-specific plan/recovery record; no task text or credentials |
 | `tick.lock`, `daemon.lock`, `control.lock`, `service.lock` | the tool | advisory locks, released by the OS on exit . Every lock file the tool keeps in a loop's state directory or under the per-user directories (these, `turn.lock`, `graph.lock`, `incident.lock`, `delivery.lock`, `sessionpipe.lock`, the registry's, the route list's, the panel's two, Telegram's two (`telegram.lock`, `telegram-poll.lock`), and the session claims) is listed by name in `migrateLockNames` in `cmd/looptender/migrate.go`; a new one must be added there, or `migrate` neither looks at it nor holds it while the directories move |
-| `targets/<id>/` | the tool | headless turn files (`run.json` with private stop key, `turn.lock` held by the live turn wrapper, `turn.started` naming the turn whose wrapper took the lock, `turn.finishing` while a wrapper publishes its exit code, stop request/acknowledgement, prompt, stdout, stderr, exit code, session id) the BB log cursor (`bb-cursor.json`), the sessionpipe reader's record (`sessionpipe-read.json`: position, a hash of the file's start and protocol words, never text), and, from internal fixtures only, create-once ACP interaction-hold records (`acp-prompt-reserved.json`, `acp-needs-user.json`, `acp-hold-adopted.json`) |
+| `targets/<id>/` | the tool | headless turn files (`run.json` with private stop key, `turn.lock` held by the live turn wrapper, `turn.started` naming the turn whose wrapper took the lock, `turn.finishing` while a wrapper publishes its exit code, stop request/acknowledgement, prompt, stdout, stderr, exit code, session id) the BB log cursor (`bb-cursor.json`), the sessionpipe reader's record (`sessionpipe-read.json`: position, a hash of the file's start and protocol words, never text) and, with `sessionpipe.send: wake_only`, the last wake's record (`sessionpipe-ask.json`: process, start, outcome and refusal code, never text), and, from internal fixtures only, create-once ACP interaction-hold records (`acp-prompt-reserved.json`, `acp-needs-user.json`, `acp-hold-adopted.json`) |
 
 ## Ownership and control writes
 
@@ -348,7 +356,7 @@ Current-target resolution after transfer and lock-holder identification remain u
 
 ### Panel build replacement storage
 
-The panel owns `build-replacements/<key>/build-update.json` and its `upgrade-backups/<time>/` binary/configuration/state snapshots under its private runtime directory, outside loop state. The key binds registration ID, configuration and state directory. The receipt expires after seven days. A startup executable handle and hash supply replacement bytes; opened-directory-relative operations bind the target. Undo only swaps the binary and invalidates the private receipt; it never writes a loop record. See [the panel protocol](dock.md#changes-from-the-page-keepgoing-panel---allow-changes).
+The panel owns `build-replacements/<key>/build-update.json` and its `upgrade-backups/<time>/` binary/configuration/state snapshots under its private runtime directory, outside loop state. The key binds registration ID, configuration and state directory. The receipt expires after seven days. A startup executable handle and hash supply replacement bytes; opened-directory-relative operations bind the target. Undo only swaps the binary and invalidates the private receipt; it never writes a loop record. See [the panel protocol](dock.md#changes-from-the-page-keepgoing-panel).
 
 ## Timing decisions and steps (U4/U5, unreleased)
 

@@ -18,6 +18,7 @@ import (
 	"github.com/looptender/looptender/internal/daemoninfo"
 	"github.com/looptender/looptender/internal/health"
 	"github.com/looptender/looptender/internal/lock"
+	rd "github.com/looptender/looptender/internal/rundiscovery"
 	"github.com/looptender/looptender/internal/state"
 )
 
@@ -31,6 +32,7 @@ func startCommand(e env, args []string, ready startReady) int {
 	background := fs.Bool("background", false, "detach the daemon; return after startup succeeds")
 	allowShare := fs.Bool("allow-second-loop", false, "start this loop even though another enabled loop supervises the same session")
 	asJSON := fs.Bool("json", false, "with --background: print the result as one JSON object")
+	routine := fs.String("routine", "", "scheduler entry that started this loop: source/routine or source/routine/invocation")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitOK
@@ -44,6 +46,19 @@ func startCommand(e env, args []string, ready startReady) int {
 	if *asJSON && !*background {
 		e.errf("start: --json is supported with --background only")
 		return exitUsage
+	}
+	routineSet := false
+	fs.Visit(func(fl *flag.Flag) { routineSet = routineSet || fl.Name == "routine" })
+	if routineSet {
+		r, err := rd.ParseRoutine(*routine)
+		if err != nil {
+			e.errf("%s", routineUsageMsg)
+			if *asJSON {
+				_ = json.NewEncoder(e.stdout).Encode(startJSON{SchemaVersion: 1, Outcome: "failed", ExitCode: exitUsage, Reason: "invalid_routine"})
+			}
+			return exitUsage
+		}
+		e.ctx = context.WithValue(e.ctx, routineKey{}, r)
 	}
 	if resolved, err := configPath(fs, *path); err != nil {
 		e.errf("start: %v", err)
@@ -86,6 +101,10 @@ type startJSON struct {
 	// looptender.yaml and keepgoing.yaml are in the working directory as two
 	// files, and empty_config_path when -c was given an empty value.
 	Reason string `json:"reason,omitempty"`
+	// Launch is launchd or systemd when the daemon was handed to the
+	// user's service manager as a one-off job named Job (start_launch.go).
+	Launch string `json:"launch,omitempty"`
+	Job    string `json:"job,omitempty"`
 }
 
 // startJSONWriter holds what --json prints until the command ends, so a
@@ -127,6 +146,10 @@ func startResolved(e env, path string, background, allowShare bool, ready startR
 			e.errf("start: cannot locate the keepgoing executable")
 			return exitFailed
 		}
+		if code, ok := startLaunched(e, executable, abs, cfg, allowShare); ok {
+			return code
+		}
+		childLaunchWarning(e)
 		return startBackground(e, executable, abs, allowShare)
 	}
 	return startForeground(e, cfg, abs, ready, allowShare)
@@ -176,7 +199,7 @@ func startForeground(e env, cfg *config.Config, path string, ready startReady, a
 		}
 		f.Enabled = true // All holds and the existing note survive.
 		return nil
-	})
+	}, suppliedRoutine(e.ctx))
 	if err != nil {
 		if errors.Is(err, errControlHistory) {
 			e.errf("start: %v; daemon was not started", err)
@@ -282,15 +305,24 @@ type startReply struct {
 }
 
 func startChild(e env, args []string) int {
+	args, ackFile, err := launchedChildArgs(args)
+	ack := func(r startReply) error { return json.NewEncoder(e.stdout).Encode(r) }
+	if ackFile != "" {
+		ack = func(r startReply) error { return writeAck(ackFile, r) }
+	}
+	if err != nil {
+		_ = ack(startReply{Code: exitFailed, Message: err.Error()})
+		return exitFailed
+	}
 	var errs bytes.Buffer
 	acknowledged := false
 	code := startCommand(env{e.ctx, io.Discard, &errs}, args, func(f control.File, registered bool) error {
-		err := json.NewEncoder(e.stdout).Encode(startReply{PID: os.Getpid(), Control: f.Summary(), ReferenceUnavailable: !registered})
+		err := ack(startReply{PID: os.Getpid(), Control: f.Summary(), ReferenceUnavailable: !registered})
 		acknowledged = err == nil
 		return err
 	})
 	if !acknowledged {
-		_ = json.NewEncoder(e.stdout).Encode(startReply{Code: code, Message: errs.String()})
+		_ = ack(startReply{Code: code, Message: errs.String()})
 	}
 	return code
 }
@@ -303,6 +335,9 @@ func startBackground(e env, executable, path string, allowShare bool) int {
 	args := []string{"__start-background", "-c", path}
 	if allowShare {
 		args = append(args, "--allow-second-loop")
+	}
+	if s := routineFlagString(suppliedRoutine(e.ctx)); s != "" {
+		args = append(args, "--routine", s)
 	}
 	cmd := exec.Command(executable, args...)
 	if err := detachDaemon(cmd); err != nil {

@@ -1,11 +1,13 @@
 // Package sessionpipe observes one agent session that sessionpipe reports. It
 // reads a tier-0 events file the person told sessionpipe to write (a file
-// sink) and nothing else: no sessionpipe command runs during a check, its
-// outbox is never read, and nothing is sent to the session.
+// sink): no sessionpipe command runs to observe, and its outbox is never read.
 //
-// The target is observed, never woken. Send and Stop return
+// The target is observed. By default it is never woken: Send and Stop return
 // adapter.ErrUnsupported, and the decision engine never asks for either on
-// this kind of target (config.ObservedOnly).
+// this kind of target (config.ObservedOnly). A loop that opts in with
+// sessionpipe.send: wake_only lets the engine wake an idle session; Send then
+// delivers the wake through `sessionpipe ask` (send.go). Stop stays
+// unsupported: sessionpipe has no local cancel.
 //
 // Only an allowlist of event types and data keys is used, and each value
 // must be one of the words the protocol defines. Everything else in a line,
@@ -75,6 +77,12 @@ type Adapter struct {
 	staleAfter  time.Duration
 	dir         string
 	now         func() time.Time
+	// cli runs `sessionpipe ask` for a wake; wake says the loop opted in.
+	cli       string
+	wake      bool
+	ackWindow time.Duration
+	// extraEnv is added to the ask's environment; tests only.
+	extraEnv []string
 }
 
 // New returns the adapter for c. dir is the target's state directory.
@@ -84,7 +92,12 @@ func New(c config.Sessionpipe, dir string) *Adapter {
 	if stale <= 0 {
 		stale = config.DefaultSessionpipeStaleAfter
 	}
-	return &Adapter{harness: harness, id: id, file: c.EventsFile, staleAfter: stale, dir: dir, now: time.Now}
+	cli := c.CLI
+	if cli == "" {
+		cli = "sessionpipe"
+	}
+	return &Adapter{harness: harness, id: id, file: c.EventsFile, staleAfter: stale, dir: dir, now: time.Now,
+		cli: cli, wake: c.Send == config.SessionpipeSendWakeOnly}
 }
 
 // CheckAt fixes the clock, for tests and for a check's single notion of now.
@@ -95,11 +108,6 @@ func (a *Adapter) Name() string { return config.SessionpipeAdapter }
 
 // ConversationKey is the session as sessionpipe names it.
 func (a *Adapter) ConversationKey() (string, bool) { return a.harness + ":" + a.id, a.id != "" }
-
-// Send is never possible: the target is observed, never woken.
-func (a *Adapter) Send(context.Context, string, adapter.Mode) error {
-	return adapter.ErrUnsupported{Op: "sending to an observed sessionpipe session"}
-}
 
 // Stop is never possible: looptender does not stop a session it observes.
 func (a *Adapter) Stop(context.Context) error {
@@ -128,8 +136,10 @@ type readState struct {
 	Seen    bool  `json:"seen,omitempty"`
 	HasSeq  bool  `json:"hasSeq,omitempty"`
 	LastSeq int64 `json:"lastSeq,omitempty"`
-	// LastAt is the newest applied event's time.
-	LastAt time.Time `json:"lastAt,omitzero"`
+	// LastAt is the newest applied event's time; LastTurnAt the newest
+	// turn.started or turn.ended's.
+	LastAt     time.Time `json:"lastAt,omitzero"`
+	LastTurnAt time.Time `json:"lastTurnAt,omitzero"`
 	// Phase is idle, active, error or ended.
 	Phase      string `json:"phase,omitempty"`
 	Background int    `json:"background,omitempty"`
@@ -385,6 +395,9 @@ func (a *Adapter) apply(line []byte, s *readState) error {
 	s.Seen = true
 	if at.After(s.LastAt) {
 		s.LastAt = at
+	}
+	if (e.Type == "turn.started" || e.Type == "turn.ended") && at.After(s.LastTurnAt) {
+		s.LastTurnAt = at
 	}
 	return nil
 }

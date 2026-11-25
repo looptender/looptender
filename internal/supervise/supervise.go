@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/looptender/looptender/internal/envvar"
+	"math"
 	"os"
 	"os/exec"
 	"slices"
@@ -22,6 +22,7 @@ import (
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/decide"
+	"github.com/looptender/looptender/internal/envvar"
 	"github.com/looptender/looptender/internal/handoff"
 	"github.com/looptender/looptender/internal/health"
 	"github.com/looptender/looptender/internal/incident"
@@ -75,6 +76,14 @@ type Options struct {
 	Now          time.Time
 	DryRun       bool            // decide and record; send nothing and run no probes
 	BacklogQuery prbacklog.Query // nil uses fixed read-only gh query when opted in
+	// UsageRead reads an account's quota for the loop's usage watch; nil
+	// reads nothing, so the watch never warns.
+	UsageRead UsageReadFunc
+	// AccountCheck runs the accounts catalog's own login check (the CLI's
+	// version and auth status: no model request) of an entry, so its login
+	// fingerprint is current. Called when the active target is at a usage
+	// limit and its route states the entry; nil checks nothing.
+	AccountCheck func(ctx context.Context, account string)
 	Fingerprint  func([]string) (string, error)
 	NewAdapter   factory.Func
 	Probe        ProbeFunc
@@ -83,6 +92,12 @@ type Options struct {
 	// Online reports connectivity once. Nil uses the loop's network settings;
 	// a loop with the check off is never checked.
 	Online func(ctx context.Context) bool
+	// HostLoad reads this computer's load level (hostcheck levels). Nil
+	// reads it (hostcheck.System).
+	HostLoad func() string
+	// HostSession reports whether this computer's login session is available
+	// to background processes. Nil reads it (hostcheck.System).
+	HostSession func(ctx context.Context) bool
 	// Clock reads wall time for the check's time budget. Now is the logical
 	// check time and may be fixed; Clock always advances.
 	Clock func() time.Time
@@ -168,6 +183,10 @@ type Result struct {
 	// Recovery says how a re-prompt was carried out: turn_retry re-ran the
 	// failed turn by reference with no new text, prompt sent the wake text.
 	Recovery string `json:"recovery,omitempty"`
+	// ModelStep is stepped_down when this check moved the conversation to a
+	// weaker model at a model-specific limit, stepped_back when it moved it
+	// back after that window reset (modelstep.go).
+	ModelStep string `json:"modelStep,omitempty"`
 	// Lanes is the lane work this check did under bb.children.retry_errored:
 	// counts only. Absent when it did none.
 	Lanes *state.LaneCheck `json:"lanes,omitempty"`
@@ -203,6 +222,8 @@ type Result struct {
 	Yielded    bool            `json:"yielded,omitempty"`
 	DryRun     bool            `json:"dryRun,omitempty"`
 	Warnings   []string        `json:"warnings,omitempty"`
+	// UsageWarned: this check sent the usage watch's warning.
+	UsageWarned bool `json:"usageWarned,omitempty"`
 	// Outcome is the recorded result of the check: succeeded, failed or
 	// dry_run. It is empty when the check could not be recorded at all.
 	Outcome string `json:"outcome,omitempty"`
@@ -210,8 +231,16 @@ type Result struct {
 	// that needs the network was not attempted, "down_untrusted" when it
 	// failed but is not believed, and "restored" when it passed after an
 	// outage, with NetworkDownFor saying how long the check had failed.
-	Network        string `json:"network,omitempty"`
-	NetworkDownFor string `json:"networkDownFor,omitempty"`
+	Network string `json:"network,omitempty"`
+	// HostSession is "unavailable" when a provider's sign-in failed while
+	// this computer's login session was unavailable to background processes,
+	// so nothing was sent and no hold raised, and "restored" on the check
+	// that finds it back.
+	HostSession string `json:"hostSession,omitempty"`
+	// HostOverloadTold: this check told the session the computer is
+	// overloaded while its children run (once per overload).
+	HostOverloadTold bool   `json:"hostOverloadTold,omitempty"`
+	NetworkDownFor   string `json:"networkDownFor,omitempty"`
 	// MissingWorktrees counts registered Git worktrees left out of the
 	// progress fingerprint because their directories are gone.
 	MissingWorktrees int `json:"missingWorktrees,omitempty"`
@@ -220,6 +249,8 @@ type Result struct {
 }
 
 type tick struct {
+	usageWarn  *usageWarning
+	usageView  *state.UsageWatch
 	assignment *assignmentDelivery
 	// ctl is the control record as this check loaded it.
 	ctl control.File
@@ -375,7 +406,9 @@ type tick struct {
 	// handoffObs is the observation a handoff in this check was made on.
 	handoffObs decide.Observation
 	// waiting is the child picture this check observed, for the run graph.
-	waiting *graphWaiting
+	waiting        *graphWaiting
+	hostEpisode    *hostEpisode
+	hostEpisodeWas hostEpisode
 }
 
 func (t *tick) warn(format string, a ...any) {
@@ -928,11 +961,15 @@ func (t *tick) run() error {
 		res.ResetsAt = &r
 	}
 	t.noteUsageLimit(target, agent, obs)
+	t.limitAccountCheck(agent, obs)
 	inWindow, why, err := window.Inside(loop.Window, t.now)
 	if err != nil {
 		return err
 	}
 	res.Window = why
+	if done, err := t.modelStep(a, target, obs, inWindow); done {
+		return t.record(err)
+	}
 
 	// Fallback health: scheduled probes, then the redundancy picture.
 	var summary health.Summary
@@ -1052,6 +1089,7 @@ func (t *tick) run() error {
 	if obs.ResetsAt.After(t.now) {
 		failover.ResetIn = obs.ResetsAt.Sub(t.now)
 	}
+	qsInput, qsResetsAt := t.quotaSwitchInput(target)
 	in := decide.Input{
 		Obs: obs, Control: gate, InWindow: inWindow,
 		UnchangedFor: unchangedFor, SinceWake: sinceWake,
@@ -1062,12 +1100,16 @@ func (t *tick) run() error {
 		Reprompts: t.st.Reprompts, MaxReprompts: loop.Errors.MaxReprompts,
 		SinceLastReprompt: sinceReprompt, Backoff: loop.Errors.Backoff.Duration,
 		SwitchBackReady: t.switchBackReady(target),
+		QuotaSwitch:     qsInput,
 		// Set here, once, so every decision taken from this input (lane
 		// recovery, the hung-turn rule, the check's own) treats an observed
 		// target as never woken, not only the ones made through t.decide.
 		ObservedOnly: t.observedOnly(),
+		ObservedWake: t.observedWake(),
 	}
 	in.AssignmentReady = t.assignmentObservation(a, obs)
+	in.UsageWarning = t.usageWatchObservation()
+	in.HostOverload = t.hostOverloadObservation(obs)
 	in.IdleSpacing = t.idleSpacingInput(obs, ctl)
 	// A loop held for a restricted turn runs no check until a person resumes
 	// it. Reaching this point with that same turn still showing therefore
@@ -1161,6 +1203,8 @@ func (t *tick) run() error {
 		t.decisionInput = in
 		d = t.decide("network_down", in)
 	}
+	d = t.gateHostSession(obs, in, d)
+	d = t.gateObservedWake(d)
 	if t.st.SkipHandoffOnce && !t.opts.DryRun {
 		t.st.SkipHandoffOnce = false
 		if d.Action == decide.Handoff || d.Action == decide.SwitchBack {
@@ -1203,12 +1247,19 @@ func (t *tick) run() error {
 		}
 	} else if d.Action == decide.Handoff {
 		setBy := t.st.TargetSetBy // what put the loop on the route it leaves
-		moved, err := t.handoff(target, agent, obs, summary)
+		handoffReason := string(obs.ErrorClass)
+		if d.QuotaSwitch {
+			handoffReason = "quota_threshold"
+		}
+		moved, err := t.handoff(target, agent, obs, summary, handoffReason)
 		// Switch-back waits for the first route's limit. A step timing chose
 		// is on the first route's allowance, so its limit is that limit; any
 		// other route's handoff leaves the recorded reset as it was.
 		if moved && err == nil && !t.opts.DryRun && (target == state.Primary || setBy == state.SetByTiming) {
 			t.st.PrimaryResetsAt = obs.ResetsAt
+			if d.QuotaSwitch && qsResetsAt != nil {
+				t.st.PrimaryResetsAt = *qsResetsAt
+			}
 		}
 		if err != nil {
 			actErr = err
@@ -1599,10 +1650,9 @@ func childrenLeft(obs decide.Observation, from config.Agent, to config.Candidate
 	return handoff.ChildrenLeft{Working: obs.ActiveChildren, Unverified: obs.ChildrenUnverified}
 }
 
-func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observation, summary health.Summary) (bool, error) {
-	class := obs.ErrorClass
+func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observation, summary health.Summary, reason string) (bool, error) {
 	t.handoffObs = obs
-	note := &HandoffNote{From: from, Reason: string(class), DryRun: t.opts.DryRun}
+	note := &HandoffNote{From: from, Reason: reason, DryRun: t.opts.DryRun}
 	t.res.Handoff = note
 	if t.opts.DryRun {
 		for _, id := range summary.Healthy {
@@ -1650,7 +1700,7 @@ func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observati
 			note.Skipped = append(note.Skipped, id+": "+why)
 			continue
 		}
-		brief, err := handoff.ComposeBrief(t.loop, handoff.Facts{Loop: t.loop.Name, At: t.now, From: t.label(from), To: id + " (" + c.Describe() + ")", Reason: string(class), Children: childrenLeft(obs, fromAgent, c)})
+		brief, err := handoff.ComposeBrief(t.loop, handoff.Facts{Loop: t.loop.Name, At: t.now, From: t.label(from), To: id + " (" + c.Describe() + ")", Reason: reason, Children: childrenLeft(obs, fromAgent, c)})
 		if err != nil {
 			return false, fmt.Errorf("handoff brief: %w", err)
 		}
@@ -1688,7 +1738,7 @@ func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observati
 		if isNewThread(c) {
 			// The brief is the new thread's first prompt: there is nothing to
 			// activate and nothing more to send.
-			thread, err := t.createThread(from, fromAgent, c, brief, string(class))
+			thread, err := t.createThread(from, fromAgent, c, brief, reason)
 			switch {
 			case errors.Is(err, state.ErrSendLimit) || errors.Is(err, state.ErrSendLedger) || errors.Is(err, state.ErrSendRecord):
 				return false, err
@@ -1705,7 +1755,7 @@ func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observati
 				continue
 			}
 			t.reserve = reserveReports // the brief has been sent, as the first prompt
-			t.moveToCreated(&state.NewThreadIntent{Candidate: id, From: from, Continues: t.st.NewThreads[id].Continues, Reason: string(class)}, thread, note)
+			t.moveToCreated(&state.NewThreadIntent{Candidate: id, From: from, Continues: t.st.NewThreads[id].Continues, Reason: reason}, thread, note)
 			return true, nil
 		}
 		// The probe asked the account, not the session. Before anything is
@@ -1754,7 +1804,7 @@ func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observati
 		t.st.Reprompts, t.st.LastRepromptAt = 0, time.Time{}
 		t.res.Target = id
 		t.reserve = reserveReports + t.reserveNetwork // the brief has been sent
-		t.report("handoff", fmt.Sprintf("%s: handed off from %s to %s after a %s error", t.loop.Name, from, id, class), map[string]any{"from": from, "to": id, "reason": string(class), "tried": note.Tried})
+		t.report("handoff", fmt.Sprintf("%s: handed off from %s to %s (%s)", t.loop.Name, from, id, reason), map[string]any{"from": from, "to": id, "reason": reason, "tried": note.Tried})
 		return true, nil
 	}
 	return false, nil
@@ -1781,6 +1831,64 @@ func (t *tick) rejectSwitchBack(from string) {
 		t.report("switch_back", fmt.Sprintf("%s: switch-back stopped after the primary rejected %d briefs; staying on %s until resume, retarget or the next handoff", t.loop.Name, t.st.SwitchBackRejected, from),
 			map[string]any{"from": from, "to": state.Primary, "stopped": true, "rejected": t.st.SwitchBackRejected})
 	}
+}
+
+// quotaSwitchInput builds the pure quota-threshold input from the active
+// route's recorded health usage reading (never touching credentials).
+func (t *tick) quotaSwitchInput(target string) (decide.QuotaSwitch, *time.Time) {
+	var cand config.Candidate
+	if target == state.Primary {
+		cand = t.loop.PrimaryCandidate()
+	} else if c, ok := t.fb.Find(target); ok {
+		cand = c
+	} else {
+		return decide.QuotaSwitch{}, nil
+	}
+	if cand.SwitchAt <= 0 || t.reg == nil {
+		return decide.QuotaSwitch{}, nil
+	}
+	identity := probe.UsageIdentity(cand)
+	e := t.reg.Candidates[cand.ID]
+	if e == nil || !e.Usage.For(identity) {
+		return decide.QuotaSwitch{Threshold: cand.SwitchAt}, nil
+	}
+	maxAge := config.DefaultProbeTTL
+	if t.fb != nil && t.fb.Probe.TTL.Duration > 0 {
+		maxAge = t.fb.Probe.TTL.Duration
+	}
+	u := e.Usage
+	var highest float64
+	var winKey string
+	var winReset *time.Time
+	activeWindows := 0
+	for _, w := range u.Windows {
+		if w.ResetsAt != nil && !w.ResetsAt.After(t.now) {
+			continue
+		}
+		if math.IsNaN(w.Used) || math.IsInf(w.Used, 0) || w.Used < 0 || w.Used > 1 {
+			continue
+		}
+		activeWindows++
+		if activeWindows == 1 || w.Used > highest {
+			highest = w.Used
+			winKey = w.Key
+		}
+		if w.Used >= cand.SwitchAt && w.ResetsAt != nil {
+			if winReset == nil || w.ResetsAt.After(*winReset) {
+				t := *w.ResetsAt
+				winReset = &t
+			}
+		}
+	}
+	return decide.QuotaSwitch{
+		Threshold:        cand.SwitchAt,
+		ReadingAvailable: true,
+		HighestUsed:      highest,
+		ReadingAge:       t.now.Sub(u.At),
+		MaxAge:           maxAge,
+		Stale:            activeWindows == 0,
+		Window:           winKey,
+	}, winReset
 }
 
 // switchBackReady reports whether the loop may try to return to its primary:
@@ -1993,6 +2101,18 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 				t.res.LanesLimited = n
 			}
 		}
+		text, usageCarried := t.usageWarningText(d, text)
+		if d.HostOverloadWake {
+			// A notice-only wake carries nothing else: the usage warning it
+			// replaced is not told yet, and goes with the next ordinary wake.
+			text = prompt.HostOverloadOnly(t.decisionInput.Obs.ActiveChildren)
+			usageCarried = false
+		}
+		var stepCarried bool
+		if !text.NoticeOnly {
+			// The model-step line waits for an ordinary wake, too.
+			text.Text, stepCarried = t.withModelStepNote(text.Text)
+		}
 		var backlogNotice *backlogDelivery
 		if d.Action == decide.Wake && !d.AssignmentWake && !text.NoticeOnly && loop.PRBacklog != nil {
 			var allowed bool
@@ -2031,6 +2151,13 @@ func (t *tick) act(a adapter.Adapter, d decide.Decision) error {
 			return t.startRefused(refused.Reason)
 		}
 		t.childNoticeSent(childErrors, err)
+		t.usageWarningSent(usageCarried, err)
+		if d.HostOverloadWake && err == nil {
+			t.hostEp().OverloadToldAt = t.now
+			t.saveHostEpisode()
+			t.res.HostOverloadTold = true
+		}
+		t.modelStepNoteSent(stepCarried, err)
 		// The adapter was called: count the attempt whatever it returned, so a
 		// failing or unsupported send cannot repeat on every check outside the
 		// per-episode caps and spacing.

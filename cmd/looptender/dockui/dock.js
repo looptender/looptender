@@ -23,7 +23,7 @@
   // What looptender did: worded by the same read as API, served on its own
   // for its size, and read only for the Usage page and a loop's page.
   var USAGE = "api/v1/usage";
-  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false };
+  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false, accountRemove: null };
 
   var TONES = {
     supervising: "good", waiting_for_you: "attn", waiting_on_limit: "limit", waiting_on_network: "limit", checks_failing: "warn",
@@ -479,8 +479,9 @@
     ul.setAttribute("aria-labelledby", "pick-loops");
     list(d.loops).forEach(function (l) {
       var li = el("li");
-      var row = pickRow("#/loop/" + l.key, "dot-" + (l.alsoWaiting ? "attn" : TONES[l.state] || "unknown"), l.name, l.pickerState, r.view === "loop" && r.key === l.key);
-      if ((l.state === "paused" && !l.alsoWaiting) || l.state === "stopped" || l.state === "finished" || l.state === "off") row.classList.add("is-quiet");
+      var dotTone = (l.alsoWaiting && !l.inactive) ? "attn" : l.inactive ? "calm" : TONES[l.state] || "unknown";
+      var row = pickRow("#/loop/" + l.key, "dot-" + dotTone, l.name, l.pickerState, r.view === "loop" && r.key === l.key);
+      if (l.inactive || l.state === "archived" || (l.state === "paused" && !l.alsoWaiting) || l.state === "stopped" || l.state === "finished" || l.state === "off") row.classList.add("is-quiet");
       li.appendChild(row);
       ul.appendChild(li);
     });
@@ -578,11 +579,206 @@
     return chip;
   }
 
+  // ---- Notifications: the one list of events the server derives (`notices`),
+  // the same one the macOS menu reads. The page keeps the ids it has seen: its
+  // first read is a baseline and says nothing, a later read adds each new id
+  // once, and an id that goes away from a complete read has ended. Many that
+  // begin together and share a group are one line. Nothing leaves this
+  // browser; browser notifications only after the person clicks "Notify me".
+  var NOTICE_KINDS = [
+    ["needs_you", "A loop needs you"], ["limit", "A usage limit is hit"], ["supervisor_gone", "A supervisor stops answering"],
+    ["lane_failed", "A lane fails"], ["hold", "A hold is set or lifted"], ["install", "An install is adopted or refused"],
+    ["disk", "The disk is low"], ["bound", "A deadline or send limit is reached"], ["host", "This computer's session or load"], ["model_step", "A conversation is stepped to another model"]
+  ];
+  var NOTICE_DEFAULT_ON = { needs_you: true, limit: true, supervisor_gone: true, host: true };
+  var NOTICE_RECENT = 10;
+  state.notices = { seen: Object.create(null), baselined: false, log: [], unread: 0, open: false };
+
+  // The choices are the shared ones the server keeps in one place (the macOS
+  // menu reads them too): they arrive with each read as `notify`, and a change
+  // is saved to the server, so they survive a reload. The page itself stores
+  // nothing in the browser (a test holds it to that).
+  function noticeSetting(kind) {
+    var n = state.data && state.data.notify;
+    if (n && n.kinds && typeof n.kinds[kind] === "boolean") return n.kinds[kind];
+    return NOTICE_DEFAULT_ON[kind] === true;
+  }
+  function menuNotifying() { var n = state.data && state.data.notify; return !!(n && n.menu && n.menu.notifying); }
+  function browserNoticesOn() {
+    var n = state.data && state.data.notify;
+    return !!(n && n.browser === true) && typeof Notification !== "undefined" && Notification.permission === "granted";
+  }
+  // Saves one choice: {kind, on} or {browser}. The reply is the new shared state.
+  function saveNotify(body) {
+    var form = state.server && state.server.notifyForm;
+    if (!form) return Promise.resolve(null);
+    var ctl = new AbortController(), timer = setTimeout(function () { ctl.abort(); }, 15000);
+    return fetch("api/v1/notify", { method: "POST", cache: "no-store", credentials: "same-origin", signal: ctl.signal,
+      headers: { "Content-Type": "application/json", Accept: "application/json", "X-Keepgoing-Form": form }, body: JSON.stringify(body) })
+      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
+      .then(function (shared) { if (state.data) state.data.notify = shared; return shared; })
+      .catch(function () { notice("notify", "That choice could not be saved. It stays as it was.", false); return null; })
+      .finally(function () { clearTimeout(timer); });
+  }
+  function noticeEntry(text, at) {
+    state.notices.log.unshift({ text: String(text), at: at, unread: true });
+    if (state.notices.log.length > NOTICE_RECENT) state.notices.log.length = NOTICE_RECENT;
+    state.notices.unread = state.notices.log.filter(function (x) { return x.unread; }).length;
+  }
+
+  // Takes one read's notices; returns what to push as browser notifications:
+  // {text, loop}. A group's count is its real total in this read.
+  function noticeStep(d) {
+    var st = state.notices, ns = d && Array.isArray(d.notices) ? d.notices : null;
+    if (!ns) return [];
+    var cur = Object.create(null), fresh = [], push = [], now = Date.now(), total = Object.create(null);
+    ns.forEach(function (n) { if (n && typeof n.id === "string") { cur[n.id] = n; total[n.group] = (total[n.group] || 0) + 1; if (!st.seen[n.id]) fresh.push(n); } });
+    var complete = d.complete === true, before = st.unread;
+    if (st.baselined) {
+      if (complete) Object.keys(st.seen).forEach(function (id) { if (!cur[id] && st.seen[id].endText) noticeEntry(st.seen[id].endText, now); });
+      fresh.forEach(function (n) { noticeEntry(n.text, now); });
+      var groups = Object.create(null), order = [];
+      fresh.forEach(function (n) {
+        if (!noticeSetting(n.kind)) return;
+        if (!groups[n.group]) { groups[n.group] = []; order.push(n.group); }
+        groups[n.group].push(n);
+      });
+      order.forEach(function (g) {
+        var m = groups[g];
+        push.push(m.length === 1 && total[g] === 1 ? { text: m[0].text, loop: m[0].loop } : { text: String(m[0].groupText).replace("{n}", String(Math.max(m.length, total[g] || 0))), loop: "" });
+      });
+      // The list opens when something new arrives, and is never closed for the person.
+      if (st.unread > before) st.open = true;
+    }
+    if (complete) st.seen = cur; else Object.keys(cur).forEach(function (id) { st.seen[id] = cur[id]; });
+    st.baselined = true;
+    return push;
+  }
+
+  // Browser notifications: only after the person's click (saved in the shared
+  // settings), never while the menu on this computer is already notifying (it
+  // pushes every kind that is on, so a second banner would repeat it), and a
+  // click on one focuses this page on the loop.
+  function postBrowserNotices(items) {
+    if (!browserNoticesOn() || menuNotifying()) return;
+    items.forEach(function (it) {
+      try {
+        var n = new Notification("looptender", { body: it.text });
+        n.onclick = function () { try { window.focus(); } catch (e) { /* nothing to focus */ } if (it.loop) window.location.hash = "#/loop/" + it.loop; if (n.close) n.close(); };
+      } catch (e) { /* the browser refused it */ }
+    });
+  }
+
+  function noticeArea() {
+    var st = state.notices;
+    var box = el("details", "notices");
+    box.open = st.open;
+    box.addEventListener("toggle", function () { st.open = box.open; });
+    var sum = el("summary", null, st.unread ? "Notifications · " + st.unread + " new" : "Notifications");
+    box.appendChild(sum);
+    if (!st.log.length) box.appendChild(el("p", "sub", "Nothing new since this page was opened. Events are listed here when they begin: a loop needing you, a usage limit, a supervisor that stopped answering."));
+    else {
+      var ul = el("ul", "notice-list");
+      st.log.forEach(function (x) {
+        var li = el("li", x.unread ? "is-unread" : null);
+        if (x.unread) li.appendChild(el("span", "tag", "New"));
+        li.appendChild(document.createTextNode(" " + x.text + " "));
+        li.appendChild(el("span", "sub", dockAgoText(x.at)));
+        ul.appendChild(li);
+      });
+      box.appendChild(ul);
+      if (st.unread) {
+        var mark = el("button", "btn", "Mark all read");
+        mark.type = "button";
+        mark.addEventListener("click", function () { st.log.forEach(function (x) { x.unread = false; }); st.unread = 0; updateTitle(); render(false, true); });
+        box.appendChild(mark);
+      }
+    }
+    var set = el("fieldset", "notice-settings");
+    set.appendChild(el("legend", "sub", "Notify me when"));
+    NOTICE_KINDS.forEach(function (k) {
+      var lab = el("label", "notice-kind"), cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = noticeSetting(k[0]);
+      cb.addEventListener("change", function () { saveNotify({ kind: k[0], on: cb.checked }).then(function () { render(false, true); }); });
+      lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + k[1]));
+      set.appendChild(lab);
+    });
+    box.appendChild(set);
+    if (menuNotifying()) box.appendChild(el("p", "sub", "The looptender menu on this computer is already notifying for these kinds, so the browser stays quiet and nothing is shown twice. This list still fills."));
+    if (typeof Notification !== "undefined") {
+      var granted = browserNoticesOn();
+      var ask = el("button", "btn", granted ? "Browser notifications are on" : "Notify me");
+      ask.type = "button";
+      ask.disabled = granted || Notification.permission === "denied";
+      ask.title = Notification.permission === "denied" ? "This browser has blocked notifications for this page." : "Shows a browser notification for each new event in the kinds above. Nothing leaves this computer.";
+      ask.addEventListener("click", function () {
+        Promise.resolve(Notification.requestPermission()).then(function (p) { return saveNotify({ browser: p === "granted" }); }).then(function () { render(false, true); });
+      });
+      box.appendChild(ask);
+    }
+    return box;
+  }
+
+  function dockAgoText(at) {
+    var sec = Math.max(0, Math.round((Date.now() - at) / 1000));
+    if (sec < 60) return "just now";
+    if (sec < 3600) return Math.round(sec / 60) + " min ago";
+    return Math.round(sec / 3600) + " h ago";
+  }
+
+  function updateTitle() {
+    var needs = state.data ? list(state.data.needsYou).length : 0, unread = state.notices.unread;
+    document.title = (needs ? "(" + needs + ") " : "") + "looptender" + (unread ? " · " + unread + " new" : "");
+  }
+
+  function routerServiceText(svc) {
+    switch (svc) {
+      case "loaded": return "service loaded";
+      case "not_installed": return "service not installed";
+      case "absent": return "service not loaded";
+      case "partial": return "service partially loaded";
+      case "unknown": return "service status unknown";
+      default: return "service unavailable";
+    }
+  }
+
+  function routerBox(r) {
+    if (!r || typeof r !== "object") return null;
+    var isEnabled = !!r.enabled;
+    var isAnswering = !!r.answering;
+    var pointed = typeof r.pointedCount === "number" && r.pointedCount >= 0 ? r.pointedCount : 0;
+    var needsAttention = (isEnabled || pointed > 0) && !isAnswering;
+    var tone = needsAttention ? "attn" : (isAnswering && (isEnabled || pointed > 0) ? "good" : "calm");
+    var stateLabel = isAnswering ? "Answering" : "Not answering";
+    var wrap = el("section", "panel router-card" + (needsAttention ? " is-attn" : ""));
+    wrap.setAttribute("aria-label", "Account Router");
+    var head = el("div", "router-head");
+    head.appendChild(el("h2", "router-title", "Account Router"));
+    var pill = el("span", "state tone-" + tone);
+    pill.appendChild(el("span", "dot dot-" + tone));
+    pill.appendChild(el("span", null, stateLabel));
+    head.appendChild(pill);
+    wrap.appendChild(head);
+    var meta = [
+      isEnabled ? "Enabled" : "Off",
+      pointed + " pointed",
+      routerServiceText(r.service)
+    ];
+    if (r.directory && r.directory !== "private") meta.push("directory " + r.directory);
+    wrap.appendChild(el("p", "sub router-meta", meta.join(" \u00B7 ")));
+    if (needsAttention) {
+      wrap.appendChild(el("p", "router-warning", "Router is enabled or pointed while its socket is not answering. Check looptender router status, start the router, or run looptender router off."));
+    }
+    return wrap;
+  }
+
   function renderHome(d, pane) {
     pane.appendChild(paneHead("Overview"));
     var group = groupBox(d);
     if (group) pane.appendChild(group);
+    var router = routerBox(d.router);
     if (d.registry.availability !== "available") {
+      if (router) pane.appendChild(router);
       pane.appendChild(el("p", "lede", "Unknown."));
       pane.appendChild(emptyBox("The registry could not be read.", "Nothing is shown rather than guessing. Check it with looptender registry list."));
       return;
@@ -590,6 +786,8 @@
     var needs = list(d.needsYou);
     if (d.lede) pane.appendChild(el("p", "lede", d.lede));
     if (d.buildFreshness && d.buildFreshness.text && list(d.loops).length) pane.appendChild(el("p", "sub fresh-summary", d.buildFreshness.text));
+    if (router) pane.appendChild(router);
+    pane.appendChild(noticeArea());
     if (!list(d.loops).length) {
       pane.appendChild(emptyBox("No loops are registered yet.", "Register one with looptender registry add -c path/to/looptender.yaml (or keepgoing.yaml), and it appears here on the next read."));
       return;
@@ -620,72 +818,119 @@
   // descendant tree. Keep each registered loop visible independently, even
   // when a lane links to it: its own control state may differ from the
   // parent's observation. No relationship is inferred from names or order.
+  function workBranch(l, d, retainedOpen, folded) {
+    var quiet = folded || l.inactive || l.state === "archived" || (l.state === "paused" && !l.alsoWaiting) || l.state === "stopped" || l.state === "finished" || l.state === "off";
+    var inlineActive = folded && state.change && state.change.key === l.key;
+    var li = el("li", "work-branch" + (quiet ? " is-quiet" : "")), details = el("details");
+    details.dataset.loop = l.key;
+    details.open = inlineActive || (Object.prototype.hasOwnProperty.call(state.treeOpen, l.key) ? state.treeOpen[l.key] : (!folded && !!needFor(l.key)));
+    retainedOpen[l.key] = details.open;
+    var summary = el("summary", "work-summary");
+    summary.setAttribute("data-focus", "tree-" + l.key);
+    var name = el("span", "work-name", l.name);
+    // The glossary's role: its last verified listing has lanes.
+    if (l.lanes && l.lanes.role === "coordinator") name.appendChild(el("span", "work-role", "coordinator"));
+    if (l.provider) { var chip = el("span", "work-role", l.provider + (l.model ? " \u00B7 " + l.model : "")); chip.title = "Configured provider and model"; name.appendChild(chip); }
+    if (l.observed) name.appendChild(el("span", "work-role work-observed", observedLabel(l)));
+    if (l.inactive) name.appendChild(el("span", "work-role work-inactive", "inactive 3d+"));
+    summary.appendChild(name);
+    var status = el("span", "work-status");
+    var tone = l.inactive ? "calm" : (TONES[l.state] || "unknown");
+    if (l.alsoWaiting && !l.inactive) tone = "attn";
+    if (l.lanesFailed && tone === "good") tone = "warn";
+    status.appendChild(el("span", "dot dot-" + tone));
+    status.appendChild(el("span", null, l.phrase));
+    var silent = supervisorAge(l);
+    if (silent) status.appendChild(el("span", "sub work-silent", silent));
+    var freshChip = freshnessChip(l);
+    if (freshChip) status.appendChild(freshChip);
+    if (l.state === "finished") status.appendChild(tag("calm", "Unverified"));
+    if (l.lanesFailed) status.appendChild(tag("needs", l.lanesFailed));
+    var rowWaits = waitsLine(l.waiting, d.readAt, true);
+    if (rowWaits) { rowWaits.classList.add("sub", "work-waits"); status.appendChild(rowWaits); }
+    summary.appendChild(status);
+    if (l.lanes && l.lanes.summary) summary.appendChild(el("span", "sub work-observation", "Lanes: " + l.lanes.summary));
+    // Age in plain words, as for usage readings; see lastCheck().
+    summary.appendChild(el("span", "sub work-age", (l.lastCheck && l.lastCheck.text) || "Last check unknown"));
+    var mr = l.migrationReview;
+    if (mr && mr.availability === "available" && mr.counts && mr.counts.unfinished > 0) {
+      summary.appendChild(el("span", "sub work-migration", "Migration review: " + mr.text));
+    }
+    details.appendChild(summary);
+    var body = el("div", "work-body");
+    body.appendChild(el("p", "detail", l.detail));
+    if (l.observed && l.observedNote) body.appendChild(el("p", "sub observed-note", l.observedNote));
+    if (l.sessionpipeWake && l.sessionpipeWake.text) body.appendChild(el("p", "sub sessionpipe-wake", "Wake: " + l.sessionpipeWake.text));
+    var facts = el("dl", "work-facts");
+    facts.appendChild(fact("Last decision", l.decision ? say(l.decision.phrase) : "Unknown"));
+    facts.appendChild(fact("Next check", nextCheck(l.nextCheck || { availability: "unknown" })));
+    if (l.checkedBy && l.checkedBy.text) facts.appendChild(fact("Checked", l.checkedBy.text));
+    body.appendChild(facts);
+    body.appendChild(laneBox(l, true));
+    var more = body.querySelector("details.lane-more"), moreKey = l.key + "/lanes";
+    if (more) {
+      more.open = !!state.treeOpen[moreKey];
+      retainedOpen[moreKey] = more.open;
+      more.addEventListener("toggle", function () {
+        if (more.isConnected) state.treeOpen[moreKey] = more.open;
+      });
+    }
+    var foot = el("div", "work-quick-actions");
+    foot.appendChild(link("#/loop/" + l.key, "Inspect " + l.name, "work-inspect"));
+    if (folded && changesOn()) {
+      var can = list(l.can);
+      ["unarchive", "archive", "resume"].forEach(function (act) {
+        if (can.indexOf(act) >= 0) {
+          var label = l.observed && OBSERVED_ACTION_LABEL[act] ? OBSERVED_ACTION_LABEL[act] : ACTION_LABEL[act];
+          if (label) foot.appendChild(button(label + "\u2026", "act-" + act, "", function () { prepareChange(l.key, act); }));
+        }
+      });
+    }
+    body.appendChild(foot);
+    if (inlineActive) {
+      var inlineChange = changeBox(l, false, true);
+      if (inlineChange) body.appendChild(inlineChange);
+    }
+    details.appendChild(body);
+    details.addEventListener("toggle", function () {
+      if (details.isConnected) state.treeOpen[l.key] = details.open;
+    });
+    li.appendChild(details);
+    return li;
+  }
+
   function workTree(d) {
     var p = panel("Loops");
     var ul = el("ul", "work-tree");
     var retainedOpen = Object.create(null);
+    var active = [], folded = [], inactiveCount = 0, archivedCount = 0;
     list(d.loops).forEach(function (l) {
-      var quiet = (l.state === "paused" && !l.alsoWaiting) || l.state === "stopped" || l.state === "finished" || l.state === "off";
-      var li = el("li", "work-branch" + (quiet ? " is-quiet" : "")), details = el("details");
-      details.dataset.loop = l.key;
-      details.open = Object.prototype.hasOwnProperty.call(state.treeOpen, l.key) ? state.treeOpen[l.key] : !!needFor(l.key);
-      retainedOpen[l.key] = details.open;
-      var summary = el("summary", "work-summary");
-      summary.setAttribute("data-focus", "tree-" + l.key);
-      var name = el("span", "work-name", l.name);
-      // The glossary's role: its last verified listing has lanes.
-      if (l.lanes && l.lanes.role === "coordinator") name.appendChild(el("span", "work-role", "coordinator"));
-      if (l.provider) { var chip = el("span", "work-role", l.provider + (l.model ? " \u00B7 " + l.model : "")); chip.title = "Configured provider and model"; name.appendChild(chip); }
-      summary.appendChild(name);
-      var status = el("span", "work-status");
-      var tone = TONES[l.state] || "unknown";
-      if (l.alsoWaiting) tone = "attn";
-      if (l.lanesFailed && tone === "good") tone = "warn";
-      status.appendChild(el("span", "dot dot-" + tone));
-      status.appendChild(el("span", null, l.phrase));
-      var silent = supervisorAge(l);
-      if (silent) status.appendChild(el("span", "sub work-silent", silent));
-      var freshChip = freshnessChip(l);
-      if (freshChip) status.appendChild(freshChip);
-      if (l.state === "finished") status.appendChild(tag("calm", "Unverified"));
-      if (l.lanesFailed) status.appendChild(tag("needs", l.lanesFailed));
-      var rowWaits = waitsLine(l.waiting, d.readAt, true);
-      if (rowWaits) { rowWaits.classList.add("sub", "work-waits"); status.appendChild(rowWaits); }
-      summary.appendChild(status);
-      if (l.lanes && l.lanes.summary) summary.appendChild(el("span", "sub work-observation", "Lanes: " + l.lanes.summary));
-      // Age in plain words, as for usage readings; see lastCheck().
-      summary.appendChild(el("span", "sub work-age", (l.lastCheck && l.lastCheck.text) || "Last check unknown"));
-      var mr = l.migrationReview;
-      if (mr && mr.availability === "available" && mr.counts && mr.counts.unfinished > 0) {
-        summary.appendChild(el("span", "sub work-migration", "Migration review: " + mr.text));
-      }
-      details.appendChild(summary);
-      var body = el("div", "work-body");
-      body.appendChild(el("p", "detail", l.detail));
-      var facts = el("dl", "work-facts");
-      facts.appendChild(fact("Last decision", l.decision ? say(l.decision.phrase) : "Unknown"));
-      facts.appendChild(fact("Next check", nextCheck(l.nextCheck || { availability: "unknown" })));
-      if (l.checkedBy && l.checkedBy.text) facts.appendChild(fact("Checked", l.checkedBy.text));
-      body.appendChild(facts);
-      body.appendChild(laneBox(l, true));
-      var more = body.querySelector("details.lane-more"), moreKey = l.key + "/lanes";
-      if (more) {
-        more.open = !!state.treeOpen[moreKey];
-        retainedOpen[moreKey] = more.open;
-        more.addEventListener("toggle", function () {
-          if (more.isConnected) state.treeOpen[moreKey] = more.open;
-        });
-      }
-      body.appendChild(link("#/loop/" + l.key, "Inspect " + l.name, "work-inspect"));
-      details.appendChild(body);
-      details.addEventListener("toggle", function () {
-        if (details.isConnected) state.treeOpen[l.key] = details.open;
-      });
-      li.appendChild(details);
-      ul.appendChild(li);
+      if (l.state === "archived") { archivedCount++; folded.push(l); }
+      else if (l.inactive) { inactiveCount++; folded.push(l); }
+      else { active.push(l); }
     });
+    active.forEach(function (l) { ul.appendChild(workBranch(l, d, retainedOpen, false)); });
+    if (folded.length) {
+      var fold = el("details", "work-older");
+      fold.open = !!state.treeOpen["older-folded"] || folded.some(function (x) { return state.change && state.change.key === x.key; });
+      retainedOpen["older-folded"] = fold.open;
+      var parts = [];
+      if (inactiveCount) parts.push("Inactive 3d+ (" + inactiveCount + ")");
+      if (archivedCount) parts.push((inactiveCount ? "archived" : "Archived") + " (" + archivedCount + ")");
+      fold.appendChild(el("summary", "work-older-summary", parts.join(" and ")));
+      var olderList = el("ul", "work-tree work-tree-older");
+      folded.forEach(function (l) { olderList.appendChild(workBranch(l, d, retainedOpen, true)); });
+      fold.appendChild(olderList);
+      fold.addEventListener("toggle", function () {
+        if (fold.isConnected) state.treeOpen["older-folded"] = fold.open;
+      });
+      p.appendChild(ul);
+      if (!active.length) p.appendChild(el("p", "sub work-older-empty", "No active loops right now. Expand older or archived loops below if needed."));
+      p.appendChild(fold);
+    } else {
+      p.appendChild(ul);
+    }
     state.treeOpen = retainedOpen;
-    p.appendChild(ul);
     if (!d.complete || d.registry.omitted) p.appendChild(el("p", "more", "This read does not include every registered loop. Missing loops are not assumed stopped or clear."));
     return p;
   }
@@ -835,6 +1080,10 @@
   }
 
   // ---- Level 2: one loop, shown through its routes ----
+  function observedLabel(l) {
+    if (!l || !l.observed) return "";
+    return l.observedWakes ? "Observed, woken only when idle" : "Observed, never woken";
+  }
   function renderLoop(d, pane, key) {
     pane.appendChild(back());
     var l = loopByKey(key);
@@ -850,11 +1099,12 @@
     st.appendChild(icon(STATE_ICON[stState] || "unknown"));
     st.appendChild(document.createTextNode(l.phrase));
     var pills = st;
-    // A failed lane is said beside the supervision state, in words.
-    if (l.lanesFailed) {
+    // A failed lane or observed target is said beside the supervision state, in words.
+    if (l.lanesFailed || l.observed) {
       pills = el("span", "pane-pills");
       pills.appendChild(st);
-      pills.appendChild(tag("needs", l.lanesFailed));
+      if (l.observed) pills.appendChild(el("span", "work-role work-observed", observedLabel(l)));
+      if (l.lanesFailed) pills.appendChild(tag("needs", l.lanesFailed));
     }
     pane.appendChild(paneHead(l.name, pills));
     // The provider and model the loop now targets, from its configuration, so
@@ -883,6 +1133,7 @@
     }
     var need = needFor(key);
     if (!need) pane.appendChild(el("p", "detail", l.detail));
+    if (l.inactive) pane.appendChild(el("p", "sub build-line work-inactive-note", "Auto-folded from the active list after 3+ days without check activity. Archive moves it out of the way without deleting files."));
     var pageWaits = need ? null : waitsLine(l.waiting, d.readAt, true);
     if (pageWaits) { pageWaits.classList.add("sub"); pane.appendChild(el("p", "waits-line", null)).appendChild(pageWaits); }
     if (need) {
@@ -903,6 +1154,7 @@
     }
     // The standing wake policy, when status warns about it. Names no path.
     if (list(l.wakePolicy).length) pane.appendChild(el("p", "detail wake-policy", say(l.wakePolicy)));
+    if (l.sessionpipeWake && l.sessionpipeWake.text) pane.appendChild(el("p", "detail sessionpipe-wake", "Wake: " + l.sessionpipeWake.text));
     var change = changeBox(l);
     if (change) pane.appendChild(change);
     if (l.migrationReview && l.migrationReview.availability === "available" && l.migrationReview.counts && l.migrationReview.counts.unfinished > 0) {
@@ -918,6 +1170,7 @@
       el("span", c.availability === "none_configured" ? "sub" : "chain-ready" + (c.brief.indexOf(CURRENT_UNAFFECTED) >= 0 ? " is-calm" : c.short ? " is-short" : ""), c.brief);
     var routing = panel("Preferred routes", [brief]);
     routing.appendChild(el("p", "sub chain-how", c.how || "Unknown."));
+    if (l.observed && l.observedNote) routing.appendChild(el("p", "sub observed-note", l.observedNote));
     var ol = el("ol", "route-list is-ordered");
     entries.forEach(function (e) {
       var bound = boundAccount(e.catalogAccount);
@@ -1200,7 +1453,8 @@
   // ---- Changes: pause, stop and resume, on a panel started with --allow-changes ----
   // Every sentence comes from the server. Each change is prepared, shown,
   // and only then confirmed; nothing is retried by itself.
-  var ACTION_LABEL = { pause: "Pause", stop: "Stop", resume: "Resume" };
+  var ACTION_LABEL = { pause: "Pause", stop: "Stop", resume: "Resume", archive: "Archive", unarchive: "Unarchive" };
+  var OBSERVED_ACTION_LABEL = { pause: "Pause checking", resume: "Resume checking" };
   function changesOn() { return !!(state.server && state.server.changes === "on" && state.server.form); }
   function post(path, form, body) {
     return fetch(path, {
@@ -1310,7 +1564,7 @@
     return b;
   }
   // all: the change to every loop at once (key "all"), on the overview.
-  function changeBox(l, all) {
+  function changeBox(l, all, inlineOnly) {
     var c = state.change && state.change.key === l.key ? state.change : null;
     if (!changesOn() && !c) return null;
     var box = el("section", "panel change");
@@ -1381,7 +1635,7 @@
       if (c.result.retry && changesOn()) again.appendChild(button("Review again", "change-retry", "", function () { prepareChange(l.key, c.action); }));
       again.appendChild(button("Close", "change-close", "", function () { state.change = null; render(false, true); focusOn("act-" + c.action); }));
       box.appendChild(again);
-      if (!changesOn()) return box;
+      if (inlineOnly || !changesOn()) return box;
     }
     if (c && c.busy) {
       box.appendChild(el("p", "change-line", "Preparing the review…"));
@@ -1396,7 +1650,8 @@
     actions.setAttribute("role", "group");
     actions.setAttribute("aria-label", all ? "Change every loop" : "Change this loop");
     can.forEach(function (a) {
-      if (ACTION_LABEL[a]) actions.appendChild(button(ACTION_LABEL[a] + (all ? " all…" : "…"), "act-" + a, "", function () { prepareChange(l.key, a); }));
+      var label = !all && l.observed && OBSERVED_ACTION_LABEL[a] ? OBSERVED_ACTION_LABEL[a] : ACTION_LABEL[a];
+      if (label) actions.appendChild(button(label + (all ? " all…" : "…"), "act-" + a, "", function () { prepareChange(l.key, a); }));
     });
     if (allowance) actions.appendChild(button("Change send allowance…", "act-set_send_allowance", "", function () { editAllowance(l.key); }));
     if (bc) actions.appendChild(button(bc.label + "…", "act-" + bc.action, "", function () { prepareChange(l.key, bc.action); }));
@@ -1487,7 +1742,7 @@
     return wrap;
   }
   var failedChecks = {
-    context_changed: "could not be compared: the context differs from the selection",
+    context_changed: "was saved in a different shell, context, or CLI path",
     timeout: "timed out",
     cancelled: "was cancelled",
     version_unavailable: "could not read the CLI version",
@@ -1498,7 +1753,11 @@
   // the last good check, or unavailable when there was none.
   function failedCheckLine(c) {
     return "Last check" + (c.failedCheckAt ? " " + fmt(secFmt, c.failedCheckAt) : "") + " " + (failedChecks[c.reason] || "did not complete") + "." +
-      (c.attention === "context_changed" ? " Review and update the selection before checking again." : "");
+      (c.attention === "context_changed"
+        ? (changesOn() && state.server && state.server.accountSelectionReview
+            ? " Review selection for this panel before checking again."
+            : " Open a panel with --allow-changes or update the selection before checking again.")
+        : "");
   }
   // What on a card needs a person, in words; the warning style is kept for
   // these and never used for age alone. A failed check or a changed context
@@ -1669,8 +1928,76 @@
         render(false, true);
         focusOn(request.preview ? "quota-cancel-" + c.id : "quota-result-" + c.id);
         if (request.result) announce(request.result.text);
-        if (confirm) { clearTimeout(state.timer); load(true); }
+        if (confirm) {
+          if (recovery && typeof accountChecks !== "undefined") delete accountChecks.attempted[c.id];
+          clearTimeout(state.timer); load(true);
+        }
       });
+  }
+  var accountChecks = { active: false, done: 0, total: 0, attempted: Object.create(null), notice: "" };
+  function accountCheckSupported(c) {
+    return changesOn() && !!(state.server && state.server.accountCheck) && (!c || c.provider === "claude-code" || c.provider === "codex");
+  }
+  function accountCheckEligible(c) {
+    if (!c || (c.provider !== "claude-code" && c.provider !== "codex")) return false;
+    if (c.attention === "context_changed" || c.reason === "context_changed" || c.reason === "unsupported") return false;
+    return true;
+  }
+  function accountNeedsAutoCheck(c) {
+    if (!accountCheckEligible(c)) return false;
+    if (c.auth && c.auth.state === "unchecked") return true;
+    return !!((c.auth && c.auth.checkAgain) || (c.plan && c.plan.checkAgain));
+  }
+  function accountCheckPost(id, form) {
+    var abort = new AbortController(), timer = setTimeout(function () { abort.abort(); }, 15000);
+    return fetch("api/v1/account-checks/" + encodeURIComponent(id) + "/run", {
+      method: "POST", cache: "no-store", credentials: "same-origin", signal: abort.signal,
+      headers: { "Content-Type": "application/json", Accept: "application/json", "X-Keepgoing-Form": form },
+      body: JSON.stringify({ action: "account_check" })
+    }).then(function (r) {
+      if (!r.ok) { var e = new Error("status " + r.status); e.status = r.status; throw e; }
+      return r.json();
+    }).then(function (d) {
+      if (!d || d.schemaVersion !== 1 || !d.result || typeof d.result.text !== "string") throw new Error("account check reply");
+      return d;
+    }).finally(function () { clearTimeout(timer); });
+  }
+  function runAccountChecks(cards, manual) {
+    if (!accountCheckSupported() || accountChecks.active || document.hidden || state.paused || route().view !== "accounts") return;
+    var queue = list(cards).filter(accountCheckEligible).slice(0, 16);
+    if (!queue.length) return;
+    queue.forEach(function (c) { accountChecks.attempted[c.id] = true; });
+    accountChecks.active = true;
+    accountChecks.done = 0;
+    accountChecks.total = queue.length;
+    accountChecks.notice = "";
+    render(false, true);
+    var lastText = "";
+    function next(i) {
+      if (i >= queue.length || route().view !== "accounts" || document.hidden || state.paused || !accountCheckSupported()) {
+        accountChecks.active = false;
+        if (manual && lastText) accountChecks.notice = queue.length === 1 ? lastText : "Checked " + accountChecks.done + " of " + accountChecks.total + " accounts.";
+        render(false, true);
+        if (accountChecks.done > 0) { savedAccounts.status = ""; savedAccounts.data = null; clearTimeout(state.timer); load(true); }
+        return;
+      }
+      accountCheckPost(queue[i].id, state.server.form)
+        .then(function (d) { lastText = d.result.text; })
+        .catch(function () { lastText = "Account check could not complete."; })
+        .then(function () {
+          accountChecks.done = i + 1;
+          render(false, true);
+          next(i + 1);
+        });
+    }
+    next(0);
+  }
+  function maybeAutoCheckAccounts(cards) {
+    if (!accountCheckSupported() || accountChecks.active || document.hidden || state.paused || route().view !== "accounts") return;
+    var due = list(cards).filter(function (c) {
+      return accountNeedsAutoCheck(c) && !accountChecks.attempted[c.id];
+    });
+    if (due.length) runAccountChecks(due, false);
   }
   function accountQuotaReason(reason) {
     return ({ not_checked: "No subscription quota reading is saved for this selection.", selection_review_required: "Review this unchanged selection for the panel, then refresh quota. Saved quota was not reused.", context_changed: "The selected context changed. Review it before refreshing quota.", cache_unavailable: "Private quota evidence could not be read. No usage is assumed.",
@@ -1757,7 +2084,7 @@
     var current = accountConnections[c.id];
     if (current && (current.busy || (current.connect && current.connect.state === "waiting"))) { render(false, true); focusOn("connect-result-" + c.id); return; }
     if (accountConnectSupported(c)) accountConnectRequest(c, "prepare");
-    else { accountConnections[c.id] = { card: c, result: { text: "Open the panel with controls to connect this account. The native menu provides Open Panel with Controls…. If Connect is still unavailable, update looptender on this device." } }; render(false, true); focusOn("connect-result-" + c.id); }
+    else { accountConnections[c.id] = { card: c, result: { text: "Connecting an account needs a panel started with looptender panel --allow-changes. If Connect is still unavailable, update looptender on this device." } }; render(false, true); focusOn("connect-result-" + c.id); }
   }
   function accountConnectBox(c) {
     var current = accountConnections[c.id];
@@ -1841,11 +2168,11 @@
       } else review.appendChild(el("p", "sub", current.recovery ? "Preparing selection review…" : "Preparing quota review…"));
       box.appendChild(review);
     }
-    var needsSelectionReview = q.reason === "selection_review_required";
+    var needsSelectionReview = q.reason === "selection_review_required" || q.reason === "context_changed" || c.attention === "context_changed";
     if (needsSelectionReview) {
       if (changesOn() && state.server.accountSelectionReview) {
         if (!current) box.appendChild(button("Review selection for this panel…", "selection-review-" + c.id, "", function () { accountQuotaRequest(c, false, true); }));
-      } else box.appendChild(el("p", "sub", "Open a panel with changes allowed, then return to Accounts to review this selection. The native menu's Open Panel with Controls… provides that entry point."));
+      } else box.appendChild(el("p", "sub", "Reviewing this selection needs a panel started with looptender panel --allow-changes; open one, then return to Accounts."));
       return box;
     }
     if (changesOn() && accountQuotaSupported(c)) {
@@ -1853,6 +2180,90 @@
     } else box.appendChild(el("p", "sub", c.provider === "claude-code" ? "Claude usage retrieval requires a panel with changes allowed on Darwin arm64 and the inspected native Claude Code 2.1.326 image. Each selection is checked before a request; other images remain unavailable." : c.provider === "antigravity" ? "Antigravity usage retrieval requires a panel with changes allowed. It runs agy /usage in read-only plan mode without an ordinary model turn." : "Review a refresh in a panel with changes allowed."));
     return box;
   }
+  function accountRemoveSupported() {
+    return changesOn() && !!(state.server && state.server.accountRemove);
+  }
+  function accountRemoveReply(d, id, step) {
+    function text(v) { return typeof v === "string" && v.trim().length > 0 && v.length <= 16384; }
+    if (!d || d.schemaVersion !== 1 || (!!d.preview === !!d.result)) throw new Error("account remove reply");
+    if (d.result) {
+      var outcomes = step === "prepare" ? ["refused", "review_again"] : ["done", "refused", "review_again"];
+      if (outcomes.indexOf(d.result.outcome) < 0 || !text(d.result.text)) throw new Error("account remove outcome");
+      return d;
+    }
+    var p = d.preview;
+    if (step !== "prepare" || p.action !== "remove_account" || p.key !== id ||
+        !text(p.title) || !text(p.confirm) || !text(p.lost) || !text(p.refused) ||
+        typeof p.form !== "string" || !/^[a-f0-9]{64}$/.test(p.form) ||
+        typeof p.expiresAt !== "string" || !isFinite(Date.parse(p.expiresAt)) ||
+        !Array.isArray(p.lines) || !p.lines.length || p.lines.length > 32 ||
+        !p.lines.every(function (line) { return Array.isArray(line) && line.length > 0 && line.length <= 32 && line.every(function (part) { return part && text(part.t) && !part.at; }); })) throw new Error("account remove preview");
+    return d;
+  }
+  function accountRemoveRequest(c, confirm) {
+    if (!accountRemoveSupported()) return;
+    var old = state.accountRemove, p = confirm && old && old.id === c.id && old.preview;
+    if (confirm && !p) return;
+    var request = { id: c.id, sessionForm: state.server.form, busy: true, preview: p || null };
+    state.accountRemove = request;
+    state.accountOpen[c.id] = true;
+    render(false, true);
+    post("api/v1/account-remove/" + encodeURIComponent(c.id) + "/" + (confirm ? "confirm" : "prepare"),
+      confirm ? p.form : state.server.form, { action: "remove_account" })
+      .then(function (d) { return accountRemoveReply(d, c.id, confirm ? "confirm" : "prepare"); })
+      .then(function (d) { request.preview = d.preview; request.result = d.result; })
+      .catch(function (err) {
+        var refused = err && err.status >= 400 && err.status < 500;
+        request.preview = null;
+        request.result = { text: !confirm ? "The account removal review could not be prepared. Nothing was removed." : refused ? p.refused : p.lost };
+      }).then(function () {
+        if (state.accountRemove !== request) return;
+        if (state.server && state.server.form !== request.sessionForm) { state.accountRemove = null; render(false, true); return; }
+        request.busy = false;
+        render(false, true);
+        focusOn(request.preview ? "remove-cancel-" + c.id : "remove-result-" + c.id);
+        if (request.result) announce(request.result.text);
+        if (confirm && request.result && request.result.outcome === "done") {
+          savedAccounts = { reference: "", status: "", data: null, serial: 0, abort: null };
+          clearTimeout(state.timer);
+          load(true);
+        }
+      });
+  }
+  function accountRemoveBox(c) {
+    if (!accountRemoveSupported()) return null;
+    var current = state.accountRemove && state.accountRemove.id === c.id ? state.accountRemove : null;
+    if (current && current.sessionForm && state.server && current.sessionForm !== state.server.form) {
+      state.accountRemove = null;
+      current = null;
+    }
+    var box = el("div", "account-remove");
+    if (!current) {
+      var openBtn = button("Remove from catalog…", "account-remove-" + c.id, "", function () { accountRemoveRequest(c, false); });
+      openBtn.setAttribute("aria-label", "Remove " + c.label + " from catalog");
+      box.appendChild(openBtn);
+      return box;
+    }
+    var review = el("div", "account-remove-review");
+    if (current.preview) {
+      review.appendChild(el("h4", null, current.preview.title));
+      list(current.preview.lines).forEach(function (line) { review.appendChild(el("p", null, say(line))); });
+      var controls = el("div", "account-remove-actions");
+      controls.appendChild(button("Cancel", "remove-cancel-" + c.id, "", function () { state.accountRemove = null; render(false, true); focusOn("account-remove-" + c.id); }, current.busy));
+      controls.appendChild(button(current.busy ? "Removing…" : current.preview.confirm, "remove-confirm-" + c.id, "is-primary", function () { accountRemoveRequest(c, true); }, current.busy));
+      review.appendChild(controls);
+    } else if (current.result) {
+      var res = el("p", null, current.result.text);
+      res.tabIndex = -1; res.setAttribute("data-focus", "remove-result-" + c.id);
+      review.appendChild(res);
+      review.appendChild(button("Close", "remove-close-" + c.id, "", function () { state.accountRemove = null; render(false, true); focusOn("account-" + c.id); }));
+    } else {
+      review.appendChild(el("p", "sub", "Preparing removal review…"));
+    }
+    box.appendChild(review);
+    return box;
+  }
+
   function renderAccounts(d, pane) {
     var a = d.accounts || {};
     pane.appendChild(back());
@@ -1876,6 +2287,12 @@
         feedback.tabIndex = -1; feedback.setAttribute("data-focus", "quota-result-" + outcome.id);
         pane.appendChild(feedback);
       }
+      var removeOutcome = state.accountRemove;
+      if (removeOutcome && removeOutcome.result) {
+        var removeFeedback = el("p", null, removeOutcome.result.text);
+        removeFeedback.tabIndex = -1; removeFeedback.setAttribute("data-focus", "remove-result-" + removeOutcome.id);
+        pane.appendChild(removeFeedback);
+      }
       Object.keys(accountConnections).forEach(function (id) {
         var connection = accountConnections[id];
         if (connection.sessionForm && connection.sessionForm !== state.server.form) return;
@@ -1893,15 +2310,34 @@
     var cards = list(a.cards), uses = list(d.accountUses), byCard = Object.create(null);
     uses.forEach(function (u) { if (u.card) byCard[u.card] = u; });
     var unnamed = uses.filter(function (u) { return u.context; });
+    var removeDone = state.accountRemove && state.accountRemove.result && !cards.some(function (x) { return x.id === state.accountRemove.id; }) ? state.accountRemove : null;
+    if (removeDone) {
+      var doneBox = el("div", "panel account-remove-result");
+      var doneText = el("p", null, removeDone.result.text);
+      doneText.tabIndex = -1; doneText.setAttribute("data-focus", "remove-result-" + removeDone.id);
+      doneBox.appendChild(doneText);
+      doneBox.appendChild(button("Close", "remove-close-" + removeDone.id, "", function () { state.accountRemove = null; render(false, true); }));
+      pane.appendChild(doneBox);
+    }
     if (!cards.length && !unnamed.length) {
       pane.appendChild(emptyBox("No accounts selected here yet", FIRST_RUN));
       pane.appendChild(addAccountBox(true));
       return;
     }
     pane.appendChild(el("p", "account-count", cards.length + (cards.length === 1 ? " selected account" : " selected accounts")));
-    var templates = cards.filter(accountConnectSupported);
-    if (templates.length) {
+    var templates = cards.filter(accountConnectSupported), eligibleChecks = accountCheckSupported() ? cards.filter(accountCheckEligible) : [];
+    if (templates.length || eligibleChecks.length) {
       var add = el("div", "account-quota-actions");
+      if (eligibleChecks.length) {
+        var checkAllLabel = accountChecks.active
+          ? "Checking accounts (" + Math.min(accountChecks.done + 1, accountChecks.total) + " of " + accountChecks.total + ")…"
+          : "Check accounts";
+        var checkAllBtn = button(checkAllLabel, "account-check-all", "", function () {
+          eligibleChecks.forEach(function (item) { delete accountChecks.attempted[item.id]; });
+          runAccountChecks(eligibleChecks, true);
+        }, accountChecks.active);
+        add.appendChild(checkAllBtn);
+      }
       ["claude-code", "codex"].forEach(function (provider) {
         var template = templates.find(function (c) { return c.provider === provider; });
         if (!template) return;
@@ -1911,6 +2347,15 @@
       });
       pane.appendChild(add);
     } else pane.appendChild(addAccountBox(!cards.length));
+    if (accountChecks.active) {
+      var checkProg = el("p", "sub account-check-status", "Checking local account status (" + Math.min(accountChecks.done + 1, accountChecks.total) + " of " + accountChecks.total + ")…");
+      checkProg.setAttribute("role", "status");
+      pane.appendChild(checkProg);
+    } else if (accountChecks.notice) {
+      var checkNotice = el("p", "sub account-check-status", accountChecks.notice);
+      checkNotice.setAttribute("role", "status");
+      pane.appendChild(checkNotice);
+    }
     if (!d.complete || (d.registry || {}).availability !== "available") pane.appendChild(el("p", "sub", "Not every loop could be read, so some routes may be missing here."));
     var ul = el("ul", "accounts-list"), retained = Object.create(null);
     cards.forEach(function (c) {
@@ -1923,7 +2368,15 @@
       var identity = el("span", "account-title"); identity.appendChild(name); identity.appendChild(provider);
       identity.appendChild(el("span", "sub", c.selection === "inherited" ? "Inherited context" : c.selection === "explicit_directory" ? "Selected context" : "External context"));
       summary.appendChild(identity);
-      var status = el("span", "account-status"); status.appendChild(accountEvidence(c.auth));
+      var status = el("span", "account-status");
+      if (c.auth && c.auth.state === "unchecked" && c.localAuth) {
+        var localWrap = el("div", "account-evidence");
+        localWrap.appendChild(el("span", null, c.localAuth === "file_present" ? "Local login file present" : c.localAuth === "file_expired" ? "Local login file expired" : "No local login file"));
+        localWrap.appendChild(el("span", "sub", c.localAuth === "file_present" ? "Credential file found; CLI check has not run" : c.localAuth === "file_expired" ? "Saved token expired; sign in again and check" : "Not checked with CLI yet"));
+        status.appendChild(localWrap);
+      } else {
+        status.appendChild(accountEvidence(c.auth));
+      }
       // The login and plan shown are the last good check; say when and why the
       // latest one failed, once, with the warning when it needs a person.
       var failed = c.attention === "check_failed" || c.attention === "context_changed" || !!c.failedCheckAt;
@@ -1939,10 +2392,26 @@
       var plan = el("span", "account-plan");
       plan.appendChild(el("span", "sub", "Reported plan"));
       var auth = c.auth || {}, sameCheck = !!(c.plan && c.plan.observedAt && c.plan.observedAt === auth.observedAt && c.plan.source === auth.source);
-      plan.appendChild(accountEvidence(c.plan, sameCheck)); summary.appendChild(plan);
+      var suppressDupPlan = c.plan && !c.plan.value && ((c.plan.missing === "not_checked" && auth.state !== "reported_present") || (auth.state === "unavailable" && c.plan.text === "Unavailable"));
+      if (suppressDupPlan) {
+        var dash = el("span", "sub", "—");
+        dash.setAttribute("aria-label", auth.state === "unchecked" ? "Reported plan unavailable until checked" : "Reported plan unavailable");
+        plan.appendChild(dash);
+      } else {
+        plan.appendChild(accountEvidence(c.plan, sameCheck));
+      }
+      summary.appendChild(plan);
       var qs = accountQuotaSummary(c);
       var compact = el("span", "quota-compact");
-      if (qs && qs.state === "reported") {
+      if (c.attention === "context_changed" && changesOn() && state.server && state.server.accountSelectionReview && (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity")) {
+        var reviewBtn = button("Review selection…", "selection-review-summary-" + c.id, "", function (event) {
+          event.preventDefault(); event.stopPropagation();
+          state.accountOpen[c.id] = true;
+          accountQuotaRequest(c, false, true);
+        });
+        reviewBtn.setAttribute("aria-label", "Review selection for " + c.label);
+        compact.appendChild(reviewBtn);
+      } else if (qs && qs.state === "reported") {
         list(qs.rows).filter(function (w) { return typeof w.usedPercent === "number"; }).slice(0, 2).forEach(function (w) {
           var item = el("span", "quota-chip"); item.appendChild(el("span", "sub", w.name));
           item.appendChild(el("strong", null, w.ended ? "Window ended" : w.usedPercent + "% used")); compact.appendChild(item);
@@ -1998,7 +2467,7 @@
         facts.appendChild(fact("Actual response model", accountEvidence(c.observedModel)));
       }
       var reasons = {
-        context_changed: "The effective context differs from the selection. Review and update it before checking again.",
+        context_changed: "This selection was saved under a different shell, context, or CLI path (such as Terminal vs an agent session or an updated binary). Review it for this panel or run looptender accounts update before checking again.",
         unsupported: "Authentication is externally managed or unsupported here. Use the provider's own controls.",
         timeout: "The latest status check timed out. It did not establish a current login.",
         cancelled: "The latest status check was cancelled.",
@@ -2006,6 +2475,16 @@
         status_unavailable: "The latest status command did not establish a recognized login result."
       };
       if (c.reason) body.appendChild(el("p", "account-note", reasons[c.reason] || "The latest account check is unavailable."));
+      if (accountCheckSupported(c) && accountCheckEligible(c)) {
+        var cardActions = el("div", "account-quota-actions");
+        cardActions.appendChild(button(accountChecks.active ? "Checking…" : "Check login now", "account-check-" + c.id, "", function () {
+          delete accountChecks.attempted[c.id];
+          runAccountChecks([c], true);
+        }, accountChecks.active));
+        body.appendChild(cardActions);
+      }
+      var removeBox = accountRemoveBox(c);
+      if (removeBox) body.appendChild(removeBox);
       details.appendChild(body);
       details.addEventListener("toggle", function () { if (details.isConnected) state.accountOpen[c.id] = details.open; });
       li.appendChild(details);
@@ -2020,11 +2499,12 @@
     // One footnote for the page, naming the command. With one card its ID
     // fills in as on the card's own hint.
     var note = el("p", "sub account-footnote");
-    note.appendChild(document.createTextNode("Login and plan reports do not verify quota, model access or continuing availability. Nothing checks again on its own: the age shown is when the last explicit check ran, and after a day the card suggests checking again. To record another observation, run "));
+    note.appendChild(document.createTextNode("Login and plan reports do not verify quota, model access or continuing availability. Opening Accounts in a panel with changes allowed runs one bounded check for unchecked or older accounts; to check again manually, run "));
     if (!cards.length) return;
     note.appendChild(accountCheckCommand(cards.length === 1 ? cards[0] : null));
     note.appendChild(document.createTextNode(cards.length === 1 && state.identifiers ? "." : state.identifiers ? " with the card's connection ID." : " with the card's connection ID (Show identifiers to see it)."));
     pane.appendChild(note);
+    maybeAutoCheckAccounts(cards);
   }
 
   // ---- How to add an account, add a route and change the order ----
@@ -2553,6 +3033,8 @@
     var active = document.activeElement, inPane = pane.contains(active), inPicker = $("picker").contains(active);
     var key = inPane ? focusKey(active, pane) : inPicker ? focusKey(active, $("picker")) : null;
     retainedRouteEditor = !navigated && !force && r.view === "routes" && routeEdit.data && changesOn() && state.server.routeChanges === "person" ? pane.querySelector(".route-editor") : null;
+    // Before the page is drawn, so the list it shows includes this read.
+    if (state.noticeRead !== d) { state.noticeRead = d; postBrowserNotices(noticeStep(d)); }
     try {
       $("layout").dataset.view = r.view;
       renderPicker(d, r);
@@ -2575,8 +3057,7 @@
     // A render that worked ends the failure banner an earlier render left.
     if (state.notice.indexOf("render") === 0) notice("render", "");
     renderReadline();
-    var needs = list(d.needsYou).length;
-    document.title = (needs ? "(" + needs + ") " : "") + "looptender";
+    updateTitle();
     // The needs-you line is announced when it changes, not on every read, so
     // a read does not talk over the outcome of a change.
     var needsSaid = (d.needsLine || "Needs you: unknown") + ".";

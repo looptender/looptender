@@ -6,6 +6,7 @@ package decide
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -112,6 +113,11 @@ type Observation struct {
 	// LimitWindow, when known, is which usage window is blocked: the one
 	// that lifts at ResetsAt (LimitWindow).
 	LimitWindow LimitWindow
+	// TurnModel is the model the conversation's latest turn request ran with,
+	// when the adapter can tell (BB's client/turn/requested execution.model);
+	// empty otherwise. Only the model step-down reads it, to step back only
+	// a conversation still on the model it was stepped down to.
+	TurnModel string
 	// AwaitingInput means the session is blocked on a person: a pending
 	// permission prompt, question, or form, reported by the provider.
 	AwaitingInput bool
@@ -163,11 +169,26 @@ type Control struct {
 // Input is everything Decide needs.
 type Input struct {
 	AssignmentReady int // exact current typed readiness, evaluated by the supervisor
+	// UsageWarning: the loop's usage watch has a warning its agent has not
+	// been sent (the weekly window runs out before it resets at the rate so
+	// far). It rides on an ordinary wake, or wakes an idle session that
+	// waits on its children once.
+	UsageWarning bool
+	// HostOverload: this computer is overloaded while the loop's children
+	// run, and the session has not been told in this episode. It wakes an
+	// idle session that waits on its children once, with a count only.
+	HostOverload bool
 	// ObservedOnly: the target is observed, never woken (a sessionpipe
 	// target). No rule may send to it, re-prompt it, stop it or move it; the
 	// state is recorded, a gone target is held for a person, and nothing else
 	// is done.
-	ObservedOnly      bool
+	ObservedOnly bool
+	// ObservedWake: with ObservedOnly, the loop opted in to waking the
+	// session (sessionpipe.send: wake_only). The ordinary rules run, and only
+	// an ordinary wake of an idle session, and the holds, survive: a nudge,
+	// a re-prompt, a child-error or assignment wake, a stop, a handoff and a
+	// switch-back are still never made.
+	ObservedWake      bool
 	Obs               Observation
 	Control           Control
 	InWindow          bool
@@ -244,6 +265,10 @@ type Input struct {
 	// IdleSpacing spaces idle wakes that changed nothing; off unless
 	// loop.progress.idle_spacing is set. See IdleSpacing.
 	IdleSpacing IdleSpacing
+
+	// QuotaSwitch configures the opt-in quota switch threshold evaluated at
+	// turn end against the active route's structured quota window reading.
+	QuotaSwitch QuotaSwitch
 }
 
 // IdleSpacing is the opt-in rule that spaces idle wakes after which no
@@ -370,7 +395,12 @@ type Decision struct {
 	// caller never matches on Reason text. The parent is idle on purpose while
 	// other children run: it gets the notice alone, not the task prompt.
 	ChildErrorWake bool
-	AssignmentWake bool
+	// UsageWarningWake is set only when the usage warning caused this wake
+	// by itself, while children run: the session gets the notice alone.
+	UsageWarningWake bool
+	// HostOverloadWake is set only when the overload caused this wake.
+	HostOverloadWake bool
+	AssignmentWake   bool
 	// DeferredInteraction is set only when the deferred-interaction rule itself
 	// produced an AwaitUser, so a caller never matches on Reason text.
 	DeferredInteraction bool
@@ -389,6 +419,9 @@ type Decision struct {
 	// IdleSpacing spaces. IdleWait is set only when that wake was spaced.
 	IdleWake bool
 	IdleWait IdleWait
+	// QuotaSwitch is set only when the opt-in quota switch threshold caused
+	// this Handoff at turn end.
+	QuotaSwitch bool
 }
 
 // SessionLostReason is fixed text. It names the way out: a person decides to
@@ -450,6 +483,59 @@ const HandoffDeferredReason = "handoff deferred: no fallback could be confirmed 
 
 // Decide applies the rules in priority order. Stop and pause always win.
 func Decide(in Input) Decision {
+	if in.ObservedOnly && in.ObservedWake {
+		return observedWake(in)
+	}
+	return decideRules(in)
+}
+
+// ObservedWakeSuffix ends the reason a woken-on-opt-in observed target gets
+// when a rule wanted something other than a wake.
+const ObservedWakeSuffix = "; observed with wake only: looptender wakes this session when it is idle and never nudges, re-prompts, stops or moves it"
+
+// observedWake runs the ordinary rules for a target that may be woken and
+// keeps only what such a target allows.
+func observedWake(in Input) Decision {
+	if in.Control.Stop {
+		return none(ObservedStopReason)
+	}
+	ordinary := in
+	ordinary.ObservedOnly, ordinary.ObservedWake = false, false
+	d := decideRules(ordinary)
+	switch {
+	case d.Action == None, d.Action == AwaitUser:
+		return d
+	case OrdinaryIdleWake(d):
+		return d
+	}
+	s := observedReason(in.Obs)
+	return none(strings.TrimSuffix(s, ObservedReasonSuffix) + ObservedWakeSuffix)
+}
+
+// IdleWakeReason is the reason of the ordinary wake of an idle session.
+const IdleWakeReason = "idle"
+
+// OrdinaryIdleWake reports whether d is the ordinary wake of an idle
+// session (the "idle" rule) and nothing more: IdleWake is set and no other
+// flag of the Decision whose name ends in Wake is, so a notice wake (child
+// errors, a usage warning, an overloaded computer, an assignment) is not, and
+// neither is any wake kind added later. It is an allow-list: only this one
+// wake is sent to an observed session that opted in.
+func OrdinaryIdleWake(d Decision) bool {
+	if d.Action != Wake || !d.IdleWake || d.Reason != IdleWakeReason {
+		return false
+	}
+	v := reflect.ValueOf(d)
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Type().Field(i)
+		if f.Name != "IdleWake" && strings.HasSuffix(f.Name, "Wake") && f.Type.Kind() == reflect.Bool && v.Field(i).Bool() {
+			return false
+		}
+	}
+	return true
+}
+
+func decideRules(in Input) Decision {
 	c := in.Control
 	o := in.Obs
 	if c.Stop && in.ObservedOnly {
@@ -513,6 +599,12 @@ func Decide(in Input) Decision {
 			if childErrorWake(in) {
 				return Decision{Action: Wake, Reason: ChildErrorWakeReason, ChildErrorWake: true}
 			}
+			if usageWarningWake(in) {
+				return Decision{Action: Wake, Reason: UsageWarningWakeReason, UsageWarningWake: true}
+			}
+			if hostOverloadWake(in) {
+				return Decision{Action: Wake, Reason: HostOverloadWakeReason, HostOverloadWake: true}
+			}
 			if in.AssignmentReady <= 0 || o.State != Idle || o.ChildrenUnverified {
 				return none("child work running")
 			}
@@ -551,6 +643,10 @@ func Decide(in Input) Decision {
 		if in.SwitchBackReady && o.ActiveChildren == 0 {
 			return Decision{Action: SwitchBack, Reason: "primary's limit has reset"}
 		}
+		// Opt-in quota switch threshold: evaluated at turn end only.
+		if qs, ok := decideQuotaSwitch(in); ok {
+			return qs
+		}
 		// Spacing only: every hold, gate and wait above still comes first, and
 		// a switch-back or a child-error notice is never spaced.
 		if idleSpaced(in) {
@@ -562,7 +658,7 @@ func Decide(in Input) Decision {
 			}
 			return Decision{Action: Wake, Reason: "independent assignments need coordinator", IdleWake: true, AssignmentWake: true}
 		}
-		return Decision{Action: Wake, Reason: "idle", IdleWake: true}
+		return Decision{Action: Wake, Reason: IdleWakeReason, IdleWake: true}
 	case Active:
 		// A turn that went silent before a network outage and stayed silent
 		// after it may be hung. Nothing is sent into it: a nudge would only
@@ -893,6 +989,34 @@ func Attempted(a Action, c Counters, at time.Time) Counters {
 		c.LastRepromptAt = at
 	}
 	return c
+}
+
+// UsageWarningWakeReason is the reason of the one wake a usage warning
+// causes by itself, while children run.
+const UsageWarningWakeReason = "usage window running out while children run"
+
+// usageWarningWake: the same conditions as the child-error wake's, for a
+// pending usage warning.
+func usageWarningWake(in Input) bool {
+	o := in.Obs
+	return in.UsageWarning &&
+		o.State == Idle && in.InWindow && !o.ChildrenUnverified &&
+		!o.RetryUnverified && !o.Retrying && o.Queued == 0 && o.Background == 0 &&
+		in.SinceWake >= in.MinWakeInterval
+}
+
+// HostOverloadWakeReason is the reason of the one wake an overloaded
+// computer causes while children run.
+const HostOverloadWakeReason = "host overloaded while children run"
+
+// hostOverloadWake: the same conditions as the child-error wake's, for an
+// overload the session has not been told about.
+func hostOverloadWake(in Input) bool {
+	o := in.Obs
+	return in.HostOverload &&
+		o.State == Idle && in.InWindow && !o.ChildrenUnverified &&
+		!o.RetryUnverified && !o.Retrying && o.Queued == 0 && o.Background == 0 &&
+		in.SinceWake >= in.MinWakeInterval
 }
 
 // ChildErrorWakeReason is the reason of the one wake that errored children

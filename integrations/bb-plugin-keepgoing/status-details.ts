@@ -73,12 +73,29 @@ export const detailsSchema = z.object({
   // status --json deadline/deadlineReached, sendAllowance, sendRecord, diskSpace
   // and unreadable. Each is present only when there is something to say.
   deadline: z.object({ at: z.string().max(64), reached: z.boolean().optional() }).optional(),
-  // Names of the fields above that status sent in a form this plugin could not read.
-  unparsed: z.array(z.string().max(32)).max(8).optional(),
   sends: z.object({ max: z.number().int().nonnegative(), used: z.number().int().nonnegative().optional(), remaining: z.number().int().nonnegative().optional(), reached: z.boolean(), unavailable: z.boolean().optional() }).optional(),
   sendRecord: z.string().max(600).optional(),
   disk: z.object({ level: z.enum(["low", "critical"]), message: z.string().max(400) }).optional(),
   unreadable: z.array(z.object({ file: z.string().max(64), problem: z.string().max(40), offset: z.number().int().nonnegative().optional(), remedy: z.string().max(1200) })).max(8).optional(),
+  // Names of the fields above that status sent in a form this plugin could not read.
+  unparsed: z.array(z.string().max(32)).max(8).optional(),
+  // The no-progress flag, only while status says it is raised ("flagged"): status's own sentence.
+  noProgress: z.object({ text: z.string().max(400) }).optional(),
+  // status --json buildFreshness (looptender's own words, shared with the dock and the menu): how this
+  // loop's supervisor build compares with the installed one. Absent from a looptender that does not send it.
+  // status --json archived (from a looptender that can archive a loop): when, and the hold it had. Absent otherwise.
+  // `at` is absent (and `unreadable` set) when the record could not be read or has no usable date: then it is shown as unreadable, never as a date.
+  // The archive note is not carried: status sends it only with --private and the card never shows it.
+  archived: z.object({ at: z.string().max(40).optional(), hold: z.string().max(40).optional(), unreadable: z.boolean().optional() }).optional(),
+  // A record left on a loop that supervises again (status --json archiveLapsed); it has no effect.
+  archiveLapsed: z.object({ at: z.string().max(40).optional() }).optional(),
+  // status --json wait (looptender wait): what the loop waits for. Its sentence and note are not read.
+  wait: z.object({ until: z.string().max(60), untilTime: z.string().max(40).optional(), expiresAt: z.string().max(40).optional() }).optional(),
+  buildFreshness: z.object({ state: z.string().max(24), text: z.string().max(200), detail: z.string().max(600).optional(), command: z.string().max(400).optional(), action: z.string().max(600).optional() }).optional(),
+  observed: z.boolean().optional(),
+  observedWakes: z.boolean().optional(),
+  targetSession: z.string().max(160).optional(),
+  sessionpipeWake: z.object({ text: z.string().max(400), held: z.boolean().optional(), outcome: z.string().max(32).optional(), code: z.string().max(32).optional() }).optional(),
 });
 export type StatusDetails = z.infer<typeof detailsSchema>;
 
@@ -116,10 +133,29 @@ export function pluginBuildLine(built: string | null, running: string | null): s
   return `Plugin: built from looptender ${built}; the looptender it runs is ${running}. These are different builds. If one of them was installed recently, BB may still be serving the plugin from before it; see the plugin README, "After installing a new build".`;
 }
 
+/** Text cut at the last whole word that fits, with an ellipsis; never mid-word, never inside a character. Short enough text is returned as it is. */
+export function cutAtWord(text: string, max: number): string {
+  const chars = Array.from(text); // by code point: a surrogate pair is never split
+  if (chars.length <= max) return text;
+  const room = chars.slice(0, max - 1).join("");
+  const at = room.lastIndexOf(" ");
+  return `${(at > max / 2 ? room.slice(0, at) : room).trimEnd().replace(/[,;:\u2014-]+$/, "").trimEnd()}…`;
+}
+
+const ABBREVIATIONS = /(?:^|[\s(])(?:e\.g|i\.e|etc|vs|dr|mr|mrs|ms|prof|inc|ltd|no|approx|st|cf|fig)\.$/i;
+/** The first sentence of a text. A full stop after a common abbreviation does not end it, and a first "sentence" that is only a few characters falls back to a cut at a word. */
+export function firstSentenceOf(text: string, max = 200): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  const end = /[.!?](?=\s|$)/g;
+  let m: RegExpExecArray | null, cut = -1;
+  while ((m = end.exec(t))) { if (!ABBREVIATIONS.test(t.slice(0, m.index + 1))) { cut = m.index + 1; break; } }
+  const one = cut < 0 ? t : t.slice(0, cut);
+  return cutAtWord(Array.from(one).length < 8 && one.length < t.length ? t : one, max);
+}
+
 /** A control note cut to one short line for a listing; the full note stays in the loop's own detail. */
 export function shortNote(note: string, max = 120): string {
-  const one = note.replace(/\s+/g, " ").trim();
-  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
+  return cutAtWord(note.replace(/\s+/g, " ").trim(), max);
 }
 
 export function notShownLine(registered: readonly string[], shown: readonly string[]): string {
@@ -134,6 +170,23 @@ export function notShownLine(registered: readonly string[], shown: readonly stri
  * but nothing checked on its new target, which is not "never". */
 export function lastLabel(lastState: string | null | undefined, details: { moved?: unknown } | null | undefined): string {
   return details?.moved ? "none yet (new target, not yet checked)" : lastState || "never";
+}
+
+const LIMIT_WAIT_LISTING_WHY: Record<string, string> = {
+  limit_failover_disabled: "failover disabled",
+  limit_no_fallback: "no confirmed fallback",
+  limit_refusal_unrecovered: "unrecovered refusal",
+};
+
+/** Concise tab-prefixed usage-limit status field for `bb looptender status`, or empty when none is active. */
+export function limitWaitListingTag(d: StatusDetails | undefined): string {
+  const wait = d?.limitWait;
+  if (!wait || wait.state === "none" || wait.resetPassed || wait.held) return "";
+  const parts: string[] = [];
+  const why = LIMIT_WAIT_LISTING_WHY[wait.reason ?? ""];
+  if (why) parts.push(why);
+  if (wait.resetIn) parts.push(`resets in ${wait.resetIn}`);
+  return parts.length > 0 ? `\tlimit=waiting (${parts.join("; ")})` : "\tlimit=waiting";
 }
 
 export function dateLabel(value: string | null | undefined): string {
@@ -154,7 +207,7 @@ const UNREADABLE_WHAT: Record<string, string> = {
 type Unreadable = NonNullable<StatusDetails["unreadable"]>[number];
 /** `<file> could not be read (<why>)`, as status prints it. */
 export const unreadableHead = (u: Unreadable): string => `${u.file} could not be read (${UNREADABLE_WHAT[u.problem] ?? "reason not recorded"}${u.offset !== undefined ? `, at byte ${u.offset}` : ""})`;
-const firstSentence = (text: string): string => { const m = /^.*?[.!?](?=\s|$)/s.exec(text.trim()); const one = m ? m[0] : text.trim(); return one.length > 240 ? `${one.slice(0, 239).trimEnd()}…` : one; };
+const firstSentence = (text: string): string => firstSentenceOf(text, 240);
 
 /** status: "the reset falls after this loop's deadline: the loop will be held by the deadline on its first check after it, before this wait can end". */
 const AFTER_DEADLINE = "the reset falls after this loop's deadline: the loop will be held by the deadline on its first check after it, before this wait can end";
@@ -165,6 +218,34 @@ const resetAfterDeadline = (d: StatusDetails | undefined): boolean => {
 
 /** The send allowance as status prints it: `used/max attempts reserved; N remaining`. */
 const sendsText = (s: NonNullable<StatusDetails["sends"]>) => s.unavailable || s.used === undefined || s.remaining === undefined ? `${s.max} allowed; the count is unavailable` : `${s.used}/${s.max} attempts reserved; ${s.remaining} remaining`;
+
+/** "Archived since <date> · unarchive to use it again", as looptender words an archived loop: no resume applies. */
+export const archivedLine = (a: NonNullable<StatusDetails["archived"]>): string =>
+  a.unreadable || !a.at || dateLabel(a.at) === "unavailable" ? ARCHIVE_UNREADABLE : `Archived since ${dateLabel(a.at)} · unarchive to use it again`;
+export const ARCHIVE_UNREADABLE = "The archive record could not be read, so no resume command is shown; run looptender status for this loop";
+export const archiveLapsedLine = (l: NonNullable<StatusDetails["archiveLapsed"]>): string =>
+  `An earlier archive record${l.at && dateLabel(l.at) !== "unavailable" ? ` (${dateLabel(l.at)})` : ""} is left on this loop, which supervises again; it has no effect`;
+
+/** What status calls a hold, in the sentence it puts after a no-progress flag recorded before the hold. */
+const HELD_WORD: Record<string, string> = { "stop requested": "stopped", completed: "completed", "awaiting user": "awaiting a person", paused: "paused", disabled: "disabled" };
+/** status's own sentence for a raised no-progress flag, qualified as status qualifies it for a held loop. */
+export function noProgressLine(controlState: string, d: StatusDetails | undefined): string | undefined {
+  if (!d?.noProgress) return undefined;
+  const held = HELD_WORD[controlState];
+  return held ? `${d.noProgress.text} (recorded before the hold; the loop is held (${held}), so this is not current)` : d.noProgress.text;
+}
+
+/** The loop's build freshness as looptender worded it; nothing when it sent none or the build is current. */
+export function freshnessToShow(d: StatusDetails | undefined): NonNullable<StatusDetails["buildFreshness"]> | undefined {
+  const f = d?.buildFreshness;
+  return f && f.state !== "current" ? f : undefined;
+}
+
+/** Plain role sentence for an observed sessionpipe loop, or undefined for ordinary targets. */
+export function observedRoleLabel(d: StatusDetails | undefined): string | undefined {
+  if (!d?.observed && d?.targetAdapter !== "sessionpipe") return undefined;
+  return d?.observedWakes ? "Observed, woken only when idle" : "Observed, never woken";
+}
 
 /** status reported unreadable records, whether or not their details could be read. */
 export const recordsUnreadable = (d: StatusDetails | undefined): boolean => !!d?.unreadable?.length || !!d?.unparsed?.includes("unreadable");
@@ -192,25 +273,35 @@ export function reasonLines(controlState: string, note: string | null, d: Status
       : `Long limit wait: no handoff possible; resets ${dateLabel(wait.resetsAt)}${wait.resetIn ? ` (in ${wait.resetIn})` : ""}; the loop sends nothing until then${resetAfterDeadline(d) ? `; ${AFTER_DEADLINE}` : ""}`);
   }
   if (d?.schedule?.overdue) out.push(`Needs you: ${d.schedule.message ?? "no check has run for longer than usual"}`);
+  if (d?.sessionpipeWake?.text) out.push(`Wake: ${firstSentence(d.sessionpipeWake.text)}`);
+  const np = noProgressLine(controlState, d);
+  if (np) out.push(np);
   if (note && controlState !== "enabled") out.push(`Note: ${shortNote(note, 160)}`);
   return out;
 }
 
 /** A tooltip cut to a length a person can read; the full text stays in the expanded view. */
 export function boundedTitle(text: string, max = 600): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+  return cutAtWord(text, max);
 }
 
 export function diagnosticLines(d: StatusDetails | undefined, target: string, supervising: boolean): string[] {
   if (!d) return ["Detailed status unavailable from this build"];
+  const role = observedRoleLabel(d);
+  const targetName = role && d.targetSession ? d.targetSession : (d.targetThread ?? d.targetAdapter);
+  const targetScope = role ?? (supervising ? "this thread" : "not this thread");
   const lines = [
     `Status read: ${dateLabel(d.readAt)} (snapshot)`,
     goalLabel(d.goal, d.goalState),
     `Task completion: ${d.completed ? "declared; not independently verified" : "not declared"}`,
-    `Current target: ${d.targetThread ?? d.targetAdapter} (${target})${supervising ? "; this thread" : "; not this thread"}${d.targetConfigured === false ? "; missing or disabled in config" : ""}`,
+    `Current target: ${targetName} (${target}); ${targetScope}${d.targetConfigured === false ? "; missing or disabled in config" : ""}`,
+    ...(role ? [`Mode: ${role}`] : []),
+    ...(d.sessionpipeWake?.text ? [`Wake: ${d.sessionpipeWake.text}`] : []),
     `Build: ${buildSummary(d.runtime).text}${d.runtime?.installedBuild && !buildSummary(d.runtime).differs ? ` · installed ${d.runtime.installedBuild}` : ""}`,
     ...(d.targetProvider ? [`Provider: ${d.targetProvider}${d.targetModel ? ` · model ${d.targetModel}` : ""} (configured)`] : []),
     ...(d.moved ? [`Moved: ${d.moved.text}`] : []),
+    ...(d.archived ? [archivedLine(d.archived)] : []),
+    ...(d.archiveLapsed ? [archiveLapsedLine(d.archiveLapsed)] : []),
     // The words `looptender status` prints, with the successor when it names one.
     ...(d.supersededBy !== undefined ? [`Superseded: successor reference is recorded${d.supersededBy ? ` (${d.supersededBy})` : ""}; resume and takeover are refused`] : []),
     d.runtime ? `Check evidence: ${d.runtime.state} · ${d.runtime.freshness} · source ${d.runtime.source}` : "Check evidence: unavailable from this build",

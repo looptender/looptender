@@ -18,10 +18,11 @@ import (
 // fakeSessionpipe stands in for the sessionpipe command: the test binary is
 // the executable doctor resolves (on every platform), and these answers are
 // what it "prints". It records every argument list, so the test can show
-// doctor ran only the two read-only commands.
+// doctor ran only its read-only commands.
 type fakeSessionpipe struct {
 	version string
 	status  string
+	pool    string
 	calls   [][]string
 }
 
@@ -35,6 +36,11 @@ func (f *fakeSessionpipe) run(_ context.Context, _ string, args []string, _ map[
 			return nil, errors.New("exit status 1")
 		}
 		return []byte(f.status), nil
+	case "pool --json":
+		if f.pool == "" {
+			return nil, errors.New("exit status 1")
+		}
+		return []byte(f.pool), nil
 	}
 	return nil, errors.New("unexpected command")
 }
@@ -83,7 +89,7 @@ func TestDoctorSessionpipeTarget(t *testing.T) {
 		t.Errorf("no sink for the file: %+v", got)
 	}
 	for _, call := range f.calls {
-		if j := strings.Join(call, " "); j != "--version" && j != "status --json" {
+		if j := strings.Join(call, " "); j != "--version" && j != "status --json" && j != "pool --json" {
 			t.Errorf("doctor ran sessionpipe %s", j)
 		}
 	}
@@ -193,5 +199,127 @@ func TestDoctorCommandOnAnObservedTarget(t *testing.T) {
 	}
 	if seen["agent.primary.observed"].Status != "ok" || seen["agent.primary.events_file"].Status != "error" {
 		t.Fatalf("checks: %+v", seen)
+	}
+}
+
+func TestDoctorSessionpipeAskStatus(t *testing.T) {
+	for name, tc := range map[string]struct {
+		out    string
+		err    error
+		status string
+	}{
+		"on and running": {"  ask: on\n  daemon: running (pid 1, 0.18.2)\n  agents: claude-code\n  folders: /x\n", nil, "ok"},
+		"off":            {"  ask: off (`sessionpipe ask on` turns it on)\n  daemon: running (pid 1, 0.18.2)\n", nil, "error"},
+		"no daemon":      {"  ask: on\n  daemon: not running (`sessionpipe ask on` installs it as a service)\n", nil, "error"},
+		"odd page":       {"something else\n", nil, "unavailable"},
+		"failed":         {"", errors.New("exit status 1"), "unavailable"},
+	} {
+		var r doctorReport
+		doctorSessionpipeAsk(&r, "agent.primary.send", []byte(tc.out), tc.err)
+		if len(r.Checks) != 1 || r.Checks[0].Status != tc.status || strings.Contains(r.Checks[0].Message+r.Checks[0].Fix, "/x") {
+			t.Errorf("%s: %+v, want %s", name, r.Checks, tc.status)
+		}
+	}
+}
+
+// A wake still running shows in status and doctor, with how long it has been
+// outstanding; a long one is a warning.
+func TestSessionpipeOutstandingWakeShows(t *testing.T) {
+	stateDir := t.TempDir()
+	target := filepath.Join(stateDir, "targets", "primary")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// This test process stands in for the running ask: alive, and its start
+	// time unrecorded (so only the process ID is compared).
+	write := func(started time.Time, outcome string) {
+		b, _ := json.Marshal(map[string]any{"pid": os.Getpid(), "startedAt": started, "outcome": outcome})
+		if err := os.WriteFile(filepath.Join(target, "sessionpipe-ask.json"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	write(now.Add(-2*time.Hour), "delivering")
+	pw := pendingSessionpipeWake(stateDir, "primary", now, time.Hour)
+	if pw == nil || pw.ForSeconds < 7000 || !strings.Contains(pw.Text, "has been running since") {
+		t.Fatalf("pending wake: %+v", pw)
+	}
+	var r doctorReport
+	doctorSessionpipeWake(&r, "agent.primary.wake", stateDir, now, time.Hour)
+	if r.Checks[0].Status != "warning" || !strings.Contains(r.Checks[0].Message, "2h0m0s") {
+		t.Fatalf("doctor: %+v", r.Checks)
+	}
+	write(now.Add(-time.Minute), "delivering")
+	r = doctorReport{}
+	doctorSessionpipeWake(&r, "agent.primary.wake", stateDir, now, time.Hour)
+	if r.Checks[0].Status != "ok" || !strings.Contains(r.Checks[0].Message, "being answered") {
+		t.Fatalf("a short wake: %+v", r.Checks)
+	}
+	write(now.Add(-time.Minute), "answered")
+	if pendingSessionpipeWake(stateDir, "primary", now, time.Hour) != nil {
+		t.Fatal("an answered wake shows as pending")
+	}
+	write(now.Add(-25*time.Hour), "delivering")
+	if pendingSessionpipeWake(stateDir, "primary", now, time.Hour) != nil {
+		t.Fatal("a wake over a day old holds the next one back")
+	}
+}
+
+// After a wake that did not get through, status and doctor say the next is
+// held, why and until when.
+func TestSessionpipeHeldWakeShows(t *testing.T) {
+	stateDir := t.TempDir()
+	target := filepath.Join(stateDir, "targets", "primary")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	b, _ := json.Marshal(map[string]any{"startedAt": now.Add(-10 * time.Minute), "outcome": "refused", "code": "ask_off"})
+	if err := os.WriteFile(filepath.Join(target, "sessionpipe-ask.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pw := pendingSessionpipeWake(stateDir, "primary", now, time.Hour)
+	if pw == nil || !pw.Held || pw.Code != "ask_off" || !strings.Contains(pw.Text, "last wake refused: ask_off, next attempt after ") {
+		t.Fatalf("held wake: %+v", pw)
+	}
+	var r doctorReport
+	doctorSessionpipeWake(&r, "agent.primary.wake", stateDir, now, time.Hour)
+	if r.Checks[0].Status != "warning" || !strings.Contains(r.Checks[0].Message, "The next wake is held: last wake refused: ask_off") || !strings.Contains(r.Checks[0].Fix, "sessionpipe ask on") {
+		t.Fatalf("doctor: %+v", r.Checks)
+	}
+	if pendingSessionpipeWake(stateDir, "primary", now.Add(time.Hour), time.Hour) != nil {
+		t.Fatal("still held after the interval")
+	}
+}
+
+func TestDoctorSessionpipePoolStatus(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		out     string
+		err     error
+		status  string
+		wantSub string
+	}{
+		"off":        {`{"on":false,"listening":false,"port":0,"accounts":[]}`, nil, "ok", "pool is off"},
+		"down":       {`{"on":true,"listening":false,"port":47812,"accounts":[{"label":"FICTIONAL-LABEL","email":"a@example.com","enabled":true,"status":"ready"}]}`, nil, "error", "connection refused"},
+		"ready":      {`{"on":true,"listening":true,"port":47812,"accounts":[{"label":"FICTIONAL-LABEL","email":"a@example.com","enabled":true,"status":"ready","current":true},{"enabled":true,"status":"limited"}]}`, nil, "ok", "1 of 2 enabled accounts ready"},
+		"exhausted":  {`{"on":true,"listening":true,"port":47812,"accounts":[{"enabled":true,"status":"limited","until":"2026-11-25T13:00:00Z"}]}`, nil, "warning", "none ready"},
+		"degraded":   {`{"on":true,"listening":true,"port":47812,"accounts":[{"enabled":true,"status":"error"}]}`, nil, "warning", "1 enabled accounts in error"},
+		"empty":      {`{"on":true,"listening":true,"port":47812,"accounts":[]}`, nil, "warning", "no enabled accounts"},
+		"bad shape":  {`{"other":true}`, nil, "unavailable", "raw output is withheld"},
+		"cli failed": {"", errors.New("exit status 1"), "unavailable", "raw output is withheld"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var r doctorReport
+			doctorSessionpipePool(&r, "agent.primary.pool", []byte(tc.out), tc.err, now)
+			if len(r.Checks) != 1 || r.Checks[0].Status != tc.status || !strings.Contains(r.Checks[0].Message, tc.wantSub) {
+				t.Fatalf("got %+v, want status %s containing %q", r.Checks, tc.status, tc.wantSub)
+			}
+			for _, secret := range []string{"FICTIONAL-LABEL", "example.com"} {
+				if strings.Contains(r.Checks[0].Message+r.Checks[0].Fix, secret) {
+					t.Fatalf("pool check leaked %q: %+v", secret, r.Checks[0])
+				}
+			}
+		})
 	}
 }

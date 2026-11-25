@@ -24,15 +24,15 @@ test("card shows completion and evidence; failed refresh labels retained data an
     assert.match(title, /Current target: thr_example/); assert.match(title, /Last recorded action: wake · failed/);
     assert.match(title, /running supervisor not confirmed/); assert.match(title, /Last sent: unavailable/);
     // A held loop says where a person resumes it; the plugin offers no Resume.
-    assert.ok(ui.getByText(/A person resumes this from an ordinary terminal/)); assert.equal(ui.queryByRole("button", { name: "Resume" }), null);
+    assert.ok(ui.getByText(/^Marked finished\. Resuming it reopens it from the looptender panel \(looptender panel\), or from a terminal outside BB with looptender resume\./)); assert.equal(ui.queryByRole("button", { name: "Resume" }), null);
     assert.ok(ui.getByText('looptender resume -c "/private/example/keepgoing.yaml"'));
     phase = "lost"; await ui.behavior.emitRealtime("changed", {});
     await ui.findByRole("alert"); assert.ok(ui.getByText(/previous snapshot/));
-    assert.equal(ui.queryByText(/A person resumes this from an ordinary terminal/), null);
+    assert.equal(ui.queryByText(/from the looptender panel \(looptender panel\), or from a terminal outside BB with looptender resume/), null);
     assert.equal(ui.queryByRole("button", { name: "Add to Looptender" }), null);
     assert.ok(!ui.container.textContent?.includes("PRIVATE"));
     phase = "ready"; fireEvent.click(ui.getByRole("button", { name: "Refresh status" }));
-    await ui.findByText(/A person resumes this from an ordinary terminal/); assert.equal(ui.queryByRole("alert"), null);
+    await ui.findByText(/from the looptender panel \(looptender panel\), or from a terminal outside BB with looptender resume/); assert.equal(ui.queryByRole("alert"), null);
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
 
@@ -107,7 +107,7 @@ test("the status label keeps the state word first and adds the running build, an
   try { assert.ok(await a.findByText("looptender: enabled v0.2.0-dev.ccd2310")); } finally { a.lifecycle.unmount(); cleanup(); }
   const b = render(withBuild({ recordedBuild: "v0.1.0", installedBuild: "v0.2.0", binaryComparison: "different" }), "thr_build_differs");
   try {
-    const label = await b.findByText("looptender: enabled v0.1.0 (installed v0.2.0)");
+    const label = await b.findByText("looptender: enabled v0.1.0 · build differs");
     assert.match(label.closest("[title]")?.getAttribute("title") ?? "", /Build: last check ran v0\.1\.0 · installed v0\.2\.0/);
   } finally { b.lifecycle.unmount(); cleanup(); }
   // An older looptender, or a build with no version, keeps the plain label.

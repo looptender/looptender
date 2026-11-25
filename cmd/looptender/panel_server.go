@@ -58,7 +58,7 @@ const panelExpiredPage = `<!doctype html>
 <body>
 <header class="bar">
   <div class="bar-in">
-    <p class="brand"><svg viewBox="0 0 20 20" aria-hidden="true" class="mark"><path d="M15.5 6.2A6.5 6.5 0 1 0 16.5 10"/><path d="M16.8 3.4v3.4h-3.4"/></svg><span>looptender</span></p>
+    <p class="brand"><svg viewBox="0 0 32 32" aria-hidden="true" class="mark"><path d="M24.2 10.6 A10 10 0 1 0 26 16"/><path d="M25.6 6.2 V11.2 H20.6"/><rect x="11" y="14.5" width="10" height="3"/></svg><span>looptender</span></p>
   </div>
 </header>
 <main class="notice">
@@ -332,6 +332,10 @@ type panelHandler struct {
 	// changes is set only on a server started with --allow-changes. Without
 	// it no write request is routed at all.
 	changes *panelChanges
+	// notifySecret keys the notification form value; notifyDir is where the
+	// shared notification files are.
+	notifySecret []byte
+	notifyDir    string
 }
 
 // allowOpening is the guard for an opening address. It is the page guard
@@ -357,12 +361,23 @@ func (h *panelHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		// A change: its own stricter guard, then the session, then the
 		// anti-forgery value the change handler checks.
-		if h.changes == nil || !panelAllowPost(r, h.state.port) {
+		if !panelAllowPost(r, h.state.port) {
 			http.Error(w, "refused", http.StatusForbidden)
 			return
 		}
 		rest, ok := h.state.authorize(r)
 		if !ok {
+			http.Error(w, "refused", http.StatusForbidden)
+			return
+		}
+		// The notification choices are not a loop change: available on a
+		// read-only panel too, with their own anti-forgery value.
+		if rest == notifyPath {
+			h.state.touch()
+			h.serveNotify(w, r, h.state.sessionOf(r))
+			return
+		}
+		if h.changes == nil {
 			http.Error(w, "refused", http.StatusForbidden)
 			return
 		}
@@ -410,10 +425,15 @@ func (h *panelHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *panelHandler) served(w http.ResponseWriter) func(session string) {
 	return func(session string) {
 		out := h.page.served
+		out.NotifyForm = notifyFormValue(h.notifySecret, session)
 		now := h.state.now().UTC()
 		if h.changes == nil {
 			out.Changes = "off"
 			out.ChangesText = txt("Read-only: this page cannot pause, resume, stop or start anything.")
+		} else if h.changes.controlsOnly {
+			since := h.changes.since
+			out.Changes, out.ChangesSince, out.Form = "on", &since, h.changes.prepareValue(session)
+			out.ChangesText = txt("Pause, stop and resume allowed for "+dockSpan(now.Sub(since))+", each after a review: started at ", tm(since, "clock"), ". "+panelControlsExposure+" looptender panel --read-only opens a panel that cannot.")
 		} else {
 			out.RouteChanges = "person"
 			if h.changes.caller != "" {
@@ -424,6 +444,8 @@ func (h *panelHandler) served(w http.ResponseWriter) func(session string) {
 			out.AccountQuota = true
 			out.AccountQuotaProviders = panelQuotaProvidersFor(runtime.GOOS, runtime.GOARCH)
 			out.AccountSelectionReview = true
+			out.AccountCheck = true
+			out.AccountRemove = true
 			out.SendAllowanceEdit = h.changes.caller == ""
 			out.AccountConnectProviders = panelConnectProvidersFor(runtime.GOOS, runtime.GOARCH)
 			out.ChangesText = txt("Changes allowed for "+dockSpan(now.Sub(since))+": started with looptender panel --allow-changes at ", tm(since, "clock"), ". "+panelExposure+" looptender panel stop turns them off.")
@@ -491,8 +513,10 @@ func panelControlServe(l net.Listener, state *panelState, record func() panelRec
 			switch req.Op {
 			case "open":
 				rec := record()
-				if rec.Changes && !panelBuildReuseAllowed(rec, req.CallerKind) {
-					reply.Error = "panel build authority differs or is unknown; explicitly stop and restart the panel"
+				// A panel that changes loops acts as the caller that started
+				// it: it opens only for that same caller.
+				if rec.mode() > panelReadOnly && (!panelBuildReuseAllowed(rec, req.CallerKind) || rec.Caller != req.Caller) {
+					reply.Error = "caller authority differs: this panel can change loops for whoever started it, and that is not this caller; explicitly stop and restart the panel"
 					break
 				}
 
@@ -559,11 +583,13 @@ type panelServerConfig struct {
 	refresh    time.Duration
 	staleAfter time.Duration
 	offline    bool
-	// changes: started with --allow-changes, so the page may pause, stop and
-	// resume loops. It never changes while the server runs.
-	changes bool
-	now     func() time.Time
-	ticks   <-chan time.Time
+	// changes: started with --allow-changes, so the page may make every
+	// change it offers; controls: pause, stop and resume only. Neither
+	// changes while the server runs.
+	changes  bool
+	controls bool
+	now      func() time.Time
+	ticks    <-chan time.Time
 }
 
 // panelServerCommand is the background server, run by keepgoing panel as
@@ -578,6 +604,7 @@ func panelServerCommand(e env, args []string) int {
 	staleAfter := fs.Duration("stale-after", defaultStaleAfter, "")
 	offline := fs.Bool("offline", false, "")
 	changes := fs.Bool("allow-changes", false, "")
+	controls := fs.Bool("controls", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *panelDir == "" || *idle <= 0 || *idle > panelMaxIdle || *refresh < dockMinRefresh || *refresh > dockMaxRefresh || *staleAfter <= 0 || !panelSupported() {
 		return exitUsage
 	}
@@ -585,7 +612,7 @@ func panelServerCommand(e env, args []string) int {
 	if err != nil {
 		return exitUsage
 	}
-	return runPanelServer(e.ctx, panelServerConfig{dir: dir, registry: *directory, idle: *idle, refresh: *refresh, staleAfter: *staleAfter, offline: *offline, changes: *changes, now: time.Now})
+	return runPanelServer(e.ctx, panelServerConfig{dir: dir, registry: *directory, idle: *idle, refresh: *refresh, staleAfter: *staleAfter, offline: *offline, changes: *changes, controls: *controls && !*changes, now: time.Now})
 }
 
 func runPanelServer(parent context.Context, c panelServerConfig) int {
@@ -663,13 +690,18 @@ func runPanelServer(parent context.Context, c panelServerConfig) int {
 	page := newDockServer(port, state, reader)
 	page.served = dockServed{SchemaVersion: 1, ServedBy: "panel", IdleSeconds: max(1, int(c.idle/time.Second)),
 		Version: dockBuildLabel(version), VersionText: dockPanelVersionText(version)}
-	handler := &panelHandler{state: state, guard: newDockGuard(port), page: page}
+	nsecret, err := panelRandom(32)
+	if err != nil {
+		return exitFailed
+	}
+	handler := &panelHandler{state: state, guard: newDockGuard(port), page: page, notifySecret: []byte(nsecret), notifyDir: c.dir}
 	rec := panelRecord{SchemaVersion: 1, PID: os.Getpid(), Port: port, StartedAt: c.now().UTC().Truncate(time.Second), IdleSeconds: int(c.idle / time.Second),
-		Instance: state.instance, Registry: registryDir, Version: version, Changes: c.changes, BuildAuthority: panelCallerKind()}
-	if c.changes {
+		Instance: state.instance, Registry: registryDir, Version: version, Changes: c.changes, Controls: c.controls, BuildAuthority: panelCallerKind(), Caller: panelCallerHash()}
+	if c.changes || c.controls {
 		if handler.changes, err = newPanelChanges(ctx, c.registry, reader, rec.StartedAt, c.now); err != nil {
 			return exitFailed
 		}
+		handler.changes.controlsOnly = !c.changes
 		defer handler.changes.closeAccountConnect()
 	}
 	if rec.IdleSeconds < 1 {

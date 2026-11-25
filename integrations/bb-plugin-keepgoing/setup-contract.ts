@@ -24,10 +24,23 @@ export function statusFollowsStandard(status: unknown): boolean {
   const parsed = z.object({ routes: z.object({ source: z.literal("standard") }).passthrough() }).safeParse(status);
   return parsed.success;
 }
+export const continuationCandidateSchema = z.object({
+  configPath: text,
+  loop: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+  displayName: z.string().max(120).optional(),
+  project: z.string().max(120).optional(),
+  sameProject: z.boolean(),
+  controlState: z.string().max(64),
+  archived: z.boolean(),
+});
+export type ContinuationCandidate = z.infer<typeof continuationCandidateSchema>;
+
 export const planSchema = z.object({
   withGoal: z.literal(true).optional(),
   loop: text, project: text, configPath: text, stateDir: text,
   threadId: text, provider: text,
+  // Set when this setup continues an existing loop (--succeeds).
+  succeeds: z.object({ configPath: text, loop: text, displayName: z.string().max(120).optional() }).optional(),
   // Advertised by a CLI whose `start` accepts --json and reports a refusal in it.
   startJson: z.literal(true).optional(),
   limits: z.object({ wakeEvery: text, stallAfter: text, interval: text, backoff: text, maxNudges: z.number().int().positive(), maxReprompts: z.number().int().positive(), maxSends: z.number().int().positive().optional(), noProgressTimeout: text.optional() }),
@@ -75,6 +88,8 @@ export const setupInput = z.object({
   withGoal: z.boolean().optional(),
   name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional(),
   task: z.string().max(262144).optional(), ticket: text.optional(),
+  // Configuration path of an existing loop this setup continues (--succeeds).
+  succeeds: text.optional(),
   // Follow the person's standard route list for handoffs. Off unless chosen.
   followStandard: z.boolean().optional(),
   // The takeover by a new conversation on another provider, when one is
@@ -136,6 +151,14 @@ export function failureMessage(f: SetupFailure, creating: boolean, name?: string
   }
 }
 export const checkSchema = z.object({ id: text, status: z.enum(["ok", "warning", "error", "unavailable"]), message: text, fix: z.string().max(4096).optional() });
+export const threadSetupMetaSchema = z.object({
+  provider: z.string().min(1).max(64),
+  providerLabel: z.string().min(1).max(120).optional(),
+  model: z.string().min(1).max(256).optional(),
+  modelLabel: z.string().min(1).max(120).optional(),
+  reasoningLevel: z.string().min(1).max(64).optional(),
+});
+export type ThreadSetupMeta = z.infer<typeof threadSetupMetaSchema>;
 export const setupResult = z.object({
   ok: z.boolean(), message: z.string(), ticket: z.string().optional(), plan: planSchema.optional(),
   record: recordSchema.optional(), goal: goalSummarySchema.nullable().optional(), goalState: goalStateSchema.optional(), checks: z.array(checkSchema).optional(), canStart: z.boolean().optional(),
@@ -152,5 +175,86 @@ export const setupResult = z.object({
   // On a thread with no setup: "none" when BB's metadata says the thread has
   // not had a turn yet, "unknown" when it cannot tell. Absent from older builds.
   conversation: conversationSchema.optional(),
+  // Thread title from BB metadata (never transcript content), used for a
+  // readable default loop slug.
+  threadTitle: z.string().max(200).optional(),
+  // Running provider and model metadata from BB (never transcript content),
+  // so Add to Looptender reflects the thread's actual setup.
+  threadMeta: threadSetupMetaSchema.optional(),
+  // Existing loops on this host that this thread can continue (--succeeds),
+  // ordered with same-project non-archived loops first.
+  continuationCandidates: z.array(continuationCandidateSchema).max(128).optional(),
+  // Any non-fatal warnings printed by `init` (for example if --succeeds
+  // could not be recorded on the predecessor).
+  warnings: z.array(z.string().max(400)).max(16).optional(),
 });
 export type SetupResult = z.infer<typeof setupResult>;
+
+const LOOP_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const QUALIFIER_WORD = /\b(claude|codex|gpt|gemini|opus|sonnet|haiku|cursor|antigravity|openai|anthropic|grok|llama|deepseek|qwen|mistral|o1|o3|o4|medium|low|high|max|fast|mini|pro|flash|lite|hydrogen)\b/i;
+
+export function fallbackSlug(threadId: string): string {
+  return `bb-${threadId.replace(/[^a-z0-9-]/g, "-").slice(0, 50)}`;
+}
+
+function toSlug(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 52)
+    .replace(/-+$/g, "");
+}
+
+/**
+ * Derive a clean lowercase hyphenated loop slug from a BB thread title,
+ * stripping trailing provider/model qualifiers and falling back to `bb-<id>`
+ * when no usable title exists.
+ */
+export function slugFromTitle(title: string | null | undefined, threadId: string): string {
+  if (!title) return fallbackSlug(threadId);
+  let cleaned = title.trim();
+  // Strip trailing parenthetical or separator provider/model qualifiers.
+  for (;;) {
+    const paren = cleaned.match(/\s*\(([^()]{1,60})\)\s*$/);
+    if (paren && QUALIFIER_WORD.test(paren[1]!)) {
+      cleaned = cleaned.slice(0, paren.index).trim();
+      continue;
+    }
+    const sep = cleaned.match(/\s+(?:·|—|-)\s+([^·—-]{1,60})$/);
+    if (sep && QUALIFIER_WORD.test(sep[1]!)) {
+      cleaned = cleaned.slice(0, sep.index).trim();
+      continue;
+    }
+    break;
+  }
+  if (/^(new thread|untitled)$/i.test(cleaned)) return fallbackSlug(threadId);
+  const slug = toSlug(cleaned);
+  return LOOP_SLUG.test(slug) ? slug : fallbackSlug(threadId);
+}
+
+/**
+ * Derive a clean default slug for a loop that continues an existing loop,
+ * avoiding collisions with existing loop names on the host.
+ */
+export function slugFromPredecessor(
+  predecessor: { loop: string; displayName?: string },
+  existingLoops: string[] = [],
+): string {
+  const taken = new Set(existingLoops);
+  let base = predecessor.loop;
+  if (/^bb-thr[-_]/.test(base) && predecessor.displayName) {
+    const fromDisplay = slugFromTitle(predecessor.displayName, "");
+    if (fromDisplay && fromDisplay !== "bb-" && !/^(?:bb-)?thr[-_]/.test(fromDisplay)) {
+      base = fromDisplay;
+    }
+  }
+  const numbered = base.match(/^(.*)-(\d+)$/);
+  const stem = toSlug(numbered ? numbered[1]! : base).slice(0, 56).replace(/-+$/g, "") || "loop";
+  let n = numbered ? Number(numbered[2]) + 1 : 2;
+  for (let i = 0; i < 100; i++, n++) {
+    const candidate = `${stem}-${n}`;
+    if (LOOP_SLUG.test(candidate) && !taken.has(candidate)) return candidate;
+  }
+  return fallbackSlug(stem);
+}

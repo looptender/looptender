@@ -61,6 +61,7 @@ type doctorReport struct {
 	Sessions      map[string]*sessionStatus `json:"sessions,omitempty"`
 	Daemon        *daemonStatus             `json:"daemon,omitempty"`
 	BBAutomation  *bbAutomationStatus       `json:"bbAutomation,omitempty"`
+	Router        *routerSummary            `json:"router,omitempty"`
 }
 
 func (r *doctorReport) add(id, status, message, fix string) {
@@ -186,6 +187,7 @@ func doctor(e env, args []string, run doctorRun) int {
 	doctorFile(&r, "state.directory", cfg.Loop.StateDir, true)
 	doctorStateAccess(&r, cfg.Loop.StateDir, doctorOSAccess)
 	doctorDiskSpace(&r, cfg.Loop.StateDir)
+	doctorHost(&r, readHost(context.Background()))
 	for _, name := range []string{control.FileName, state.FileName, "health.json", state.LogName, daemoninfo.FileName, report.DeliveryFile, "delivery.lock", report.SessionpipeGateFile, report.SessionpipeLock + ".lock"} {
 		p := filepath.Join(cfg.Loop.StateDir, name)
 		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
@@ -210,12 +212,29 @@ func doctor(e env, args []string, run doctorRun) int {
 		}
 		r.ControlState = ctl.Summary()
 		r.add("control", "ok", "Control state: "+r.ControlState+".", "")
+		if j := readLaunchJob(cfg.Loop.StateDir); j != nil {
+			r.add("daemon.launch_job", "ok", "The daemon runs as the "+j.Kind+" job "+j.Label+", outside BB, so it keeps running when BB quits.", "End it with "+launchStopCommand(j.Kind, j.Label, j.Target)+" or by terminating its PID.")
+		}
 		r.Archived, r.ArchiveLapsed = loopArchive(cfg.Loop.StateDir, ctl)
+		if wt := waitOf(cfg.Loop.StateDir, ctl); wt != nil {
+			r.add("loop.wait", "ok", "The loop is "+wt.Text+".", "")
+		}
 		if a := r.Archived; a != nil {
 			r.add("loop.archived", "ok", "The loop is archived "+archiveSince(a)+": it is listed apart, needs nobody and is checked by no daemon; warnings about its routes are not given.", "")
 		}
 		if a := r.ArchiveLapsed; a != nil {
 			r.add("loop.archived", "warning", "An archive record "+archiveSince(a)+" is ignored: the loop supervises again, resumed by a build from before archiving.", "Run looptender unarchive -c "+shellQuote(cfg.Path())+" to remove the record, or pause the loop to archive it again.")
+		}
+	}
+	switch v := describeUsageWatch(cfg.Loop.StateDir); {
+	case v == nil:
+	case v.Unreadable:
+		r.add("usage_watch", "warning", "The usage watch setting cannot be read, so the watch is off.", "Set it again with usage-watch --account, or turn it off with usage-watch --off.")
+	default:
+		if known, _ := usageWatchAccountKnown(v.Account); !known {
+			r.add("usage_watch", "warning", "The usage watch is on, but the accounts catalog has no entry for its account, so no quota is read.", "Name an entry from accounts list with usage-watch --account.")
+		} else {
+			r.add("usage_watch", "ok", "The usage watch is on: its account's quota is read every "+v.Every+", and the agent is warned once a window when it would run out within "+v.WarnWithin+".", "")
 		}
 	}
 	st, stateErr := state.Load(cfg.Loop.StateDir)
@@ -276,6 +295,9 @@ func doctor(e env, args []string, run doctorRun) int {
 			r.add("agent."+id+".session", status, s.Message, "")
 		}
 		workspace := doctorAgent(e.ctx, &r, id, a, *offline, *timeout, run)
+		if id == state.Primary && a.WakesObserved() {
+			doctorSessionpipeWake(&r, "agent."+id+".wake", cfg.Loop.StateDir, time.Now(), cfg.Loop.Progress.MinWakeInterval.Duration)
+		}
 		if a.BB != nil && a.BB.Thread != "" {
 			if *offline {
 				r.add("agent."+id+".workspace", "unavailable", "Working-directory comparison skipped in offline mode.", "")
@@ -315,6 +337,7 @@ func doctor(e env, args []string, run doctorRun) int {
 	if home, err := os.UserHomeDir(); err == nil {
 		doctorAccountDefaultDirectories(&r, doctorAccountsCatalog, home)
 	}
+	doctorRouter(e.ctx, &r, "", *offline)
 	queryCtx, cancel := context.WithTimeout(e.ctx, *timeout)
 	d := inspectDaemon(queryCtx, cfg.Loop.StateDir, version, *offline)
 	cancel()
@@ -370,6 +393,13 @@ func doctor(e env, args []string, run doctorRun) int {
 		held = "archived"
 	}
 	doctorRoutes(&r, cfg, *path, st, stateErr == nil, held, r.CheckedAt)
+	// A loop that reports to Telegram: say whether the poller that reads the
+	// phone's taps runs (doctor --telegram says more).
+	if rep := cfg.Loop.Report; rep != nil && rep.Format == "telegram" && !*telegramCheck {
+		if dir, err := resolveTelegramDir(""); err == nil {
+			doctorTelegramPoller(&r, dir)
+		}
+	}
 	if stateErr == nil {
 		if ctl, err := control.Load(cfg.Loop.StateDir); err == nil {
 			sch := describeSchedule(&cfg.Loop, st, ctl, &d, r.CheckedAt)
@@ -526,6 +556,13 @@ func printDoctor(e env, r doctorReport, asJSON bool) int {
 	fmt.Fprintf(e.stdout, "next check: %s\n", r.NextCheck)
 	if r.Daemon != nil && r.Daemon.State == "responsive" {
 		fmt.Fprintf(e.stdout, "daemon: %s; dry run %t; live build %s\n", r.Daemon.Phase, r.Daemon.DryRun, r.Daemon.BinaryComparison)
+	}
+	if r.Router != nil {
+		stateWord := "off"
+		if r.Router.Enabled {
+			stateWord = "on"
+		}
+		fmt.Fprintf(e.stdout, "router: %s (directory %s, answering %v, pointed %d, service %s)\n", stateWord, r.Router.Directory, r.Router.Answering, r.Router.PointedCount, r.Router.Service)
 	}
 	for _, c := range r.Checks {
 		fmt.Fprintf(e.stdout, "[%s] %s: %s\n", c.Status, c.ID, c.Message)

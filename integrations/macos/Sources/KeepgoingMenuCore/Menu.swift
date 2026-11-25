@@ -37,8 +37,41 @@ public struct PanelLoop: Decodable, Equatable {
     /// words (the panel shows the same). Absent from a CLI that predates it
     /// and when nothing can be said; the menu then says nothing.
     public var buildFreshness: PanelFreshness? = nil
+    /// The loop's one display name, as the panel shows it (the stable name,
+    /// without a model or a generation). Absent from a CLI that predates it:
+    /// `name` is then the registered name.
+    public var naming: PanelNaming? = nil
+    /// Set while the loop is archived. An archived loop is out of the way:
+    /// it never counts as needing a person and is listed last.
+    public var archived: PanelArchived? = nil
+    /// When the loop's last check ran, and what it waits for in the page's
+    /// fixed words (never the hold's note).
+    public var checkedAt: String? = nil
+    public var reason: String? = nil
+    /// What it waits for, by kind: asked, held, limit, checks or unknown.
+    public var waiting: PanelWaiting? = nil
 
-    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil) {
+    /// Set when the loop was replaced by a successor: out of the way,
+    /// whatever hold it kept. Absent from a CLI that predates it.
+    public var superseded: Bool? = nil
+    /// Set when the loop's target is an observed sessionpipe session:
+    /// looptender never sends to, wakes, re-prompts or stops it unless
+    /// observedWakes is true (woken only when idle).
+    public var observed: Bool? = nil
+    public var observedWakes: Bool? = nil
+    /// Set when the loop has had no check activity for at least 3 days (72h).
+    public var inactive: Bool? = nil
+
+    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil, naming: PanelNaming? = nil, archived: PanelArchived? = nil, checkedAt: String? = nil, reason: String? = nil, waiting: PanelWaiting? = nil, superseded: Bool? = nil, observed: Bool? = nil, observedWakes: Bool? = nil, inactive: Bool? = nil) {
+        self.observed = observed
+        self.observedWakes = observedWakes
+        self.inactive = inactive
+        self.superseded = superseded
+        self.waiting = waiting
+        self.naming = naming
+        self.archived = archived
+        self.checkedAt = checkedAt
+        self.reason = reason
         self.buildFreshness = buildFreshness
         self.key = key
         self.name = name
@@ -53,6 +86,27 @@ public struct PanelLoop: Decodable, Equatable {
         self.provider = provider
         self.model = model
     }
+}
+
+/// A loop's display name, already masked by the CLI.
+public struct PanelNaming: Decodable, Equatable {
+    public let displayName: String
+    /// The display name cut at its end by the CLI's own rule; absent when it is the name itself.
+    public var shortName: String? = nil
+    public init(displayName: String, shortName: String? = nil) { self.displayName = displayName; self.shortName = shortName }
+}
+
+/// What a loop waits for, by kind only: never the hold's note.
+public struct PanelWaiting: Decodable, Equatable {
+    public let kind: String
+    public var by: String? = nil
+    public init(kind: String, by: String? = nil) { self.kind = kind; self.by = by }
+}
+
+/// An archived loop: when. Its note is never carried.
+public struct PanelArchived: Decodable, Equatable {
+    public var at: String? = nil
+    public init(at: String? = nil) { self.at = at }
 }
 
 /// How fresh one supervisor's build is. The words are the CLI's; the menu
@@ -98,9 +152,16 @@ public struct PanelList: Decodable, Equatable {
     /// The installed CLI's build, shortened by the CLI; absent when it has no
     /// version or from a CLI that predates it.
     public var installedBuild: String? = nil
+    /// Events to tell the person about, the same list the panel page reads.
+    /// Absent from a CLI that predates it.
+    public var notices: [PanelNotice]? = nil
+    /// The notification settings the menu, the panel and push share, and
+    /// whether the menu is notifying. Absent from a CLI that predates it.
+    public var notify: PanelNotify? = nil
     /// "Build X installed … · N supervisors on it · M older"; absent from a
     /// CLI that predates it.
     public var buildFreshness: PanelFreshnessSummary? = nil
+    public var inactive: Int? = nil
 }
 
 /// What `keepgoing panel status --json` says about the panel's background
@@ -183,6 +244,13 @@ public enum MenuCommand: Equatable {
     case openPanelWithChanges
     /// Runs `keepgoing panel stop`. Supervision is not affected.
     case stopPanel
+    /// Turns one kind of notification on or off. Runs no CLI command.
+    case toggleNoticeKind(String)
+    /// Runs `keepgoing panel notify set --kind K --on|--off`: writes the shared
+    /// settings. Only a known kind.
+    case notifySet(kind: String, on: Bool)
+    /// Runs `keepgoing panel notify heartbeat`: records that the menu runs.
+    case notifyHeartbeat(notifying: Bool, pid: Int32)
     /// Relaunches the menu from the installed build. Runs no CLI command.
     case relaunchMenu
     /// Turns "Update the menu automatically" on or off. Runs no CLI command.
@@ -207,6 +275,16 @@ public enum MenuCommand: Equatable {
     case quit
 }
 
+/// Semantic tint for a row's symbol. Shape and text still carry the meaning
+/// without colour; `.needsYou` is reserved for states that wait on a person.
+public enum Tone: Equatable {
+    case supervising
+    case needsYou
+    case limit
+    case failing
+    case quiet
+}
+
 public struct MenuRow: Equatable {
     public enum Kind: Equatable { case action, loop, status, separator }
     public let kind: Kind
@@ -225,6 +303,8 @@ public struct MenuRow: Equatable {
     public let command: MenuCommand?
     /// A loop's choices, shown as its submenu.
     public var submenu: [MenuRow] = []
+    /// Semantic tint for `symbol`; `.quiet` stays a system-coloured template.
+    public var tone: Tone = .quiet
     public var isEnabled: Bool { command != nil || !submenu.isEmpty }
 }
 
@@ -248,6 +328,13 @@ public enum MenuReading: Equatable {
     case unavailable
 }
 
+/// What the menu shows of its notifications.
+public struct NoticeView: Equatable {
+    public let recent: [RecentNotice]
+    public let on: [String: Bool]
+    public init(recent: [RecentNotice], on: [String: Bool]) { self.recent = recent; self.on = on }
+}
+
 /// What the menu says about its own update.
 public struct UpdateOffer: Equatable {
     /// The installed build's name when it differs from the one running.
@@ -269,7 +356,7 @@ public struct UpdateOffer: Equatable {
 public enum MenuBuilder {
     // Long enough for a real loop name, short enough that the state column
     // stays close to the short names beside it.
-    static let maxName = 28
+    static let maxName = 32
     static let maxPhrase = 40
     /// The most loops listed. They arrive with the ones that want attention
     /// first; the rest are one choice away in the panel.
@@ -283,13 +370,21 @@ public enum MenuBuilder {
         "outside_hours": "moon", "paused": "pause.circle", "off": "circle", "stopped": "stop.circle", "finished": "checkmark.circle",
     ]
 
-    /// Shortened in the middle: loop names often share a beginning, so the
-    /// end is what tells them apart.
+    /// Semantic tint per state, matching every key in `symbols`. Only
+    /// `waiting_for_you` maps to `.needsYou`; routine quiet states stay in the
+    /// system colour.
+    public static let tones: [String: Tone] = [
+        "waiting_for_you": .needsYou, "unknown": .quiet, "checks_failing": .failing,
+        "not_checked_recently": .quiet, "waiting_on_limit": .limit, "supervising": .supervising,
+        "outside_hours": .quiet, "paused": .quiet, "off": .quiet, "stopped": .quiet, "finished": .quiet,
+    ]
+
+    /// Shortened at the end, never in the middle: a name's beginning is what
+    /// the person reads and what the panel shows, so a long one loses its tail.
     static func shortened(_ text: String, to limit: Int) -> String {
         let characters = Array(text)
-        guard characters.count > limit else { return text }
-        let head = (limit - 1 + 1) / 2, tail = limit - 1 - head
-        return String(characters.prefix(head)) + "…" + String(characters.suffix(tail))
+        guard characters.count > limit, limit > 1 else { return text }
+        return String(characters.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…"
     }
 
     static func age(_ seconds: TimeInterval) -> String {
@@ -312,13 +407,33 @@ public enum MenuBuilder {
         return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
-    static func action(_ title: String, _ command: MenuCommand, symbol: String, help: String, detail: String = "") -> MenuRow {
+    static func action(_ title: String, _ command: MenuCommand, symbol: String, help: String, detail: String = "", tone: Tone = .quiet) -> MenuRow {
         MenuRow(kind: .action, title: title, detail: detail, symbol: symbol, accessibilityLabel: detail.isEmpty ? title : title + ", " + detail,
-                accessibilityHelp: help, toolTip: "", command: command)
+                accessibilityHelp: help, toolTip: "", command: command, tone: tone)
     }
     static let separator = MenuRow(kind: .separator, title: "", detail: "", symbol: "", accessibilityLabel: "", accessibilityHelp: "", toolTip: "", command: nil)
     static func status(_ text: String) -> MenuRow {
         MenuRow(kind: .status, title: text, detail: "", symbol: "", accessibilityLabel: text, accessibilityHelp: "", toolTip: "", command: nil)
+    }
+
+    /// The Recent section (the last ten events, pushed or not, with their age)
+    /// and the per-kind settings.
+    static func noticeRows(_ view: NoticeView, now: Date) -> [MenuRow] {
+        var rows: [MenuRow] = []
+        if !view.recent.isEmpty {
+            // Recent is one item with a submenu: the last ten, pushed or not, with their age.
+            let items = view.recent.prefix(NoticeTracker.maxRecent).map { r in status(r.text + " · " + age(now.timeIntervalSince(r.at)).replacingOccurrences(of: "Read ", with: "")) }
+            rows.append(MenuRow(kind: .action, title: "Recent", detail: "", symbol: "clock", accessibilityLabel: "Recent", accessibilityHelp: "Shows the last events.", toolTip: "", command: nil, submenu: items))
+        }
+        let toggles = NoticeKinds.all.map { entry -> MenuRow in
+            let on = view.on[entry.kind] ?? false
+            return action(entry.label, .toggleNoticeKind(entry.kind), symbol: on ? "checkmark.circle" : "circle",
+                          help: "Turns the notification for this on or off. It is still listed under Recent.", detail: on ? "on" : "off")
+        }
+        let parent = MenuRow(kind: .action, title: "Notify me when…", detail: "", symbol: "bell", accessibilityLabel: "Notify me when",
+                             accessibilityHelp: "Chooses which events are pushed as notifications.", toolTip: "", command: nil, submenu: toggles)
+        rows.append(parent)
+        return rows
     }
 
     /// The menu's own update: the offer when the installed build differs (and
@@ -351,9 +466,9 @@ public enum MenuBuilder {
     /// in place and the status line says a read is under way. `panel` is the
     /// panel server's status when it was read; the row that stops it is there
     /// only while it is running.
-    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil) -> MenuModel {
+    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil, notices: NoticeView? = nil) -> MenuModel {
         // The first row is always there and always tries, whatever was read.
-        var rows = [action("Open looptender Panel", .openPanel, symbol: "macwindow", help: "Opens the looptender panel in your browser.")]
+        var rows = [action("Open looptender Panel", .openPanel, symbol: "macwindow", help: "Opens the looptender panel in your browser, where you can pause, stop and resume loops, each after a review.")]
         var badge = ""
         var iconLabel = "looptender"
         var line: String
@@ -371,45 +486,55 @@ public enum MenuBuilder {
             badge = "?"
             iconLabel = "looptender, can't be read"
         case .read(let list, let at):
-            let held = max(0, list.needsYou - list.unread)
+            // The CLI's count, less the loops that still carry a hold but are archived
+            // or replaced: a person cannot act on those, so they never count.
+            let stale = list.loops.filter { $0.needsYou && group($0) == .other }.count
+            let held = max(0, list.needsYou - list.unread - stale)
             if let needs = needsLine(held: held, unread: list.unread) {
                 // The symbol says which it is: a person is needed, or only
                 // that something could not be read.
-                rows.append(action(needs, .openPanel, symbol: held > 0 ? "exclamationmark.circle.fill" : "questionmark.circle", help: "Opens the panel on what needs you."))
-                badge = list.needsYou > 99 ? "99+" : String(list.needsYou)
+                rows.append(action(needs, .openPanel, symbol: held > 0 ? "exclamationmark.circle.fill" : "questionmark.circle", help: "Opens the panel on what needs you.", tone: held > 0 ? .needsYou : .quiet))
+                let count = max(0, list.needsYou - stale)
+                badge = count > 99 ? "99+" : String(count)
                 iconLabel = "looptender, " + needs
-            } else if !list.allClear {
+            } else if !list.allClear && !(stale > 0 && list.needsYou == stale && list.complete && list.omitted == 0 && list.registry == "available") {
                 // The icon is plain only when the CLI says every loop was
                 // read and none needs a person. An unreadable registry or a
                 // read that was cut off is not "nothing needs you".
                 badge = "?"
                 iconLabel = list.registry == "available" ? "looptender, not every loop was read" : "looptender, the list of loops can't be read"
             }
-            if let quota = list.accountQuotas {
-                rows.append(separator)
-                rows.append(contentsOf: quotaRows(quota))
-            }
+            let installed = list.installedBuild.map(Contract.text)
+            let groups: [(String, [PanelLoop])] = [("Needs you", list.loops.filter { group($0) == .needsYou }), ("Working", list.loops.filter { group($0) == .working })]
+            let others = list.loops.filter { group($0) == .other }
+            let listedLoops = groups.flatMap { $0.1.prefix(maxLoops) } + others.prefix(maxLoops * 2)
+            let names = disambiguatedTitles(listedLoops)
             if !list.loops.isEmpty { rows.append(separator) }
-            if let summary = list.buildFreshness.map({ Contract.text($0.text) }), !summary.isEmpty, !list.loops.isEmpty { rows.append(status(summary)) }
-            for loop in list.loops.prefix(maxLoops) {
-                let name = Contract.text(loop.name), short = shortened(name, to: maxName)
-                let flag = loop.noProgress.map(Contract.text) ?? ""
-                // The panel's own words: its phrase, and "no progress" as the
-                // panel's picker row says it when that flag is raised.
-                let phrase = shortened(Contract.text(loop.phrase) + (flag.isEmpty ? "" : " · no progress"), to: maxPhrase)
-                let choices = loopChoices(loop) + freshnessRows(loop)
-                // The build after the state, outside the cut-down phrase, so
-                // a long phrase never hides which build it is.
-                let build = buildText(loop, installed: list.installedBuild)
-                let target = targetText(loop)
-                let fresh = freshnessMark(loop)
-                let shown = [phrase, target, build, fresh].filter { !$0.isEmpty }.joined(separator: " · ")
-                rows.append(MenuRow(kind: .loop, title: short, detail: shown, symbol: symbols[loop.needsYou && loop.state == "paused" ? "waiting_for_you" : loop.state] ?? "questionmark.circle",
-                                    accessibilityLabel: flag.isEmpty ? "\(name), \(shown)" : "\(name), \(Contract.text(loop.phrase)). \(flag)" + (target.isEmpty ? "" : ". Configured target: " + target) + (build.isEmpty ? "" : ". " + build),
-                                    accessibilityHelp: choices.count > 1 ? "Shows what you can do with this loop." : "Opens this loop in the panel.",
-                                    toolTip: [short == name ? "" : name, target.isEmpty ? "" : "Configured target: " + target].filter { !$0.isEmpty }.joined(separator: "\n"), command: choices.count > 1 ? nil : .openLoop(key: loop.key), submenu: choices.count > 1 ? choices : []))
+            for (title, loops) in groups where !loops.isEmpty {
+                rows.append(status(title))
+                for loop in loops.prefix(maxLoops) { rows.append(loopRow(loop, title: names[loop.key], installed: installed, now: now)) }
             }
+            if !others.isEmpty {
+                rows.append(MenuRow(kind: .action, title: "Other loops (\(others.count))", detail: "", symbol: "tray.full", accessibilityLabel: "Other loops, \(others.count)",
+                                    accessibilityHelp: "Shows paused, off, stopped, finished and archived loops.", toolTip: "", command: nil,
+                                    submenu: others.prefix(maxLoops * 2).map { loopRow($0, title: names[$0.key], installed: installed, now: now) }))
+            }
+            // Accounts: only those at or near a limit on top; the rest in one submenu.
+            if let quota = list.accountQuotas {
+                let all = quotaRows(quota)
+                let matter = accountsThatMatter(quota)
+                if !matter.isEmpty || !all.isEmpty {
+                    rows.append(separator)
+                    rows.append(contentsOf: matter)
+                    rows.append(MenuRow(kind: .action, title: "Accounts", detail: "", symbol: "person.2", accessibilityLabel: "Accounts",
+                                        accessibilityHelp: "Shows saved quota for the selected accounts.", toolTip: "", command: nil, submenu: all))
+                }
+            }
+            // The build, only when something is not on the installed one.
+            let behind = notOnInstalledCount(list.loops)
+            if behind > 0 { rows.append(status(behind == 1 ? "1 supervisor not on the installed build" : "\(behind) supervisors not on the installed build")) }
             if list.canAll?.contains("pause") == true {
+                rows.append(separator)
                 rows.append(action("Pause All Loops…", .reviewAll(.pause), symbol: "pause.circle",
                                    help: "Shows which loops pausing every loop changes, then asks you to confirm."))
             }
@@ -420,7 +545,7 @@ public enum MenuBuilder {
             let total = list.loops.count + list.omitted
             // Whenever some loops are not listed here, whether this menu cut
             // them or the CLI did.
-            if total > min(list.loops.count, maxLoops) {
+            if total > listedLoops.count {
                 rows.append(action("All \(total) Loops in the Panel", .openPanel, symbol: "ellipsis.circle", help: "Opens the panel, which lists every loop."))
             }
             var facts: [String] = []
@@ -438,15 +563,17 @@ public enum MenuBuilder {
             if let installed = list.installedBuild.map(Contract.text), !installed.isEmpty { line += " · looptender " + installed }
         }
         rows.append(separator)
-        if let panel, panel.exposure != nil {
-            rows.append(action("Open Panel with Controls…", .openPanelWithChanges, symbol: "slider.horizontal.3",
-                               help: "Opens the panel so its page can pause, stop and resume loops and offer a separate review to replace a loop’s own build. Asks first."))
-        }
+        // One panel item: Open looptender Panel opens the panel in which a
+        // person can pause, stop and resume loops, each after a review. The
+        // separate "with controls" item is gone; .openPanelWithChanges still
+        // runs keepgoing panel --allow-changes for what needs it (connecting
+        // an account).
         if let panel, panel.running {
             // Named for what it stops, the page, so it is not taken for
             // stopping a loop; what happens to the loops is in the help.
             rows.append(action("Stop the Panel Page", .stopPanel, symbol: "xmark.circle", help: "Stops the panel's background process. Your loops keep running.", detail: stopsIn(panel.idleRemainingSeconds)))
         }
+        if let notices { rows.append(contentsOf: noticeRows(notices, now: now)) }
         if let update { rows.append(contentsOf: updateRows(update)) }
         rows.append(action("Quit looptender Menu", .quit, symbol: "power", help: "Quits this menu. Supervision keeps running."))
         rows.append(separator)
@@ -497,15 +624,24 @@ public enum MenuBuilder {
     static func loopChoices(_ loop: PanelLoop) -> [MenuRow] {
         let rows = [action("Open in Panel", .openLoop(key: loop.key), symbol: "macwindow", help: "Opens this loop in the panel.")]
         let can = Set(loop.can ?? [])
+        let obs = loop.observed == true
         var changes: [MenuRow] = []
         if can.contains("pause") {
-            changes.append(action("Pause…", .review(.pause, key: loop.key), symbol: "pause.circle", help: "Shows what pausing does, then asks you to confirm."))
+            changes.append(action(obs ? "Pause checking…" : "Pause…", .review(.pause, key: loop.key), symbol: "pause.circle",
+                                  help: obs ? "Shows what pausing checking does, then asks you to confirm." : "Shows what pausing does, then asks you to confirm."))
         }
         if can.contains("resume") {
-            changes.append(action("Resume…", .review(.resume, key: loop.key), symbol: "play.circle", help: "Shows what resuming clears, then asks you to confirm."))
+            changes.append(action(obs ? "Resume checking…" : "Resume…", .review(.resume, key: loop.key), symbol: "play.circle",
+                                  help: obs ? "Shows what resuming checking clears, then asks you to confirm." : "Shows what resuming clears, then asks you to confirm."))
         }
-        if can.contains("stop") {
+        if !obs && can.contains("stop") {
             changes.append(action("Stop…", .review(.stop, key: loop.key), symbol: "stop.circle", help: "Shows what stopping does, then asks you to confirm."))
+        }
+        if !isArchived(loop) && can.contains("archive") {
+            changes.append(action("Archive…", .review(.archive, key: loop.key), symbol: "archivebox", help: "Shows what archiving does without deleting files, then asks you to confirm."))
+        }
+        if isArchived(loop) && can.contains("unarchive") {
+            changes.append(action("Unarchive…", .review(.unarchive, key: loop.key), symbol: "tray.and.arrow.up", help: "Shows what unarchiving does without resuming, then asks you to confirm."))
         }
         return changes.isEmpty ? rows : rows + [separator] + changes
     }
@@ -529,16 +665,19 @@ public enum MenuBuilder {
             guard Contract.validKey(key), Contract.validExpect(expect), action == .stop || (!lanes && !immediately && !dropQueued), !dropQueued || lanes else { return nil }
             return ["client", "apply", action.rawValue, "--loop", key, "--expect", expect] + (lanes ? ["--lanes"] : []) + (immediately ? ["--immediately"] : [])
                 + (dropQueued ? ["--drop-queued"] : []) + ["--json"]
-        case .reviewAll(let action): return action != .resume ? ["client", "review", action.rawValue, "--all", "--json"] : nil
+        case .reviewAll(let action): return (action == .pause || action == .stop) ? ["client", "review", action.rawValue, "--all", "--json"] : nil
         case .applyAll(let action, let expects, let lanes):
             let keys = expects.map(\.key)
-            guard action != .resume, !lanes || action == .stop, (1...128).contains(expects.count), Set(keys).count == keys.count,
+            guard (action == .pause || action == .stop), !lanes || action == .stop, (1...128).contains(expects.count), Set(keys).count == keys.count,
                   expects.allSatisfy({ Contract.validKey($0.key) && Contract.validExpect($0.expect) }) else { return nil }
             var arguments: [String] = ["client", "apply", action.rawValue, "--all"]
             for e in expects { arguments += ["--expect", e.key + "=" + e.expect] }
             if lanes { arguments.append("--lanes") }
             return arguments + ["--json"]
-        case .quit, .relaunchMenu, .toggleAutoUpdate: return nil
+        case .notifySet(let kind, let on):
+            return NoticeKinds.all.contains { $0.kind == kind } ? ["panel", "notify", "set", "--kind", kind, on ? "--on" : "--off"] : nil
+        case .notifyHeartbeat(let notifying, let pid): return pid > 0 ? ["panel", "notify", "heartbeat", "--notifying=" + (notifying ? "true" : "false"), "--pid=" + String(pid)] : nil
+        case .quit, .relaunchMenu, .toggleAutoUpdate, .toggleNoticeKind: return nil
         }
     }
 

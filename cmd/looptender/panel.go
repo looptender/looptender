@@ -3,10 +3,13 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/looptender/looptender/internal/control"
 	"io"
 	"net"
 	"os"
@@ -51,8 +54,8 @@ import (
 const (
 	panelRecordName = "panel.json"
 	panelSocketName = "panel.sock"
-	// Both are listed in migrateLockNames (migrate.go); so must any new
-	// lock file in the panel directory.
+	// Both are listed in migrateLockNames (migrate.go), and so is notifyMenuLock
+	// (notify_settings.go); so must any new lock file in the panel directory.
 	panelOpenLock    = "panel-open"
 	panelServerLock  = "panel-server"
 	panelDefaultIdle = 30 * time.Minute
@@ -80,10 +83,46 @@ type panelRecord struct {
 	// Registry is the registry directory the server reads.
 	Registry string `json:"registry"`
 	Version  string `json:"version"`
-	// Changes: started with --allow-changes. Since StartedAt, as the mode
-	// never changes while the server runs.
+	// Changes: started with --allow-changes, so every change the page
+	// offers, build replacement, route edits and account sign-in included.
+	// Controls: started in the default mode, so pause, stop and resume only.
+	// Neither: started with --read-only. Since StartedAt, as the mode never
+	// changes while the server runs.
 	Changes        bool   `json:"changes,omitempty"`
+	Controls       bool   `json:"controls,omitempty"`
 	BuildAuthority string `json:"buildAuthority,omitempty"`
+	// Caller is a hash of the BB thread that started the server ("" for a
+	// person outside BB). A panel that can change loops acts as that caller,
+	// so it is opened only for the same caller.
+	Caller string `json:"caller,omitempty"`
+}
+
+// Panel modes, weakest first.
+const (
+	panelReadOnly = iota
+	panelControlsMode
+	panelFullMode
+)
+
+func (r panelRecord) mode() int {
+	switch {
+	case r.Changes:
+		return panelFullMode
+	case r.Controls:
+		return panelControlsMode
+	}
+	return panelReadOnly
+}
+
+// panelCallerHash names the BB thread this process runs as, without the
+// thread ID; "" outside BB.
+func panelCallerHash() string {
+	t, marked := os.Getenv("BB_THREAD_ID"), os.Getenv(control.SupervisedLoopVar)
+	if t == "" && marked == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("looptender panel caller\n" + t + "\n" + marked))
+	return hex.EncodeToString(sum[:16])
 }
 
 var (
@@ -359,7 +398,10 @@ func writePanelRecord(dir string, rec panelRecord) error {
 // panelRequest is one message on the private socket.
 type panelRequest struct {
 	CallerKind string `json:"callerKind,omitempty"`
-	Op         string `json:"op"` // open, status or stop
+	// Caller is the opener's caller hash (panelCallerHash): a panel that
+	// changes loops opens only for the caller that started it.
+	Caller string `json:"caller,omitempty"`
+	Op     string `json:"op"` // open, status or stop
 	// Key is the page key of the loop to open; empty opens the overview.
 	Key string `json:"key,omitempty"`
 	// File asks for the opening as a private file to hand to a browser
@@ -503,6 +545,7 @@ type panelOptions struct {
 	staleAfter time.Duration
 	offline    bool
 	changes    bool
+	controls   bool
 }
 
 // panelServerEnvironment is everything the background server is given: where
@@ -510,7 +553,10 @@ type panelOptions struct {
 // Nothing else the caller had in its environment reaches it.
 func panelServerEnvironment() []string {
 	env := []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
-	for _, name := range []string{"BB_THREAD_ID", "HOME", "USER", "LOGNAME", "TMPDIR", "TZ", "LANG", "LC_ALL", "LC_CTYPE", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"} {
+	// The supervised-loop marker too: a panel started by a loop's
+	// supervisor, or anything it started, refuses to resume that loop, as
+	// the command would.
+	for _, name := range []string{"BB_THREAD_ID", control.SupervisedLoopVar, "HOME", "USER", "LOGNAME", "TMPDIR", "TZ", "LANG", "LC_ALL", "LC_CTYPE", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"} {
 		if v, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+v)
 		}
@@ -558,6 +604,8 @@ func panelEnsure(ctx context.Context, o panelOptions) (panelRecord, bool, error)
 	}
 	if o.changes {
 		args = append(args, "--allow-changes")
+	} else if o.controls {
+		args = append(args, "--controls")
 	}
 	cmd := exec.Command(exe, args...)
 	if err := detachDaemon(cmd); err != nil {
@@ -613,11 +661,11 @@ func panelRemoveLeftovers(dir string) {
 // reply is still only ever a loopback opening address for the server's own
 // port, or the name of a launch page inside the private directory.
 func panelRequestOpening(ctx context.Context, dir string, rec panelRecord, key string, asFile bool) (string, error) {
-	if rec.Changes && !panelBuildReuseAllowed(rec, panelCallerKind()) {
-		return "", errors.New("panel build authority differs or is unknown; explicitly stop and restart the panel")
+	if !panelReuseAllowed(rec) {
+		return "", errors.New("caller authority differs: this panel can change loops for whoever started it, and that is not this caller; explicitly stop and restart the panel")
 	}
 
-	reply, err := panelControl(ctx, dir, panelRequest{Op: "open", Key: key, File: asFile, CallerKind: panelCallerKind()})
+	reply, err := panelControl(ctx, dir, panelRequest{Op: "open", Key: key, File: asFile, CallerKind: panelCallerKind(), Caller: panelCallerHash()})
 	if err != nil {
 		return "", err
 	}
@@ -694,6 +742,8 @@ func panelCommand(e env, args []string) int {
 			return panelStopCommand(e, args[1:])
 		case "list":
 			return panelListCommand(e, args[1:])
+		case "notify":
+			return panelNotifyCommand(e, args[1:])
 		}
 	}
 	if !panelSupported() {
@@ -711,7 +761,8 @@ func panelCommand(e env, args []string) int {
 	refresh := fs.Duration("refresh", dockDefaultRefresh, "how often the page reads again (5s to 10m)")
 	staleAfter := fs.Duration("stale-after", defaultStaleAfter, "age at which a check or child listing is shown as stale")
 	offline := fs.Bool("offline", false, "do not ask each loop's local daemon for its next check")
-	changes := fs.Bool("allow-changes", false, "let the page change loop controls/builds and offer reviewed account sign-in and quota reads (a panel this command starts; a running one keeps its own mode)")
+	changes := fs.Bool("allow-changes", false, "also let the page replace a loop's own build, edit routes and send allowances, and offer reviewed account sign-in and quota reads")
+	readOnly := fs.Bool("read-only", false, "open a panel that cannot change anything (pause, stop and resume are offered by default)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(e.stdout, panelUsage)
@@ -721,6 +772,17 @@ func panelCommand(e env, args []string) int {
 		}
 		e.errf("panel: invalid arguments; see panel --help")
 		return exitUsage
+	}
+	if *readOnly && *changes {
+		e.errf("panel: --read-only and --allow-changes do not go together")
+		return exitUsage
+	}
+	want := panelControlsMode
+	switch {
+	case *readOnly:
+		want = panelReadOnly
+	case *changes:
+		want = panelFullMode
 	}
 	if (*account != "" && (!panelAccountID.MatchString(*account) || *loop != "")) || fs.NArg() != 0 || *idle < panelMinIdle || *idle > panelMaxIdle || *refresh < dockMinRefresh || *refresh > dockMaxRefresh || *staleAfter <= 0 {
 		e.errf("panel: idle 1m-24h, refresh 5s-10m, a positive stale-after; no positional arguments except status, stop or list")
@@ -738,7 +800,7 @@ func panelCommand(e env, args []string) int {
 	if *panelDir == "" {
 		if legacy, running := panelLegacyRunning(); running {
 			presence, old := panelFind(e.ctx, legacy)
-			if presence != panelRunning || ((old.Changes || *changes) && !panelBuildReuseAllowed(old, panelCallerKind())) {
+			if presence != panelRunning || ((old.mode() > panelReadOnly || want > panelReadOnly) && !panelReuseAllowed(old)) {
 				e.errf("panel: legacy panel build authority differs or is unknown; explicitly stop the panel before restarting it")
 				return exitFailed
 			}
@@ -758,38 +820,14 @@ func panelCommand(e env, args []string) int {
 			return exitFailed
 		}
 	}
-	lk, err := acquirePanelOpenLock(e.ctx, dir)
+	opts := panelOptions{dir: dir, registry: *directory, idle: *idle, refresh: *refresh, staleAfter: *staleAfter, offline: *offline, changes: want == panelFullMode, controls: want == panelControlsMode}
+	rec, started, restarted, err := panelOpenMode(e, opts, want)
 	if err != nil {
 		e.errf("panel: %v", err)
 		return exitFailed
 	}
-	rec, started, err := panelEnsure(e.ctx, panelOptions{dir: dir, registry: *directory, idle: *idle, refresh: *refresh, staleAfter: *staleAfter, offline: *offline, changes: *changes})
-	_ = lk.Release()
-	if err != nil {
-		e.errf("panel: %v", err)
-		return exitFailed
-	}
-	if rec.Changes && !panelBuildReuseAllowed(rec, panelCallerKind()) {
-		e.errf("panel: build authority differs from this caller or is unknown; stop the panel explicitly and restart it from the intended person or agent")
-		return exitFailed
-	}
-	if !started {
-		// A server started before the name in use changed (see userdir)
-		// serves the default registry under the other name: it is the
-		// running panel all the same, not one for another registry.
-		if want, _ := registryDirectory(*directory); rec.Registry != want && !panelSameDefaultRegistry(rec.Registry, want) {
-			e.errf("panel: a panel for another registry is already running; run looptender panel stop first")
-			return exitFailed
-		}
-		// A running server never changes mode, in either direction.
-		switch {
-		case *changes && !rec.Changes:
-			e.errf("panel: a read-only panel is already running; run looptender panel stop, then looptender panel --allow-changes")
-			return exitFailed
-		case !*changes && rec.Changes:
-			e.errf("panel: the running panel allows changes (it was started with --allow-changes); run looptender panel stop first to open it read-only, or looptender panel --allow-changes to open it as it is")
-			return exitFailed
-		}
+	if restarted {
+		fmt.Fprintln(e.stdout, "Restarted the running panel so the page can change loops: a page already open on it ends; this one replaces it.")
 	}
 	// The browser is found before an opening is made, so that when there is
 	// none nothing is written and nothing is launched.
@@ -806,8 +844,11 @@ func panelCommand(e env, args []string) int {
 		return exitFailed
 	}
 	mode := ""
-	if rec.Changes {
+	switch rec.mode() {
+	case panelFullMode:
 		mode = " Changes are allowed from the page: pause, stop, resume and replace a loop’s own build, each after a review. " + panelExposure + " looptender panel stop turns them off."
+	case panelControlsMode:
+		mode = " The page can pause, stop and resume loops, each after a review. " + panelControlsExposure + " looptender panel --read-only opens a panel that cannot."
 	}
 	if browser == nil {
 		fmt.Fprintf(e.stdout, why+"Open this address in a browser on this computer within 30 seconds. It works once:\n\n  %s\n\nAnyone who can read this terminal can use it during those 30 seconds. Run looptender panel again for a new one. looptender panel stop ends the panel's background process; supervision is not affected.%s\n", opening, mode)
@@ -845,10 +886,13 @@ type panelStatus struct {
 	// InUse: a page read from it within the last minute. A page left open
 	// and visible keeps reading, so the server does not go idle under it.
 	InUse bool `json:"inUse"`
-	// ChangesAllowed: it was started with --allow-changes, and has allowed
-	// them for ChangesAllowedSeconds (since it started).
-	ChangesAllowed        bool `json:"changesAllowed"`
-	ChangesAllowedSeconds *int `json:"changesAllowedSeconds,omitempty"`
+	// ChangesAllowed: the page can change loops (pause, stop and resume
+	// at least), and has been able to for ChangesAllowedSeconds (since it
+	// started). Mode says how much: read_only, controls (pause, stop and
+	// resume) or all (started with --allow-changes).
+	ChangesAllowed        bool   `json:"changesAllowed"`
+	ChangesAllowedSeconds *int   `json:"changesAllowedSeconds,omitempty"`
+	Mode                  string `json:"mode,omitempty"`
 	// EarlierBuildPanel is the old location when a server an earlier build
 	// started is running there. Reported only; keepgoing panel stop ends it.
 	EarlierBuildPanel string `json:"earlierBuildPanel,omitempty"`
@@ -887,7 +931,8 @@ func panelStatusCommand(e env, args []string) int {
 			started, remaining := reply.Record.StartedAt.UTC(), reply.IdleRemainingSeconds
 			st.Answering, st.StartedAt, st.Port, st.IdleSeconds, st.IdleRemainingSeconds = true, &started, reply.Record.Port, reply.Record.IdleSeconds, &remaining
 			st.InUse = reply.SinceUseSeconds < 60
-			if reply.Record.Changes {
+			st.Mode = []string{"read_only", "controls", "all"}[reply.Record.mode()]
+			if reply.Record.mode() > panelReadOnly {
 				allowed := max(0, int(time.Since(started)/time.Second))
 				st.ChangesAllowed, st.ChangesAllowedSeconds = true, &allowed
 			}
@@ -913,10 +958,13 @@ func panelStatusCommand(e env, args []string) int {
 		} else {
 			fmt.Fprintf(e.stdout, "It stops by itself after %s without a page reading from it: in about %s if nothing does.\n", idle, (time.Duration(*st.IdleRemainingSeconds) * time.Second).Round(time.Minute))
 		}
-		if st.ChangesAllowed {
+		switch {
+		case st.Mode == "all":
 			fmt.Fprintf(e.stdout, "Changes allowed for %s: the page can pause, stop and resume loops, and replace a loop's own build, each after a review. %s looptender panel stop turns them off.\n", dockSpan(time.Duration(*st.ChangesAllowedSeconds)*time.Second), panelExposure)
-		} else {
-			fmt.Fprintln(e.stdout, "Read-only: started without --allow-changes.")
+		case st.ChangesAllowed:
+			fmt.Fprintf(e.stdout, "Pause, stop and resume allowed for %s, each after a review. %s\n", dockSpan(time.Duration(*st.ChangesAllowedSeconds)*time.Second), panelControlsExposure)
+		default:
+			fmt.Fprintln(e.stdout, "Read-only: started with --read-only.")
 		}
 		fmt.Fprintln(e.stdout, "looptender panel opens it; looptender panel stop ends it. Supervision is not affected either way.")
 	}
@@ -1020,12 +1068,20 @@ type panelList struct {
 	Unread          int              `json:"unread"`
 	Omitted         int              `json:"omitted"`
 	// Loops is every loop read, archived ones last (State "archived");
-	// Archived counts those. A list shows the others and one line for these.
+	// Archived counts those, Inactive counts non-archived 3-day inactive loops.
 	Loops    []panelListLoop `json:"loops"`
 	Archived int             `json:"archived"`
+	Inactive int             `json:"inactive,omitempty"`
 	// Volumes is one notice for each volume holding loops' state that is
 	// filling or nearly full (see dockReport.Volumes).
 	Volumes []dockVolume `json:"volumes,omitempty"`
+	// Notices is the one list of events a person is told about, as the page
+	// has it (notices.go). A reader notifies once for each new ID.
+	// Host is the computer's login session and load.
+	Host    *hostStatus   `json:"host,omitempty"`
+	Notices []panelNotice `json:"notices"`
+	// Notify: as in the dock report.
+	Notify *notifyState `json:"notify,omitempty"`
 	// CanAll is which changes can be made to every loop at once
 	// (client review|apply --all): pause and stop, while any loop can be.
 	CanAll []string `json:"canAll"`
@@ -1078,16 +1134,22 @@ type panelListLoop struct {
 	// NoProgress is the no-progress flag's sentence when it is raised, in
 	// the page's words; empty otherwise. It is never a need.
 	NoProgress string `json:"noProgress,omitempty"`
+	// UsageBurn is the usage watch's words while, at the weekly window's
+	// rate so far, it runs out before it resets: "At this rate the weekly
+	// window is used up in about N h, before it resets."
+	UsageBurn string `json:"usageBurn,omitempty"`
 	// Can is which changes fit the loop's control flags as read, as the
 	// page offers them: pause, stop and resume. Empty when the flags could
 	// not be read. client review and client apply take them.
 	Can []string `json:"can"`
 	// Observed is set when the loop's target is observed, never woken (a
 	// sessionpipe session). Its Can never holds stop: pause and resume change
-	// only whether looptender checks it. ObservedNote is the fixed sentence
-	// that says so, for a row to show beside its reason.
-	Observed     bool   `json:"observed,omitempty"`
-	ObservedNote string `json:"observedNote,omitempty"`
+	// only whether looptender checks it. ObservedWakes is set with Observed
+	// when the loop opted in with sessionpipe.send: wake_only. ObservedNote is
+	// the fixed sentence that says so, for a row to show beside its reason.
+	Observed      bool   `json:"observed,omitempty"`
+	ObservedWakes bool   `json:"observedWakes,omitempty"`
+	ObservedNote  string `json:"observedNote,omitempty"`
 	// OverdueSince is set when the loop needs a person because its checks
 	// have stopped: the time of its last check. A new value is a new gap, so
 	// a client can tell people once per gap.
@@ -1109,15 +1171,19 @@ type panelListLoop struct {
 	Moved    *clientMoved `json:"moved,omitempty"`
 	// Archived: as on the page's loop (when, the hold it had, the note with
 	// identifier-shaped tokens hidden). ArchiveLapsed: a record the loop no
-	// longer honours.
+	// longer honours. Inactive: folded because checks stopped >= 3 days ago.
 	Archived      *archiveView `json:"archived,omitempty"`
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	Inactive      bool         `json:"inactive,omitempty"`
 	// Naming is the loop's one display name and what goes with it
 	// (loop_naming.go), the same on every surface; no reader composes its
 	// own. Absent when it is the loop's name and nothing more.
 	Naming *loopNaming `json:"naming,omitempty"`
 	// Lineage: as on the page's loop.
 	Lineage *listLineage `json:"lineage,omitempty"`
+	// Superseded is set when the loop was replaced by a successor (its hold
+	// is superseded or its archive record names a successor).
+	Superseded bool `json:"superseded,omitempty"`
 }
 
 func buildPanelList(r dockReport) panelList {
@@ -1125,6 +1191,12 @@ func buildPanelList(r dockReport) panelList {
 		NeedsYou: len(r.NeedsYou), Unread: r.Unread, Omitted: r.Registry.Omitted, Loops: []panelListLoop{}}
 	out.AccountQuotas = panelQuotaSummary(r)
 	out.Volumes = r.Volumes
+	out.Notices = r.Notices
+	out.Notify = r.Notify
+	out.Host = r.Host
+	if out.Notices == nil {
+		out.Notices = []panelNotice{}
+	}
 	out.InstalledBuild = shortBuildLabel(version)
 	out.BuildFreshness = r.BuildFreshness
 	needs := map[string]bool{}
@@ -1142,7 +1214,7 @@ func buildPanelList(r dockReport) panelList {
 				out.CanAll = append(out.CanAll, a)
 			}
 		}
-		row := panelListLoop{Key: l.Key, Name: l.Name, DiskSpace: dockDiskLevel(l.DiskSpace), State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, Observed: l.Observed, ObservedNote: l.ObservedNote, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
+		row := panelListLoop{Key: l.Key, Name: l.Name, DiskSpace: dockDiskLevel(l.DiskSpace), State: l.State, Phrase: l.Phrase, NeedsYou: needs[l.Key], Can: l.Can, Observed: l.Observed, ObservedWakes: l.ObservedWakes, ObservedNote: l.ObservedNote, OverdueSince: overdue[l.Key], Provider: l.Provider, Model: l.Model, Moved: l.Moved,
 			BuildDiffers: l.Build.Availability == "different", BuildFreshness: l.BuildFreshness.public()}
 		// Lengthened with the installed label when the two would read the same.
 		var inst string
@@ -1152,6 +1224,9 @@ func buildPanelList(r dockReport) panelList {
 		}
 		if np := l.NoProgress; np != nil && np.Availability == "flagged" {
 			row.NoProgress = np.Text
+		}
+		if u := l.UsageBurn; u != nil {
+			row.UsageBurn = u.Words
 		}
 		row.Reason, row.CheckedAt, row.Supervisor = l.Detail, l.LastCheck.At, l.Supervisor
 		row.UsageLimit = l.UsageLimit.compact()
@@ -1163,10 +1238,13 @@ func buildPanelList(r dockReport) panelList {
 			row.Waiting = &panelWaiting{Kind: w.Kind, By: w.By, Since: w.Since, AtLeast: w.SinceEvidence == "control_changed"}
 		}
 		// The list carries no note (it never has): when, and the hold.
-		row.Archived, row.ArchiveLapsed = withoutNote(l.Archived), withoutNote(l.ArchiveLapsed)
+		row.Archived, row.ArchiveLapsed, row.Inactive = withoutNote(l.Archived), withoutNote(l.ArchiveLapsed), l.Inactive
 		row.Naming, row.Lineage = l.Naming, l.Lineage // already as lists carry them
+		row.Superseded = l.Hold.State == "superseded" || (l.Archived != nil && l.Archived.ContinuedIn != nil)
 		if row.Archived != nil {
 			out.Archived++
+		} else if row.Inactive {
+			out.Inactive++
 		}
 		out.Loops = append(out.Loops, row)
 	}
@@ -1192,7 +1270,7 @@ func panelListCommand(e env, args []string) int {
 		e.errf("panel list: registry directory unavailable")
 		return exitUsage
 	}
-	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: dockDefaultRefresh, staleAfter: *staleAfter, query: inspectDaemon, accountsDir: panelAccountsDir}
+	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: dockDefaultRefresh, staleAfter: *staleAfter, query: inspectDaemon, accountsDir: panelAccountsDir, routerOffline: *offline}
 	if *offline {
 		reader.query = func(ctx context.Context, dir, current string, _ bool) daemonStatus {
 			return inspectDaemon(ctx, dir, current, true)
@@ -1260,11 +1338,74 @@ func panelListCommand(e env, args []string) int {
 // This class is captured in the running process record and carried by each
 // socket opening. Missing/old authority never grants a build-capable opening.
 func panelCallerKind() string {
-	if os.Getenv("BB_THREAD_ID") != "" {
+	// A process its supervisor started (a headless turn has no BB thread)
+	// is an agent too.
+	if os.Getenv("BB_THREAD_ID") != "" || os.Getenv(control.SupervisedLoopVar) != "" {
 		return "agent"
 	}
 	return "person"
 }
+
+// panelReuseAllowed: a running panel that can change loops acts as the
+// caller that started it, so it is opened only for that same caller: the
+// same BB thread, or a person outside BB. One conversation can never open a
+// panel another conversation, or a person, started, and act as them.
+func panelReuseAllowed(rec panelRecord) bool {
+	if rec.mode() == panelReadOnly {
+		return true
+	}
+	return rec.BuildAuthority == panelCallerKind() && rec.Caller == panelCallerHash()
+}
+
+// panelOpenMode returns a running server of at least the wanted mode for
+// this caller, under the panel-open lock: the running one when it serves
+// this caller in a mode at least as strong; a new one, started after the
+// running one has stopped (so never two), when the running one is weaker
+// and this caller may use it. A panel that changes loops for another caller
+// is refused, as before; so is a read-only panel asked for while one that
+// changes loops runs: weakening, like taking over, is a deliberate stop.
+func panelOpenMode(e env, o panelOptions, want int) (panelRecord, bool, bool, error) {
+	lk, err := acquirePanelOpenLock(e.ctx, o.dir)
+	if err != nil {
+		return panelRecord{}, false, false, err
+	}
+	rec, started, err := panelEnsure(e.ctx, o)
+	_ = lk.Release()
+	if err != nil || started {
+		return rec, started, false, err
+	}
+	// A server started before the name in use changed (see userdir) serves
+	// the default registry under the other name: it is the running panel
+	// all the same, not one for another registry.
+	if reg, _ := registryDirectory(o.registry); rec.Registry != reg && !panelSameDefaultRegistry(rec.Registry, reg) {
+		return rec, false, false, errors.New("a panel for another registry is already running; run looptender panel stop first")
+	}
+	have := rec.mode()
+	switch {
+	case want == panelReadOnly && have > panelReadOnly:
+		return rec, false, false, errors.New("the running panel can change loops; run looptender panel stop first to open a read-only one, or looptender panel to open it as it is")
+	case have > panelReadOnly && !panelReuseAllowed(rec):
+		// It acts with its starting caller's authority, which is not this
+		// caller's: never opened or replaced from here.
+		return rec, false, false, errors.New("caller authority differs: a panel that can change loops is running for another conversation or a person; it is not opened from here. Run looptender panel stop first, or open it as whoever started it")
+	case have >= want:
+		return rec, false, false, nil
+	}
+	// The running panel is weaker than wanted and this caller may use it:
+	// a read-only panel, or this caller's own pause, stop and resume panel
+	// asked for with --allow-changes.
+	if _, err := panelStopAt(e, o.dir); err != nil {
+		return panelRecord{}, false, false, err
+	}
+	lk, err = acquirePanelOpenLock(e.ctx, o.dir)
+	if err != nil {
+		return panelRecord{}, false, false, err
+	}
+	defer lk.Release()
+	rec, started, err = panelEnsure(e.ctx, o)
+	return rec, started, err == nil, err
+}
+
 func panelBuildReuseAllowed(rec panelRecord, caller string) bool {
 	return (caller == "person" || caller == "agent") && rec.BuildAuthority == caller
 }

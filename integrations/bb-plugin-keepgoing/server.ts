@@ -3,7 +3,7 @@
 // CLI; every decision stays in keepgoing.
 import { publicationSchema } from "./registry-contract.ts";
 import { BUILD_LABEL } from "./build-label.ts";
-import { isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
+import { cutAtWord, recordsUnreadable, isBuildLabel, pluginBuildLine, shortNote, notShownLine, lastLabel, limitWaitListingTag, checkSchema, movedSchema, runtimeSchema, daemonSchema, detailsSchema, goalDetails, limitWaitSchema, scheduleSchema } from "./status-details.ts";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract } from "./host-contract.ts";
@@ -21,7 +21,15 @@ import { withClientFlag } from "./client-flag.ts";
 import { configuredProgram, execProgram } from "./executable.ts";
 
 /** The subset of `keepgoing status --json` this plugin reads. */
-const agentRef = z.object({ adapter: z.string(), bbThread: z.string().optional(), provider: z.string().optional(), model: z.string().optional() });
+const agentRef = z.object({
+  adapter: z.string(),
+  bbThread: z.string().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  session: z.string().optional(),
+  observed: z.boolean().optional(),
+  wakes: z.boolean().optional(),
+});
 const statusSchema = z.object({
   goal: z.unknown().optional(), goalError: z.unknown().optional(),
   loop: z.string(),
@@ -52,12 +60,15 @@ const statusSchema = z.object({
   targetAgent: agentRef.optional(),
   // Fields status adds later. Each is checked on its own in `lenient`: one that is
   // malformed is named in details.unparsed, never taken for "nothing to say".
-  deadline: z.unknown().optional(), deadlineReached: z.unknown().optional(), sendAllowance: z.unknown().optional(), sendRecord: z.unknown().optional(), diskSpace: z.unknown().optional(), unreadable: z.unknown().optional(),
+  wait: z.unknown().optional(), archived: z.unknown().optional(), archiveLapsed: z.unknown().optional(), naming: z.unknown().optional(), buildFreshness: z.unknown().optional(), noProgress: z.unknown().optional(),
+  deadline: z.unknown().optional(), deadlineReached: z.unknown().optional(), sendAllowance: z.unknown().optional(), sendRecord: z.unknown().optional(), diskSpace: z.unknown().optional(), unreadable: z.unknown().optional(), sessionpipeWake: z.unknown().optional(),
 });
 
 const loopSchema = z.object({
   details: detailsSchema.optional(),
   loop: z.string(),
+  // naming.displayName from status --json: shown where the card shows a name; the slug stays as secondary text.
+  displayName: z.string().max(120).optional(),
   configPath: z.string(),
   imported: z.boolean().optional(),
   referenceSource: z.enum(["plugin_setting", "plugin_setup", "registry_attachment"]).optional(),
@@ -73,19 +84,34 @@ const loopSchema = z.object({
   checkedAt: z.string().nullable(),
   handoffs: z.number(),
   fallbacks: z.string().nullable(),
+  // The looptender build this plugin was built from: the card's own code, apart from each supervisor's build.
+  pluginBuild: z.string().max(64).optional(),
 });
 export type LoopView = z.infer<typeof loopSchema>;
 
 const sendAllowanceShape = z.object({ max: z.number(), used: z.number().optional(), remaining: z.number().optional(), reached: z.boolean(), error: z.string().optional() });
 const unreadableShape = z.object({ file: z.string(), problem: z.string(), offset: z.number().optional(), remedy: z.string() });
+const noProgressShape = z.object({ availability: z.string(), text: z.string() });
+const archivedShape = z.object({ at: z.string().optional(), hold: z.string().optional(), unreadable: z.boolean().optional() }).passthrough();
+const freshnessShape = z.object({ state: z.string(), text: z.string(), detail: z.string().optional(), command: z.string().optional(), action: z.string().optional() });
+const waitShape = z.object({ until: z.string(), untilTime: z.string().optional(), expiresAt: z.string().optional() });
 const diskShape = z.object({ level: z.string(), message: z.string().optional() });
+const sessionpipeWakeShape = z.object({
+  since: z.string().optional(),
+  forSeconds: z.number().int().nonnegative().optional(),
+  text: z.string().max(400),
+  held: z.boolean().optional(),
+  outcome: z.string().max(32).optional(),
+  code: z.string().max(32).optional(),
+  until: z.string().optional(),
+});
 
 /**
  * The fields status adds later, read one by one. A malformed one is left out
  * and named in `unparsed`, so the card says it could not be read; it is never
  * dropped as though there were nothing to say, and never costs the loop.
  */
-function lenient(s: { control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown }) {
+function lenient(s: { wait?: unknown; archived?: unknown; archiveLapsed?: unknown; buildFreshness?: unknown; noProgress?: unknown; control?: { supersededBy?: unknown }; deadline?: unknown; deadlineReached?: unknown; sendAllowance?: unknown; sendRecord?: unknown; diskSpace?: unknown; unreadable?: unknown; sessionpipeWake?: unknown }) {
   const unparsed: string[] = [];
   const pick = <T>(name: string, schema: z.ZodType<T>, raw: unknown): T | undefined => {
     if (raw === undefined) return undefined;
@@ -94,6 +120,19 @@ function lenient(s: { control?: { supersededBy?: unknown }; deadline?: unknown; 
     unparsed.push(name);
     return undefined;
   };
+  // An archive record that is malformed, flagged unreadable or has no usable date fails safe: it is kept as
+  // "unreadable", so the card offers no resume command and never prints an empty date.
+  let archived: { at?: string; hold?: string; unreadable?: boolean } | undefined;
+  if (s.archived !== undefined && s.archived !== null) {
+    const a = archivedShape.safeParse(s.archived);
+    const dated = a.success && !a.data.unreadable && !!a.data.at && !Number.isNaN(Date.parse(a.data.at)) && !a.data.at.startsWith("0001-");
+    if (a.success && dated) archived = { at: a.data.at, ...(a.data.hold ? { hold: a.data.hold } : {}) };
+    else { archived = { unreadable: true }; if (!a.success) unparsed.push("archived"); }
+  }
+  const archiveLapsed = pick("archiveLapsed", z.object({ at: z.string().optional() }).passthrough(), s.archiveLapsed);
+  const wait = pick("wait", waitShape, s.wait);
+  const freshness = pick("buildFreshness", freshnessShape, s.buildFreshness);
+  const noProgress = pick("noProgress", noProgressShape, s.noProgress);
   const supersededBy = pick("supersededBy", z.string(), s.control?.supersededBy);
   const deadline = pick("deadline", z.string(), s.deadline);
   const deadlineReached = pick("deadlineReached", z.boolean(), s.deadlineReached);
@@ -101,6 +140,7 @@ function lenient(s: { control?: { supersededBy?: unknown }; deadline?: unknown; 
   const sendRecord = pick("sendRecord", z.string(), s.sendRecord);
   const disk = pick("diskSpace", diskShape, s.diskSpace);
   if (disk && (disk.level === "low" || disk.level === "critical") && !disk.message) unparsed.push("diskSpace");
+  const sessionpipeWake = pick("sessionpipeWake", sessionpipeWakeShape, s.sessionpipeWake);
   // Entries are kept one by one: the well-formed ones are shown, and a bad one is named.
   let unreadable: z.infer<typeof unreadableShape>[] = [];
   if (s.unreadable !== undefined) {
@@ -110,7 +150,15 @@ function lenient(s: { control?: { supersededBy?: unknown }; deadline?: unknown; 
       if (unreadable.length !== s.unreadable.length) unparsed.push("unreadable");
     }
   }
-  return { supersededBy, deadline, deadlineReached, sends, sendRecord, disk, unreadable, unparsed };
+  return { wait, archived, archiveLapsed, freshness, noProgress, supersededBy, deadline, deadlineReached, sends, sendRecord, disk, sessionpipeWake, unreadable, unparsed };
+}
+
+/** The loop's display name from status --json naming.displayName, when it is a readable name that differs from the slug. */
+function displayName(naming: unknown, slug: string): string | undefined {
+  const n = typeof naming === "object" && naming !== null ? Reflect.get(naming, "displayName") : undefined;
+  if (typeof n !== "string") return undefined;
+  const clean = n.replace(/\s+/g, " ").trim().slice(0, 120);
+  return clean && clean !== slug ? clean : undefined;
 }
 
 const actionSchema = z.enum(["pause", "resume", "stop"]);
@@ -130,7 +178,7 @@ export const NOT_THIS_THREAD = "This loop does not belong to this thread (it is 
 // What the plugin says instead of resuming: where a person resumes the loop.
 export const resumeByPerson = (configPath: string) =>
   "looptender does not resume a loop from this plugin, because it cannot tell a person's click from the supervised session. " +
-  `From an ordinary terminal, not one BB opened on this loop's thread, run looptender resume -c ${JSON.stringify(configPath)}, or start the looptender panel there with looptender panel --allow-changes.`;
+  `From an ordinary terminal, not one BB opened on this loop's thread, run looptender resume -c ${JSON.stringify(configPath)}, or open the looptender panel there with looptender panel and resume it from the loop's page.`;
 
 export const rpcContract = defineRpcContract({
   attachment: { input: attachInput, output: attachResult },
@@ -148,6 +196,10 @@ export const rpcContract = defineRpcContract({
   },
   control: {
     input: z.object({ configPath: z.string().min(1).max(1000), action: actionSchema, managedId: z.string().optional(), expectedThreadId: z.string().min(1).max(200).optional() }),
+    output: z.object({ ok: z.boolean(), message: z.string() }),
+  },
+  startChecks: {
+    input: z.object({ configPath: z.string().min(1).max(1000), managedId: z.string().optional(), expectedThreadId: z.string().min(1).max(200).optional() }),
     output: z.object({ ok: z.boolean(), message: z.string() }),
   },
 });
@@ -214,7 +266,7 @@ export default async function plugin(bb: BbPluginApi) {
   const intents = async () => z.array(moveIntentSchema).max(32).parse(await bb.storage.kv.get("moves.v1") ?? []);
   const host = bb.hosts.experimental_client({ contract: hostContract });
   const records = async () => z.array(recordSchema).max(32).parse(await bb.storage.kv.get("setups.v1") ?? []);
-  const hostCommand = (bin: string, record: z.infer<typeof recordSchema>, operation: "status" | "doctor" | "start" | "pause" | "resume" | "stop", json?: true) =>
+  const hostCommand = (bin: string, record: z.infer<typeof recordSchema>, operation: "status" | "doctor" | "start" | "startChecks" | "pause" | "resume" | "stop", json?: true) =>
     host.call("command", { bin, record, operation, ...(json ? { json } : {}) }, { hostId: record.hostId, signal: AbortSignal.timeout(30_000) });
   const resolveTarget = async (threadId: string) => {
     const signal = AbortSignal.timeout(10_000);
@@ -271,8 +323,18 @@ export default async function plugin(bb: BbPluginApi) {
       ...((f.disk?.level === "low" || f.disk?.level === "critical") && f.disk.message ? { disk: { level: f.disk.level, message: f.disk.message.slice(0, 400) } } : {}),
       ...(f.unreadable.length ? { unreadable: f.unreadable.slice(0, 8).map(u => ({ file: u.file.slice(0, 64), problem: u.problem.slice(0, 40), ...(u.offset !== undefined ? { offset: u.offset } : {}), remedy: u.remedy.slice(0, 1200) })) } : {}),
       ...(f.unparsed.length ? { unparsed: f.unparsed.slice(0, 8) } : {}),
+      ...(f.noProgress?.availability === "flagged" ? { noProgress: { text: f.noProgress.text.slice(0, 400) } } : {}),
+      ...(f.wait ? { wait: { until: f.wait.until.slice(0, 60), ...(f.wait.untilTime ? { untilTime: f.wait.untilTime.slice(0, 40) } : {}), ...(f.wait.expiresAt ? { expiresAt: f.wait.expiresAt.slice(0, 40) } : {}) } } : {}),
+      ...(f.archived ? { archived: { ...(f.archived.at ? { at: f.archived.at.slice(0, 40) } : {}), ...(f.archived.hold ? { hold: f.archived.hold.slice(0, 40) } : {}), ...(f.archived.unreadable ? { unreadable: true } : {}) } } : {}),
+      ...(f.archiveLapsed ? { archiveLapsed: { ...(f.archiveLapsed.at ? { at: f.archiveLapsed.at.slice(0, 40) } : {}) } } : {}),
+      ...(f.freshness ? { buildFreshness: { state: f.freshness.state.slice(0, 24), text: cutAtWord(f.freshness.text, 200), ...(f.freshness.detail ? { detail: cutAtWord(f.freshness.detail, 600) } : {}), ...(f.freshness.command ? { command: f.freshness.command.slice(0, 400) } : {}), ...(f.freshness.action ? { action: cutAtWord(f.freshness.action, 600) } : {}) } } : {}),
+      ...(target.observed || target.adapter === "sessionpipe" ? { observed: true, ...(target.wakes ? { observedWakes: true } : {}) } : {}),
+      ...(target.session ? { targetSession: target.session.slice(0, 160) } : {}),
+      ...(f.sessionpipeWake ? { sessionpipeWake: { text: cutAtWord(f.sessionpipeWake.text, 400), ...(f.sessionpipeWake.held ? { held: true } : {}), ...(f.sessionpipeWake.outcome ? { outcome: f.sessionpipeWake.outcome.slice(0, 32) } : {}), ...(f.sessionpipeWake.code ? { code: f.sessionpipeWake.code.slice(0, 32) } : {}) } } : {}),
     },
+    ...(BUILD_LABEL && isBuildLabel(BUILD_LABEL) ? { pluginBuild: BUILD_LABEL } : {}),
     loop: s.loop,
+    ...(displayName(s.naming, s.loop) ? { displayName: displayName(s.naming, s.loop) } : {}),
     configPath,
     controlState: s.controlState,
     note: control.note ?? null,
@@ -359,6 +421,63 @@ export default async function plugin(bb: BbPluginApi) {
       : { ok: false, message: `looptender ${action} exited ${result.code}` };
   };
 
+  // Start checks for an enabled, unheld, non-archived loop whose daemon is not
+  // running ("checks have stopped"). Never clears a hold or resumes a held loop.
+  const startChecks = async (configPath: string, managedId?: string, expectedThreadId?: string) => {
+    const { bin, paths } = await configured();
+    const eligible = (s: z.infer<typeof statusSchema>) => {
+      if (expectedThreadId !== undefined && s.primaryAgent.bbThread !== expectedThreadId && s.targetAgent?.bbThread !== expectedThreadId) return NOT_THIS_THREAD;
+      if (s.controlState !== "enabled" || s.archived !== undefined) return "This action is only available for an enabled, unheld, non-archived loop.";
+      if (s.daemon?.state === "responsive") return "A daemon is already running for this loop.";
+      return null;
+    };
+    if (managedId) {
+      const record = (await records()).find(r => r.id === managedId && r.configPath === configPath);
+      if (!record) return { ok: false, message: "That setup is not registered with this plugin." };
+      if (expectedThreadId !== undefined && record.threadId !== expectedThreadId) return { ok: false, message: NOT_THIS_SETUP };
+      if (record.registryId) return { ok: false, message: "Imported loops are started from the host CLI." };
+      try {
+        await verifyImported(bin, record);
+        const st = await hostCommand(bin, record, "status");
+        const parsed = st.code === 0 ? statusSchema.safeParse(st.data) : undefined;
+        if (!parsed?.success) return { ok: false, message: "The loop's status could not be read, so nothing was started." };
+        const err = eligible(parsed.data);
+        if (err) return { ok: false, message: err };
+        const res = await hostCommand(bin, record, "startChecks");
+        bb.realtime.publish(CHANGED, { at: Date.now() });
+        return res.code === 0
+          ? { ok: true, message: res.method === "service" ? "Checks started via user service (survives reboot)." : "Checks started in background." }
+          : { ok: false, message: "Could not start checks; inspect looptender service status on the host." };
+      } catch {
+        return { ok: false, message: "Host unavailable or target changed; nothing was started." };
+      }
+    }
+    if (!paths.includes(configPath)) return { ok: false, message: "That loop is not in the plugin's configured list." };
+    let s: z.infer<typeof statusSchema>;
+    try { s = await status(bin, configPath); } catch { return { ok: false, message: "The loop's status could not be read, so nothing was started." }; }
+    const err = eligible(s);
+    if (err) return { ok: false, message: err };
+    let svc = await run(bin, ["service", "install", "--json", "-c", configPath]);
+    if (svc.code !== 0 && /already recorded|existing or unknown registration/i.test(svc.stderr)) {
+      const rm = await run(bin, ["service", "remove", "--json", "-c", configPath]);
+      if (rm.code === 0) {
+        svc = await run(bin, ["service", "install", "--json", "-c", configPath]);
+      }
+    }
+    if (svc.code === 0) {
+      bb.realtime.publish(CHANGED, { at: Date.now() });
+      return { ok: true, message: "Checks started via user service (survives reboot)." };
+    }
+    if (/user-service management currently supports macOS GUI LaunchAgents and Linux systemd user services|unknown subcommand|expected install, remove, or status/i.test(svc.stderr)) {
+      const bg = await run(bin, ["start", "--background", "-c", configPath]);
+      bb.realtime.publish(CHANGED, { at: Date.now() });
+      return bg.code === 0
+        ? { ok: true, message: "Checks started in background." }
+        : { ok: false, message: `looptender start exited ${bg.code}` };
+    }
+    return { ok: false, message: "Could not install user service; inspect looptender service status on the host." };
+  };
+
   const attachment = createAttachController({
     target: resolveTarget, binary: async () => (await configured()).bin, records,
     save: async value => { await bb.storage.kv.set("setups.v1", value); },
@@ -383,7 +502,7 @@ export default async function plugin(bb: BbPluginApi) {
       const result = await allLoops(threadId);
       if (result.loops.length || result.errors.length) throw new Error("Existing or unverified supervision");
     },
-    init: (bin, target, name, task, dryRun, withGoal, bounds, followStandard, takeover) => host.call("init", { bin, target, name, task, dryRun, withGoal, ...(bounds ? { bounds } : {}), ...(followStandard ? { followStandard: true as const } : {}), ...(takeover ? { takeover } : {}) }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) }),
+    init: (bin, target, name, task, dryRun, withGoal, bounds, followStandard, takeover, succeeds) => host.call("init", { bin, target, name, task, dryRun, withGoal, ...(bounds ? { bounds } : {}), ...(followStandard ? { followStandard: true as const } : {}), ...(takeover ? { takeover } : {}), ...(succeeds ? { succeeds } : {}) }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) }),
     standardRoutes: async (bin, target) => (await host.call("standardRoutes", { bin, target }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) })).available,
     command: hostCommand,
     // Only thread metadata, never content: a thread BB reports as pending has
@@ -391,6 +510,67 @@ export default async function plugin(bb: BbPluginApi) {
     conversation: async threadId => {
       const t = await bb.sdk.threads.get({ threadId, signal: AbortSignal.timeout(10_000) });
       return t.status === "pending" || t.runtime?.displayStatus === "pending" || t.runtime?.displayStatus === "provisioning" ? "none" : "unknown";
+    },
+    threadTitle: async threadId => {
+      const t = await bb.sdk.threads.get({ threadId, signal: AbortSignal.timeout(10_000) });
+      const raw = (t.title ?? t.titleFallback ?? "").trim();
+      return raw ? raw.slice(0, 200) : undefined;
+    },
+    threadMeta: async threadId => {
+      const signal = AbortSignal.timeout(10_000);
+      const t = await bb.sdk.threads.get({ threadId, signal });
+      const provider = t.providerId.slice(0, 64);
+      let model: string | undefined;
+      let reasoningLevel: string | undefined;
+      try {
+        const opts = await bb.sdk.threads.defaultExecutionOptions({ threadId, signal });
+        if (opts?.model) model = opts.model.slice(0, 256);
+        if (opts?.reasoningLevel) reasoningLevel = opts.reasoningLevel.slice(0, 64);
+      } catch { /* optional metadata */ }
+      if (!model) {
+        try {
+          const proj = await bb.sdk.projects.defaultExecutionOptions({ projectId: t.projectId, signal });
+          if (proj && proj.providerId === provider && proj.model) {
+            model = proj.model.slice(0, 256);
+            if (!reasoningLevel && proj.reasoningLevel) reasoningLevel = proj.reasoningLevel.slice(0, 64);
+          }
+        } catch { /* optional metadata */ }
+      }
+      let providerLabel: string | undefined;
+      try {
+        const providers = await bb.sdk.providers.list({ signal });
+        const match = providers.find(p => p.id === provider);
+        if (match?.displayName) providerLabel = match.displayName.slice(0, 120);
+      } catch { /* optional metadata */ }
+      let modelLabel: string | undefined;
+      if (model && t.environmentId) {
+        try {
+          const res = await bb.sdk.providers.models({ environmentId: t.environmentId, providerId: provider, signal });
+          const match = res.models.find(m => m.id === model || m.model === model);
+          if (match?.displayName) modelLabel = match.displayName.slice(0, 120);
+        } catch { /* optional metadata */ }
+      }
+      return {
+        provider,
+        ...(providerLabel ? { providerLabel } : {}),
+        ...(model ? { model } : {}),
+        ...(modelLabel ? { modelLabel } : {}),
+        ...(reasoningLevel ? { reasoningLevel } : {}),
+      };
+    },
+    continuationCandidates: async (bin, target) => {
+      const recs = await records();
+      const sameHostRecs = recs.filter(r => r.hostId === target.hostId);
+      const extraPaths = [...new Set([...sameHostRecs.map(r => r.configPath), ...(await configured()).paths])].slice(0, 128);
+      const res = await host.call("continuationCandidates", { bin, target, extraPaths }, { hostId: target.hostId, signal: AbortSignal.timeout(30_000) });
+      const sameProjectPaths = new Set(sameHostRecs.filter(r => r.projectId === target.projectId || r.project === target.project).map(r => r.configPath));
+      const enriched = res.candidates.map(c => sameProjectPaths.has(c.configPath) ? { ...c, sameProject: true } : c);
+      enriched.sort((a, b) => {
+        const rank = (c: typeof a) => (c.archived ? 2 : 0) + (c.sameProject ? 0 : 1);
+        const diff = rank(a) - rank(b);
+        return diff !== 0 ? diff : (a.displayName ?? a.loop).localeCompare(b.displayName ?? b.loop);
+      });
+      return enriched;
     },
     changed: () => bb.realtime.publish(CHANGED, { at: Date.now() }),
   });
@@ -498,6 +678,7 @@ export default async function plugin(bb: BbPluginApi) {
       async id => (await allLoops(id)).loops[0]?.loop,
     ),
     control: ({ configPath, action, managedId, expectedThreadId }) => action === "resume" ? serialize(() => control(configPath, action, managedId, expectedThreadId)) : control(configPath, action, managedId, expectedThreadId),
+    startChecks: ({ configPath, managedId, expectedThreadId }) => serialize(() => startChecks(configPath, managedId, expectedThreadId)),
   });
 
   bb.cli.register({
@@ -513,7 +694,7 @@ export default async function plugin(bb: BbPluginApi) {
       const [command, name, ...rest] = argv;
       if (command === "status" && name === undefined) {
         const { loops, errors } = await allLoops(null);
-        const lines = loops.map((l) => `${l.loop}\t${l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.details?.disk ? `\tdisk=${l.details.disk.level}` : ""}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
+        const lines = loops.map((l) => `${l.loop}\t${recordsUnreadable(l.details) ? "records unreadable" : l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.details?.disk ? `\tdisk=${l.details.disk.level}` : ""}${limitWaitListingTag(l.details)}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
         // Registered loops this plugin was not told about: said, with how to add one.
         let notShown = "";
         try {

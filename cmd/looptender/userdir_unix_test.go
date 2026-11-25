@@ -163,7 +163,7 @@ func TestPanelOpensTheRunningPanelAfterTheNameChanges(t *testing.T) {
 	if userdir.DirName() != "keepgoing" {
 		t.Fatal("the earlier name is not in use")
 	}
-	code, out, errs := panelRunHere("--no-open")
+	code, out, errs := panelRunHere("--read-only", "--no-open")
 	if code != exitOK || !strings.Contains(out, "Open this address") || strings.Contains(errs, "another registry") {
 		t.Fatalf("open: %d %s %s", code, out, errs)
 	}
@@ -178,7 +178,7 @@ func TestPanelOpensTheRunningPanelAfterTheNameChanges(t *testing.T) {
 	if err := os.MkdirAll(chosen, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errs := panelRunHere("--no-open", "--directory", chosen); code != exitFailed || !strings.Contains(errs, "another registry") {
+	if code, _, errs := panelRunHere("--read-only", "--no-open", "--directory", chosen); code != exitFailed || !strings.Contains(errs, "another registry") {
 		t.Fatalf("a chosen registry: %d %s", code, errs)
 	}
 	if code, out, errs := panelRunHere("stop"); code != exitOK || !strings.Contains(out, "Stopped the looptender panel") {

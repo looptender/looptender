@@ -22,6 +22,7 @@ import (
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/registry"
+	"github.com/looptender/looptender/internal/state"
 )
 
 // Changes from the panel: pause, stop and resume of one loop at a time. They
@@ -43,6 +44,9 @@ const (
 	panelChangesPrefix  = "api/v1/loops/"
 	panelChangeOrigin   = "panel"
 	panelPrepareContext = "keepgoing-panel-prepare\x00"
+	// panelControlsExposure is said wherever the default panel's pause,
+	// stop and resume are on.
+	panelControlsExposure = "Anyone using this window can pause, stop or resume loops, as the conversation or person that started this panel could from a terminal; a resume is refused for a loop its own conversation, or anything its supervisor started, asks to clear. Replacing a loop's build, editing routes and account sign-in need looptender panel --allow-changes."
 	// panelExposure is said wherever changes are turned on.
 	panelExposure = "While changes are allowed, anyone using this window can pause, stop or resume loops, replace their check builds with this panel's build, edit routes within the startup caller's authority, review send allowances when opened outside a supervised thread, review unchanged account selections in this panel's environment, start isolated provider sign-in for selected account rows, and read selected Codex subscription quota or retrieve supported Claude usage (provider freshness unknown)."
 )
@@ -54,6 +58,10 @@ type panelChanges struct {
 	registry     string          // the --directory value, as given
 	routeCatalog string          // optional catalog directory for isolated fixtures
 	caller       string          // immutable startup BB caller; never supplied by the page or a later opening
+	// controlsOnly: the default panel, started without --allow-changes, so
+	// pause, stop and resume only: no build replacement, route or
+	// send-allowance edits, account selection review, sign-in or quota reads.
+	controlsOnly bool
 	reader       *dockReader
 	since        time.Time
 	now          func() time.Time
@@ -64,6 +72,7 @@ type panelChanges struct {
 	order           []string            // form values, oldest first
 	quotaEnv        []string            // immutable startup context, never browser supplied
 	quotaRun        accountQuotaRun     // tests may substitute a fictional RPC
+	checkRun        accountRun          // tests may substitute a fictional status command runner
 	connectRun      accountConnectRun   // fictional provider fixtures only
 	connectAdmit    accountConnectAdmit // fictional admission fixtures only
 	connectClosing  bool
@@ -86,6 +95,7 @@ type panelForm struct {
 	quota     *accountQuotaSelection
 	connect   *panelAccountConnectReview
 	selection *panelAccountSelectionReview
+	remove    *panelAccountRemoveReview
 	allowance *panelSendAllowanceReview
 }
 
@@ -193,7 +203,7 @@ func panelReadAction(body io.Reader) (panelChangeRequest, bool) {
 	if (req.Action != "stop" && (req.Lanes || req.Immediately || req.DropQueued)) || (req.DropQueued && !req.Lanes) {
 		return req, false
 	}
-	return req, panelActions[req.Action] != "" || panelBuildActions[req.Action] != "" || req.Action == panelAccountQuotaAction || req.Action == panelAccountSelectionAction
+	return req, panelActions[req.Action] != "" || panelBuildActions[req.Action] != "" || req.Action == panelAccountQuotaAction || req.Action == panelAccountSelectionAction || req.Action == panelAccountCheckAction || req.Action == panelAccountRemoveAction
 }
 
 // panelPreview is what the page shows before the person confirms. Every
@@ -240,17 +250,29 @@ type panelChangeReply struct {
 	Result        *panelResult              `json:"result,omitempty"`
 }
 
-var panelActions = map[string]string{"pause": "Pause", "stop": "Stop", "resume": "Resume"}
-var panelDone = map[string]string{"pause": "paused", "stop": "stopped", "resume": "resumed"}
+var panelActions = map[string]string{"pause": "Pause", "stop": "Stop", "resume": "Resume", "archive": "Archive", "unarchive": "Unarchive"}
+var panelDone = map[string]string{"pause": "paused", "stop": "stopped", "resume": "resumed", "archive": "archived", "unarchive": "unarchived"}
 
 // serve answers one change request. rest is the path under the session.
 func (c *panelChanges) serve(w http.ResponseWriter, r *http.Request, rest, session string) {
+	if c.controlsOnly {
+		for _, p := range []string{panelSendAllowancePrefix, panelAccountConnectPrefix, panelRoutesPrefix, panelAccountSelectionPrefix, panelAccountQuotaPrefix, panelAccountCheckPrefix, panelAccountRemovePrefix} {
+			if strings.HasPrefix(rest, p) {
+				http.Error(w, "refused", http.StatusForbidden)
+				return
+			}
+		}
+	}
 	if strings.HasPrefix(rest, panelSendAllowancePrefix) {
 		c.serveSendAllowance(w, r, rest, session)
 		return
 	}
 	if strings.HasPrefix(rest, panelAccountConnectPrefix) {
 		c.serveAccountConnect(w, r, rest, session)
+		return
+	}
+	if strings.HasPrefix(rest, panelAccountRemovePrefix) {
+		c.serveAccountRemove(w, r, rest, session)
 		return
 	}
 	if strings.HasPrefix(rest, panelRoutesPrefix) {
@@ -265,6 +287,10 @@ func (c *panelChanges) serve(w http.ResponseWriter, r *http.Request, rest, sessi
 		c.serveAccountQuota(w, r, rest, session)
 		return
 	}
+	if strings.HasPrefix(rest, panelAccountCheckPrefix) {
+		c.serveAccountCheck(w, r, rest, session)
+		return
+	}
 	key, step, ok := strings.Cut(strings.TrimPrefix(rest, panelChangesPrefix), "/")
 	if !strings.HasPrefix(rest, panelChangesPrefix) || !ok || !(panelKeyPattern.MatchString(key) || key == panelGroupKey) || (step != "prepare" && step != "confirm") {
 		http.NotFound(w, r)
@@ -272,7 +298,7 @@ func (c *panelChanges) serve(w http.ResponseWriter, r *http.Request, rest, sessi
 	}
 	req, ok := panelReadAction(http.MaxBytesReader(w, r.Body, panelMaxBody))
 	// A build change is for one loop only, never for every loop at once.
-	if !ok || req.Action == panelAccountQuotaAction || req.Action == panelAccountSelectionAction || (step == "prepare" && (req.Lanes || req.Immediately || req.DropQueued)) || (key == panelGroupKey && panelBuildActions[req.Action] != "") {
+	if !ok || req.Action == panelAccountQuotaAction || req.Action == panelAccountSelectionAction || req.Action == panelAccountCheckAction || req.Action == panelAccountRemoveAction || (step == "prepare" && (req.Lanes || req.Immediately || req.DropQueued)) || (key == panelGroupKey && panelBuildActions[req.Action] != "") || (c.controlsOnly && panelBuildActions[req.Action] != "") {
 		http.Error(w, "refused", http.StatusBadRequest)
 		return
 	}
@@ -435,14 +461,20 @@ func panelReviewForCaller(ctx context.Context, registryDir string, reader *dockR
 	if action == "resume" && control.CheckTransferReady(ctl) != nil {
 		return panelReviewed{}, &panelResult{Outcome: "refused", Text: "This loop is superseded or has a pending transfer. Resume is unavailable; inspect its status. Nothing was changed."}
 	}
-	if action == "resume" && control.CheckOwner(ctl, caller, false) != nil {
-		return panelReviewed{}, &panelResult{Outcome: "refused", Text: "This panel cannot resume the loop with its startup caller. Nothing was changed."}
+	if (action == "resume" || action == "archive" || action == "unarchive") && control.CheckOwner(ctl, caller, false) != nil {
+		return panelReviewed{}, &panelResult{Outcome: "refused", Text: "This panel cannot " + action + " the loop with its startup caller. Nothing was changed."}
 	}
-	if action == "resume" && entryHoldClearer(entry, caller) != nil {
+	if (action == "resume" || action == "archive" || action == "unarchive") && entryHoldClearer(entry, caller) != nil {
 		return panelReviewed{}, &panelResult{Outcome: "refused", Text: panelSupervisedSession + " Nothing was changed."}
 	}
 	// The rest of the loop as it is now, read the way the page reads it.
 	loop := panelLoopNow(ctx, reader, dir, entry, all, now)
+	if action == "archive" && loop.Archived != nil {
+		return panelReviewed{}, &panelResult{Outcome: "refused", Text: "This loop is already archived. Nothing was changed."}
+	}
+	if action == "unarchive" && loop.Archived == nil {
+		return panelReviewed{}, &panelResult{Outcome: "refused", Text: "This loop is not archived. Nothing was changed."}
+	}
 	ttl := panelHoldFormTTL
 	if action == "resume" {
 		// A resume's own ticket is prepared when the person confirms, so
@@ -542,12 +574,137 @@ func panelApply(ctx context.Context, registryDir, id, action, origin, caller, ex
 		done, _ := clientResume(ctx, registryDir, id, "resume", prepared.Ticket, false, caller, origin, expect, time.Now, nil)
 		return done.clientHoldReport
 	}
+	if action == "archive" || action == "unarchive" {
+		return applyClientArchive(ctx, registryDir, id, action, origin, caller, expect)
+	}
 	if opts.Now {
 		// Both the page and client apply retain their actual caller for
 		// caller-last ordering in a stop carried out now.
 		opts.CallerThread = caller
 	}
 	r, _ := applyClientHoldWith(ctx, registryDir, id, action, origin, expect, opts)
+	return r
+}
+
+func applyClientArchive(ctx context.Context, directory, id, operation, origin, caller, expect string) clientHoldReport {
+	r := clientHoldReport{SchemaVersion: 1, RegistrationID: id, Operation: operation, ControlSave: "not_attempted", Issues: []string{}}
+	reject := errors.New("client archive rejected")
+	fail := func(issue string) error { r.Issues = append(r.Issues, issue); return reject }
+	didPauseWrite := false
+	dir, err := registryDirectory(directory)
+	if err != nil {
+		r.Issues = append(r.Issues, "registry_unavailable")
+		return r
+	}
+	err = registry.WithEntry(dir, id, func(entry registry.Entry) error {
+		if ctx.Err() != nil {
+			return fail("cancelled")
+		}
+		if _, ok := clientConfig(entry); !ok {
+			return fail("binding_unavailable")
+		}
+		var initial control.File
+		if readTransferRecord(entry.StateDir, control.FileName, &initial) != nil {
+			return fail("control_unavailable")
+		}
+		checkLocked := func(f control.File) error {
+			if ctx.Err() != nil {
+				return fail("cancelled")
+			}
+			current, ok := clientEntry(dir, id)
+			if !ok || current != entry {
+				return fail("registration_changed")
+			}
+			if expect != "" && !expectDigestMatches(controlDigest(f), expect) {
+				return fail("observation_changed")
+			}
+			if err := control.CheckOwner(f, caller, false); err != nil {
+				return fail("owned")
+			}
+			if err := entryHoldClearer(entry, caller); err != nil {
+				return fail("supervised_session")
+			}
+			r.ControlSave = "unconfirmed"
+			return nil
+		}
+		if operation == "archive" {
+			if arch, aerr := control.LoadArchive(entry.StateDir); aerr != nil {
+				return fail("control_unavailable")
+			} else if arch != nil {
+				return fail("already_archived")
+			}
+			if initial.Supervising() {
+				// Pause before archiving so control.ArchiveLoop finds no supervising run;
+				// verify the reviewed digest inside the control lock first.
+				f, uerr := updateControlFrom(entry.StateDir, "pause", origin, func(f *control.File) error {
+					if err := checkLocked(*f); err != nil {
+						return err
+					}
+					f.Paused = true
+					didPauseWrite = true
+					return nil
+				})
+				if uerr == nil || errors.Is(uerr, errControlHistory) {
+					recordRegistration(entry.StateDir, entry.ID)
+				}
+				if uerr != nil && !errors.Is(uerr, errControlHistory) {
+					return uerr
+				}
+				r.Controls = &clientControls{f.Enabled, f.Paused, f.Stop, f.AwaitingUser, f.Completed}
+				expect = controlDigest(f)
+			}
+			_, f, aerr := control.ArchiveLoop(entry.StateDir, "", time.Now().UTC(), checkLocked)
+			if aerr != nil {
+				if !errors.Is(aerr, reject) {
+					if errors.Is(aerr, control.ErrArchiveSupervising) {
+						return fail("observation_changed")
+					}
+					return aerr
+				}
+				return aerr
+			}
+			r.ControlSave = "confirmed"
+			r.Controls = &clientControls{f.Enabled, f.Paused, f.Stop, f.AwaitingUser, f.Completed}
+			if state.Append(entry.StateDir, state.Event{Loop: entry.Loop, Event: "control", Action: "archive", Reason: f.Summary()}) != nil {
+				r.Issues = append(r.Issues, "run_history_unavailable")
+			}
+			return nil
+		}
+		arch, uerr := control.UnarchiveLoop(entry.StateDir, checkLocked)
+		if uerr != nil {
+			if !errors.Is(uerr, reject) {
+				return uerr
+			}
+			return uerr
+		}
+		if arch == nil {
+			r.ControlSave = "not_attempted"
+			return fail("not_archived")
+		}
+		f, lerr := control.Load(entry.StateDir)
+		if lerr != nil {
+			return fail("control_unavailable")
+		}
+		r.ControlSave = "confirmed"
+		r.Controls = &clientControls{f.Enabled, f.Paused, f.Stop, f.AwaitingUser, f.Completed}
+		if state.Append(entry.StateDir, state.Event{Loop: entry.Loop, Event: "control", Action: "unarchive", Reason: f.Summary()}) != nil {
+			r.Issues = append(r.Issues, "run_history_unavailable")
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, lock.ErrHeld) {
+			if !didPauseWrite {
+				r.ControlSave = "not_attempted"
+			}
+			r.Issues = append(r.Issues, "busy")
+			return r
+		}
+		if !errors.Is(err, reject) && r.ControlSave == "not_attempted" {
+			r.Issues = append(r.Issues, "control_or_registration_unavailable")
+		}
+		return r
+	}
 	return r
 }
 
@@ -590,7 +747,11 @@ func panelLoopNow(ctx context.Context, reader *dockReader, dir string, entry reg
 // resume clears comes from clearForResume, the function the resume itself
 // saves with, run on a copy of the record reviewed.
 func panelPreviewOf(action string, l panelLoop, ctl control.File, expires, now time.Time) panelPreview {
-	p := panelPreview{Action: action, Title: panelActions[action] + " " + l.Name + "?", Confirm: panelActions[action] + " " + l.Name, Lines: []dockText{},
+	label := panelActions[action]
+	if l.Observed && (action == "pause" || action == "resume") {
+		label += " checking"
+	}
+	p := panelPreview{Action: action, Title: label + " " + l.Name + "?", Confirm: label + " " + l.Name, Lines: []dockText{},
 		Lost:    "looptender could not confirm whether " + l.Name + " was " + panelDone[action] + ". Check its state before doing anything else.",
 		Refused: "The panel refused this request before doing anything. Nothing was changed."}
 	add := func(a ...any) { p.Lines = append(p.Lines, txt(a...)) }
@@ -598,7 +759,14 @@ func panelPreviewOf(action string, l panelLoop, ctl control.File, expires, now t
 	add("Now: " + l.Phrase + ". Last check: " + strings.ToLower(l.LastCheck.Text[:1]) + l.LastCheck.Text[1:] + ".")
 	switch action {
 	case "pause":
-		add("looptender sends it nothing until it is resumed. A check already running finishes. Its route, note, other holds and ownership do not change.")
+		switch {
+		case l.Observed && !l.ObservedWakes:
+			add("looptender stops checking this session until you resume checking; nothing is ever sent to it. A check already running finishes. Its note and other holds do not change.")
+		case l.Observed && l.ObservedWakes:
+			add("looptender stops checking and idle wakes until you resume checking. A check already running finishes. Its note and other holds do not change.")
+		default:
+			add("looptender sends it nothing until it is resumed. A check already running finishes. Its route, note, other holds and ownership do not change.")
+		}
 	case "stop":
 		add("The loop's next check carries out the stop; this review cannot confirm that the session stopped. Nothing is sent until it is resumed.")
 		add("This stops the conversation only: its lanes, if it has any, keep running.")
@@ -628,7 +796,14 @@ func panelPreviewOf(action string, l panelLoop, ctl control.File, expires, now t
 		if e.NewEpisode {
 			add("The hold was raised because re-prompts or nudges were spent, so resume starts a new error episode: those counts start over. Loop-wide limits are unchanged.")
 		}
-		add("Resume does not turn supervision on or start a turn; the next check decides what to send.")
+		switch {
+		case l.Observed && !l.ObservedWakes:
+			add("Resume continues checking; nothing is ever sent to this session.")
+		case l.Observed && l.ObservedWakes:
+			add("Resume continues checking and idle wakes; nothing is sent by resuming, and the next check decides whether the idle session should be woken.")
+		default:
+			add("Resume does not turn supervision on or start a turn; the next check decides what to send.")
+		}
 		if !ctl.Enabled {
 			add("Supervision is off for this loop, and resume does not turn it on.")
 		}
@@ -652,6 +827,16 @@ func panelPreviewOf(action string, l panelLoop, ctl control.File, expires, now t
 			add("Next check: unknown; " + strings.TrimSuffix(n.Detail, ".") + ".")
 		}
 		add("Confirming prepares this resume's own ticket, so a resume another client prepared and has not used yet can no longer be used.")
+	case "archive":
+		if ctl.Supervising() {
+			add("Archiving pauses supervision first, then moves this loop into the archived list. No files or records are deleted.")
+		} else {
+			add("Moves this loop into the archived list without deleting any files or records.")
+		}
+		add("An archived loop needs nobody, stops daemon checks, and stays out of your active list and badge count. You can bring it back later with Unarchive.")
+	case "unarchive":
+		add("Brings this loop back from the archived list into the normal list without deleting or changing any holds.")
+		add("Nothing is resumed automatically: if its supervision was paused or held, it stays that way until you resume it.")
 	}
 	add("If the loop's control record changes before you confirm, nothing is changed and you are asked to review again.")
 	add("This review expires ", dockUntil(now, expires), ".")
@@ -695,9 +880,11 @@ func panelOutcome(action string, r clientHoldReport) panelResult {
 		return panelResult{Outcome: "done", Text: text}
 	case r.ControlSave == "confirmed":
 		text := map[string]string{
-			"pause":  "Paused: looptender will send nothing; a check already running finishes.",
-			"stop":   "Stop requested: the next check carries it out.",
-			"resume": "Resumed: holds cleared; the next check decides what to send.",
+			"pause":     "Paused: looptender will send nothing; a check already running finishes.",
+			"stop":      "Stop requested: the next check carries it out.",
+			"resume":    "Resumed: holds cleared; the next check decides what to send.",
+			"archive":   "Archived: moved into the archived list without deleting files.",
+			"unarchive": "Unarchived: returned to the normal list. Nothing was resumed.",
 		}[action]
 		if has("incident_history_unavailable") || has("run_history_unavailable") {
 			text += " Its history could not record this change."
@@ -720,6 +907,12 @@ func panelOutcome(action string, r clientHoldReport) panelResult {
 			why = panelSupervisedSession
 		case "archived":
 			why = "The loop is archived. Unarchive it first with looptender unarchive; unarchiving resumes nothing."
+		case "already_archived":
+			why = "This loop is already archived."
+		case "not_archived":
+			why = "This loop is not archived."
+		case "owned":
+			why = "This loop is supervised for another conversation."
 		case "ticket_unavailable":
 			why = "A review could not be prepared."
 		case "cancelled":

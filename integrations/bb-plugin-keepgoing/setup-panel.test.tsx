@@ -231,29 +231,29 @@ test("on a thread with no turn yet, the typed task stays the default through pre
   } finally { cleanup(); }
 });
 
-test("the preview shows the takeover, and the person can turn it off and preview again", async () => {
+test("takeover is off by default, can be enabled in Options, and previewed", async () => {
   const sent: Array<string | undefined> = [];
   const offer = { provider: "claude-code", model: "example-claude-model" };
   const call = async (input: { action: string; takeover?: "on" | "off" }): Promise<SetupResult> => {
     if (input.action !== "preview") return { ok: true, message: "No loop is set up for this thread yet." };
     sent.push(input.takeover);
-    const takeover = input.takeover !== "off" ? { takeover: { ...offer, permission: "accept-edits", text: "On a usage limit on codex: a new conversation on claude-code takes over." } } : {};
-    return { ok: true, message: input.takeover === "off" ? "Preview without takeover" : "Preview with takeover", plan: { ...plan, ...takeover, takeoverOffer: offer }, ticket: "example-ticket" };
+    const takeover = input.takeover === "on" ? { takeover: { ...offer, permission: "accept-edits", text: "On a usage limit on codex: a new conversation on claude-code takes over." } } : {};
+    return { ok: true, message: input.takeover === "on" ? "Preview with takeover" : "Preview without takeover", plan: { ...plan, ...takeover, takeoverOffer: offer }, ticket: "example-ticket" };
   };
   const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
   try {
     await ui.findByText("No loop is set up for this thread yet.");
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
-    await ui.findByText("Preview with takeover");
-    assert.ok(ui.getByText("On a usage limit on codex: a new conversation on claude-code takes over."));
-    const box = ui.getByRole("checkbox", { name: "Take over on a usage limit" }) as HTMLInputElement;
-    assert.equal(box.checked, true);
-    fireEvent.click(box);
-    assert.equal(ui.queryByRole("button", { name: "Create setup" }), null, "turning it off invalidates the preview");
-    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByText("Preview without takeover");
     assert.ok(ui.getByText("No fallbacks; automatic handoff is off."));
-    assert.deepEqual(sent, ["on", "off"]);
+    const box = ui.getByRole("checkbox", { name: "Take over on a usage limit" }) as HTMLInputElement;
+    assert.equal(box.checked, false);
+    fireEvent.click(box);
+    assert.equal(ui.queryByRole("button", { name: "Create setup" }), null, "turning it on invalidates the preview");
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByText("Preview with takeover");
+    assert.ok(ui.getByText("On a usage limit on codex: a new conversation on claude-code takes over."));
+    assert.deepEqual(sent, ["off", "on"]);
   } finally { cleanup(); }
 });
 
@@ -273,7 +273,8 @@ test("each step has exactly one prominent button, and the choices are form contr
     // Selection is by radio and checkbox, grouped under headings; the only buttons are actions.
     assert.deepEqual([...ui.container.querySelectorAll("fieldset > legend")].map(l => l.textContent), ["What should the loop keep going?", "Options"]);
     assert.equal(ui.container.querySelectorAll("input[type=radio]").length, 2); assert.equal(ui.container.querySelectorAll("input[type=checkbox]").length, 1);
-    assert.deepEqual([...ui.container.querySelectorAll("button")].map(b => b.textContent), ["Preview setup"]);
+    assert.deepEqual([...ui.container.querySelectorAll('button:not([role="tab"])')].map(b => b.textContent), ["Preview setup"]);
+    assert.deepEqual([...ui.container.querySelectorAll('[role="tab"]')].map(b => b.textContent), ["New loop", "Continue existing"]);
     assert.ok(ui.container.querySelector("label[for]"), "labelled fields");
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByRole("button", { name: "Create setup" });
@@ -285,7 +286,7 @@ test("each step has exactly one prominent button, and the choices are form contr
     assert.deepEqual(primaries(ui), ["Start background supervision"]);
     fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
     await ui.findByText("Supervision started");
-    assert.ok(ui.getByText(/Yes: a background supervisor was launched/)); assert.deepEqual(primaries(ui), []);
+    assert.ok(ui.getByText(/background supervisor launched/)); assert.deepEqual(primaries(ui), ["Done"]);
   } finally { cleanup(); }
 });
 
@@ -365,4 +366,225 @@ test("focus rings and error text meet the contrast the form needs in both themes
   assert.ok(ratio(ring!, "#ffffff") >= 3, "light"); assert.ok(ratio(ring!, "#1b1b1d") >= 3, "dark");
   assert.ok(!/outline:2px solid Highlight/.test(css));
   assert.match(css, /\.kgs-chip\{min-height:44px !important/);
+});
+
+test("slugFromTitle and slugFromPredecessor derive clean slugs and avoid collisions", async () => {
+  const { slugFromTitle, slugFromPredecessor } = await import("./setup-contract.ts");
+  assert.equal(slugFromTitle("Fix auth token refresh (Claude 4)", "thr_example"), "fix-auth-token-refresh");
+  assert.equal(slugFromTitle("Add continuation UI · Gemini 4 Hydrogen (Medium)", "thr_example"), "add-continuation-ui");
+  assert.equal(slugFromTitle("New thread", "thr_example"), "bb-thr-example");
+  assert.equal(slugFromTitle(null, "thr_example"), "bb-thr-example");
+  assert.equal(slugFromPredecessor({ loop: "example-loop" }, ["example-loop"]), "example-loop-2");
+  assert.equal(slugFromPredecessor({ loop: "example-loop-2" }, ["example-loop", "example-loop-2"]), "example-loop-3");
+  assert.equal(slugFromPredecessor({ loop: "bb-thr_old", displayName: "Auth Refresh Work" }, []), "auth-refresh-work-2");
+  assert.equal(slugFromPredecessor({ loop: "bb-thr_old", displayName: "BB work" }, []), "bb-work-2");
+  assert.equal(slugFromPredecessor({ loop: "bb-thr_old", displayName: "thr_old" }, []), "bb-thr-old-2");
+  assert.equal(slugFromPredecessor({ loop: "bb-thr_old", displayName: "bb-thr-old" }, []), "bb-thr-old-2");
+});
+
+test("Continue a loop mode selects a predecessor, derives slug, explains auto-archive, and sends succeeds", async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const candidates = [
+    { configPath: "/private/auth-work/looptender.yaml", loop: "auth-work", displayName: "Auth Work", project: "example", sameProject: true, controlState: "paused", archived: false },
+  ];
+  const call = async (input: Record<string, unknown>): Promise<SetupResult> => {
+    seen.push(input);
+    if (input.action === "inspect") return { ok: true, message: "No loop yet", threadTitle: "Continue auth work (Codex)", continuationCandidates: candidates };
+    if (input.action === "preview") return { ok: true, message: "Preview only", ticket: "t1", plan: { ...plan, loop: "auth-work-2", succeeds: { configPath: candidates[0]!.configPath, loop: "auth-work", displayName: "Auth Work" } } };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record: { ...record, loop: "auth-work-2" }, canStart: true, checks: [], warnings: ["init: warning: fictional notice"] };
+    return { ok: true, message: "No loop yet" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call as never} onChanged={() => {}} />);
+  try {
+    await ui.findByText("No loop yet");
+    const nameInput = ui.getByLabelText("Loop name") as HTMLInputElement;
+    assert.equal(nameInput.value, "continue-auth-work");
+    fireEvent.click(ui.getByRole("tab", { name: /Continue existing/ }));
+    assert.ok(ui.getByText(/archived automatically once this new loop completes its first check; nothing is deleted/));
+    fireEvent.change(ui.getByLabelText("Loop to continue"), { target: { value: candidates[0]!.configPath } });
+    assert.equal(nameInput.value, "auth-work-2");
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByText(/Auth Work \(auth-work\) — archived automatically after first completed check/);
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await ui.findByText("init: warning: fictional notice");
+    const createCall = seen.find(c => c.action === "create")!;
+    assert.equal(createCall.succeeds, candidates[0]!.configPath);
+    assert.equal(createCall.name, "auth-work-2");
+  } finally { cleanup(); }
+});
+
+test("displays current provider and model for non-Claude threads without defaulting to Claude/Fable/Opus, and keeps modal compact with collapsed accordions", async () => {
+  const meta = { provider: "acp-antigravity", providerLabel: "Antigravity", model: "gemini-4-neon", modelLabel: "Gemini 4 Neon", reasoningLevel: "high" };
+  const agPlan = { ...plan, provider: "acp-antigravity" };
+  const agRecord = { ...record, provider: "acp-antigravity" };
+  const call = async (input: { action: string }): Promise<SetupResult> => {
+    if (input.action === "preview") return { ok: true, message: "Preview without takeover", plan: agPlan, threadMeta: meta, ticket: "ag-ticket", task: "Keep going" };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record: agRecord, canStart: true, checks: [{ id: "agent.primary.target", status: "ok", message: "Verified" }], threadMeta: meta };
+    return { ok: true, message: "No loop yet", threadMeta: meta };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  try {
+    await ui.findByText(/Running on Antigravity · Gemini 4 Neon \(high\)/);
+    assert.equal(/claude|fable|opus/i.test(ui.container.textContent ?? ""), false);
+    const details = [...ui.container.querySelectorAll("details")] as HTMLDetailsElement[];
+    assert.ok(details.length >= 1 && details.every(d => !d.open), "secondary Options accordion starts collapsed");
+
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    assert.equal(/claude|fable|opus/i.test(ui.container.textContent ?? ""), false);
+    assert.ok(ui.getAllByText(/Antigravity · Gemini 4 Neon \(high\)/).length >= 2);
+    const previewDetails = [...ui.container.querySelectorAll("details")] as HTMLDetailsElement[];
+    assert.ok(previewDetails.length >= 2 && previewDetails.every(d => !d.open), "preview path/task/limit details start collapsed");
+
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await ui.findByRole("button", { name: "Start background supervision" });
+    assert.equal(/claude|fable|opus/i.test(ui.container.textContent ?? ""), false);
+    const doneDetails = [...ui.container.querySelectorAll("details")] as HTMLDetailsElement[];
+    assert.ok(doneDetails.every(d => !d.open), "saved config path and diagnostics start collapsed");
+  } finally { cleanup(); }
+});
+
+test("modal styles bound height, tighten spacing, and avoid left-accent borders", async () => {
+  const { SetupStyles } = await import("./setup-style.tsx");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const css = renderToStaticMarkup(<SetupStyles />);
+  assert.match(css, /max-height:min\(76vh,620px\)/);
+  assert.match(css, /overflow-y:auto/);
+  assert.match(css, /min-height:68px/);
+  assert.equal(/border-left/i.test(css), false);
+});
+
+test("Minimize button works on form, preview, saved, and started states; Supervision started is compact with Done and collapsed Details & diagnostics", async () => {
+  let closes = 0;
+  const meta = { provider: "acp-antigravity", providerLabel: "Antigravity", model: "gemini-4-neon", modelLabel: "Gemini 4 Neon", reasoningLevel: "high" };
+  const call = async (input: { action: string }): Promise<SetupResult> => {
+    if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket", threadMeta: meta };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [{ id: "c1", status: "ok", message: "Verified" }], threadMeta: meta };
+    if (input.action === "start") return { ok: true, message: "Background supervision started (user service installed; survives reboot). Existing timers were not changed.", record, canStart: false, started: true, checks: [{ id: "c1", status: "ok", message: "Verified" }], threadMeta: meta };
+    return { ok: true, message: "Nothing set up yet", threadMeta: meta };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} onClose={() => closes++} />);
+  try {
+    await ui.findByText("Nothing set up yet");
+    // New vs Continue helper copy clearly distinguishes native BB continuation vs takeover.
+    assert.ok(ui.getByText(/For a brand-new goal on this thread\. \(If you're continuing an existing supervised BB thread directly, it's already covered\.\)/));
+    assert.ok(ui.getByText(/You opened a new BB thread to take over an older loop's goal/));
+
+    // Form state has Minimize.
+    fireEvent.click(ui.getByRole("button", { name: "Minimize Add to Looptender" }));
+    assert.equal(closes, 1);
+
+    // Preview state has Minimize.
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    fireEvent.click(ui.getByRole("button", { name: "Minimize Add to Looptender" }));
+    assert.equal(closes, 2);
+
+    // Saved state has Minimize.
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await ui.findByText("Setup created, switched off");
+    fireEvent.click(ui.getByRole("button", { name: "Minimize Add to Looptender" }));
+    assert.equal(closes, 3);
+
+    // Started state shows crisp 3-line summary, prominent Done button, collapsed Details & diagnostics, and Minimize.
+    fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
+    await ui.findByText("Supervision started");
+    assert.ok(ui.getByText("user service installed"));
+    assert.ok(ui.getByText("Antigravity · Gemini 4 Neon (high)"));
+    assert.deepEqual(primaries(ui), ["Done"]);
+    const accordions = [...ui.container.querySelectorAll("details")] as HTMLDetailsElement[];
+    assert.equal(accordions.length, 1);
+    assert.equal(accordions[0]!.open, false);
+    assert.equal(accordions[0]!.querySelector("summary")?.textContent, "Details & diagnostics (1)");
+
+    fireEvent.click(ui.getByRole("button", { name: "Minimize Add to Looptender" }));
+    assert.equal(closes, 4);
+    fireEvent.click(ui.getByRole("button", { name: "Done" }));
+    assert.equal(closes, 5);
+  } finally { cleanup(); }
+});
+
+test("setup mode tablist supports ArrowLeft/ArrowRight switching, roving tabIndex, ARIA tabpanel linkage, and unique IDs across instances", async () => {
+  const call = async (): Promise<SetupResult> => ({ ok: true, message: "Nothing set up yet" });
+  const ui = render(<>
+    <SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />
+    <SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />
+  </>);
+  try {
+    await ui.findAllByText("Nothing set up yet");
+    const newTabs = ui.getAllByRole("tab", { name: "New loop" }) as HTMLButtonElement[];
+    const continueTabs = ui.getAllByRole("tab", { name: /Continue existing/ }) as HTMLButtonElement[];
+    const tabpanels = ui.getAllByRole("tabpanel");
+    const newTab = newTabs[0]!;
+    const continueTab = continueTabs[0]!;
+    const tabpanel = tabpanels[0]!;
+
+    assert.notEqual(newTabs[0]!.id, newTabs[1]!.id);
+    assert.notEqual(continueTabs[0]!.id, continueTabs[1]!.id);
+    assert.notEqual(tabpanels[0]!.id, tabpanels[1]!.id);
+
+    assert.equal(newTab.getAttribute("aria-selected"), "true");
+    assert.equal(newTab.tabIndex, 0);
+    assert.equal(continueTab.getAttribute("aria-selected"), "false");
+    assert.equal(continueTab.tabIndex, -1);
+    assert.equal(newTab.getAttribute("aria-controls"), tabpanel.id);
+    assert.equal(continueTab.getAttribute("aria-controls"), tabpanel.id);
+    assert.equal(tabpanel.getAttribute("aria-labelledby"), newTab.id);
+
+    newTab.focus();
+    fireEvent.keyDown(newTab, { key: "ArrowRight" });
+    assert.equal(continueTab.getAttribute("aria-selected"), "true");
+    assert.equal(continueTab.tabIndex, 0);
+    assert.equal(newTab.tabIndex, -1);
+    assert.equal(document.activeElement, continueTab);
+    assert.equal(tabpanel.getAttribute("aria-labelledby"), continueTab.id);
+    assert.ok(ui.getByText("No existing loops found on this host."));
+
+    fireEvent.keyDown(continueTab, { key: "ArrowLeft" });
+    assert.equal(newTab.getAttribute("aria-selected"), "true");
+    assert.equal(newTab.tabIndex, 0);
+    assert.equal(continueTab.tabIndex, -1);
+    assert.equal(document.activeElement, newTab);
+    assert.equal(tabpanel.getAttribute("aria-labelledby"), newTab.id);
+  } finally { cleanup(); }
+});
+
+test("Refresh diagnostics on Supervision started view preserves user service label and exits when inspect reports canStart", async () => {
+  let inspectCount = 0;
+  const call = async (input: { action: string }): Promise<SetupResult> => {
+    if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket" };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [{ id: "c1", status: "ok", message: "Initial" }] };
+    if (input.action === "start") return { ok: true, message: "Background supervision started (user service installed; survives reboot).", record, canStart: false, started: true, checks: [{ id: "c1", status: "ok", message: "Initial" }] };
+    if (input.action === "inspect") {
+      inspectCount++;
+      if (inspectCount === 1) return { ok: true, message: "Nothing set up yet" };
+      if (inspectCount === 2) return { ok: true, message: "Refreshed", record, canStart: false, checks: [{ id: "c2", status: "ok", message: "Refreshed check" }] };
+      return { ok: true, message: "Saved disabled again", record, canStart: true, checks: [{ id: "c3", status: "ok", message: "Stopped externally" }] };
+    }
+    return { ok: true, message: "Nothing set up yet" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Nothing set up yet");
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await ui.findByRole("button", { name: "Start background supervision" });
+    fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
+    await ui.findByText("Supervision started");
+    assert.ok(ui.getByText("user service installed"));
+
+    // First refresh still running (canStart: false): stays on Supervision started and preserves "user service installed".
+    fireEvent.click(ui.getByRole("button", { name: "Refresh diagnostics" }));
+    await ui.findByText("ok: Refreshed check");
+    assert.ok(ui.getByText("Supervision started"));
+    assert.ok(ui.getByText("user service installed"));
+    assert.equal(ui.queryByRole("button", { name: "Start background supervision" }), null);
+
+    // Second refresh reports canStart: true (e.g. stopped externally): exits Supervision started so Start is shown again.
+    fireEvent.click(ui.getByRole("button", { name: "Refresh diagnostics" }));
+    await ui.findByRole("button", { name: "Start background supervision" });
+    assert.equal(ui.queryByText("Supervision started"), null);
+    assert.ok(ui.getByText("ok: Stopped externally"));
+  } finally { cleanup(); }
 });

@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import KeepgoingMenuCore
 
@@ -31,9 +32,11 @@ final class MenuTests: XCTestCase {
             "Open looptender Panel",
             "1 loop needs you",
             "---",
-            "example-api | Waiting for you",
-            "example-docs | Supervising",
-            "example-site | Paused",
+            "Needs you",
+            "example-api | Needs you",
+            "Working",
+            "example-docs | Working",
+            "Other loops (1)",
             "---",
             "Quit looptender Menu",
             "---",
@@ -42,18 +45,20 @@ final class MenuTests: XCTestCase {
         XCTAssertEqual(model.badge, "1")
         XCTAssertEqual(model.iconAccessibilityLabel, "looptender, 1 loop needs you")
         XCTAssertEqual(model.rows.map(\.command), [
-            .openPanel, .openPanel, nil,
-            .openLoop(key: "l000000000001"), .openLoop(key: "l000000000002"), .openLoop(key: "l000000000003"),
+            .openPanel, .openPanel, nil, nil,
+            .openLoop(key: "l000000000001"), nil, .openLoop(key: "l000000000002"), nil,
             nil, .quit, nil, nil,
         ])
         // A row says what it is; what choosing it does is offered as help.
-        let api = model.rows[3]
-        XCTAssertEqual(api.accessibilityLabel, "example-api, Waiting for you")
+        let api = model.rows[4]
+        XCTAssertEqual(api.accessibilityLabel, "example-api, Needs you")
         XCTAssertEqual(api.accessibilityHelp, "Opens this loop in the panel.")
         XCTAssertEqual(model.rows[0].accessibilityLabel, "Open looptender Panel")
-        XCTAssertEqual(model.rows[0].accessibilityHelp, "Opens the looptender panel in your browser.")
+        XCTAssertEqual(model.rows[0].accessibilityHelp, "Opens the looptender panel in your browser, where you can pause, stop and resume loops, each after a review.")
+        // The paused loop is in the collapsed group, with its own row inside it.
+        let other = model.rows[7]
+        XCTAssertEqual(other.submenu.map { "\($0.title) | \($0.detail)" }, ["example-site | Paused"])
     }
-
     // Nothing that looks like a menu item is unclickable, except the one
     // status line, which is last.
     func testOnlyTheLastRowCannotBeChosen() {
@@ -64,8 +69,8 @@ final class MenuTests: XCTestCase {
                 let model = MenuBuilder.build(reading, now: now, refreshing: refreshing)
                 let rows = model.rows.filter { $0.kind != .separator }
                 XCTAssertEqual(rows.last?.kind, .status)
-                XCTAssertEqual(rows.filter { !$0.isEnabled }.count, 1, "\(reading)")
-                XCTAssertEqual(rows.filter { $0.kind == .status }.count, 1)
+                // What cannot be chosen is text: the section headings, the build line and the status line.
+                XCTAssertTrue(rows.filter { !$0.isEnabled }.allSatisfy { $0.kind == .status }, "\(reading)")
                 XCTAssertEqual(rows.first?.command, .openPanel, "the first row always opens the panel")
                 XCTAssertNotEqual(model.rows.first?.kind, .separator)
                 // No two separators in a row, and every row is labelled.
@@ -75,7 +80,6 @@ final class MenuTests: XCTestCase {
             }
         }
     }
-
     func testStopRowIsThereOnlyWhileThePanelRuns() {
         func rows(_ panel: PanelStatus?) -> [String] { text(MenuBuilder.build(.read(three, at: now), now: now, panel: panel)) }
         let stopped = PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil)
@@ -95,8 +99,9 @@ final class MenuTests: XCTestCase {
         XCTAssertEqual(MenuBuilder.stopsIn(nil), "running")
         // It is offered even when the list could not be read.
         XCTAssertTrue(MenuBuilder.build(.unavailable, now: now, panel: PanelStatus(schemaVersion: 1, running: true, idleRemainingSeconds: 5)).rows.contains { $0.command == .stopPanel })
-        // The status line stays the only row that cannot be chosen.
-        XCTAssertEqual(model.rows.filter { $0.kind != .separator && !$0.isEnabled }.count, 1)
+        // The status line stays last, and what cannot be chosen is text.
+        XCTAssertEqual(model.rows.last?.kind, .status)
+        XCTAssertTrue(model.rows.filter { $0.kind != .separator && !$0.isEnabled }.allSatisfy { $0.kind == .status })
     }
 
     func testUnaskedReadsAreSlowAndBackOff() {
@@ -179,7 +184,7 @@ final class MenuTests: XCTestCase {
         let row = MenuBuilder.build(.read(list([loop(["pause", "stop"])]), at: now), now: now).rows.first { $0.kind == .loop }!
         XCTAssertNil(row.command)
         XCTAssertTrue(row.isEnabled)
-        XCTAssertEqual(row.accessibilityHelp, "Shows what you can do with this loop.")
+        XCTAssertEqual(row.accessibilityHelp, "Shows this loop's details and what you can do with it.")
         XCTAssertEqual(row.submenu.compactMap(\.command), [.openLoop(key: "l000000000001"), .review(.pause, key: "l000000000001"), .review(.stop, key: "l000000000001")])
         XCTAssertTrue(row.submenu.filter { $0.kind != .separator }.allSatisfy { !$0.accessibilityHelp.isEmpty && !$0.symbol.isEmpty })
         // Every change asks first; none runs from the menu directly.
@@ -190,17 +195,20 @@ final class MenuTests: XCTestCase {
         XCTAssertFalse(MenuBuilder.sameShape(MenuBuilder.build(.read(list([loop(["pause", "stop"])]), at: now), now: now).rows, other))
     }
 
-    // The controls row is offered only by a CLI that gives the footer's
-    // exposure statement, which its confirmation shows.
-    func testOpenPanelWithControlsNeedsTheExposureStatement() {
+    // One panel item: the panel it opens can pause, stop and resume, so
+    // there is no separate "with controls" item, whatever the CLI says.
+    func testOnePanelItemOpensThePanelThatCanChangeLoops() {
         func rows(_ status: PanelStatus?) -> [MenuCommand?] { MenuBuilder.build(.read(three, at: now), now: now, panel: status).rows.map(\.command) }
-        XCTAssertFalse(rows(nil).contains(.openPanelWithChanges))
-        XCTAssertFalse(rows(PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil)).contains(.openPanelWithChanges))
         var status = PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil)
         status.exposure = "While changes are allowed, anyone who can use this browser window can pause, stop and resume loops."
+        for s in [nil, PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil), status] {
+            XCTAssertFalse(rows(s).contains(.openPanelWithChanges))
+        }
         let model = MenuBuilder.build(.read(three, at: now), now: now, panel: status)
-        XCTAssertEqual(Array(text(model).suffix(5)), ["---", "Open Panel with Controls…", "Quit looptender Menu", "---", "Read just now"])
-        XCTAssertEqual(model.rows.first { $0.command == .openPanelWithChanges }?.accessibilityHelp, "Opens the panel so its page can pause, stop and resume loops and offer a separate review to replace a loop’s own build. Asks first.")
+        XCTAssertEqual(Array(text(model).suffix(4)), ["---", "Quit looptender Menu", "---", "Read just now"])
+        XCTAssertEqual(model.rows.first { $0.command == .openPanel }?.accessibilityHelp, "Opens the looptender panel in your browser, where you can pause, stop and resume loops, each after a review.")
+        // An older menu's "with controls" call still opens the panel.
+        XCTAssertEqual(MenuBuilder.arguments(.openPanelWithChanges), ["panel", "--allow-changes"])
     }
 
     func testBadgeAndNeedsLine() {
@@ -260,7 +268,7 @@ final class MenuTests: XCTestCase {
         XCTAssertEqual(last(.read(three, at: now), refreshing: true), "Reading…")
         XCTAssertEqual(last(.read(three, at: now), notice: "The panel could not be opened. Run keepgoing panel in a terminal."), "The panel could not be opened. Run keepgoing panel in a terminal.")
         // While a read is under way the last read's rows stay in place.
-        XCTAssertEqual(MenuBuilder.build(.read(three, at: now), now: now, refreshing: true).rows.filter { $0.kind == .loop }.count, 3)
+        XCTAssertEqual(MenuBuilder.build(.read(three, at: now), now: now, refreshing: true).rows.filter { $0.kind == .loop }.count, 2)
     }
 
     func testLongNamesHundredLoopsAndUnknownStates() {
@@ -272,23 +280,33 @@ final class MenuTests: XCTestCase {
         for i in 4...100 { loops.append(loop(i, "example-loop-\(i)", "off", "Off")) }
         let model = MenuBuilder.build(.read(list(loops), at: now), now: now)
         let rows = model.rows.filter { $0.kind == .loop }
-        // The list is capped; one more row leads to the rest.
-        XCTAssertEqual(rows.count, MenuBuilder.maxLoops)
-        let more = model.rows.first { $0.title == "All 100 Loops in the Panel" }
-        XCTAssertEqual(more?.command, .openPanel)
+        // The three that are working are listed; the 97 that are off are in one collapsed group.
+        XCTAssertEqual(rows.count, 3)
+        let other = model.rows.first { $0.title.hasPrefix("Other loops") }
+        XCTAssertEqual(other?.title, "Other loops (97)")
+        XCTAssertEqual(other?.submenu.count, MenuBuilder.maxLoops * 2)
+        // One more row leads to the rest.
+        XCTAssertEqual(model.rows.first { $0.title == "All 100 Loops in the Panel" }?.command, .openPanel)
         XCTAssertNil(MenuBuilder.build(.read(list(Array(loops.prefix(25))), at: now), now: now).rows.first { $0.title.hasPrefix("All ") })
         XCTAssertEqual(MenuBuilder.build(.read(list(Array(loops.prefix(10)), omitted: 30), at: now), now: now).rows.first { $0.title.hasPrefix("All ") }?.title, "All 40 Loops in the Panel")
-        // Shortened in the middle, so two names with the same beginning differ.
+        // Non-colliding long names are cut at the end; colliding ones keep a distinguishing tail.
+        let singleLong = MenuBuilder.build(.read(list([loop(1, long, "supervising", "Supervising")]), at: now), now: now).rows.first { $0.kind == .loop }!
+        XCTAssertEqual(singleLong.title.count, MenuBuilder.maxName)
+        XCTAssertTrue(singleLong.title.hasSuffix("…"))
+        XCTAssertTrue(singleLong.title.hasPrefix("example-monorepo-migration-"))
+        XCTAssertFalse(singleLong.title.contains("phase"), "the end is what is cut")
         XCTAssertEqual(rows[0].title.count, MenuBuilder.maxName)
-        XCTAssertTrue(rows[0].title.contains("…"))
-        XCTAssertTrue(rows[0].title.hasPrefix("example-") && rows[0].title.hasSuffix("phase-one"))
+        XCTAssertEqual(rows[1].title.count, MenuBuilder.maxName)
         XCTAssertNotEqual(rows[0].title, rows[1].title)
+        XCTAssertTrue(rows[0].title.hasPrefix("example-monorepo-migrati"))
+        XCTAssertTrue(rows[0].title.hasSuffix("one"))
+        XCTAssertTrue(rows[1].title.hasSuffix("two"))
         XCTAssertEqual(rows[0].toolTip, long, "the full name is still reachable")
-        XCTAssertEqual(rows[0].accessibilityLabel, long + ", Supervising")
+        XCTAssertEqual(rows[1].toolTip, sibling)
+        XCTAssertEqual(rows[0].accessibilityLabel, long + ", Working")
         XCTAssertEqual(rows[2].title, "example-loopsecondline", "control characters and line separators never reach the menu")
         XCTAssertEqual(rows[2].symbol, "questionmark.circle", "a state this build does not know gets the unknown symbol")
-        XCTAssertEqual(rows[2].detail.count, MenuBuilder.maxPhrase, "a phrase cannot set the menu's width")
-        XCTAssertEqual(rows[3].toolTip, "")
+        XCTAssertEqual(rows[2].detail.count, 24, "a phrase cannot set the menu's width")
         XCTAssertTrue(rows.allSatisfy { $0.isEnabled && !$0.symbol.isEmpty })
         // Joiners that scripts and emoji sequences need are kept.
         XCTAssertEqual(Contract.text("a\u{200D}b\u{200C}c\u{200B}\u{0000}"), "a\u{200D}b\u{200C}c")
@@ -298,7 +316,6 @@ final class MenuTests: XCTestCase {
         }
         XCTAssertEqual(MenuBuilder.symbols.values.filter { $0.hasSuffix(".fill") }, ["exclamationmark.circle.fill"])
     }
-
     func testAnOpenMenuCanBeUpdatedInPlaceOnlyWhenItsRowsAreTheSame() {
         let before = MenuBuilder.build(.read(three, at: now.addingTimeInterval(-600)), now: now)
         let reading = MenuBuilder.build(.read(three, at: now.addingTimeInterval(-600)), now: now, refreshing: true)
@@ -347,8 +364,11 @@ final class MenuTests: XCTestCase {
         XCTAssertNil(list.loops[1].noProgress)
         let model = MenuBuilder.build(.read(list, at: now), now: now)
         let rows = model.rows.filter { $0.kind == .loop }
-        XCTAssertEqual(rows.map { $0.detail }, ["Supervising · no progress", "Supervising"])
-        XCTAssertEqual(rows[0].accessibilityLabel, "example-api, Supervising. No progress: 8 messages with no recorded change to its repositories in 3 h.")
+        XCTAssertEqual(rows.map { $0.detail }, ["Working", "Working"])
+        XCTAssertEqual(rows[0].accessibilityLabel, "example-api, Working")
+        // The flag is in the loop's submenu, in the page's words, and is never a need.
+        XCTAssertTrue(rows[0].submenu.contains { $0.title == "No progress: 8 messages with no recorded change to its repositories in 3 h." })
+        XCTAssertTrue(rows[1].submenu.isEmpty || !rows[1].submenu.contains { $0.title.hasPrefix("No progress") })
         // It is never a need: no badge, and the icon says nothing needs you.
         XCTAssertEqual(model.badge, "")
     }
@@ -364,19 +384,23 @@ final class MenuTests: XCTestCase {
         let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
         let model = MenuBuilder.build(.read(decoded, at: now), now: now)
         let lines = text(model)
-        XCTAssertTrue(lines.contains("Build v0.2.0 installed 3 h ago · 1 supervisor on it · 2 not on it"))
-        XCTAssertTrue(lines.contains("example-api | Supervising"))
-        XCTAssertTrue(lines.contains("example-docs | Supervising · Update pending · switches at next check"))
-        XCTAssertTrue(lines.contains("example-site | Paused · Older build · restart the supervisor to update"))
-        let older = try XCTUnwrap(model.rows.first { $0.title == "example-site" })
-        XCTAssertEqual(older.submenu.filter { $0.kind == .status }.map(\.title), ["Runs v0.1.0.", "This ends the supervisor and starts nothing, so until you start it again the loop has no supervisor. The loop stays held; this does not resume it.", "Run: looptender daemon-shutdown -c CONFIG"])
+        // One short line, only because something is not on the installed build; the long summary is gone.
+        XCTAssertTrue(lines.contains("2 supervisors not on the installed build"))
+        XCTAssertFalse(lines.contains { $0.hasPrefix("Build v0.2.0 installed") })
+        XCTAssertTrue(lines.contains("example-api | Working"))
+        XCTAssertTrue(lines.contains("example-docs | Working"), "the build is in the submenu, not on the row")
+        let docs = try XCTUnwrap(model.rows.first { $0.title == "example-docs" })
+        XCTAssertTrue(docs.submenu.contains { $0.title == "Update pending · switches at next check" })
+        let other = try XCTUnwrap(model.rows.first { $0.title.hasPrefix("Other loops") })
+        let older = try XCTUnwrap(other.submenu.first { $0.title == "example-site" })
+        XCTAssertEqual(older.detail, "Paused")
+        XCTAssertEqual(older.submenu.filter { $0.kind == .status }.map(\.title), ["Older build · restart the supervisor to update", "Runs v0.1.0.", "This ends the supervisor and starts nothing, so until you start it again the loop has no supervisor. The loop stays held; this does not resume it.", "Run: looptender daemon-shutdown -c CONFIG"])
         // The command is only shown: every action in the submenu is one the menu already had.
         XCTAssertEqual(older.submenu.compactMap(\.command), [.openLoop(key: "l000000000003"), .review(.resume, key: "l000000000003")])
         // A CLI that sends none of it keeps the plain menu.
         let plain = MenuBuilder.build(.read(three, at: now.addingTimeInterval(-130)), now: now)
         XCTAssertFalse(text(plain).contains { $0.contains("installed") || $0.contains("Older build") })
     }
-
     func testBuildsAreShownPerLoopAndOnceAtTheFoot() throws {
         let json = """
         {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":true,"needsYou":0,"unread":0,"omitted":0,
@@ -388,41 +412,38 @@ final class MenuTests: XCTestCase {
         let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
         let model = MenuBuilder.build(.read(decoded, at: now), now: now)
         XCTAssertEqual(text(model), [
-            "Open looptender Panel", "---",
-            "example-api | Supervising · last check ran v0.1.0 · installed v0.2.0",
-            "example-docs | Supervising · v0.2.0",
-            "example-site | Supervising",
+            "Open looptender Panel", "---", "Working",
+            "example-api | Working", "example-docs | Working", "example-site | Working",
             "---", "Quit looptender Menu", "---", "Read just now · looptender v0.2.0"])
+        // The build is in each loop's submenu, with the installed one named when they differ.
+        XCTAssertEqual(model.rows.first { $0.title == "example-api" }?.submenu.first?.title, "last check ran v0.1.0 · installed v0.2.0")
+        XCTAssertEqual(model.rows.first { $0.title == "example-docs" }?.submenu.first?.title, "v0.2.0")
+        XCTAssertTrue(model.rows.first { $0.title == "example-site" }!.submenu.isEmpty)
         // A CLI that sends none of it keeps the plain menu.
         let plain = MenuBuilder.build(.read(three, at: now.addingTimeInterval(-130)), now: now)
         XCTAssertFalse(text(plain).contains { $0.contains("looptender v") || $0.contains("last check ran") })
     }
-
-    func testProviderModelAndAMovedHoldAreOnTheRow() throws {
+    func testProviderModelAndAMovedHoldAreInTheSubmenu() throws {
         let json = """
-        {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":false,"needsYou":1,"unread":0,"omitted":0,
-         "loops":[{"key":"l000000000001","name":"example-codex-loop","state":"waiting_for_you","phrase":"Moved: resume to start","needsYou":true,"provider":"claude-code","model":"example-model",
+        {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":false,"needsYou":2,"unread":0,"omitted":0,
+         "loops":[{"key":"l000000000001","name":"example-codex-loop","state":"waiting_for_you","phrase":"Moved: resume to start","needsYou":true,"provider":"claude-code","model":"example-model","reason":"It was moved to a new thread and waits for you to resume it.",
                    "moved":{"held":true,"text":"Moved to its new thread. Resuming it is the one action needed."}},
                   {"key":"l000000000002","name":"example-docs","state":"waiting_for_you","phrase":"Waiting for you","needsYou":true,"provider":"codex"},
                   {"key":"l000000000003","name":"example-site","state":"supervising","phrase":"Supervising","needsYou":false}]}
         """
         let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
-        let rows = text(MenuBuilder.build(.read(decoded, at: now), now: now))
-        XCTAssertTrue(rows.contains("example-codex-loop | Moved: resume to start · claude-code example-model"))
-        // An ordinary hold keeps its wording, with only the provider known.
-        XCTAssertTrue(rows.contains("example-docs | Waiting for you · codex"))
-        // VoiceOver and the tooltip say the target is configuration, also on a flagged row.
-        let flagged = try JSONDecoder().decode(PanelList.self, from: Data("""
-        {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":true,"needsYou":0,"unread":0,"omitted":0,
-         "loops":[{"key":"l000000000001","name":"example-api","state":"supervising","phrase":"Supervising","needsYou":false,"noProgress":"No progress: fictional","provider":"claude-code","model":"example-model"}]}
-        """.utf8))
-        let row = MenuBuilder.build(.read(flagged, at: now), now: now).rows.first { $0.kind == .loop }!
-        XCTAssertTrue(row.accessibilityLabel.contains("Configured target: claude-code example-model"))
-        XCTAssertTrue(row.toolTip.contains("Configured target: claude-code example-model"))
-        // A CLI that sends neither leaves the row as it was.
-        XCTAssertTrue(rows.contains("example-site | Supervising"))
+        let model = MenuBuilder.build(.read(decoded, at: now), now: now)
+        let rows = text(model)
+        // The row is the name and one word; where it runs and what it waits for are in its submenu.
+        XCTAssertTrue(rows.contains("example-codex-loop | Needs you"))
+        XCTAssertTrue(rows.contains("example-docs | Needs you"))
+        let moved = try XCTUnwrap(model.rows.first { $0.title == "example-codex-loop" })
+        XCTAssertEqual(moved.submenu.prefix(2).map(\.title), ["It was moved to a new thread and waits for you to resume it.", "claude-code example-model"])
+        XCTAssertTrue(try XCTUnwrap(model.rows.first { $0.title == "example-docs" }).submenu.contains { $0.title == "codex" })
+        // VoiceOver says the state; the target is configuration, said in the submenu.
+        XCTAssertEqual(moved.accessibilityLabel, "example-codex-loop, Needs you")
+        XCTAssertTrue(rows.contains("example-site | Working"))
     }
-
     func testAPausedLoopThatStillWaitsForYouHasTheNeedsYouSymbol() throws {
         let json = """
         {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":false,"needsYou":1,"unread":0,"omitted":0,
@@ -430,8 +451,100 @@ final class MenuTests: XCTestCase {
                   {"key":"l000000000002","name":"example-paused","state":"paused","phrase":"Paused","needsYou":false}]}
         """
         let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
-        let rows = MenuBuilder.build(.read(decoded, at: now), now: now).rows.filter { $0.kind == .loop }
+        let model = MenuBuilder.build(.read(decoded, at: now), now: now)
+        let rows = model.rows.filter { $0.kind == .loop }
+        // A paused loop that still waits for a person is in Needs you, with the amber symbol.
+        XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows[0].symbol, "exclamationmark.circle.fill")
-        XCTAssertEqual(rows[1].symbol, "pause.circle")
+        XCTAssertEqual(rows[0].tone, .needsYou)
+        XCTAssertEqual(rows[0].detail, "Needs you")
+        // The plain paused loop is in the collapsed group, quiet.
+        let inside = try XCTUnwrap(model.rows.first { $0.title.hasPrefix("Other loops") }).submenu
+        XCTAssertEqual(inside.map(\.symbol), ["pause.circle"])
+        XCTAssertEqual(inside.map(\.tone), [.quiet])
+    }
+    func testEveryStateHasAToneAndOnlyWaitingForYouIsNeedsYou() {
+        XCTAssertEqual(Set(MenuBuilder.tones.keys), Set(MenuBuilder.symbols.keys))
+        for state in MenuBuilder.symbols.keys {
+            XCTAssertNotNil(MenuBuilder.tones[state], state)
+        }
+        XCTAssertEqual(MenuBuilder.tones.filter { $0.value == .needsYou }.map(\.key), ["waiting_for_you"])
+        XCTAssertEqual(MenuBuilder.tones["supervising"], .supervising)
+        XCTAssertEqual(MenuBuilder.tones["waiting_on_limit"], .limit)
+        XCTAssertEqual(MenuBuilder.tones["checks_failing"], .failing)
+        for quiet in ["unknown", "not_checked_recently", "outside_hours", "paused", "off", "stopped", "finished"] {
+            XCTAssertEqual(MenuBuilder.tones[quiet], .quiet, quiet)
+        }
+        let model = MenuBuilder.build(.read(three, at: now), now: now)
+        XCTAssertEqual(model.rows[0].tone, .quiet)
+        XCTAssertEqual(model.rows[1].tone, .needsYou)
+        let loops = model.rows.filter { $0.kind == .loop }
+        XCTAssertEqual(loops.map(\.tone), [.needsYou, .supervising])
+        XCTAssertEqual(model.rows.first { $0.title.hasPrefix("Other loops") }?.submenu.map(\.tone), [.quiet])
+        // A needs line for unread loops only is not amber.
+        let unreadOnly = MenuBuilder.build(.read(list([], needsYou: 1, unread: 1), at: now), now: now)
+        XCTAssertEqual(unreadOnly.rows[1].tone, .quiet)
+    }
+
+    func testBrandMarkIsATemplateImageAtTheRequestedSize() {
+        let standard = BrandMark.image(size: 18)
+        XCTAssertTrue(standard.isTemplate)
+        XCTAssertEqual(standard.size, NSSize(width: 18, height: 18))
+        let larger = BrandMark.image(size: 24)
+        XCTAssertTrue(larger.isTemplate)
+        XCTAssertEqual(larger.size, NSSize(width: 24, height: 24))
+    }
+
+    func testObservedSessionpipeLoopsShowRoleLabelCheckingActionsAndOmitStop() throws {
+        let json = """
+        {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":false,"needsYou":1,"unread":0,"omitted":0,
+         "loops":[
+           {"key":"l000000000001","name":"observed-claude-code-11111111","state":"supervising","phrase":"Supervising","needsYou":false,"can":["pause","stop"],"observed":true,"observedWakes":false,"provider":"sessionpipe"},
+           {"key":"l000000000002","name":"observed-claude-code-22222222","state":"waiting_for_you","phrase":"Waiting for you","needsYou":true,"can":["pause","resume","stop"],"observed":true,"observedWakes":true,"provider":"sessionpipe","reason":"It is held for a person."}
+         ]}
+        """
+        let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
+        let model = MenuBuilder.build(.read(decoded, at: now), now: now)
+
+        let neverWoken = try XCTUnwrap(model.rows.first { $0.title == "observed-claude-code-11111111" })
+        XCTAssertTrue(neverWoken.submenu.contains { $0.title == "Observed, never woken" })
+        XCTAssertTrue(neverWoken.submenu.contains { $0.title == "Pause checking…" && $0.command == .review(.pause, key: "l000000000001") })
+        XCTAssertFalse(neverWoken.submenu.contains { $0.title.hasPrefix("Stop") || $0.command == .review(.stop, key: "l000000000001") })
+
+        let wakeOnly = try XCTUnwrap(model.rows.first { $0.title == "observed-claude-code-22222222" })
+        XCTAssertTrue(wakeOnly.submenu.contains { $0.title == "Observed, woken only when idle" })
+        XCTAssertTrue(wakeOnly.submenu.contains { $0.title == "Pause checking…" })
+        XCTAssertTrue(wakeOnly.submenu.contains { $0.title == "Resume checking…" && $0.command == .review(.resume, key: "l000000000002") })
+        XCTAssertFalse(wakeOnly.submenu.contains { $0.title.hasPrefix("Stop") || $0.command == .review(.stop, key: "l000000000002") })
+    }
+
+    func testMenuOffersArchiveForActiveAndUnarchiveForArchivedLoopsAndFoldsInactive() throws {
+        let json = """
+        {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":true,"needsYou":0,"unread":0,"omitted":0,"archived":1,"inactive":1,
+         "loops":[
+           {"key":"l000000000001","name":"example-active","state":"supervising","phrase":"Supervising","needsYou":false,"can":["pause","stop","archive"]},
+           {"key":"l000000000002","name":"example-stale","state":"not_checked_recently","phrase":"Not checked recently","needsYou":false,"inactive":true,"can":["pause","stop","archive"]},
+           {"key":"l000000000003","name":"example-old","state":"archived","phrase":"Archived","needsYou":false,"archived":{"at":"2030-01-01T00:00:00Z","hold":"paused"},"can":["unarchive"]}
+         ]}
+        """
+        let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
+        let model = MenuBuilder.build(.read(decoded, at: now), now: now)
+        let top = model.rows.filter { $0.kind == .loop }
+        XCTAssertEqual(top.map(\.title), ["example-active"])
+        let activeSubmenu = try XCTUnwrap(top.first?.submenu)
+        XCTAssertEqual(activeSubmenu.last?.title, "Archive…")
+        XCTAssertEqual(activeSubmenu.last?.command, .review(.archive, key: "l000000000001"))
+
+        let other = try XCTUnwrap(model.rows.first { $0.title.hasPrefix("Other loops") })
+        XCTAssertEqual(other.title, "Other loops (2)")
+        let staleRow = try XCTUnwrap(other.submenu.first { $0.title == "example-stale" })
+        XCTAssertTrue(staleRow.submenu.contains { $0.title == "Inactive for 3+ days" })
+        XCTAssertTrue(staleRow.submenu.contains { $0.title == "Archive…" && $0.command == .review(.archive, key: "l000000000002") })
+
+        let archRow = try XCTUnwrap(other.submenu.first { $0.title == "example-old" })
+        XCTAssertTrue(archRow.submenu.contains { $0.title == "Unarchive…" && $0.command == .review(.unarchive, key: "l000000000003") })
+        XCTAssertFalse(archRow.submenu.contains { $0.title == "Archive…" })
+        XCTAssertNil(MenuBuilder.arguments(.reviewAll(.archive)))
+        XCTAssertNil(MenuBuilder.arguments(.reviewAll(.unarchive)))
     }
 }

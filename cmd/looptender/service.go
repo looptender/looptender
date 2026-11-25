@@ -301,6 +301,14 @@ func installService(e env, h serviceHost, cfg *config.Config, p servicePlan, exi
 		e.errf("service: %v", err)
 		return exitFailed
 	}
+	if p.Backend == "launchd" {
+		launchLock, err := lock.AcquireNamed(p.StateDir, lock.Launch)
+		if err != nil {
+			return ownershipError(e, err)
+		}
+		clearStaleLaunchesUnderDaemonLock(p.StateDir, h.uid, time.Now())
+		launchLock.Release()
+	}
 	if serviceRegistration(e.ctx, h, p) != "absent" {
 		e.errf("service: existing or unknown registration; nothing installed")
 		return exitFailed

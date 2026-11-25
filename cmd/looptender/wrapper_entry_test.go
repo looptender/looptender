@@ -30,6 +30,10 @@ func TestMain(m *testing.M) {
 	// No test may open a real browser: unless a test names its own stand-in,
 	// the panel's launcher is a program that does nothing.
 	os.Setenv(panelOpenerEnv, "/usr/bin/true")
+	// No test hands a daemon to the real launchd or systemd: a test run inside
+	// a BB thread would otherwise submit real jobs (start_launch.go).
+	// start_launch_unix_test.go uses stand-ins instead.
+	os.Setenv(backgroundLaunchEnv, "child")
 	// No test reads or writes the person's own registry, session claims or
 	// standard route list.
 	// The variables are inherited by every binary a test runs.
@@ -47,6 +51,7 @@ func TestMain(m *testing.M) {
 	// doctorAccountsCatalog or setupAccountsDir itself.
 	doctorAccountsCatalog = filepath.Join(private, "accounts")
 	setupAccountsDir = filepath.Join(private, "accounts")
+	limitAccountsDir = filepath.Join(private, "accounts")
 	// Nor the panel's directory, where --client reports are kept, in this
 	// process: panelStateBase, a package variable, points at a private
 	// directory. A test that moves HOME to a home of its own gets the real

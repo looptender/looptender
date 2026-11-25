@@ -58,6 +58,59 @@ func stateColumn(_ rows: [MenuRow]) -> CGFloat {
     return ceil(widest) + 18
 }
 
+/// Builds an sRGB colour from a 24-bit hex literal.
+func srgb(_ hex: UInt32) -> NSColor {
+    NSColor(
+        srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+        green: CGFloat((hex >> 8) & 0xFF) / 255,
+        blue: CGFloat(hex & 0xFF) / 255,
+        alpha: 1
+    )
+}
+
+/// Direction B semantic tint for a row's symbol, adapting to light and dark
+/// appearances. Quiet rows return nil and remain system-tinted template images.
+func toneColor(_ tone: Tone) -> NSColor? {
+    let pair: (light: UInt32, dark: UInt32)
+    switch tone {
+    case .supervising: pair = (0x0B658C, 0x56C2F0)
+    case .needsYou:    pair = (0x8D4C00, 0xF0B14C)
+    case .limit:       pair = (0x3B4DA8, 0x99AAFF)
+    case .failing:     pair = (0xAD2620, 0xF77E77)
+    case .quiet:       return nil
+    }
+    return NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? srgb(pair.dark) : srgb(pair.light)
+    }
+}
+
+/// The needs-you symbol is a filled circle with the mark knocked out of it, so
+/// it takes two layers: the mark in the ground colour of the tone, the circle in
+/// the tone. A single colour would paint the mark away and leave a plain disc.
+func palette(for tone: Tone, _ color: NSColor) -> [NSColor] {
+    guard tone == .needsYou else { return [color] }
+    let ground = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? srgb(0x0D1014) : srgb(0xFFFFFF)
+    }
+    return [ground, color]
+}
+
+/// Builds the SF Symbol image for a row, applying Direction B's palette tint
+/// for active semantic states while keeping quiet rows as template images.
+func rowImage(_ row: MenuRow) -> NSImage? {
+    guard !row.symbol.isEmpty,
+          let base = NSImage(systemSymbolName: row.symbol, accessibilityDescription: nil) else {
+        return nil
+    }
+    if let color = toneColor(row.tone),
+       let tinted = base.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: palette(for: row.tone, color))) {
+        tinted.isTemplate = false
+        return tinted
+    }
+    base.isTemplate = true // decorative: the words carry the meaning
+    return base
+}
+
 /// The background of the drawn picture: the window colour of its appearance.
 final class Backdrop: NSView {
     override func draw(_ dirtyRect: NSRect) {
@@ -85,6 +138,10 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var flow: UpdateFlow?
     let launchPath: String
     let updater: MenuUpdater?
+    var tracker = NoticeTracker()
+    var heartbeatSaid = SaidOnce()
+    /// The shared settings as the last read gave them (the CLI keeps them in one place).
+    var notify: PanelNotify? { if case .read(let list, _) = reading { return list.notify }; return nil }
     /// Work the menu must not quit under: a change being read, confirmed (its
     /// window open) or applied, and the panel being restarted. Shared with the
     /// update flow, which asks it at each step.
@@ -99,6 +156,9 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.renderDark = renderDark
         super.init()
         notifier.onUpdateClick = { [weak self] in self?.flow?.relaunch(byRequest: true) }
+        // The answer to the permission question, or a change in System Settings, is told at once.
+        notifier.onPermissionChange = { [weak self] in self?.sendHeartbeat(true) }
+        notifier.onNoticeClick = { [weak self] loop in self?.run(loop.isEmpty ? .openPanel : .openLoop(key: loop)) }
     }
 
     // Verification aid: once the first read has finished, draw the menu bar
@@ -121,7 +181,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         func line(image: NSImage?, text: NSAttributedString, height: CGFloat = 24) -> NSView {
             let icon = NSImageView()
             icon.image = image
-            icon.contentTintColor = .labelColor
+            icon.contentTintColor = image?.isTemplate == true ? .labelColor : nil
             icon.widthAnchor.constraint(equalToConstant: 18).isActive = true
             let row = NSStackView(views: [icon, label(text)])
             row.spacing = 7
@@ -132,7 +192,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The menu bar item: the icon and, when something needs a person, the count.
         let bar = NSMutableAttributedString(string: model.badge.isEmpty ? "" : model.badge, attributes: [.font: NSFont.menuBarFont(ofSize: 0), .foregroundColor: NSColor.labelColor])
         bar.append(NSAttributedString(string: "      menu bar item", attributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor.tertiaryLabelColor]))
-        stack.addArrangedSubview(line(image: NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil), text: bar, height: 26))
+        stack.addArrangedSubview(line(image: BrandMark.image(size: 18), text: bar, height: 26))
         func rule() {
             let box = NSBox()
             box.boxType = .separator
@@ -150,9 +210,9 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .status:
                 stack.addArrangedSubview(line(image: nil, text: NSAttributedString(string: row.title, attributes: [.font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor])))
             case .loop:
-                stack.addArrangedSubview(line(image: NSImage(systemSymbolName: row.symbol, accessibilityDescription: nil), text: rowText(row, column: column, drawn: true)))
+                stack.addArrangedSubview(line(image: rowImage(row), text: rowText(row, column: column, drawn: true)))
             case .action:
-                stack.addArrangedSubview(line(image: row.symbol.isEmpty ? nil : NSImage(systemSymbolName: row.symbol, accessibilityDescription: nil), text: rowText(row, column: nil, drawn: true)))
+                stack.addArrangedSubview(line(image: rowImage(row), text: rowText(row, column: nil, drawn: true)))
             }
         }
         let backdrop = Backdrop()
@@ -178,9 +238,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        let image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
-        image?.isTemplate = true // follows the menu bar in light and dark
-        item.button?.image = image
+        item.button?.image = BrandMark.image(size: 18) // template: follows the menu bar in light and dark
         item.button?.imagePosition = .imageLeading
         item.menu = menu
         menu.autoenablesItems = false
@@ -229,7 +287,8 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// rebuild waits until nothing is highlighted or the menu has closed.
     func render() {
         let offer = updater.map { UpdateOffer(availableLabel: flow?.installed?.label, automatic: $0.automatic, failure: $0.lastFailure, noMenuLabel: flow?.noMenuLabel) }
-        let model = MenuBuilder.build(reading, now: Date(), notice: notice, refreshing: loading, panel: panel, update: renderPath == nil ? offer : nil)
+        let model = MenuBuilder.build(reading, now: Date(), notice: notice, refreshing: loading, panel: panel, update: renderPath == nil ? offer : nil,
+                                       notices: renderPath == nil ? NoticeView(recent: tracker.recent, on: NoticeSettings.map(notify)) : nil)
         if let button = item.button {
             // A dot after the count marks an update that is waiting; the label says so in words.
             let mark = flow?.installed != nil && renderPath == nil ? "\u{2022}" : ""
@@ -269,12 +328,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         entry.action = row.command == nil ? nil : #selector(choose(_:))
         entry.target = self
         entry.isEnabled = row.isEnabled
-        if row.symbol.isEmpty {
-            entry.image = nil
-        } else if let image = NSImage(systemSymbolName: row.symbol, accessibilityDescription: nil) {
-            image.isTemplate = true // decorative: the words carry the meaning
-            entry.image = image
-        }
+        entry.image = rowImage(row)
         switch row.kind {
         case .loop:
             entry.attributedTitle = rowText(row, column: column, drawn: false)
@@ -309,6 +363,14 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         case .relaunchMenu:
             flow?.relaunch(byRequest: true)
+            return
+        case .toggleNoticeKind(let kind):
+            // The shared setting is the CLI's: write it there, then read again.
+            let turnOn = !NoticeSettings.isOn(kind, notify)
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                try? client.open(.notifySet(kind: kind, on: turnOn))
+                DispatchQueue.main.async { [self] in refresh() }
+            }
             return
         case .toggleAutoUpdate:
             // Turning it on does not relaunch under the open menu: the check
@@ -522,6 +584,32 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         flow?.check()
     }
 
+    /// Tells the CLI this menu runs and whether it can post notifications.
+    func sendHeartbeat(_ running: Bool) {
+        // Read the permission now: the person may have changed it in System Settings.
+        notifier.refreshPermission()
+        let notifying = HeartbeatPolicy.notifying(running: running, canPost: notifier.canPost, permission: notifier.permission)
+        let pid = ProcessInfo.processInfo.processIdentifier
+        DispatchQueue.global(qos: .utility).async { [client] in
+            let failed = (try? client.open(.notifyHeartbeat(notifying: notifying, pid: pid))) == nil
+            DispatchQueue.main.async { [self] in
+                // Said once, not every minute: the panel may then notify too, and this is why.
+                if heartbeatSaid.shouldLog(failed: failed) {
+                    fputs("KeepgoingMenu: the heartbeat could not be saved, so the panel may not know this menu is notifying (run: looptender panel notify heartbeat)\n", stderr)
+                }
+            }
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Said once, in this process, before it exits (the app is ending, so this
+        // one call is made here and waited for). It carries this menu's pid, so
+        // it takes effect only if the heartbeat file is still this menu's: a menu
+        // that replaced this one has written since, and is not retracted.
+        let pid = ProcessInfo.processInfo.processIdentifier
+        try? client.open(.notifyHeartbeat(notifying: false, pid: pid))
+    }
+
     func refresh() {
         guard !loading else { return }
         loading = true
@@ -549,6 +637,14 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 scheduleNextRead()
                 render()
                 notifier.update(result)
+                if renderPath == nil {
+                    let settings = notify
+                    for posted in tracker.next(result, now: Date(), isOn: { NoticeSettings.isOn($0, settings) }) { notifier.post(notice: posted) }
+                    render()
+                    // Say that the menu runs, and whether it notifies, so the panel does not
+                    // send a second banner for the same event on this computer.
+                    if !failed { sendHeartbeat(true) }
+                }
                 checkForUpdate()
                 if let path = renderPath { renderMenu(to: path) }
             }

@@ -52,6 +52,7 @@ loop:
 | `prompt` or `prompt_file` | one of them | The text sent on wake, nudge, and re-prompt. The file is read on every send, so you can edit it while the loop runs. A `sessionpipe` target is sent nothing and must have neither. |
 | `handoff_file` | no | Sent to a fallback when it takes over. When the file is missing, a brief is generated. |
 | `switch_back` | no | Returns the loop to the primary once its limit resets and an exact probe passes. Off by default. See [fallbacks.md](fallbacks.md#switching-back). |
+| `switch_at` | no | Optional fraction in `(0, 1]` of any reported quota window at or above which the loop switches to a confirmed fallback at turn end (unreleased; `0` disables it). |
 | `routes` | no | `standard`: follow the person's [standard route list](routes.md) instead of a `fallbacks` file. v0.2.0. Excludes `fallbacks`; for `bb`, `claude` and `codex` loops. |
 | `routes_allow` | no | With `routes: standard`: `[new_conversation]` lets a standard route that starts a new conversation apply to this loop. Off by default. |
 | `probe` | for switch-back and timing | How to probe the primary, with the same fields as a candidate's `probe`. The kind defaults from `provider`. |
@@ -146,9 +147,10 @@ An observed target: one agent session that [sessionpipe](sessionpipe.md#observed
 | `session` | yes | The session as sessionpipe names it, `<harness>:<id>`, for example `claude-code:8c132906-8c3f-4814-870a-afc3d05e1d2e`. |
 | `events_file` | yes | The file given to `sessionpipe sink add file:PATH --tier 0`. A relative path resolves against the configuration file; give sessionpipe the same absolute path. |
 | `stale_after` | no | How long the session may say nothing before its state reads unknown (default `10m`, between `2m` and `168h`). Silence is never idle. |
-| `cli` | no | The `sessionpipe` command, default `sessionpipe`. Only `doctor` runs it (`--version` and `status --json`); checks never do. |
+| `cli` | no | The `sessionpipe` command, default `sessionpipe`. `doctor` runs it (`--version`, `status --json`, and with `send` also `ask status`), and a wake runs `ask`. Observing never does. |
+| `send` | no | `wake_only` opts in to [waking the session when it is idle](sessionpipe.md#waking-an-observed-session-opt-in-unreleased), through `sessionpipe ask`, with the loop's prompt. Absent, the default, never sends. |
 
-The loop must have no `prompt` or `prompt_file`, no `fallbacks` or `routes`, no `switch_back` and no `timing`, and a sessionpipe target cannot be a fallback candidate.
+Without `send`, the loop must have no `prompt` or `prompt_file`; with `send: wake_only` it needs one. Either way it may have no `fallbacks` or `routes`, no `switch_back` and no `timing`, and a sessionpipe target cannot be a fallback candidate.
 
 ## An agent defined in configuration
 

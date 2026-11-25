@@ -6,12 +6,13 @@ import { join } from "node:path";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server.ts";
 import { reasonLines, boundedTitle, diagnosticLines, recordsUnreadable, type StatusDetails } from "./status-details.ts";
+import { writeStandIn } from "./stand-in.ts";
 
 // A stand-in looptender that prints the given status JSON and exits with the given code.
 async function loopWith(status: object, exit = 0) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "keepgoing-visibility-")));
   const program = join(dir, "looptender-stand-in");
-  await writeFile(program, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(status)}\nJSON\nexit ${exit}\n`, { mode: 0o700 });
+  await writeStandIn(program, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(status)}\nJSON\nexit ${exit}\n`);
   const config = join(dir, "looptender.yaml");
   const { bb, harness } = createFakePluginHost({ pluginId: "keepgoing", settings: { keepgoingPath: program, configs: config } });
   await plugin(bb);
@@ -135,7 +136,7 @@ test("an unpunctuated remedy is cut to 240 characters in the reasons", () => {
     unreadable: [{ file: "state.json", problem: "not_json", remedy: "word ".repeat(200).trim() }] };
   const line = reasonLines("enabled", null, d)[0]!;
   const remedy = line.slice("state.json could not be read (its content is not JSON). ".length);
-  assert.equal(remedy.length, 240); assert.ok(remedy.endsWith("…"));
+  assert.ok(remedy.length <= 240 && remedy.length > 200); assert.ok(remedy.endsWith("word…"), "cut at a whole word, with an ellipsis");
 });
 
 test("the listing says a low disk once, as disk=low, and nothing for an ok one", async () => {
@@ -144,4 +145,15 @@ test("the listing says a low disk once, as disk=low, and nothing for an ok one",
   try { assert.equal((await low.listing()).match(/disk=low/g)?.length, 1); } finally { await low.dispose(); }
   const ok = await loopWith({ ...healthy, diskSpace: { level: "ok" } });
   try { assert.ok(!(await ok.listing()).includes("disk=")); } finally { await ok.dispose(); }
+});
+
+test("the listing says records unreadable, as the card does, where the control state beside it cannot be trusted", async () => {
+  const { state: _s, targetAgent: _t, ...rest } = healthy;
+  const w = await loopWith({ ...rest, controlState: "enabled", unreadable: [{ file: "control.json", problem: "not_json", remedy: "Checks send nothing until it is repaired." }] }, 1);
+  try {
+    const line = (await w.listing()).split("\n").find(l => l.startsWith("example-loop"))!;
+    assert.match(line, /^example-loop\trecords unreadable\t/); assert.ok(!/\tenabled\t/.test(line));
+  } finally { await w.dispose(); }
+  const ok = await loopWith(healthy);
+  try { assert.match((await ok.listing()).split("\n").find(l => l.startsWith("example-loop"))!, /^example-loop\tenabled\t/); } finally { await ok.dispose(); }
 });

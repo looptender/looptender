@@ -69,6 +69,7 @@ type Route struct {
 	// AccountDir is an existing account directory for a headless route.
 	AccountDir string     `yaml:"account_dir,omitempty"`
 	Probe      RouteProbe `yaml:"probe,omitempty"`
+	SwitchAt   float64    `yaml:"switch_at,omitempty"`
 	Disabled   bool       `yaml:"disabled,omitempty"`
 }
 
@@ -369,6 +370,9 @@ func (r *Routes) Validate() error {
 		if rt.Account != "" && !ValidAccountID(rt.Account) {
 			add("%saccount must be an accounts catalog ID: the 32 lowercase hexadecimal characters accounts add prints", where)
 		}
+		if err := validSwitchAt(rt.SwitchAt); err != nil {
+			add("%sswitch_at %v", where, err)
+		}
 		switch rt.Enter {
 		case EnterSameConversation, EnterNewConversation, EnterHeadless:
 		default:
@@ -470,7 +474,7 @@ func resolveRoute(l Loop, rt Route, red Redundancy, probe ProbePolicy) (Candidat
 	if rt.Group == l.Agent.Group {
 		return Candidate{}, "draws on the same usage limit as this loop's first route"
 	}
-	c := Candidate{ID: rt.ID}
+	c := Candidate{ID: rt.ID, SwitchAt: rt.SwitchAt}
 	c.Agent = Agent{Provider: rt.Provider, Group: rt.Group, Account: rt.Account}
 	c.Probe = Probe{Model: rt.Probe.Model}
 	if rt.Probe.AccountDir != "" {

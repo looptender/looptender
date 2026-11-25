@@ -121,6 +121,93 @@ func TestObserveStructuredRateLimit(t *testing.T) {
 	}
 }
 
+func TestObserveClaudeCodeWeeklyLimitSequence(t *testing.T) {
+	now := time.Date(2030, 11, 25, 0, 0, 0, 0, time.UTC)
+	reset := now.Add(77 * time.Hour)
+	rateLimitUpdated := fmt.Sprintf(`{"type":"provider/rateLimits/updated","data":{"providerThreadId":"p1","rateLimits":{"providerId":"claude-code","status":"blocked","kind":"subscription-window","windows":[{"providerKey":"seven_day","label":"Weekly limit","status":"blocked","resetsAtMs":%d}],"reachedReason":"seven_day","overageStatus":"rejected"}}}`, reset.UnixMilli())
+	agentMsg := `{"type":"item/completed","data":{"providerThreadId":"p1","item":{"type":"agentMessage","id":"i1","text":"You've hit your weekly limit · resets Nov 28 at 5am (UTC)"}}}`
+	providerErr := `{"type":"provider/error","data":{"providerThreadId":"p1","message":"Provider error","detail":"You've hit your weekly limit · resets Nov 28 at 5am (UTC)","errorInfo":{"category":"rate-limit","providerCode":"rate_limit_event","httpStatusCode":429}}}`
+	turnFailed := `{"type":"turn/completed","data":{"providerThreadId":"p1","status":"failed"}}`
+
+	t.Run("structured weekly limit with rateLimits update", func(t *testing.T) {
+		log := "[" + strings.Join([]string{turnStarted, rateLimitUpdated, agentMsg, providerErr, turnFailed}, ",") + "]"
+		a, _ := newFake(`{"thread":{"status":"error","queuedMessageCount":0,"archivedAt":null,"deletedAt":null}}`, log, false)
+		a.CheckAt(now)
+		obs, err := a.Observe(context.Background())
+		if err != nil {
+			t.Fatalf("Observe: %v", err)
+		}
+		wantWindow := decide.LimitWindow{Key: "seven_day", Label: "Weekly limit", Reason: "seven_day"}
+		if obs.State != decide.Error || obs.ErrorClass != decide.ErrRateLimit || obs.Retrying || !obs.ResetsAt.Equal(reset) || obs.LimitWindow != wantWindow {
+			t.Fatalf("unexpected observation: %+v", obs)
+		}
+		// With failover eligible and a confirmed fallback, the weekly limit triggers handoff.
+		d := decide.Decide(decide.Input{
+			Obs:          obs,
+			Control:      decide.Control{Enabled: true},
+			InWindow:     true,
+			MaxReprompts: 3,
+			Failover: decide.Failover{
+				Eligible:          true,
+				Available:         true,
+				ResetIn:           obs.ResetsAt.Sub(now),
+				WaitIfResetWithin: 30 * time.Minute,
+			},
+		})
+		if d.Action != decide.Handoff {
+			t.Fatalf("with fallback: got %+v, want handoff", d)
+		}
+		// With failover disabled, the loop waits with an explicit failover-disabled reason.
+		dOff := decide.Decide(decide.Input{
+			Obs:          obs,
+			Control:      decide.Control{Enabled: true},
+			InWindow:     true,
+			MaxReprompts: 3,
+			Failover:     decide.Failover{Eligible: false, ResetIn: obs.ResetsAt.Sub(now)},
+		})
+		if dOff.Action != decide.None || dOff.LimitWait != decide.WaitFailoverDisabled || !strings.Contains(dOff.Reason, "failover disabled") {
+			t.Fatalf("failover disabled: got %+v", dOff)
+		}
+		// With failover eligible but no confirmed fallback, the loop surfaces WaitNoFallback.
+		dNoFB := decide.Decide(decide.Input{
+			Obs:          obs,
+			Control:      decide.Control{Enabled: true},
+			InWindow:     true,
+			MaxReprompts: 3,
+			Failover:     decide.Failover{Eligible: true, Available: false, ResetIn: obs.ResetsAt.Sub(now)},
+		})
+		if dNoFB.Action != decide.None || dNoFB.LimitWait != decide.WaitNoFallback || !strings.Contains(dNoFB.Reason, "no confirmed fallback") {
+			t.Fatalf("no fallback: got %+v", dNoFB)
+		}
+	})
+
+	t.Run("first-hit weekly limit without rateLimits update", func(t *testing.T) {
+		transientRetry := providerError("unknown", nil, "unknown", true)
+		cmdStart := `{"type":"item/started","data":{"providerThreadId":"p1","item":{"type":"commandExecution","id":"c1"}}}`
+		cmdDone := `{"type":"item/completed","data":{"providerThreadId":"p1","item":{"type":"commandExecution","id":"c1"}}}`
+		log := "[" + strings.Join([]string{turnStarted, transientRetry, cmdStart, cmdDone, agentMsg, providerErr, turnFailed}, ",") + "]"
+		a, _ := newFake(`{"thread":{"status":"error","queuedMessageCount":0,"archivedAt":null,"deletedAt":null}}`, log, false)
+		a.CheckAt(now)
+		obs, err := a.Observe(context.Background())
+		if err != nil {
+			t.Fatalf("Observe: %v", err)
+		}
+		if obs.State != decide.Error || obs.ErrorClass != decide.ErrRateLimit || obs.Retrying || !obs.ResetsAt.IsZero() {
+			t.Fatalf("unexpected observation: %+v", obs)
+		}
+		d := decide.Decide(decide.Input{
+			Obs:          obs,
+			Control:      decide.Control{Enabled: true},
+			InWindow:     true,
+			MaxReprompts: 3,
+			Failover:     decide.Failover{Eligible: true, Available: true},
+		})
+		if d.Action != decide.Handoff {
+			t.Fatalf("first-hit with fallback: got %+v, want handoff", d)
+		}
+	})
+}
+
 // A forbidden provider error is the provider's decision about the account or
 // the work. It is its own class, so it can never be treated as a login to
 // fail over from.
@@ -309,6 +396,64 @@ func TestObserveProseNeverClassifies(t *testing.T) {
 	if obs.ErrorClass != decide.ErrUnknown {
 		t.Errorf("message text classified as %s", obs.ErrorClass)
 	}
+}
+
+// Antigravity (acp-antigravity) quota errors currently arrive as agentMessage
+// prose with turn/completed status "completed" and no provider/error or
+// provider/rateLimits/updated event. Prose alone must never classify as a
+// rate limit; once BB emits structured fields, the existing BB adapter handles
+// them without reading message text.
+func TestObserveAntigravityProseQuotaRemainsFailSafe(t *testing.T) {
+	now := time.Date(2030, 11, 25, 0, 0, 0, 0, time.UTC)
+	quotaMsgStart := `{"type":"item/started","data":{"providerThreadId":"p1","item":{"type":"agentMessage","id":"item_example1","text":""}}}`
+	quotaMsgDelta := `{"type":"item/agentMessage/delta","data":{"providerThreadId":"p1","itemId":"item_example1","delta":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h48m44s."}}`
+	quotaMsgDone := `{"type":"item/completed","data":{"providerThreadId":"p1","item":{"type":"agentMessage","id":"item_example1","text":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h48m44s."}}}`
+	turnDoneOK := `{"type":"turn/completed","data":{"providerThreadId":"p1","status":"completed"}}`
+	turnDoneFailed := `{"type":"turn/completed","data":{"providerThreadId":"p1","status":"failed"}}`
+
+	t.Run("idle completed turn with quota prose stays idle without error or reset", func(t *testing.T) {
+		log := "[" + strings.Join([]string{turnStarted, quotaMsgStart, quotaMsgDelta, quotaMsgDone, turnDoneOK}, ",") + "]"
+		a, _ := newFake(`{"thread":{"status":"idle","queuedMessageCount":0,"archivedAt":null,"deletedAt":null}}`, log, false)
+		a.CheckAt(now)
+		obs, err := a.Observe(context.Background())
+		if err != nil {
+			t.Fatalf("Observe: %v", err)
+		}
+		if obs.State != decide.Idle || obs.ErrorClass != decide.ErrNone || obs.Retrying || !obs.ResetsAt.IsZero() || obs.LimitWindow != (decide.LimitWindow{}) {
+			t.Fatalf("prose quota leaked into observation: %+v", obs)
+		}
+	})
+
+	t.Run("errored turn with quota prose and unknown structured error stays ErrUnknown", func(t *testing.T) {
+		unknownErr := providerError("unknown", nil, "unknown", false)
+		log := "[" + strings.Join([]string{turnStarted, quotaMsgStart, quotaMsgDelta, quotaMsgDone, unknownErr, turnDoneFailed}, ",") + "]"
+		a, _ := newFake(`{"thread":{"status":"error","queuedMessageCount":0,"archivedAt":null,"deletedAt":null}}`, log, false)
+		a.CheckAt(now)
+		obs, err := a.Observe(context.Background())
+		if err != nil {
+			t.Fatalf("Observe: %v", err)
+		}
+		if obs.State != decide.Error || obs.ErrorClass != decide.ErrUnknown || obs.Retrying || !obs.ResetsAt.IsZero() {
+			t.Fatalf("unclassified prose classified as %s: %+v", obs.ErrorClass, obs)
+		}
+	})
+
+	t.Run("structured rate-limit and rateLimits events classify acp-antigravity quota", func(t *testing.T) {
+		reset := now.Add(2 * time.Hour)
+		rateLimitUpdated := fmt.Sprintf(`{"type":"provider/rateLimits/updated","data":{"providerThreadId":"p1","rateLimits":{"providerId":"acp-antigravity","status":"blocked","kind":"subscription-window","windows":[{"providerKey":"individual_quota","label":"Individual quota","status":"blocked","resetsAtMs":%d}],"reachedReason":"quota_exceeded"}}}`, reset.UnixMilli())
+		structuredErr := providerError("rate-limit", 429, "quota_exceeded", false)
+		log := "[" + strings.Join([]string{turnStarted, rateLimitUpdated, quotaMsgDone, structuredErr, turnDoneFailed}, ",") + "]"
+		a, _ := newFake(`{"thread":{"status":"error","queuedMessageCount":0,"archivedAt":null,"deletedAt":null}}`, log, false)
+		a.CheckAt(now)
+		obs, err := a.Observe(context.Background())
+		if err != nil {
+			t.Fatalf("Observe: %v", err)
+		}
+		wantWindow := decide.LimitWindow{Key: "individual_quota", Label: "Individual quota", Reason: "quota_exceeded"}
+		if obs.State != decide.Error || obs.ErrorClass != decide.ErrRateLimit || obs.Retrying || !obs.ResetsAt.Equal(reset) || obs.LimitWindow != wantWindow {
+			t.Fatalf("structured acp-antigravity quota not classified: %+v", obs)
+		}
+	})
 }
 
 func TestObserveIgnoresErrorsFromEarlierTurns(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -41,8 +42,19 @@ type ProbePolicy struct {
 type Candidate struct {
 	ID       string `yaml:"id"`
 	Agent    `yaml:",inline"`
-	Probe    Probe `yaml:"probe"`
-	Disabled bool  `yaml:"disabled,omitempty"`
+	Probe    Probe   `yaml:"probe"`
+	SwitchAt float64 `yaml:"switch_at,omitempty"`
+	Disabled bool    `yaml:"disabled,omitempty"`
+}
+
+func validSwitchAt(v float64) error {
+	if v == 0 {
+		return nil
+	}
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 1 {
+		return errors.New("must be above 0 and at most 1 (a share of a quota window; 0 disables it)")
+	}
+	return nil
 }
 
 // Probe says how to confirm a candidate works.
@@ -176,6 +188,9 @@ func (f *Fallbacks) Validate() error {
 		if c.Provider == "" {
 			add("%sprovider is required (for example claude-code or codex); redundancy counts by it", where)
 		}
+		if err := validSwitchAt(c.SwitchAt); err != nil {
+			add("%sswitch_at %v", where, err)
+		}
 		errs = append(errs, c.Agent.validate(where)...)
 		if c.Adapter == "cursor" {
 			add("%sCursor fallback candidates are not supported; exact account/model probes are unverified", where)
@@ -229,7 +244,7 @@ func (f *Fallbacks) Find(id string) (Candidate, bool) {
 // PrimaryCandidate presents the loop's own agent as a probe-able candidate,
 // so the primary can be confirmed before a switch-back.
 func (l Loop) PrimaryCandidate() Candidate {
-	return Candidate{ID: "primary", Agent: l.Agent, Probe: l.Probe}
+	return Candidate{ID: "primary", Agent: l.Agent, Probe: l.Probe, SwitchAt: l.SwitchAt}
 }
 
 // ProbeModel is the model a probe should use for a tier: the target model

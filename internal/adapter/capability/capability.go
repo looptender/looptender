@@ -91,7 +91,7 @@ var Adapters = []Adapter{
 	{ID: "bb", Title: "BB thread", Registered: true, Activator: true, WakePoller: true, TurnRetrier: true, LaneRecoverer: true, LaneStopper: true, SessionEvidence: true, ContextReader: true,
 		Files: []string{"internal/adapter/bb/bb.go", "internal/adapter/bb/children.go", "internal/adapter/bb/assignment.go", "internal/adapter/bb/cursor.go", "internal/adapter/bb/lanes.go", "internal/adapter/bb/wake.go"},
 		Inputs: []string{"ActiveChildIDs", "ActiveChildren", "AwaitingChildren", "AwaitingInput", "Background", "ChildOutcome", "ChildTitles", "ChildrenUnverified", "DirectChildren", "ErrorClass", "ErroredChildren", "Evidence",
-			"ErrorTurn", "Gone", "HealthyChildren", "LimitWindow", "ModelFallback", "Queued", "ResetsAt", "RetryDeclined", "RetryExpired", "RetryKnown", "RetryUnverified", "Retrying", "State", "Title", "Turn", "TurnUnknown", "Turns"}},
+			"ErrorTurn", "Gone", "HealthyChildren", "LimitWindow", "ModelFallback", "Queued", "ResetsAt", "RetryDeclined", "RetryExpired", "RetryKnown", "RetryUnverified", "Retrying", "State", "Title", "Turn", "TurnModel", "TurnUnknown", "Turns"}},
 	{ID: "claude", Title: "Claude Code headless", Registered: true, SessionEvidence: true,
 		Files:  []string{"internal/adapter/runner/claude.go", "internal/adapter/runner/spec.go"},
 		Inputs: []string{"ErrorClass", "Evidence", "SessionLost", "State"}},
@@ -122,7 +122,7 @@ var Adapters = []Adapter{
 // ObservationFields is every field of decide.Observation. A new field must be
 // added here, and to the Inputs of each adapter that sets it.
 var ObservationFields = []string{"ActiveChildIDs", "ActiveChildren", "AwaitingChildren", "AwaitingInput", "Background", "ChildOutcome", "ChildTitles", "ChildrenUnverified", "DeferredInteraction", "DirectChildren", "ErrorClass",
-	"ErrorTurn", "ErroredChildren", "Evidence", "Gone", "HealthyChildren", "LimitWindow", "ModelFallback", "Queued", "ResetsAt", "RetryDeclined", "RetryExpired", "RetryKnown", "RetryUnverified", "Retrying", "SessionLost", "State", "Title", "Turn", "TurnUnknown", "Turns"}
+	"ErrorTurn", "ErroredChildren", "Evidence", "Gone", "HealthyChildren", "LimitWindow", "ModelFallback", "Queued", "ResetsAt", "RetryDeclined", "RetryExpired", "RetryKnown", "RetryUnverified", "Retrying", "SessionLost", "State", "Title", "Turn", "TurnModel", "TurnUnknown", "Turns"}
 
 func t(path, test string) Ref { return Ref{Path: path, Test: test} }
 func d(path string) Ref       { return Ref{Path: path} }
@@ -213,7 +213,7 @@ var Matrix = []Behaviour{
 			"bb":      {Yes, Fixture, fakeDecision + " A real retry exhaustion and explicit resume were observed once.", []Ref{t(superTest, "TestErrorRepromptsThenAwaitsUser"), d(providers)}},
 			"claude":  {Yes, Fixture, "Run end to end with a stand-in CLI.", []Ref{t(offlineTest, "TestScenarioHeadlessOutage")}},
 			"codex":   {Yes, Fixture, "Run end to end with a stand-in CLI.", []Ref{t(offlineTest, "TestScenarioHeadlessOutage")}},
-			"cursor":  {Yes, Live, "A failed turn is re-prompted in its verified session. Live once after a usage-limit failure and after a stop; connection loss is fixture-only.", []Ref{d("docs/cursor.md"), t("internal/adapter/runner/cursor_recovery_test.go", "TestCursorRecoversInitializedSessionAfterWrapperCrash"), t(cursorTest, "TestCursorConnectionLossKeepsSessionAndStaysUnknown")}},
+			"cursor":  {Yes, Live, "A failed turn is re-prompted in its verified session. Live once after a usage-limit failure and after a stop; connection loss is fixture-only (including stand-in any-duration outage recovery).", []Ref{d("docs/cursor.md"), t("internal/adapter/runner/cursor_recovery_test.go", "TestCursorRecoversInitializedSessionAfterWrapperCrash"), t(cursorTest, "TestCursorConnectionLossKeepsSessionAndStaysUnknown"), t(offlineTest, "TestScenarioHeadlessOutage")}},
 			"process": {Yes, Fixture, fakeDecision, []Ref{t(superTest, "TestErrorRepromptsThenAwaitsUser")}},
 		})},
 	{ID: "session_resume", Title: "Recover a failed turn: exact session resume", What: "Continue the same conversation by its saved identifier, never \"the most recent\".",
@@ -221,7 +221,7 @@ var Matrix = []Behaviour{
 			"bb":      {NA, None, "The configured thread is the conversation; every message goes to that thread ID.", nil},
 			"claude":  {Yes, Fixture, "--resume with the saved session ID. Unreleased source holds a finished or crashed attempt with no usable identity; explicit session reset permits one fresh attempt and preserves supervision holds.", []Ref{t(runnerTest, "TestClaudeTurnLifecycle"), t(offlineTest, "TestScenarioHeadlessOutage")}},
 			"codex":   {Yes, Fixture, "exec resume with the saved thread ID. Unreleased source holds a finished or crashed attempt with no usable identity; explicit session reset permits one fresh attempt and preserves supervision holds.", []Ref{t(runnerTest, "TestCodexResumeArgs"), t(offlineTest, "TestScenarioHeadlessOutage")}},
-			"cursor":  {Yes, Live, "--resume with the saved session ID, live once across three turns. A new conversation is refused when the previous turn's identity is unverified, unless that turn exited 1 having written nothing on a CLI version whose start order is verified.", []Ref{d("docs/cursor.md"), t(cursorTest, "TestCursorSessionSafety"), t(cursorTest, "TestCursorFreshStartNeedsExactShapeAndVerifiedVersion")}},
+			"cursor":  {Yes, Live, "--resume with the saved session ID, live once across three turns; verified end to end across stand-in outages too. A new conversation is refused when the previous turn's identity is unverified, unless that turn exited 1 having written nothing on a CLI version whose start order is verified.", []Ref{d("docs/cursor.md"), t(cursorTest, "TestCursorSessionSafety"), t(cursorTest, "TestCursorFreshStartNeedsExactShapeAndVerifiedVersion"), t(offlineTest, "TestScenarioHeadlessOutage")}},
 			"process": {NA, None, "The resume command owns session identity.", nil},
 		})},
 	{ID: "turn_retry", Title: "Recover a failed turn: retry the turn", What: "Ask the provider to retry the failed turn itself, instead of sending a new prompt.",
@@ -235,7 +235,7 @@ var Matrix = []Behaviour{
 			"bb":      {Yes, Fixture, "The supervisor checks connectivity before a re-prompt, handoff, hold for an errored thread or probe, and waits while it fails. Run for outages of 20 minutes to 3 weeks with a stand-in bb. A turn whose log (Turn) shows it silent since before an outage or a sleep has the nudges due to it held back, not sent; a log that cannot be read (TurnUnknown) changes nothing.", []Ref{t(offlineBBTest, "TestOfflineForAnyLengthThenRecoversOnce"), t("internal/supervise/hungturn_vs_main_test.go", "TestHungTurnActsAsTheStallRuleExceptForTheNudges"), d(networkDoc), d("docs/operations.md#a-turn-that-hung-through-an-outage")}},
 			"claude":  {Yes, Fixture, "As for BB. The wake that ran into the outage is spent; nothing else is, and no hold is raised. Run end to end with a stand-in CLI.", []Ref{t(offlineTest, "TestScenarioHeadlessOutage"), d(networkDoc)}},
 			"codex":   {Yes, Fixture, "As for Claude Code.", []Ref{t(offlineTest, "TestScenarioHeadlessOutage"), d(networkDoc)}},
-			"cursor":  {Yes, Fixture, fakeDecision, []Ref{t(networkTest, "TestOutageDoesNotSpendRepromptsOrProbes"), d(networkDoc)}},
+			"cursor":  {Yes, Fixture, "As for Claude Code and Codex, with connection/reconnecting records and no provider probe: the wake that ran into the outage is spent, nothing else is, and no hold is raised. Run end to end with a stand-in CLI (`agent`). No live outage has been observed.", []Ref{t(offlineTest, "TestScenarioHeadlessOutage"), t(networkTest, "TestOutageDoesNotSpendRepromptsOrProbes"), d(networkDoc)}},
 			"process": {Yes, Fixture, fakeDecision, []Ref{t(networkTest, "TestOutageDoesNotSpendRepromptsOrProbes"), d(networkDoc)}},
 		})},
 	{ID: "child_awareness", Title: "Child-work awareness", What: "Normally hold a parent that is not in error while conversations it started are still working, and say which. A parent in error is recovered regardless.",
@@ -398,7 +398,7 @@ const (
 	spDoc      = "docs/sessionpipe.md#observed-sessions-in-unreleased"
 	spDecide   = "internal/decide/observed_test.go"
 	spConfig   = "internal/config/sessionpipe_test.go"
-	spObserved = "Observed, never woken: looptender sends nothing to a sessionpipe target and never acts on it."
+	spObserved = "Observed: looptender sends a sessionpipe target nothing and never acts on it, except an idle-session wake when the loop opts in (sessionpipe.send: wake_only)."
 )
 
 // sessionpipeCells is the column for an observed sessionpipe target. A row

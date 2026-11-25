@@ -102,7 +102,7 @@ func dockCommand(e env, args []string) int {
 		e.errf("dock: no random source for the access token")
 		return exitFailed
 	}
-	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: *refresh, staleAfter: *staleAfter, query: inspectDaemon, versions: true}
+	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: *refresh, staleAfter: *staleAfter, query: inspectDaemon, versions: true, routerOffline: *offline}
 	if *offline {
 		reader.query = func(ctx context.Context, dir, current string, _ bool) daemonStatus {
 			return inspectDaemon(ctx, dir, current, true)
@@ -200,20 +200,27 @@ type dockServed struct {
 	// footer's words.
 	Version     string `json:"version"`
 	VersionText string `json:"versionText"`
-	// Changes is set by the panel server only: "on" when it was started with
-	// --allow-changes, otherwise "off". keepgoing dock never allows them.
+	// Changes is set by the panel server only: "on" when the page can change
+	// loops (the default panel's pause, stop and resume, or everything with
+	// --allow-changes), "off" for a panel started with --read-only. keepgoing
+	// dock never allows them.
 	// ChangesText says so in the footer's words. Form is the session's
 	// anti-forgery value for preparing a change, only when changes are on.
-	Changes                 string     `json:"changes,omitempty"`
-	ChangesSince            *time.Time `json:"changesSince,omitempty"`
-	ChangesText             dockText   `json:"changesText,omitempty"`
-	Form                    string     `json:"form,omitempty"`
-	RouteChanges            string     `json:"routeChanges,omitempty"`
-	AccountQuotaProviders   []string   `json:"accountQuotaProviders,omitempty"` // explicit provider allowlist; absent means legacy Codex only
-	AccountQuota            bool       `json:"accountQuota,omitempty"`          // explicit reviewed account-scoped refresh
-	AccountConnectProviders []string   `json:"accountConnectProviders,omitempty"`
-	SendAllowanceEdit       bool       `json:"sendAllowanceEdit,omitempty"`
-	AccountSelectionReview  bool       `json:"accountSelectionReview,omitempty"`
+	Changes      string     `json:"changes,omitempty"`
+	ChangesSince *time.Time `json:"changesSince,omitempty"`
+	ChangesText  dockText   `json:"changesText,omitempty"`
+	Form         string     `json:"form,omitempty"`
+	// NotifyForm is the session's anti-forgery value for saving the page's
+	// notification choices (notify_settings.go); on every panel, read-only too.
+	NotifyForm              string   `json:"notifyForm,omitempty"`
+	RouteChanges            string   `json:"routeChanges,omitempty"`
+	AccountQuotaProviders   []string `json:"accountQuotaProviders,omitempty"` // explicit provider allowlist; absent means legacy Codex only
+	AccountQuota            bool     `json:"accountQuota,omitempty"`          // explicit reviewed account-scoped refresh
+	AccountCheck            bool     `json:"accountCheck,omitempty"`          // bounded status check on Accounts open (--allow-changes)
+	AccountConnectProviders []string `json:"accountConnectProviders,omitempty"`
+	AccountRemove           bool     `json:"accountRemove,omitempty"`
+	SendAllowanceEdit       bool     `json:"sendAllowanceEdit,omitempty"`
+	AccountSelectionReview  bool     `json:"accountSelectionReview,omitempty"`
 }
 
 func newDockServer(port int, auth dockAuth, reader *dockReader) *dockServer {
@@ -352,9 +359,11 @@ type dockReader struct {
 	// they hash no service file and read no client report. panelDir is
 	// where the clients' reports are read from; empty means the default
 	// panel directory. services caches service file digests.
-	versions bool
-	panelDir string
-	services dockServiceFiles
+	versions      bool
+	panelDir      string
+	routerDir     string // test/private router override; empty uses default
+	routerOffline bool
+	services      dockServiceFiles
 }
 
 type dockCached struct {
@@ -471,6 +480,10 @@ func (d *dockReader) read(ctx context.Context, identifiers bool) (result dockRep
 			if f, err := accounts.Load(dir); err == nil {
 				view, catalog = accounts.Project(f, d.clock()), &f
 				accounts.AttachQuota(&view, accounts.QuotaViews(dir, f, os.Environ(), d.clock()))
+				if logins, err := accounts.LoadLogins(dir); err == nil {
+					accounts.AttachLogins(&view, logins)
+				}
+				attachLocalAccountStatus(&view, f, os.Environ(), d.clock())
 			}
 		}
 		dockLinkAccountRoutes(&view, result)
@@ -530,6 +543,15 @@ func (d *dockReader) read(ctx context.Context, identifiers bool) (result dockRep
 		}
 	})
 	r := buildDockReport(inputs, now, d.refresh, d.staleAfter, identifiers, true, omitted, ctx.Err() == nil)
+	r.Notify = readNotifyState(panelClientsDir(d.panelDir), now)
+	h := readHost(ctx)
+	r.Host = &h
+	if rs, ok := readRouterSummary(ctx, d.routerDir, d.routerOffline); ok {
+		r.Router = &rs
+	}
+	if n := hostNotices(&h, now); len(n) > 0 {
+		r.Notices = append(n, r.Notices...)
+	}
 	if d.versions {
 		var clients *clientsFile
 		var clientsErr error

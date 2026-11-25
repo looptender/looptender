@@ -54,7 +54,7 @@ test("SDK RPC resolves host metadata, persists references, and routes controls w
     // says where a person resumes and never runs the CLI.
     const clicked = await harness.behavior.callRpc("control", { configPath: created.record.configPath, managedId: created.record.id, action: "resume", expectedThreadId: thread.id }) as { ok: boolean; message: string };
     assert.equal(clicked.ok, false); assert.equal(clicked.message, resumeByPerson(created.record.configPath));
-    assert.match(clicked.message, /looptender panel --allow-changes/); assert.match(clicked.message, /looptender resume -c /);
+    assert.match(clicked.message, /with looptender panel and resume it from the loop's page/); assert.match(clicked.message, /looptender resume -c /);
     const listed = await harness.behavior.callRpc("control", { configPath: "/private/listed/keepgoing.yaml", action: "resume" }) as { ok: boolean; message: string };
     assert.equal(listed.ok, false); assert.equal(listed.message, resumeByPerson("/private/listed/keepgoing.yaml"));
     const typed = await harness.behavior.runCli(["resume", "example-loop"]);
@@ -91,5 +91,62 @@ test("reference coverage failures withhold private configured paths and remain u
     assert.match(String(cli.stdout), /CLI registry\/menu coverage is separate/);
     assert.match(String(cli.stderr), /configured loop reference is unavailable/);
     assert.deepEqual(harness.inspection.sdk.callsTo("threads.spawn"), []);
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+test("inspect, preview, create, and start preserve non-Claude thread provider and model metadata without reading transcript", async () => {
+  const thread = makeThreadResponse({ id: "thr_ag_example", environmentId: "env_example", projectId: "proj_example", providerId: "acp-antigravity" });
+  const host = makeHostResponse({ id: "host_example", status: "connected" });
+  const environment = { id: "env_example", projectId: "proj_example", hostId: host.id, path: "/projects/example", isGitRepo: true, status: "ready", hostLifecycle: "active", lifecycle: { phase: "active" } };
+  const agent = { adapter: "bb", provider: "acp-antigravity", bbThread: thread.id };
+  const state = { loop: "ag-loop", target: "primary", controlState: "disabled", control: {}, window: "open", state: {}, primaryAgent: agent, targetAgent: agent, daemon: { state: "not_recorded" } };
+  const seenProviders: string[] = [];
+  const seenTakeovers: unknown[] = [];
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "keepgoing", settings: { keepgoingPath: "keepgoing", configs: "" },
+    sdk: {
+      threads: {
+        get: async () => thread,
+        defaultExecutionOptions: async () => ({ model: "gemini-4-neon", reasoningLevel: "high", permissionMode: "accept-edits", serviceTier: "default", source: "client/thread/start" }),
+      },
+      providers: {
+        list: async () => [{ id: "acp-antigravity", displayName: "Antigravity" }] as never,
+        models: async () => ({ modelLoadError: null, models: [{ id: "gemini-4-neon", model: "gemini-4-neon", displayName: "Gemini 4 Neon", description: "", isDefault: true, reasoningDiscovery: "known", defaultReasoningEffort: "high", supportedReasoningEfforts: [] }] }) as never,
+      },
+      environments: { get: async () => environment },
+      hosts: { get: async () => host },
+    },
+    experimental_callHostRpc: async ({ method, input }) => {
+      if (method === "standardRoutes") return { available: false };
+      if (method === "init") {
+        const p = hostContract.init.input.parse(input);
+        seenProviders.push(p.target.provider);
+        seenTakeovers.push(p.takeover);
+        return { plan: { withGoal: true, loop: p.name, project: p.target.project, configPath: "/private/ag-loop/looptender.yaml", stateDir: "/private/ag-loop/state", threadId: p.target.threadId, provider: p.target.provider, limits: { interval: "5m", wakeEvery: "1h", stallAfter: "30m", backoff: "10m", maxNudges: 3, maxReprompts: 3 } } };
+      }
+      const p = hostContract.command.input.parse(input);
+      return { code: 0, data: p.operation === "doctor" ? { schemaVersion: 1, targetAgent: agent, checks: [{ id: "agent.primary.target", status: "ok", message: "Verified" }] } : p.operation === "status" ? state : null };
+    },
+  });
+  try {
+    await plugin(bb);
+    const inspected = setupResult.parse(await harness.behavior.callRpc("setup", { action: "inspect", threadId: thread.id }));
+    assert.deepEqual(inspected.threadMeta, { provider: "acp-antigravity", providerLabel: "Antigravity", model: "gemini-4-neon", modelLabel: "Gemini 4 Neon", reasoningLevel: "high" });
+    const preview = setupResult.parse(await harness.behavior.callRpc("setup", { action: "preview", threadId: thread.id, name: "ag-loop", task: "Fictional task", withGoal: true }));
+    assert.equal(preview.ok, true);
+    assert.equal(preview.plan?.provider, "acp-antigravity");
+    assert.equal(preview.plan?.takeover, undefined);
+    assert.deepEqual(preview.threadMeta, inspected.threadMeta);
+    const created = setupResult.parse(await harness.behavior.callRpc("setup", { action: "create", threadId: thread.id, ticket: preview.ticket, task: "Fictional task", withGoal: true }));
+    assert.equal(created.ok, true, created.message);
+    assert.equal(created.record?.provider, "acp-antigravity");
+    assert.equal(created.canStart, true);
+    const started = setupResult.parse(await harness.behavior.callRpc("setup", { action: "start", threadId: thread.id }));
+    assert.equal(started.ok, true);
+    assert.equal(started.started, true);
+    assert.deepEqual(seenProviders, ["acp-antigravity", "acp-antigravity", "acp-antigravity"]);
+    assert.deepEqual(seenTakeovers, ["detect", undefined, undefined]);
+    assert.deepEqual(harness.inspection.sdk.callsTo("threads.timeline"), []);
+    assert.deepEqual(harness.inspection.sdk.callsTo("threads.output"), []);
   } finally { await harness.lifecycle.dispose(); }
 });

@@ -17,6 +17,16 @@ integrations/macos/.build/debug/KeepgoingMenu --executable /path/to/keepgoing
 
 For a non-default registry, pass `--directory /private/example-registry` to the CLI registration and `--registry-directory /private/example-registry` to the menu executable. Executable and directory arguments must be absolute. The preview does not discover binaries, scan for loops, register loops, retain configuration, or start at login. Quitting the menu leaves supervision alone.
 
+## How the menu is laid out
+
+Narrow, grouped, and quiet about what does not matter. A row is the loop's display name (as the panel shows it, cut at its end at 32 characters, never in the middle) and one short state word. Where it runs, its model, its build and when it was last checked are in the row's submenu, above the choices.
+
+- **Needs you** lists only the loops a person can act on now, each with what it waits for (`Asked you`, `On hold`, `Checks stopped`). **Working** lists the rest that are running (including at a limit, offline or failing). One collapsed item, **Other loops (N)**, holds paused, off, stopped, finished, archived and replaced loops.
+- An archived or replaced loop never counts in "N loops need you" or the icon, whatever hold it kept, and never appears in the first two groups.
+- **Accounts** is one item with a submenu of all the accounts; only those at or above 80% used (at most two) are shown above it.
+- One grey line, "2 supervisors not on the installed build", appears only when that is so. **Recent** is a submenu.
+- At the bottom: Pause All, Stop All, Recent, Notify me when, Update automatically, Quit, and the status line. What each control does is unchanged.
+
 ## What the menu shows
 
 ```text
@@ -27,7 +37,7 @@ example-api     Waiting for you   >
 example-docs    Supervising       >
 example-site    Paused            >    Open in Panel
 ---------------------------------      -------------
-Open Panel with Controls…              Resume…
+                                       Resume…
 Stop the Panel Page   stops by…        Stop…
 Quit looptender Menu
 ---------------------------------
@@ -43,7 +53,7 @@ Read 2 min ago
 - **Stop All Loops…** works the same way for a stop, while looptender says any loop can be stopped. Its buttons are looptender's options for the whole, in its words: stop the conversations, or, when any loop has lanes, stop them and their lanes (`--lanes`). Each is styled as destructive, and Cancel is the default. Each loop is stopped as its own review offered it: at once only where it can be, its lanes only if it has them. Deleting queued messages is never offered for every loop. The result says which loops were stopped now and which wait for their next check.
 - **Pause…, Resume… and Stop…** each read the review with `keepgoing client review ACTION --loop KEY --json`, which changes nothing, and show it in a native confirmation: the review's title, then each of its sentences. The sentences come from the code that builds the page's review, so the menu and the page say the same. **Cancel is the default** (Return and Escape choose it), and a stop's button is styled as destructive. Confirming runs `keepgoing client apply ACTION --loop KEY --expect VALUE --json` once. The value is one review for one action on one loop: looptender refuses it for any other loop or change, after the review expires (2 minutes, 5 for a resume; the menu does not run it then either), and when the loop's control record has changed since it was reviewed. Then nothing is changed and you are asked to review again. Times in a review are this computer's, with their offset (`06:45 +07`). The result is said in the page's words: a done change on the menu's last line, anything else in an alert. A lost or unreadable reply is "could not confirm", and nothing is sent again by itself. A looptender that could not be started, or that refused the arguments (a different version), is said as nothing having run.
 - **Stop.** When looptender lists stop options (`client review stop`, for a loop whose agent has lanes), the confirmation offers one button for each, in looptender's words: stop the conversation; stop it and its lanes; and, only when messages are queued in lanes that have not started, stop it, its lanes and those queued messages, which deletes them and their text (`--drop-queued`, passed for that button alone). Each is carried out at once when looptender says it can be. The menu writes none of those words itself. It offers only the options it fully understands and still shows the review when one is new to it, so a later addition to the options cannot break Stop ([the shape and the rule](../../docs/local-clients.md#reviewed-pause-stop-and-resume-client-review-client-apply)). Without options, a stop stops the conversation only, at the loop's next check, and the review says so.
-- **Open Panel with Controls…** starts the panel with `keepgoing panel --allow-changes`, so its page can pause, stop and resume, and offer a separate review to replace a loop’s own build. It asks first, and the question shows the page footer's own statement: anyone who can use the browser window can then pause, stop and resume loops. A read-only panel that is running is stopped and started again, which the question says first. A panel that already allows changes is opened as it is. Whether the panel runs, and in which mode, is read again when this is chosen, not taken from the menu's last read, which can be minutes old. It is offered only by an executable whose `panel status --json` gives that statement.
+- **Open looptender Panel** opens the panel with `keepgoing panel`, whose page can pause, stop and resume loops, each after its review (unreleased: earlier menus had a separate **Open Panel with Controls…**, and the plain panel was read-only). A running read-only panel is stopped and started again in that mode. Connecting an account runs `keepgoing panel --allow-changes` after a confirmation, since sign-in, like build replacement and route edits, needs that flag.
 - **Stop the Panel Page** is there only while the panel's background process is running, and says when it would stop by itself. Choosing it runs `keepgoing panel stop`. It stops the page, never a loop.
 - The last line is the only one that cannot be chosen. It says when the list was read, and anything a person should know about that read: no loops registered, not every loop was read, the list could not be read, looptender can't be reached, or the menu and looptender are different versions.
 
@@ -73,6 +83,17 @@ The menu compares the build it runs with the one installed now, from the file sy
 **What the checks prove.** `codesign --verify --deep --strict` shows that the bundle's seal is intact (its resources and executable match what was sealed); it does not show who signed it, and these bundles are signed ad hoc, so anyone who can write the bundle can re-seal it. The bundle-identifier and program-name checks catch an app that is not this one by accident, not on purpose. A bare executable outside an app bundle is checked only for being executable. The program that runs is whatever your own install directory holds: only the path the menu was started through and `<root>/current` beside its `builds/<id>` are looked at, and the update is as trustworthy as who can write there. It is integrity, not provenance.
 
 Before quitting, the menu checks the installed program: it must exist and be runnable and, in an app bundle, have a readable `Info.plist` that names that program and this app's bundle identifier, and pass `codesign --verify --deep --strict`. It then starts the new one with the same arguments, and quits only if that one is still running 1.5 seconds later. If a check fails, or the new menu does not stay up, this menu keeps running and says why in its last line (and in an alert when you chose the update). An automatic relaunch is tried once for each installed build, so a failing one never repeats; choosing the item yourself can be tried again. Open at Login is never read or changed: the relaunched menu is an ordinary start of the same program. Not testable without the real app: the relaunch itself, the notification's permission and click, and a login-item start; the decisions and the file checks are tested.
+
+## Notifications for events
+
+The CLI sends one list of events in `panel list --json` (`notices`; see [the dock guide](../../docs/dock.md)), the same one the panel page reads. The menu keeps the ids it has seen: its first read is a baseline and posts nothing, and a later read posts each new id once. Events that begin together and share a group are one notification (`5 loops stopped: usage limit until Fri 04:00.`); one event's notification opens that loop in the panel, a group's opens the panel. A read that was cut off, failed or came from an older CLI changes nothing.
+
+- **Pushed by default:** a loop needs you (an agent's question is the most urgent), a usage limit is hit, a supervisor stops answering. **Listed but quiet:** a failed lane, a hold set or lifted, an install adopted or refused, a low or critical disk, a deadline or send limit reached. **Notify me when…** turns each kind on or off in the settings the CLI keeps for the menu, the panel and push together (`panel notify set`), so a choice made on the panel page is the same here.
+- The menu tells the CLI it runs (`panel notify heartbeat`, after each read and when it quits), so the panel page does not send a second banner for the same event on this computer. Started after being down, it tells once about an urgent question (an agent asked) that began since it last ran, and nothing else of what was already open.
+- A group's count is its real total ("5 loops stopped", though one is new).
+- **Recent** lists the last ten events, pushed or not, with their age. It is kept in memory: a restart starts empty.
+- The words come from the CLI and carry no note text, path, thread ID or account name. The count beside the icon is still the loops that need you, and only that.
+- Permission is the one the menu already asks for (when started from an app bundle); without it nothing is posted, nothing is asked again, and Recent still lists the events.
 
 ## Notifications when checks stop
 
@@ -109,7 +130,7 @@ Every subprocess uses a fixed argument array without a shell and a 1 MiB cap per
 | `keepgoing panel list --json` | read the loops | 25 s (the CLI bounds its own read at 20) |
 | `keepgoing panel status --json` | read whether the panel runs | 5 s |
 | `keepgoing panel [--loop KEY]` | open the panel or a loop's page | 20 s |
-| `keepgoing panel --allow-changes` | open the panel with controls, after a confirmation | 20 s |
+| `keepgoing panel --allow-changes` | open the panel with every change, to connect an account, after a confirmation | 20 s |
 | `keepgoing panel stop` | stop the panel's page | 20 s |
 | `keepgoing client review pause\|stop\|resume --loop KEY --json` | read a review; changes nothing | 25 s |
 | `keepgoing client review pause\|stop --all --json` | read the review of pausing or stopping every loop; changes nothing | 25 s |

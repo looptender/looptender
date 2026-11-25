@@ -80,35 +80,37 @@ extension MenuBuilder {
         if list.accounts.isEmpty { return [quotaStatus("No selected Claude, Codex or Antigravity accounts.")] }
         var result = [quotaStatus("Account quota · saved selections, not live thread identity")]
         for a in list.accounts.prefix(6) {
-            let q = a.summary
-            var children = [quotaStatus(q.text)]
-            if let at = q.retrievedAt { children.append(quotaStatus("Retrieved \(at) · provider freshness unknown; may be cached or seeded")) }
-            if let at = q.observedAt { children.append(quotaStatus("Read \(at) · \(q.freshness == "stale" ? "older reading" : "saved snapshot")")) }
-            for r in q.rows.prefix(8) {
-                var value = "\(r.name): \(r.text)"
-                if let reset = r.resetsAt { value += " · \(r.ended == true ? "Ended" : "Resets") \(reset)" }
-                else if r.usedPercent != nil || r.remainingPercent != nil { value += " · Reset unavailable" }
-                children.append(quotaStatus(value))
-            }
-            if q.rows.count > 8 { children.append(quotaStatus("\(q.rows.count - 8) more quota details in the panel.")) }
-            if q.partial == true || (q.omitted ?? 0) > 0 { children.append(quotaStatus("Partial quota evidence; missing values are not zero.")) }
-            if let source = q.source { children.append(quotaStatus("Source: \(source)")) }
-            if let failed = q.failedRefreshAt { children.append(quotaStatus("Refresh failed \(failed). \(q.failedRefreshText ?? "Earlier evidence retains its time.")")) }
-            children.append(MenuRow(kind: .action, title: "Open Panel", detail: "", symbol: "macwindow", accessibilityLabel: "Open panel for quota details", accessibilityHelp: "Choose Accounts for saved quota details; explicit refresh is reviewed there.", toolTip: "", command: a.id.map { .openAccount(id: $0) } ?? .openPanel))
-            if q.state != "reported", let id = a.id {
-                let connect = a.provider == "claude-code" ? "Connect Claude" : "Connect Codex"
-                result.append(MenuRow(kind: .action, title: shortened(a.label, to: maxName), detail: connect, symbol: "person.crop.circle.badge.plus", accessibilityLabel: "\(connect) for \(a.label)", accessibilityHelp: "Opens this account in the panel. Sign-in starts only after your review.", toolTip: q.text, command: .connectAccount(id: id)))
-                continue
-            }
-            let first = q.rows.first(where: { $0.usedPercent != nil })
-            var detail = q.state == "reported" ? (first.map { $0.ended == true ? "Window ended" : "\($0.usedPercent!)% used" } ?? "Quota details recorded") : "Quota unavailable"
-            if q.freshness == "provider_unknown" { detail += " · freshness unknown" }
-            result.append(MenuRow(kind: .action, title: shortened(a.label, to: maxName), detail: detail, symbol: "gauge.with.dots.needle.33percent", accessibilityLabel: "\(a.label), \(a.provider), \(detail). Selected account identity not verified.", accessibilityHelp: "Opens saved quota details; reads no provider.", toolTip: a.label, command: nil, submenu: children))
+            result.append(quotaAccountRow(a))
         }
         let more = list.omitted + max(0, list.accounts.count - 6)
         if more > 0 { result.append(quotaStatus("\(more) more selected accounts in the panel.")) }
         if !list.complete { result.append(quotaStatus("Account selection evidence is incomplete.")) }
         return result
+    }
+    static func quotaAccountRow(_ a: AccountQuota, peakUsed: Double? = nil) -> MenuRow {
+        let q = a.summary
+        var children = [quotaStatus(q.text)]
+        if let at = q.retrievedAt { children.append(quotaStatus("Retrieved \(at) · provider freshness unknown; may be cached or seeded")) }
+        if let at = q.observedAt { children.append(quotaStatus("Read \(at) · \(q.freshness == "stale" ? "older reading" : "saved snapshot")")) }
+        for r in q.rows.prefix(8) {
+            var value = "\(r.name): \(r.text)"
+            if let reset = r.resetsAt { value += " · \(r.ended == true ? "Ended" : "Resets") \(reset)" }
+            else if r.usedPercent != nil || r.remainingPercent != nil { value += " · Reset unavailable" }
+            children.append(quotaStatus(value))
+        }
+        if q.rows.count > 8 { children.append(quotaStatus("\(q.rows.count - 8) more quota details in the panel.")) }
+        if q.partial == true || (q.omitted ?? 0) > 0 { children.append(quotaStatus("Partial quota evidence; missing values are not zero.")) }
+        if let source = q.source { children.append(quotaStatus("Source: \(source)")) }
+        if let failed = q.failedRefreshAt { children.append(quotaStatus("Refresh failed \(failed). \(q.failedRefreshText ?? "Earlier evidence retains its time.")")) }
+        children.append(MenuRow(kind: .action, title: "Open Panel", detail: "", symbol: "macwindow", accessibilityLabel: "Open panel for quota details", accessibilityHelp: "Choose Accounts for saved quota details; explicit refresh is reviewed there.", toolTip: "", command: a.id.map { .openAccount(id: $0) } ?? .openPanel))
+        if q.state != "reported", let id = a.id {
+            let connect = a.provider == "claude-code" ? "Connect Claude" : "Connect Codex"
+            return MenuRow(kind: .action, title: shortened(a.label, to: maxName), detail: connect, symbol: "person.crop.circle.badge.plus", accessibilityLabel: "\(connect) for \(a.label)", accessibilityHelp: "Opens this account in the panel. Sign-in starts only after your review.", toolTip: q.text, command: .connectAccount(id: id))
+        }
+        let first = q.rows.first(where: { $0.usedPercent != nil })
+        var detail = q.state == "reported" ? (peakUsed.map { "\($0)% used" } ?? first.map { $0.ended == true ? "Window ended" : "\($0.usedPercent!)% used" } ?? "Quota details recorded") : "Quota unavailable"
+        if q.freshness == "provider_unknown" { detail += " · freshness unknown" }
+        return MenuRow(kind: .action, title: shortened(a.label, to: maxName), detail: detail, symbol: "gauge.with.dots.needle.33percent", accessibilityLabel: "\(a.label), \(a.provider), \(detail). Selected account identity not verified.", accessibilityHelp: "Opens saved quota details; reads no provider.", toolTip: a.label, command: nil, submenu: children)
     }
     private static func quotaStatus(_ full: String) -> MenuRow {
         MenuRow(kind: .status, title: shortened(full, to: 110), detail: "", symbol: "", accessibilityLabel: full, accessibilityHelp: "", toolTip: full, command: nil)

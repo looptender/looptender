@@ -217,4 +217,19 @@ final class ControlsTests: XCTestCase {
         XCTAssertNil(Contract.panelAuthority(String(repeating: "é", count: 513)))
     }
 
+    func testArchiveAndUnarchiveConfirmationsAreReviewedAndNotDestructive() throws {
+        let archReview = try review(action: .archive)
+        let archConf = ConfirmationBuilder.build(archReview)
+        XCTAssertNil(archConf.defaultButton.command)
+        XCTAssertEqual(archConf.buttons[1].destructive, false)
+        XCTAssertEqual(archConf.buttons[1].command, .apply(.archive, key: key, expect: expect, lanes: false, immediately: false))
+        XCTAssertEqual(MenuBuilder.arguments(archConf.buttons[1].command!), ["client", "apply", "archive", "--loop", key, "--expect", expect, "--json"])
+
+        let unarchReview = try review(action: .unarchive)
+        let unarchConf = ConfirmationBuilder.build(unarchReview)
+        XCTAssertEqual(unarchConf.buttons[1].destructive, false)
+        XCTAssertEqual(unarchConf.buttons[1].command, .apply(.unarchive, key: key, expect: expect, lanes: false, immediately: false))
+        XCTAssertEqual(MenuBuilder.arguments(unarchConf.buttons[1].command!), ["client", "apply", "unarchive", "--loop", key, "--expect", expect, "--json"])
+    }
+
 }

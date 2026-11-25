@@ -262,11 +262,35 @@ func TestDockStateWordAgreesWithStatusForEveryControlCombination(t *testing.T) {
 	if l, _ := projectDockLoop(dockEvidence{controls: &clientControls{Enabled: true, Completed: true, Paused: true}}.input(), dockNow, defaultStaleAfter, false); l.State != "paused" {
 		t.Errorf("completed and paused reads %s", l.State)
 	}
-	// A superseded loop: the snapshot's own word wins.
+	// A superseded loop: the snapshot's own word wins, and panel list carries superseded: true.
 	in := dockEvidence{controls: &clientControls{Enabled: true}}.input()
 	in.Client.Snapshot.ControlState = "superseded"
 	if l, _ := projectDockLoop(in, dockNow, defaultStaleAfter, false); l.Phrase != "Superseded" || l.State != "off" {
 		t.Errorf("superseded reads %s %q", l.State, l.Phrase)
+	}
+	rSup := buildDockReport([]dockInput{in}, dockNow, time.Minute, defaultStaleAfter, false, true, 0, true)
+	if !buildPanelList(rSup).Loops[0].Superseded {
+		t.Errorf("panel list superseded = false, want true")
+	}
+	// An archived loop continued in another is also marked superseded; a plain loop is not.
+	arch := dockEvidence{controls: &clientControls{Enabled: false}}.input()
+	arch.Client.Snapshot.Archived = &archiveView{At: dockNow, ContinuedIn: &continuedRef{Key: "l0123456789ab"}}
+	plain := dockEvidence{controls: &clientControls{Enabled: true}}.input()
+	rArch := buildDockReport([]dockInput{arch, plain}, dockNow, time.Minute, defaultStaleAfter, false, true, 0, true)
+	pl := buildPanelList(rArch)
+	if !pl.Loops[0].Superseded && !pl.Loops[1].Superseded {
+		t.Errorf("archived continued loop not marked superseded: %+v", pl.Loops)
+	}
+	var gotArch, gotPlain bool
+	for _, row := range pl.Loops {
+		if row.State == "archived" {
+			gotArch = row.Superseded
+		} else {
+			gotPlain = row.Superseded
+		}
+	}
+	if !gotArch || gotPlain {
+		t.Errorf("gotArch=%v (want true), gotPlain=%v (want false)", gotArch, gotPlain)
 	}
 }
 

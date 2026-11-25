@@ -12,8 +12,35 @@ import UserNotifications
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// Called on the main queue when the person clicks the update notification.
     var onUpdateClick: (() -> Void)?
+    /// Called on the main queue with the loop key of a clicked event, or "" for several.
+    var onNoticeClick: ((String) -> Void)?
     private var rule = OverdueNotices()
     private let center: UNUserNotificationCenter?
+    /// Whether this menu posts notifications at all (an app bundle, and not turned off).
+    var canPost: Bool { center != nil }
+    /// What the person has allowed, read from the system; unknown until first read.
+    private(set) var permission: NotificationPermission = .unknown
+    /// Called on the main queue when the permission changes (granted, or turned off in System Settings).
+    var onPermissionChange: (() -> Void)?
+
+    /// Reads the system's answer now and, when it differs from the last, says so.
+    func refreshPermission() {
+        guard let center else { return }
+        center.getNotificationSettings { [weak self] settings in
+            let now: NotificationPermission
+            switch settings.authorizationStatus {
+            case .authorized, .provisional: now = .authorized
+            case .denied: now = .denied
+            case .notDetermined: now = .notDetermined
+            default: now = .unknown
+            }
+            DispatchQueue.main.async {
+                guard let self, now != self.permission else { return }
+                self.permission = now
+                self.onPermissionChange?()
+            }
+        }
+    }
 
     init(enabled: Bool) {
         guard enabled else {
@@ -31,12 +58,24 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         super.init()
         center?.delegate = self
         // macOS asks the person once; if they decline, nothing is posted.
-        center?.requestAuthorization(options: [.alert]) { _, _ in }
+        center?.requestAuthorization(options: [.alert]) { [weak self] _, _ in self?.refreshPermission() }
+        refreshPermission()
     }
 
     /// The gaps already told, for the menu that replaces this one.
     func exportTold() -> String { rule.exportTold() }
     func restoreTold(_ text: String) { rule.restoreTold(text) }
+
+    /// One event from the list. Without permission nothing shows and nothing
+    /// is asked again.
+    func post(notice: PostedNotice) {
+        guard let center else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "looptender"
+        content.body = notice.body
+        content.userInfo = ["loop": notice.loop ?? ""]
+        center.add(UNNotificationRequest(identifier: notice.identifier, content: content, trigger: nil))
+    }
 
     static let updateIdentifier = "menu-update-available"
 
@@ -52,8 +91,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
-        if response.notification.request.content.userInfo["relaunch"] as? Bool == true {
+        let info = response.notification.request.content.userInfo
+        if info["relaunch"] as? Bool == true {
             DispatchQueue.main.async { [weak self] in self?.onUpdateClick?() }
+        } else if let loop = info["loop"] as? String {
+            DispatchQueue.main.async { [weak self] in self?.onNoticeClick?(loop) }
         }
         completionHandler()
     }
@@ -61,6 +103,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// Called on the main queue after each read.
     func update(_ reading: MenuReading) {
         guard let center else { return }
+        // The list the panel reads carries an overdue check as a notice too:
+        // with it, the older rule would post it a second time.
+        if case .read(let list, _) = reading, list.notices != nil { return }
         for notice in rule.next(reading) {
             let content = UNMutableNotificationContent()
             content.title = notice.title

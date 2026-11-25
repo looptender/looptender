@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -53,6 +54,8 @@ Supervision (read -c FILE; default ./looptender.yaml, or ./keepgoing.yaml when o
   doctor                   Diagnose setup and recent checks without model calls
   runs                     Show recorded runs, sends and chat/session references offline; follow one with --id (text or --json)
   adapter check            Check one process status observation; no resume/stop or loop-state writes by this command
+  model-step               Step the loop's conversation down a model at one model's weekly limit, and back after it resets (--models A,B, --off)
+  usage-watch              Warn a loop's agent once before its account's weekly window runs out (--account ID, --off)
   timeline                 Explain retained incident history offline; filter with --kind, --target, --since, --until (text or --json)
 
 Transfer planning:
@@ -68,7 +71,8 @@ Local client discovery:
   client pause|stop        Save a restrictive hold for a registered loop
   client prepare-resume    Prepare a short-lived snapshot/ticket for review
   client resume            Clear holds using an unchanged prepared ticket
-  accounts list|add|update|check|usage  Select private account contexts; explicit status only, no model calls
+  accounts list|add|update|remove|check|usage  Select private account contexts; explicit status only, no model calls
+  accounts connect|disconnect  Connect a subscription: a new private directory, the provider's own sign-in, a label; or take one out of the list
   registry add|list|remove|reconcile  Register private loop references; never start supervision
   migrate                  Say what moving the per-user directories from keepgoing/ to looptender/ would do;
                            --apply moves them and leaves a link, --undo --apply moves them back
@@ -82,12 +86,15 @@ Goal metadata:
 
 Control:
   enable | disable         Turn supervision on or off (nothing is sent while off)
-                           enable, resume and tick take --routine source/routine[/invocation]
+                           enable, resume, start, daemon and tick take --routine source/routine[/invocation]
                            to record which scheduler entry and trigger called them
   pause | resume           Pause; resume also clears stop, awaiting-user, and completion
   stop                     Stop the running session on the next pass, then send nothing
   complete                 Mark the task finished; hold until resume
-  await-user               Mark the loop as waiting for a person
+  await-user               Mark the loop as waiting for a person; --withdraw --note WHY: the
+                           loop's own thread takes back the await-user it set, if nothing changed since
+  wait --until CONDITION   Send nothing until host-session, network, time:RFC3339 or limit-reset
+                           holds, then carry on by itself (--for, default 24h, then an ordinary await-user)
   archive | unarchive      List a loop that is not supervising apart (--note TEXT), or normally again;
                            an archived loop needs nobody and cannot be resumed until unarchived.
                            Neither changes a hold; unarchive resumes nothing
@@ -138,10 +145,38 @@ func main() {
 	// Headless turns run through a copy of this binary on every platform;
 	// this returns immediately for ordinary CLI invocations.
 	runner.MaybeRunTurn()
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(context.Background())
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		s := <-signals
+		receivedSignal.Store(signalName(s))
+		cancel()
+	}()
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	cancel()
 	os.Exit(code)
+}
+
+// receivedSignal is the signal that ended this process's command, if one
+// did; the daemon's stopped record says it.
+var receivedSignal atomic.Value
+
+func stopSignal() string {
+	s, _ := receivedSignal.Load().(string)
+	return s
+}
+
+func signalName(s os.Signal) string {
+	switch s {
+	case os.Interrupt:
+		return "SIGINT"
+	case syscall.SIGTERM:
+		return "SIGTERM"
+	case syscall.SIGHUP:
+		return "SIGHUP"
+	}
+	return "other"
 }
 
 type env struct {
@@ -157,9 +192,21 @@ type routineKey struct{}
 // routineIgnoredKey marks a tick whose --routine value could not be recorded.
 type routineIgnoredKey struct{}
 
+const routineUsageMsg = "--routine takes source/routine or source/routine/invocation; each part is 1-128 letters, digits and . _ : @ -, starting with a letter or digit"
+
 func suppliedRoutine(ctx context.Context) rd.RoutineRef {
 	r, _ := ctx.Value(routineKey{}).(rd.RoutineRef)
 	return r
+}
+
+func routineFlagString(r rd.RoutineRef) string {
+	if r == (rd.RoutineRef{}) {
+		return ""
+	}
+	if r.Invocation == "" {
+		return r.Source + "/" + r.Routine
+	}
+	return r.Source + "/" + r.Routine + "/" + r.Invocation
 }
 
 func (e env) errf(format string, a ...any) { fmt.Fprintf(e.stderr, format+"\n", a...) }
@@ -202,6 +249,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return promptPolicyCommand(e, rest)
 	case "service":
 		return serviceCommand(e, rest, localServiceHost())
+	case "router":
+		return routerCommand(e, rest)
+	case "__router-run":
+		return routerRunCommand(e, rest)
+	case "__router-front":
+		return routerFrontCommand(e, rest)
 	case "__service-daemon":
 		return serviceDaemon(e, rest)
 	case adoptCommandName:
@@ -212,6 +265,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return startCommand(e, rest, nil)
 	case "__start-background":
 		return startChild(e, rest)
+	case "model-step":
+		return modelStepCommand(e, rest)
+	case "usage-watch":
+		return usageWatchCommand(e, rest)
 	case "timeline":
 		return timelineCommand(e, rest)
 	case "runs":
@@ -271,6 +328,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		now:         fs.String("now", "", "RFC 3339 time to use instead of the clock"),
 		reviewFile:  fs.String("review-file", "", "complete: bounded private whole-objective and assignment review JSON"),
 		note:        fs.String("note", "", "a short note stored in control.json"),
+		until:       fs.String("until", "", "wait: what to wait for: host-session, network, time:RFC3339 or limit-reset"),
+		waitFor:     fs.Duration("for", 0, "wait: how long before the wait becomes an ordinary await-user (default 24h, at most 7 days)"),
+		withdraw:    fs.Bool("withdraw", false, "await-user: the owner thread takes back the await-user it set (needs --note)"),
 		succeededBy: fs.String("succeeded-by", "", "archive: the configuration of the loop that continues this one; this loop is archived after its first completed check"),
 		id:          fs.String("id", "", "fallbacks check: only this candidate"),
 		exact:       fs.Bool("exact", false, "fallbacks check: probe the target model, not the cheap one"),
@@ -291,6 +351,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	positional = append(positional, fs.Args()...)
+	if (*f.until != "" || *f.waitFor != 0) && cmd != "wait" {
+		e.errf("--until and --for are only supported by wait")
+		return exitUsage
+	}
+	if *f.withdraw && cmd != "await-user" {
+		e.errf("--withdraw is only supported by await-user")
+		return exitUsage
+	}
 	if *f.succeededBy != "" && cmd != "archive" {
 		e.errf("--succeeded-by is only supported by archive")
 		return exitUsage
@@ -359,8 +427,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.Visit(func(fl *flag.Flag) { routineSet = routineSet || fl.Name == "routine" })
 	if routineSet {
 		// Never echo the value: it is supplied by another program.
-		if cmd != "enable" && cmd != "resume" && cmd != "tick" {
-			e.errf("--routine is only supported by enable, resume, and tick")
+		if cmd != "enable" && cmd != "resume" && cmd != "tick" && cmd != "daemon" {
+			e.errf("--routine is only supported by enable, resume, tick, start, and daemon")
 			return exitUsage
 		}
 		r, err := rd.ParseRoutine(*f.routine)
@@ -372,7 +440,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			// run when its scheduler sends a value keepgoing cannot record.
 			e.ctx = context.WithValue(e.ctx, routineIgnoredKey{}, true)
 		default:
-			e.errf("--routine takes source/routine or source/routine/invocation; each part is 1-128 letters, digits and . _ : @ -, starting with a letter or digit")
+			e.errf("%s", routineUsageMsg)
 			return exitUsage
 		}
 	}
@@ -453,7 +521,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return unarchiveCmd(e, cfg, *f.asJSON)
 	case "complete":
 		return completionCommand(e, cfg, *f.note, *f.reviewFile)
-	case "disable", "pause", "resume", "await-user":
+	case "wait":
+		if len(positional) != 0 || *f.until == "" {
+			e.errf("usage: looptender wait --until host-session|network|time:RFC3339|limit-reset [--for DURATION] [--note TEXT] [-c looptender.yaml]")
+			return exitUsage
+		}
+		return waitCmd(e, cfg, *f.until, *f.note, *f.waitFor, now)
+	case "await-user":
+		if *f.withdraw {
+			return withdrawCmd(e, cfg, *f.note)
+		}
+		return controlCmd(e, cfg, cmd, *f.note, *f.takeOver, *f.keepStop)
+	case "disable", "pause", "resume":
 		return controlCmd(e, cfg, cmd, *f.note, *f.takeOver, *f.keepStop)
 	case "session reset":
 		if *f.dryRun {
@@ -505,7 +584,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 type cliFlags struct {
 	staleAfter                      *time.Duration
 	cfgPath, now, note, id, routine *string
-	reviewFile, succeededBy         *string
+	reviewFile, succeededBy, until  *string
+	waitFor                         *time.Duration
+	withdraw                        *bool
 	client                          *string
 	target                          *string
 	here                            *bool

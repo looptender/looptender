@@ -163,9 +163,12 @@ func TestTelegramPollStatusPauseStopAndGuards(t *testing.T) {
 		},
 	})
 	mu.Lock()
-	if len(sent) != 0 || len(answers) != 0 {
+	// Strangers get nothing; the paired user's stale /status gets one
+	// short "too old" reply and nothing is acted on.
+	if len(sent) != 1 || len(answers) != 0 || !strings.Contains(sent[0].Text, "too old to act on") || sent[0].ReplyMarkup != nil {
 		t.Fatalf("unauthorized/stale updates produced output: sent=%+v answers=%+v", sent, answers)
 	}
+	sent = nil
 	mu.Unlock()
 	rec, ok, err := telegram.LoadPairing(tgDir)
 	if err != nil || !ok || rec.LastUpdateOffset != 13 {

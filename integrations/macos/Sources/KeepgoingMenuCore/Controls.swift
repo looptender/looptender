@@ -8,7 +8,7 @@ import Foundation
 // was reviewed. Nothing is retried by itself.
 
 public enum LoopAction: String, Equatable, CaseIterable {
-    case pause, stop, resume
+    case pause, stop, resume, archive, unarchive
 }
 
 /// How a stop may be made, when the CLI offers a choice: `stop` in the

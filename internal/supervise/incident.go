@@ -1,8 +1,10 @@
 package supervise
 
 import (
+	"path/filepath"
 	"time"
 
+	"github.com/looptender/looptender/internal/adapter/sessionpipe"
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/decide"
@@ -55,9 +57,48 @@ func (t *tick) observedOnly() bool {
 	return config.ObservedOnly(t.loop.Adapter) || config.ObservedOnly(t.incidentAdapter)
 }
 
+// observedWake reports whether this check's observed target may be woken:
+// the loop opted in with sessionpipe.send: wake_only.
+func (t *tick) observedWake() bool {
+	return t.observedOnly() && t.loop.Agent.WakesObserved()
+}
+
+// WakeHoldReason is the reason recorded while a wake is held after one that
+// did not get through, and what status and doctor say.
+func WakeHoldReason(outcome, code string, until time.Time) string {
+	s := "last wake " + outcome
+	if code != "" {
+		s += ": " + code
+	}
+	return s + ", next attempt after " + until.UTC().Format(time.RFC3339) + " or the session's next turn"
+}
+
+// gateObservedWake holds a wake of an observed session while this computer's
+// login session is unavailable to background processes: sessionpipe's
+// daemon delivers it, and a headless delivery would need the same keychain
+// the supervisor cannot reach then.
+func (t *tick) gateObservedWake(d decide.Decision) decide.Decision {
+	if d.Action != decide.Wake || !t.observedWake() || t.opts.DryRun {
+		return d
+	}
+	if !t.hostSessionAvailable() {
+		t.res.HostSession = "unavailable"
+		return decide.Decision{Action: decide.None, Reason: HostSessionReason}
+	}
+	// After a wake that did not get through, the next waits for the
+	// session's next turn event or the idle spacing interval: a check that
+	// still sees the session idle does not try again at once.
+	dir := filepath.Join(t.loop.StateDir, "targets", t.res.Target)
+	if held, outcome, code, until := sessionpipe.WakeHold(dir, t.now, t.loop.Progress.MinWakeInterval.Duration); held {
+		return decide.Decision{Action: decide.None, Reason: WakeHoldReason(outcome, code, until)}
+	}
+	return d
+}
+
 func (t *tick) decide(stage string, in decide.Input) decide.Decision {
 	// An observed target is never woken, whichever rule asks.
 	in.ObservedOnly = in.ObservedOnly || t.observedOnly()
+	in.ObservedWake = in.ObservedWake || t.observedWake()
 	d := decide.Decide(in)
 	t.incidentDecisions.Add(stage, in, d)
 	t.incidentLimitWait = d.LimitWait

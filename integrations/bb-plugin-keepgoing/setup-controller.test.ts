@@ -387,8 +387,8 @@ test("an enabled loop nothing supervises can still be started: that error is wha
   assert.notEqual(r.canStart, true); assert.ok(!g.calls.includes("start"));
 });
 
-test("a takeover the CLI offers is previewed by default, can be turned off, and binds the creation", async () => {
-  for (const takeover of ["on", "off"] as const) {
+test("a takeover the CLI offers is off by default, can be opted into, and binds the creation", async () => {
+  for (const takeover of ["off", "on"] as const) {
     const f = fixture();
     const seen: unknown[] = [];
     const offer = { provider: "claude-code", model: "example-claude-model" };
@@ -398,9 +398,9 @@ test("a takeover the CLI offers is previewed by default, can be turned off, and 
       if (choice === "none" || choice === undefined) return { plan: structuredClone(f.plan) };
       return { plan: { ...structuredClone(f.plan), takeover: { provider: choice.provider, model: choice.model, permission: "accept-edits", text: "On a usage limit on codex: a new conversation on claude-code takes over." } } };
     };
-    const p = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", ...(takeover === "off" ? { takeover } : {}) });
+    const p = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", ...(takeover === "on" ? { takeover } : {}) });
     assert.equal(p.ok, true, p.message);
-    assert.deepEqual(p.plan?.takeoverOffer, offer, "the offer stays visible to turn it back on");
+    assert.deepEqual(p.plan?.takeoverOffer, offer, "the offer stays available in Options to turn on");
     if (takeover === "on") {
       assert.deepEqual(seen, ["detect", offer]); assert.equal(p.plan?.takeover?.provider, "claude-code"); assert.match(p.message, /a new conversation on claude-code takes over/);
     } else {
@@ -415,6 +415,23 @@ test("a takeover the CLI offers is previewed by default, can be turned off, and 
   }
 });
 
+test("inspect and preview surface threadMeta from BB metadata and fall back safely when unavailable", async () => {
+  const f = fixture();
+  f.target.provider = "acp-antigravity";
+  f.plan.provider = "acp-antigravity";
+  f.d.threadMeta = async () => ({ provider: "acp-antigravity", providerLabel: "Antigravity", model: "gemini-4-neon", modelLabel: "Gemini 4 Neon", reasoningLevel: "high" });
+  const inspected = await f.controller.call({ action: "inspect", threadId: "thr_example" });
+  assert.deepEqual(inspected.threadMeta, { provider: "acp-antigravity", providerLabel: "Antigravity", model: "gemini-4-neon", modelLabel: "Gemini 4 Neon", reasoningLevel: "high" });
+  const preview = await f.preview();
+  assert.deepEqual(preview.threadMeta, inspected.threadMeta);
+
+  // A threadMeta lookup error falls back to target.provider without leaking error text.
+  f.d.threadMeta = async () => { throw new Error("PRIVATE-META-ERROR"); };
+  const fallback = await f.controller.call({ action: "inspect", threadId: "thr_example" });
+  assert.deepEqual(fallback.threadMeta, { provider: "acp-antigravity" });
+  assert.ok(!JSON.stringify(fallback).includes("PRIVATE-META-ERROR"));
+});
+
 test("a CLI that offers no takeover is asked nothing more", async () => {
   const f = fixture();
   const seen: unknown[] = [];
@@ -425,4 +442,58 @@ test("a CLI that offers no takeover is asked nothing more", async () => {
     assert.equal(p.ok, true); assert.equal(p.plan?.takeover, undefined); assert.equal(p.plan?.takeoverOffer, undefined);
   }
   assert.deepEqual(seen, ["detect", "detect"], "only asked what is usable: no provider or model flags");
+});
+
+test("continuationCandidates and threadTitle are surfaced on inspect; succeeds is validated and bound to preview", async () => {
+  const f = fixture();
+  const candidates = [
+    { configPath: "/private/example-prev/looptender.yaml", loop: "example-prev", displayName: "Example Work", project: "example", sameProject: true, controlState: "paused", archived: false },
+  ];
+  f.d.threadTitle = async () => "Fix token refresh (Claude 4)";
+  f.d.continuationCandidates = async () => candidates;
+  let seenSucceeds: string | undefined;
+  const baseInit = f.d.init;
+  f.d.init = async (bin, target, name, task, dry, goal, bounds, follow, choice, succeeds) => {
+    seenSucceeds = succeeds;
+    const res = await baseInit(bin, target, name, task, dry, goal, bounds, follow, choice, succeeds);
+    if ("plan" in res && !dry) return { ...res, warnings: ["init: warning: example non-fatal notice"] };
+    return res;
+  };
+  const inspected = await f.controller.call({ action: "inspect", threadId: "thr_example" });
+  assert.equal(inspected.threadTitle, "Fix token refresh (Claude 4)");
+  assert.deepEqual(inspected.continuationCandidates, candidates);
+
+  // Arbitrary browser-supplied configPath not in continuationCandidates is refused.
+  const bad = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", succeeds: "/private/unknown/looptender.yaml" });
+  assert.equal(bad.ok, false);
+  assert.match(bad.message, /not registered or configured/);
+
+  const p = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", succeeds: candidates[0]!.configPath });
+  assert.equal(p.ok, true, p.message);
+  assert.equal(seenSucceeds, candidates[0]!.configPath);
+  assert.deepEqual(p.plan?.succeeds, { configPath: candidates[0]!.configPath, loop: "example-prev", displayName: "Example Work" });
+
+  // Changing or dropping succeeds invalidates the preview ticket.
+  const mismatched = await f.controller.call({ action: "create", threadId: "thr_example", ticket: p.ticket, task: "Fictional private task" });
+  assert.equal(mismatched.ok, false);
+
+  const p2 = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", succeeds: candidates[0]!.configPath });
+  const created = await f.controller.call({ action: "create", threadId: "thr_example", ticket: p2.ticket, task: "Fictional private task", succeeds: candidates[0]!.configPath });
+  assert.equal(created.ok, true, created.message);
+  assert.deepEqual(created.warnings, ["init: warning: example non-fatal notice"]);
+});
+
+test("start reports service persistence when command returns method service", async () => {
+  const f = fixture();
+  const baseCmd = f.d.command;
+  f.d.command = async (bin, record, op, json) => {
+    const res = await baseCmd(bin, record, op, json);
+    return op === "start" ? { ...res, method: "service" as const } : res;
+  };
+  const created = await f.create((await f.preview()).ticket);
+  assert.equal(created.ok, true);
+  const started = await f.controller.call({ action: "start", threadId: "thr_example" });
+  assert.equal(started.ok, true);
+  assert.equal(started.started, true);
+  assert.match(started.message, /user service installed; survives reboot/);
 });

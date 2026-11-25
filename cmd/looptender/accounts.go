@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/looptender/looptender/internal/accounts"
@@ -32,7 +33,7 @@ func accountsDirectory(path string) (string, error) {
 }
 func accountsCommand(e env, args []string, run accountRun) int {
 	if len(args) == 0 {
-		e.errf("usage: accounts list|add|update|check|usage [flags]")
+		e.errf("usage: accounts list|add|update|remove|check|usage|connect|disconnect [flags]")
 		return exitUsage
 	}
 	op := args[0]
@@ -47,7 +48,10 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	accountDir := fs.String("account-dir", "", "existing selected account directory; never copied")
 	workdir := fs.String("workdir", "", "selected working directory")
 	expect := fs.String("expect", "", "required current revision for update")
+	expectRevision := fs.String("revision", "", "expected current revision for remove")
 	asJSON := fs.Bool("json", false, "print minimized structured result")
+	like := fs.String("like", "", "connect: take the executable and working directory from this entry")
+	force := fs.Bool("force", false, "disconnect: even when a loop names the account")
 	if err := fs.Parse(args[1:]); err != nil {
 		return exitUsage
 	}
@@ -57,14 +61,17 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	supplied := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { supplied[f.Name] = true })
 	for k := range supplied {
-		allowed := k == "directory" || k == "json" || ((op == "check" || op == "update" || op == "usage") && k == "id") ||
-			((op == "add" || op == "update") && (k == "label" || k == "provider" || k == "selection" || k == "cli" || k == "account-dir" || k == "workdir" || (op == "update" && k == "expect")))
+		allowed := k == "directory" || k == "json" || ((op == "check" || op == "update" || op == "usage" || op == "remove") && k == "id") ||
+			((op == "add" || op == "update") && (k == "label" || k == "provider" || k == "selection" || k == "cli" || k == "account-dir" || k == "workdir" || (op == "update" && k == "expect"))) ||
+			(op == "remove" && k == "revision") ||
+			(op == "connect" && (k == "label" || k == "provider" || k == "cli" || k == "workdir" || k == "like")) ||
+			(op == "disconnect" && (k == "label" || k == "id" || k == "force"))
 		if !allowed {
 			e.errf("accounts: flag not allowed for this operation")
 			return exitUsage
 		}
 	}
-	if op != "list" && op != "add" && op != "update" && op != "check" && op != "usage" {
+	if op != "list" && op != "add" && op != "update" && op != "remove" && op != "check" && op != "usage" && op != "connect" && op != "disconnect" {
 		return exitUsage
 	}
 	path, err := accountsDirectory(*dir)
@@ -74,6 +81,15 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	}
 	if op == "usage" {
 		return accountsUsage(e, path, *id, *asJSON)
+	}
+	if op == "connect" {
+		return accountsConnect(e, path, accountConnectOptions{provider: *provider, label: *label, like: *like, cli: *cli, workdir: *workdir, asJSON: *asJSON}, accountConnectDefaults())
+	}
+	if op == "disconnect" {
+		return accountsDisconnect(e, path, *id, *label, *force, *asJSON, accountUses)
+	}
+	if op == "remove" {
+		return accountsRemove(e, path, *id, *expectRevision, *asJSON, accountUses)
 	}
 	now := time.Now().UTC()
 	caller := os.Getenv("BB_THREAD_ID")
@@ -213,6 +229,13 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	return exitOK
 }
 func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, now time.Time) error {
+	return accountCheckWithEnv(ctx, dir, id, caller, run, os.Environ, now)
+}
+
+func accountCheckWithEnv(ctx context.Context, dir, id, caller string, run accountRun, getEnv func() []string, now time.Time) error {
+	if getEnv == nil {
+		getEnv = os.Environ
+	}
 	f, err := accounts.Load(dir)
 	if err != nil {
 		return err
@@ -236,7 +259,8 @@ func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, n
 	if current == nil || current.Revision != selected.Revision {
 		return accounts.ErrChanged
 	}
-	effective := os.Environ()
+	effective := getEnv()
+	fingerprint := ""
 	o := accounts.Observation{Revision: selected.Revision, Context: selected.Context, At: now, Auth: "unavailable", Caller: caller}
 	bound, accepted := accounts.Bound(f, selected, effective)
 	if !accountContextExists(selected) || !accepted {
@@ -271,6 +295,9 @@ func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, n
 			o.Version = v
 			if selected.Provider == "claude-code" {
 				raw, callErr = call("auth", "status", "--json")
+				if callErr == nil {
+					fingerprint = accounts.LoginFingerprint(f, selected.Provider, claudeLoginIdentity(raw))
+				}
 			} else {
 				raw, callErr = call("login", "status")
 			}
@@ -289,13 +316,13 @@ func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, n
 			}
 		}
 	}
-	return accounts.Update(dir, func(latest *accounts.File) error {
+	err = accounts.Update(dir, func(latest *accounts.File) error {
 		e := accounts.Find(latest, id)
 		if e == nil || e.Revision != selected.Revision || e.Context != selected.Context {
 			return accounts.ErrChanged
 		}
 		if o.Reason != "context_changed" {
-			if now, ok := accounts.Bound(*latest, *e, os.Environ()); !accountContextExists(*e) || !ok || now != o.Context {
+			if now, ok := accounts.Bound(*latest, *e, getEnv()); !accountContextExists(*e) || !ok || now != o.Context {
 				return accounts.ErrChanged
 			}
 		}
@@ -315,6 +342,37 @@ func accountCheck(ctx context.Context, dir, id, caller string, run accountRun, n
 		}
 		return nil
 	})
+	if err == nil && fingerprint != "" && o.Auth == "reported_present" {
+		// Best effort: the check itself is recorded either way.
+		_ = accounts.RecordLogin(dir, id, fingerprint, now)
+	}
+	return err
+}
+
+// claudeLoginIdentity is the account identity in claude auth status
+// --json, for a fingerprint only: it is never stored, printed or compared
+// outside accounts.LoginFingerprint. "" when it is not logged in or names
+// no account.
+func claudeLoginIdentity(raw []byte) string {
+	var s struct {
+		LoggedIn *bool `json:"loggedIn"`
+		Email    any   `json:"email"`
+		OrgID    any   `json:"orgId"`
+		OrgUUID  any   `json:"orgUuid"`
+	}
+	if json.Unmarshal(raw, &s) != nil || s.LoggedIn == nil || !*s.LoggedIn {
+		return ""
+	}
+	email, _ := s.Email.(string)
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return ""
+	}
+	org, _ := s.OrgID.(string)
+	if org == "" {
+		org, _ = s.OrgUUID.(string)
+	}
+	return email + "\n" + strings.TrimSpace(org)
 }
 func accountLogin(e accounts.Entry, o accounts.Observation, raw []byte, err error) accounts.Observation {
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -397,4 +455,127 @@ func accountContextExists(e accounts.Entry) bool {
 		return err == nil && dir == e.Directory
 	}
 	return true
+}
+
+// limitAccountCheckSpacing is how long a login fingerprint stays current
+// for the check at a usage limit.
+const limitAccountCheckSpacing = time.Hour
+
+// tickAccountCheck is a check's login check of the account its route
+// states, at a usage limit: the same check as accounts check, at most once
+// an hour per account. Its result is only the catalog's own record.
+func tickAccountCheck(ctx context.Context, id string) {
+	dir, err := accountsDirectory(limitAccountsDir)
+	if err != nil {
+		return
+	}
+	f, err := accounts.Load(dir)
+	if err != nil {
+		return
+	}
+	e := accounts.Find(&f, id)
+	if e == nil || e.Provider != "claude-code" || (e.Attempt != nil && time.Since(e.Attempt.At) < limitAccountCheckSpacing) {
+		return
+	}
+	_ = accountCheck(ctx, dir, id, "", limitAccountRun, time.Now().UTC())
+}
+
+// limitAccountsDir and limitAccountRun are the catalog and the command
+// runner of the check at a limit; tests replace them.
+var (
+	limitAccountsDir string
+	limitAccountRun  accountRun = accountExec
+)
+
+type accountRemoveOut struct {
+	SchemaVersion      int               `json:"schemaVersion"`
+	Removed            bool              `json:"removed"`
+	ID                 string            `json:"id"`
+	Label              string            `json:"label"`
+	Provider           string            `json:"provider"`
+	References         []string          `json:"references,omitempty"`
+	ReferencesComplete bool              `json:"referencesComplete"`
+	Revisions          map[string]string `json:"revisions"`
+	Accounts           accounts.View     `json:"accounts"`
+}
+
+// accountsRemove deletes only the selected entry from accounts.json, leaving
+// provider credentials, logins, and directories on disk untouched, and reports
+// any registered loop references so callers can update or verify routes.
+func accountsRemove(e env, dir, id, expectedRevision string, asJSON bool, uses func(catalogDir, id string) ([]string, bool)) int {
+	if strings.TrimSpace(id) == "" {
+		e.errf("accounts remove: name the account with --id")
+		return exitUsage
+	}
+	catalog, err := accounts.Load(dir)
+	if err != nil || accounts.Find(&catalog, id) == nil {
+		e.errf("accounts remove: account not found; nothing was changed")
+		return exitFailed
+	}
+	guard, err := accounts.CheckGuard(dir, id)
+	if err != nil {
+		if errors.Is(err, lock.ErrHeld) {
+			e.errf("accounts remove: operation already running")
+			return exitSkipped
+		}
+		e.errf("accounts remove: catalog unavailable")
+		return exitFailed
+	}
+	defer guard.Release()
+
+	removed, err := accounts.Remove(dir, id, expectedRevision)
+	if err != nil {
+		if errors.Is(err, lock.ErrHeld) {
+			e.errf("accounts remove: operation already running")
+			return exitSkipped
+		}
+		if errors.Is(err, accounts.ErrChanged) {
+			e.errf("accounts remove: selection or revision changed; review again")
+		} else {
+			e.errf("accounts remove: catalog unavailable; nothing was changed")
+		}
+		return exitFailed
+	}
+
+	var refs []string
+	refsComplete := false
+	if uses != nil {
+		refs, refsComplete = uses(dir, removed.ID)
+	}
+	view := accounts.ReadView(dir, time.Now().UTC())
+	if !view.Complete {
+		e.errf("accounts: catalog unavailable")
+		return exitFailed
+	}
+	revisions := map[string]string{}
+	if after, loadErr := accounts.Load(dir); loadErr == nil {
+		for _, selected := range after.Entries {
+			revisions[selected.ID] = selected.Revision
+		}
+	}
+	if asJSON {
+		out := accountRemoveOut{
+			SchemaVersion:      1,
+			Removed:            true,
+			ID:                 removed.ID,
+			Label:              removed.Label,
+			Provider:           removed.Provider,
+			References:         refs,
+			ReferencesComplete: refsComplete,
+			Revisions:          revisions,
+			Accounts:           view,
+		}
+		if json.NewEncoder(e.stdout).Encode(out) != nil {
+			return exitFailed
+		}
+		return exitOK
+	}
+	fmt.Fprintf(e.stdout, "Removed %q (%s, %s) from the account catalog.\n", removed.Label, removed.Provider, removed.ID)
+	fmt.Fprintln(e.stdout, "Provider credentials, logins, and directories on disk were not touched.")
+	if len(refs) > 0 {
+		fmt.Fprintf(e.stdout, "Warning: registered loop routes still reference this account: %s. Edit those routes or run `looptender doctor`.\n", strings.Join(refs, "; "))
+	} else if !refsComplete {
+		fmt.Fprintln(e.stdout, "Warning: could not inspect every registered loop for remaining route references; run `looptender doctor`.")
+	}
+	return exitOK
 }

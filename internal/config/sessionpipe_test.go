@@ -126,3 +126,22 @@ func TestSessionpipeSchemaForbidsPromptAndFallback(t *testing.T) {
 		t.Fatal("fallbacks.schema.json allows a sessionpipe candidate")
 	}
 }
+
+// send: wake_only opts in to waking, and then the loop needs the text it
+// sends; any other value is refused.
+func TestSessionpipeSendWakeOnly(t *testing.T) {
+	wake := strings.Replace(sessionpipeLoop, "    events_file: sessionpipe/events.jsonl\n", "    events_file: sessionpipe/events.jsonl\n    send: wake_only\n", 1)
+	if _, err := loadText(t, wake); err == nil || !strings.Contains(err.Error(), "one of loop.prompt or loop.prompt_file is required") {
+		t.Fatalf("wake_only without a prompt: %v", err)
+	}
+	cfg, err := loadText(t, wake+"  prompt: Fictional wake text.\n")
+	if err != nil || !cfg.Loop.Agent.WakesObserved() {
+		t.Fatalf("wake_only with a prompt: %v", err)
+	}
+	if _, err := loadText(t, strings.Replace(wake, "wake_only", "always", 1)+"  prompt: x\n"); err == nil || !strings.Contains(err.Error(), "sessionpipe.send must be wake_only") {
+		t.Fatalf("another value: %v", err)
+	}
+	if cfg, err := loadText(t, sessionpipeLoop); err != nil || cfg.Loop.Agent.WakesObserved() {
+		t.Fatalf("the default: %v", err)
+	}
+}

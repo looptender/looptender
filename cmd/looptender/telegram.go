@@ -27,6 +27,9 @@ const telegramUsage = `Telegram remote channel (zero-infrastructure local pairin
   telegram poll        Long-poll getUpdates for /status, Pause/Stop, and ticketed Resume
   telegram topics      Inspect or sync per-loop private-chat topics (--sync creates missing topics)
   telegram disconnect  Remove local Telegram pairing and saved token file
+  telegram service install|status|uninstall
+                       Keep the poller running as a service (macOS launchd background domain,
+                       Linux systemd user unit); you run install yourself (--dry-run previews)
 `
 
 func telegramCommand(e env, args []string) int {
@@ -52,6 +55,8 @@ func telegramCommandWithInput(e env, args []string, stdin io.Reader) int {
 		return telegramTopicsCommand(e, rest)
 	case "disconnect":
 		return telegramDisconnectCommand(e, rest)
+	case "service":
+		return telegramServiceCommand(e, rest)
 	default:
 		e.errf("telegram: unknown subcommand %q; see telegram --help", sub)
 		return exitUsage
@@ -71,6 +76,7 @@ func telegramSetupCommand(e env, args []string, stdin io.Reader) int {
 	dirFlag := fs.String("dir", "", "private state directory for Telegram pairing (default: user state dir)")
 	regFlag := fs.String("registry", "", "private loop registry directory for optional topic creation")
 	modeFlag := fs.String("mode", telegram.ModeAlerts, "channel mode: alerts (redacted default) or chat (explicit opt-in)")
+	deviceLabelFlag := fs.String("device-label", "", "optional non-identifying device label for Telegram alerts (default: \"this computer\")")
 	acceptNonE2E := fs.Bool("accept-non-e2e", false, "acknowledge Telegram Bot API is not end-to-end encrypted (required for --mode chat)")
 	tokenEnv := fs.String("token-env", telegram.TokenEnv, "environment variable to read the @BotFather token from")
 	tokenStdin := fs.Bool("token-stdin", false, "read the @BotFather token from standard input instead of the environment")
@@ -112,8 +118,11 @@ func telegramSetupCommand(e env, args []string, stdin io.Reader) int {
 		token = strings.TrimSpace(os.Getenv(strings.TrimSpace(*tokenEnv)))
 	}
 	if token == "" {
-		if !*tokenStdin {
-			fmt.Fprintln(e.stdout, "Create a free personal bot with @BotFather (/newbot), then paste its token below:")
+		if stdinIsTerminal(stdin) {
+			// A token typed at a terminal is echoed on the screen: never read
+			// it that way. The safe command reads it silently and pipes it in.
+			e.errf("telegram setup: refusing to read the bot token from the terminal, where it would be shown. Create a bot with @BotFather (/newbot), then run:\n  %s", telegramSafeSetupCommand)
+			return exitUsage
 		}
 		if stdin == nil {
 			e.errf("telegram setup: no input stream available for bot token")
@@ -223,6 +232,7 @@ func telegramSetupCommand(e env, args []string, stdin io.Reader) int {
 	rec := telegram.PairingRecord{
 		SchemaVersion:    telegram.PairingSchemaVersion,
 		Mode:             mode,
+		DeviceLabel:      telegram.SanitizeDeviceLabel(*deviceLabelFlag),
 		BotID:            me.ID,
 		BotUsername:      me.Username,
 		AllowedUserID:    matched.UserID,
@@ -260,9 +270,8 @@ func telegramSetupCommand(e env, args []string, stdin io.Reader) int {
 		}
 	}
 
-	host, _ := os.Hostname()
 	confirmText := telegram.FormatAlert(telegram.AlertSummary{
-		Device:  host,
+		Device:  telegram.EffectiveDeviceLabel(rec),
 		Loop:    "telegram",
 		Event:   "paired",
 		Summary: fmt.Sprintf("Paired in %s mode. Configure loop.report.format: telegram to receive alerts here.", mode),
@@ -281,10 +290,15 @@ type telegramStatusView struct {
 	Paired        bool   `json:"paired"`
 	BotUsername   string `json:"botUsername,omitempty"`
 	Mode          string `json:"mode,omitempty"`
+	DeviceLabel   string `json:"deviceLabel,omitempty"`
 	TopicsEnabled bool   `json:"topicsEnabled,omitempty"`
 	LoopTopics    int    `json:"loopTopics,omitempty"`
 	TokenPresent  bool   `json:"tokenPresent"`
-	PairedAt      string `json:"pairedAt,omitempty"`
+	// TokenFile is missing, private or not_private (refused at every read);
+	// TokenFromEnv says LOOPTENDER_TELEGRAM_BOT_TOKEN is set and overrides it.
+	TokenFile    string `json:"tokenFile"`
+	TokenFromEnv bool   `json:"tokenFromEnvironment,omitempty"`
+	PairedAt     string `json:"pairedAt,omitempty"`
 }
 
 func telegramStatusCommand(e env, args []string) int {
@@ -312,10 +326,13 @@ func telegramStatusCommand(e env, args []string) int {
 	v := telegramStatusView{
 		Paired:       ok,
 		TokenPresent: tokenPresent,
+		TokenFile:    telegram.TokenFileState(dir),
+		TokenFromEnv: telegram.TokenFromEnvironment(),
 	}
 	if ok {
 		v.BotUsername = rec.BotUsername
 		v.Mode = rec.Mode
+		v.DeviceLabel = telegram.EffectiveDeviceLabel(rec)
 		v.TopicsEnabled = rec.TopicsEnabled
 		v.LoopTopics = len(rec.LoopTopics)
 		v.PairedAt = rec.PairedAt.UTC().Format(time.RFC3339)
@@ -331,8 +348,20 @@ func telegramStatusCommand(e env, args []string) int {
 	}
 	fmt.Fprintf(e.stdout, "Telegram: paired to @%s\n", v.BotUsername)
 	fmt.Fprintf(e.stdout, "Mode: %s\n", v.Mode)
+	fmt.Fprintf(e.stdout, "Device label: %s\n", v.DeviceLabel)
 	fmt.Fprintf(e.stdout, "Private-chat topics enabled: %t (%d loop topics)\n", v.TopicsEnabled, v.LoopTopics)
 	fmt.Fprintf(e.stdout, "Token present: %t\n", v.TokenPresent)
+	if v.TokenFile == "not_private" {
+		fmt.Fprintln(e.stdout, "Token file: readable by others or not owned by you, so it is not used; run chmod 600 on it, or telegram setup again")
+	}
+	if v.TokenFromEnv {
+		fmt.Fprintf(e.stdout, "Token: %s is set in this environment and overrides the saved token file\n", telegram.TokenEnv)
+	}
+	if running, _ := telegramPollerRunning(dir); running {
+		fmt.Fprintln(e.stdout, "Poller: running (Resume, Pause and Stop from the phone work)")
+	} else {
+		fmt.Fprintln(e.stdout, "Poller: not running, so taps on the phone do nothing; run `looptender telegram service install` once, or `looptender telegram poll` in a terminal")
+	}
 	fmt.Fprintf(e.stdout, "Paired at: %s\n", v.PairedAt)
 	return exitOK
 }
@@ -363,9 +392,8 @@ func telegramTestCommand(e env, args []string) int {
 		e.errf("telegram test: not paired; run `looptender telegram setup` first")
 		return exitFailed
 	}
-	host, _ := os.Hostname()
 	text := telegram.FormatAlert(telegram.AlertSummary{
-		Device:  host,
+		Device:  telegram.EffectiveDeviceLabel(rec),
 		Loop:    "test",
 		Event:   "test",
 		Summary: "Test alert from looptender",
@@ -597,4 +625,20 @@ func telegramTopicsCommand(e env, args []string) int {
 		fmt.Fprintf(e.stdout, "Fallback to single DM for loops that could not create topics: %s\n", strings.Join(view.FailedLoops, ", "))
 	}
 	return exitOK
+}
+
+// telegramSafeSetupCommand reads the token without echo, keeps it out of the
+// shell history and the process list (printf is a shell builtin), and hands
+// it to setup on standard input.
+const telegramSafeSetupCommand = `IFS= read -rs 'TG?BotFather token (hidden): ' && echo && { printf '%s\n' "$TG" | looptender telegram setup --token-stdin --qr && looptender telegram test; }; unset TG`
+
+// stdinIsTerminal reports whether r is a terminal, where typed input is
+// echoed.
+func stdinIsTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok || f == nil {
+		return false
+	}
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }

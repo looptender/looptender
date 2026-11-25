@@ -4,6 +4,7 @@ package main
 
 import (
 	"os"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -23,4 +24,9 @@ func TestHelperHoldLock(t *testing.T) {
 	}
 	os.WriteFile(os.Getenv("HOLD_READY"), nil, 0o600)
 	time.Sleep(time.Minute)
+	// The lock lives as long as this open file description. Without this the
+	// file is unreachable once Fd() has been called, a garbage collection runs
+	// its finalizer, the descriptor closes and the lock is released under the
+	// test (seen as "held lock: 0" in a race run).
+	runtime.KeepAlive(f)
 }

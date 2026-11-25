@@ -118,6 +118,31 @@ test("a long limit wait says why no handoff is possible and whether anyone was t
   }
 });
 
+test("limitWaitListingTag surfaces active limit waits and failover blocks for bb looptender status", async () => {
+  const { limitWaitListingTag } = await import("./status-details.ts");
+  const base = { readAt: "2030-01-01T00:00:00Z", completed: false, targetThread: "thr_example", targetAdapter: "bb", targetConfigured: true, runtime: null, daemon: null, lastCheck: null };
+  assert.equal(
+    limitWaitListingTag({ ...base, limitWait: { state: "not_subscribed", resetsAt: "2030-01-06T12:00:00Z", reason: "limit_failover_disabled", resetIn: "3d 4h" } }),
+    "\tlimit=waiting (failover disabled; resets in 3d 4h)",
+  );
+  assert.equal(
+    limitWaitListingTag({ ...base, limitWait: { state: "reported", resetsAt: "2030-01-06T12:00:00Z", reason: "limit_no_fallback", resetIn: "5h" } }),
+    "\tlimit=waiting (no confirmed fallback; resets in 5h)",
+  );
+  assert.equal(
+    limitWaitListingTag({ ...base, limitWait: { state: "not_subscribed", resetsAt: "2030-01-06T12:00:00Z", reason: "limit_refusal_unrecovered" } }),
+    "\tlimit=waiting (unrecovered refusal)",
+  );
+  for (const limitWait of [
+    null,
+    { state: "none" },
+    { state: "reported", resetPassed: true, reason: "limit_failover_disabled", resetIn: "3d 4h" },
+    { state: "not_subscribed", held: "paused", reason: "limit_failover_disabled", resetIn: "3d 4h" },
+  ]) {
+    assert.equal(limitWaitListingTag({ ...base, limitWait }), "", JSON.stringify(limitWait));
+  }
+});
+
 test("the build lines say what was recorded and never guess", async () => {
   const { buildSummary } = await import("./status-details.ts");
   const rt = { state: "recent", source: "state", freshness: "recent" };
@@ -179,4 +204,45 @@ test("a long control note is one short line in the listing", async () => {
   const cut = shortNote("word ".repeat(100));
   assert.ok(cut.length <= 120 && cut.endsWith("…") && !cut.includes("\n"));
   assert.equal(shortNote("two\nlines  here"), "two lines here");
+});
+
+test("observed sessionpipe loops project session ref, observed/wakes role, and sessionpipeWake into details and diagnostics", async () => {
+  const { reasonLines } = await import("./status-details.ts");
+  const record = { id: "example-sp", loop: "observed-claude-code-example", threadId: "thr_source", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: "/projects/example", provider: "sessionpipe", configPath: "/private/example/sp.yaml" };
+  let data: unknown = {
+    loop: "observed-claude-code-example",
+    target: "primary",
+    controlState: "enabled",
+    window: "open",
+    state: {},
+    targetConfigured: true,
+    primaryAgent: { adapter: "sessionpipe", provider: "sessionpipe", session: "claude-code:8c132906-8c3f-4814-870a-afc3d05e1d2e", observed: true, wakes: true },
+    targetAgent: { adapter: "sessionpipe", provider: "sessionpipe", session: "claude-code:8c132906-8c3f-4814-870a-afc3d05e1d2e", observed: true, wakes: true },
+    sessionpipeWake: { since: "2030-01-01T00:00:00Z", forSeconds: 0, held: true, outcome: "refused", code: "folder", until: "2030-01-01T01:00:00Z", text: "last wake refused: folder, next attempt after 2030-01-01T01:00:00Z or the session's next turn; nothing is sent until then" },
+  };
+  const { bb, harness } = createFakePluginHost({ pluginId: "keepgoing", settings: { configs: "", keepgoingPath: "keepgoing" },
+    experimental_callHostRpc: async () => ({ code: 0, data }),
+  });
+  try {
+    await plugin(bb);
+    await bb.storage.kv.set("setups.v1", [record]);
+    const read = async () => rpcContract.forThread.output.parse(await harness.behavior.callRpc("forThread", { threadId: record.threadId })).loops[0]!;
+    const lv = await read();
+    assert.equal(lv.details?.observed, true);
+    assert.equal(lv.details?.observedWakes, true);
+    assert.equal(lv.details?.targetSession, "claude-code:8c132906-8c3f-4814-870a-afc3d05e1d2e");
+    assert.equal(lv.details?.sessionpipeWake?.code, "folder");
+
+    const diag = diagnosticLines(lv.details, lv.target, lv.supervising).join("\n");
+    assert.match(diag, /Current target: claude-code:8c132906-8c3f-4814-870a-afc3d05e1d2e \(primary\); Observed, woken only when idle/);
+    assert.match(diag, /Mode: Observed, woken only when idle/);
+    assert.match(diag, /Wake: last wake refused: folder/);
+    assert.ok(reasonLines(lv.controlState, lv.note, lv.details).some(l => l.startsWith("Wake: last wake refused: folder")));
+
+    data = { ...data as object, sessionpipeWake: { held: "not-a-bool" }, targetAgent: { adapter: "sessionpipe", provider: "sessionpipe", session: "claude-code:example", observed: true } };
+    const malformed = await read();
+    assert.ok(malformed.details?.unparsed?.includes("sessionpipeWake"));
+    assert.equal(malformed.details?.observedWakes, undefined);
+    assert.match(diagnosticLines(malformed.details, malformed.target, false).join("\n"), /Mode: Observed, never woken/);
+  } finally { await harness.lifecycle.dispose(); }
 });
