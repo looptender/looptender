@@ -1088,6 +1088,7 @@ func (t *tick) run() error {
 	if obs.ResetsAt.After(t.now) {
 		failover.ResetIn = obs.ResetsAt.Sub(t.now)
 	}
+	qsInput, qsResetsAt := t.quotaSwitchInput(target)
 	in := decide.Input{
 		Obs: obs, Control: gate, InWindow: inWindow,
 		UnchangedFor: unchangedFor, SinceWake: sinceWake,
@@ -1098,6 +1099,7 @@ func (t *tick) run() error {
 		Reprompts: t.st.Reprompts, MaxReprompts: loop.Errors.MaxReprompts,
 		SinceLastReprompt: sinceReprompt, Backoff: loop.Errors.Backoff.Duration,
 		SwitchBackReady: t.switchBackReady(target),
+		QuotaSwitch:     qsInput,
 		// Set here, once, so every decision taken from this input (lane
 		// recovery, the hung-turn rule, the check's own) treats an observed
 		// target as never woken, not only the ones made through t.decide.
@@ -1244,12 +1246,19 @@ func (t *tick) run() error {
 		}
 	} else if d.Action == decide.Handoff {
 		setBy := t.st.TargetSetBy // what put the loop on the route it leaves
-		moved, err := t.handoff(target, agent, obs, summary)
+		handoffReason := string(obs.ErrorClass)
+		if d.QuotaSwitch {
+			handoffReason = "quota_threshold"
+		}
+		moved, err := t.handoff(target, agent, obs, summary, handoffReason)
 		// Switch-back waits for the first route's limit. A step timing chose
 		// is on the first route's allowance, so its limit is that limit; any
 		// other route's handoff leaves the recorded reset as it was.
 		if moved && err == nil && !t.opts.DryRun && (target == state.Primary || setBy == state.SetByTiming) {
 			t.st.PrimaryResetsAt = obs.ResetsAt
+			if d.QuotaSwitch && qsResetsAt != nil {
+				t.st.PrimaryResetsAt = *qsResetsAt
+			}
 		}
 		if err != nil {
 			actErr = err
@@ -1640,10 +1649,9 @@ func childrenLeft(obs decide.Observation, from config.Agent, to config.Candidate
 	return handoff.ChildrenLeft{Working: obs.ActiveChildren, Unverified: obs.ChildrenUnverified}
 }
 
-func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observation, summary health.Summary) (bool, error) {
-	class := obs.ErrorClass
+func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observation, summary health.Summary, reason string) (bool, error) {
 	t.handoffObs = obs
-	note := &HandoffNote{From: from, Reason: string(class), DryRun: t.opts.DryRun}
+	note := &HandoffNote{From: from, Reason: reason, DryRun: t.opts.DryRun}
 	t.res.Handoff = note
 	if t.opts.DryRun {
 		for _, id := range summary.Healthy {
@@ -1691,7 +1699,7 @@ func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observati
 			note.Skipped = append(note.Skipped, id+": "+why)
 			continue
 		}
-		brief, err := handoff.ComposeBrief(t.loop, handoff.Facts{Loop: t.loop.Name, At: t.now, From: t.label(from), To: id + " (" + c.Describe() + ")", Reason: string(class), Children: childrenLeft(obs, fromAgent, c)})
+		brief, err := handoff.ComposeBrief(t.loop, handoff.Facts{Loop: t.loop.Name, At: t.now, From: t.label(from), To: id + " (" + c.Describe() + ")", Reason: reason, Children: childrenLeft(obs, fromAgent, c)})
 		if err != nil {
 			return false, fmt.Errorf("handoff brief: %w", err)
 		}
@@ -1729,7 +1737,7 @@ func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observati
 		if isNewThread(c) {
 			// The brief is the new thread's first prompt: there is nothing to
 			// activate and nothing more to send.
-			thread, err := t.createThread(from, fromAgent, c, brief, string(class))
+			thread, err := t.createThread(from, fromAgent, c, brief, reason)
 			switch {
 			case errors.Is(err, state.ErrSendLimit) || errors.Is(err, state.ErrSendLedger) || errors.Is(err, state.ErrSendRecord):
 				return false, err
@@ -1746,7 +1754,7 @@ func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observati
 				continue
 			}
 			t.reserve = reserveReports // the brief has been sent, as the first prompt
-			t.moveToCreated(&state.NewThreadIntent{Candidate: id, From: from, Continues: t.st.NewThreads[id].Continues, Reason: string(class)}, thread, note)
+			t.moveToCreated(&state.NewThreadIntent{Candidate: id, From: from, Continues: t.st.NewThreads[id].Continues, Reason: reason}, thread, note)
 			return true, nil
 		}
 		// The probe asked the account, not the session. Before anything is
@@ -1795,7 +1803,7 @@ func (t *tick) handoff(from string, fromAgent config.Agent, obs decide.Observati
 		t.st.Reprompts, t.st.LastRepromptAt = 0, time.Time{}
 		t.res.Target = id
 		t.reserve = reserveReports + t.reserveNetwork // the brief has been sent
-		t.report("handoff", fmt.Sprintf("%s: handed off from %s to %s after a %s error", t.loop.Name, from, id, class), map[string]any{"from": from, "to": id, "reason": string(class), "tried": note.Tried})
+		t.report("handoff", fmt.Sprintf("%s: handed off from %s to %s (%s)", t.loop.Name, from, id, reason), map[string]any{"from": from, "to": id, "reason": reason, "tried": note.Tried})
 		return true, nil
 	}
 	return false, nil
@@ -1822,6 +1830,56 @@ func (t *tick) rejectSwitchBack(from string) {
 		t.report("switch_back", fmt.Sprintf("%s: switch-back stopped after the primary rejected %d briefs; staying on %s until resume, retarget or the next handoff", t.loop.Name, t.st.SwitchBackRejected, from),
 			map[string]any{"from": from, "to": state.Primary, "stopped": true, "rejected": t.st.SwitchBackRejected})
 	}
+}
+
+// quotaSwitchInput builds the pure quota-threshold input from the active
+// route's recorded health usage reading (never touching credentials).
+func (t *tick) quotaSwitchInput(target string) (decide.QuotaSwitch, *time.Time) {
+	var cand config.Candidate
+	if target == state.Primary {
+		cand = t.loop.PrimaryCandidate()
+	} else if c, ok := t.fb.Find(target); ok {
+		cand = c
+	} else {
+		return decide.QuotaSwitch{}, nil
+	}
+	if cand.SwitchAt <= 0 || t.reg == nil {
+		return decide.QuotaSwitch{}, nil
+	}
+	identity := probe.UsageIdentity(cand)
+	e := t.reg.Candidates[cand.ID]
+	if e == nil || !e.Usage.For(identity) {
+		return decide.QuotaSwitch{Threshold: cand.SwitchAt}, nil
+	}
+	maxAge := config.DefaultProbeTTL
+	if t.fb != nil && t.fb.Probe.TTL.Duration > 0 {
+		maxAge = t.fb.Probe.TTL.Duration
+	}
+	u := e.Usage
+	var highest float64
+	var winKey string
+	var winReset *time.Time
+	activeWindows := 0
+	for _, w := range u.Windows {
+		if w.ResetsAt != nil && !w.ResetsAt.After(t.now) {
+			continue
+		}
+		activeWindows++
+		if activeWindows == 1 || w.Used > highest {
+			highest = w.Used
+			winKey = w.Key
+			winReset = w.ResetsAt
+		}
+	}
+	return decide.QuotaSwitch{
+		Threshold:        cand.SwitchAt,
+		ReadingAvailable: true,
+		HighestUsed:      highest,
+		ReadingAge:       t.now.Sub(u.At),
+		MaxAge:           maxAge,
+		Stale:            activeWindows == 0,
+		Window:           winKey,
+	}, winReset
 }
 
 // switchBackReady reports whether the loop may try to return to its primary:

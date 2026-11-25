@@ -265,6 +265,10 @@ type Input struct {
 	// IdleSpacing spaces idle wakes that changed nothing; off unless
 	// loop.progress.idle_spacing is set. See IdleSpacing.
 	IdleSpacing IdleSpacing
+
+	// QuotaSwitch configures the opt-in quota switch threshold evaluated at
+	// turn end against the active route's structured quota window reading.
+	QuotaSwitch QuotaSwitch
 }
 
 // IdleSpacing is the opt-in rule that spaces idle wakes after which no
@@ -415,6 +419,9 @@ type Decision struct {
 	// IdleSpacing spaces. IdleWait is set only when that wake was spaced.
 	IdleWake bool
 	IdleWait IdleWait
+	// QuotaSwitch is set only when the opt-in quota switch threshold caused
+	// this Handoff at turn end.
+	QuotaSwitch bool
 }
 
 // SessionLostReason is fixed text. It names the way out: a person decides to
@@ -635,6 +642,10 @@ func decideRules(in Input) Decision {
 		// Only between turns: never pull the loop from a fallback mid-turn.
 		if in.SwitchBackReady && o.ActiveChildren == 0 {
 			return Decision{Action: SwitchBack, Reason: "primary's limit has reset"}
+		}
+		// Opt-in quota switch threshold: evaluated at turn end only.
+		if qs, ok := decideQuotaSwitch(in); ok {
+			return qs
 		}
 		// Spacing only: every hold, gate and wait above still comes first, and
 		// a switch-back or a child-error notice is never spaced.

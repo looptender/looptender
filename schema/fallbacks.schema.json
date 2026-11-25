@@ -110,6 +110,12 @@
               "const": "primary"
             }
           },
+          "switch_at": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "share of any reported quota window in (0, 1] at or above which the loop switches to the next confirmed fallback at turn end; 0 disables it"
+          },
           "disabled": {
             "type": "boolean"
           },
