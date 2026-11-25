@@ -10,6 +10,11 @@ const css = `
 .kgs h3[tabindex]:focus{outline:none}
 .kgs h3{font-size:15px;font-weight:600}
 .kgs h4{font-size:13px;font-weight:600}
+.kgs .kgs-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.kgs .kgs-min{font:inherit;font-size:12px;line-height:18px;padding:3px 9px;border:1px solid color-mix(in srgb,currentColor 32%,transparent);border-radius:6px;background:transparent;color:inherit;cursor:pointer;flex:none;opacity:.82}
+.kgs .kgs-min:hover{opacity:1;background:color-mix(in srgb,currentColor 9%,transparent)}
+.kgs .kgs-min:focus-visible{outline:2px solid #1a73e8;outline-offset:2px}
+.kgs .kgs-intent-help{display:grid;gap:3px}
 .kgs .lead,.kgs .help{opacity:.74}
 .kgs .help{font-size:12px}
 .kgs fieldset{border:0;margin:0;padding:0;min-width:0;display:grid;gap:6px}
@@ -69,11 +74,15 @@ const css = `
 .kgs input[type=text],.kgs input[type=number],.kgs textarea,.kgs select{font-size:16px;min-height:44px}
 .kgs textarea{min-height:88px}
 .kgs .btn{min-height:44px}
+.kgs .kgs-min{min-height:44px;min-width:44px;padding:0 12px;font-size:14px}
 .kgs .tab{min-height:44px;font-size:14px}
 .kgs .choice{min-height:44px;padding:10px}
 .kgs summary,.kgs-more>summary{min-height:44px;display:flex;align-items:center}
 .kgs-chip{min-height:44px !important;padding:8px 14px !important;font-size:14px !important;line-height:20px !important;box-sizing:border-box}
 }
+.kg-banner-body{max-height:min(65vh,540px);overflow-y:auto;overscroll-behavior:contain}
+.kg-banner-body .kgs{max-height:none;overflow-y:visible}
+@media (max-width:640px),(pointer:coarse){.kg-banner-body{max-height:min(72vh,600px);max-height:min(72dvh,600px)}}
 .kgs-more{display:grid;gap:10px;padding:0 14px 12px;max-width:540px;min-width:240px;font-size:13px;line-height:1.4;box-sizing:border-box}
 .kgs-more>summary{padding:6px 0}
 .kgs-more>summary:focus-visible{outline:2px solid #1a73e8;outline-offset:2px}

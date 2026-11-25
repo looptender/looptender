@@ -12,7 +12,7 @@ import {
   useRealtime,
   useRpc,
 } from "@get-bb/plugin-sdk/app";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
 import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, archivedLine, firstSentenceOf, observedRoleLabel } from "./status-details";
 import { lineageDue, type LineageEntry } from "./lineage";
@@ -373,9 +373,14 @@ function ResumeNote({ loop }: { loop: LoopView }) {
   return <span className="kg-t" style={{ ...wrap, display: "grid", gap: 8 }}><span>{heldSentence(loop)}</span>{!isWait(loop) && <PhoneResumeLink loop={loop} />}</span>;
 }
 
-function ThreadSetup({ threadId, onChanged, hideStart = false }: { threadId: string; onChanged(): void; hideStart?: boolean }) {
+function ThreadSetup({ threadId, onChanged, onClose, hideStart = false }: { threadId: string; onChanged(): void; onClose?(): void; hideStart?: boolean }) {
   const rpc = useRpc<typeof rpcContract>();
-  const call = useCallback((input: Parameters<typeof rpc.call<"setup">>[1]) => rpc.call("setup", input), [rpc]);
+  const [started, setStarted] = useState(false);
+  const call = useCallback(async (input: Parameters<typeof rpc.call<"setup">>[1]) => {
+    const result = await rpc.call("setup", input);
+    if (result.started) setStarted(true);
+    return result;
+  }, [rpc]);
   const [generation, setGeneration] = useState(0);
   const attach = useCallback(async (input: Parameters<typeof rpc.call<"attachment">>[1]) => {
     const result = await rpc.call("attachment", input);
@@ -388,12 +393,12 @@ function ThreadSetup({ threadId, onChanged, hideStart = false }: { threadId: str
     return result;
   }, [rpc]);
   // One primary flow first. Attaching and moving are for a loop that already
-  // exists, so they sit behind a collapsed section of their own.
-  return <><SetupPanel key={`${threadId}-${generation}`} threadId={threadId} call={call} onChanged={onChanged} hideStart={hideStart} />
-    <details className="kgs-more"><SetupStyles /><summary>Already have a loop?</summary>
+  // exists, so they sit behind a collapsed section of their own (hidden once started).
+  return <><SetupPanel key={`${threadId}-${generation}`} threadId={threadId} call={call} onChanged={onChanged} onClose={onClose} hideStart={hideStart} />
+    {!started && <details className="kgs-more"><SetupStyles /><summary>Already have a loop?</summary>
       <AttachPanel key={`attach-${threadId}`} threadId={threadId} call={attach} onChanged={onChanged} />
       <TransferPanel key={`move-${threadId}`} threadId={threadId} call={transfer} onChanged={onChanged} />
-    </details></>;
+    </details>}</>;
 }
 
 function StatusWarning({ refresh }: { refresh(): void }) {
@@ -518,6 +523,7 @@ function CardRow({ threadId }: { threadId: string }) {
   const [open, setOpen] = useState(false);
   const lineage = useLineage(threadId, loops.map(l => `${loopKey(l)}:${l.controlState}`).join(","));
   const nav = useBbNavigate();
+  const childMoreRef = useRef<HTMLDetailsElement>(null);
   // A lane is covered through its parent's loop, and a session has one loop: no
   // entry button, one quiet line, and setup kept in a collapsed "more" below.
   const quiet = loaded && !failed && !loops.length && lineage.child;
@@ -525,8 +531,8 @@ function CardRow({ threadId }: { threadId: string }) {
   if (quiet) return <div>
     <SetupStyles />
     {lineage.coveredBy && <ContextRow icon="Repeat" label={<>Covered by <a href={`#thread-${lineage.coveredBy.threadId}`} onClick={e => { e.preventDefault(); nav.toThread(lineage.coveredBy!.threadId); }}>{lineage.coveredBy.loop}</a></>} title="This thread is covered through its parent thread's loop" />}
-    <details className="kgs-more"><summary>Set up a loop for this thread anyway</summary>
-      <ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={false} />
+    <details ref={childMoreRef} className="kgs-more"><summary>Set up a loop for this thread anyway</summary>
+      <ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} onClose={() => { if (childMoreRef.current) childMoreRef.current.open = false; }} hideStart={false} />
     </details>
   </div>;
   if (waitingOnLineage) return <div><SetupStyles /></div>;
@@ -537,7 +543,7 @@ function CardRow({ threadId }: { threadId: string }) {
     {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} showLabel={false} />}
     {!loaded ? <ContextRow icon="Repeat" label="looptender: checking status" /> : !loops.length ? <ContextRow icon="Repeat" label="looptender" action={!failed && <button type="button" className="kgs-chip" {...kg} style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>Add to Looptender</button>} /> : loops.map(l => <CardLoop key={loopKey(l)} loop={l} name={referenceName(l, loops, references)} threadId={threadId} starting={!!starting?.has(loopKey(l))} refresh={refresh} failed={failed} created={l === loop ? created : null} showName={loops.length > 1} />)}
     {!failed && loops.some(l => l.managedId) && <button type="button" className="kgs-chip" {...kg} style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>{loops.length > 1 ? "Thread setup" : "Setup"}</button>}
-    {open && <div hidden={failed}><ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={created === READY_NOT_STARTED} /></div>}
+    {open && <div hidden={failed}><ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} onClose={() => setOpen(false)} hideStart={created === READY_NOT_STARTED} /></div>}
   </div>;
 }
 
@@ -630,7 +636,7 @@ function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; i
 }
 
 
-function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded: boolean }) {
+function BannerDetails({ threadId, isExpanded, onToggle }: { threadId: string; isExpanded: boolean; onToggle(): void }) {
   const { loops, references, starting, refresh, failed, loaded } = useLoops(threadId);
   const { outcome, start, control, loop } = useThreadOutcome(threadId, loops);
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
@@ -639,15 +645,16 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
   if (!isExpanded) return null;
   const childNoLoop = loaded && !failed && !loops.length && lineage.child;
   if (loaded && !failed && !loops.length && lineage.pending) return null;
-  if (childNoLoop) return <>
+  if (childNoLoop) return <div className="kg-banner-body">
     <SetupStyles />
     {lineage.coveredBy && <div style={{ padding: "4px 12px", fontSize: 12 }}>Covered by <a href={`#thread-${lineage.coveredBy.threadId}`} onClick={e => { e.preventDefault(); nav.toThread(lineage.coveredBy!.threadId); }}>{lineage.coveredBy.loop}</a>, a loop on a parent thread.</div>}
     <details className="kgs-more"><summary>Set up a loop for this thread anyway</summary>
-      <ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={false} />
+      <ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} onClose={onToggle} hideStart={false} />
     </details>
-  </>;
-  return <>
+  </div>;
+  return <div className="kg-banner-body">
     <FocusStyle />
+    <SetupStyles />
     {failed && <StatusWarning refresh={refresh} />}
     {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} showLabel={false} />}
     {loops.map(l => {
@@ -669,8 +676,8 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
         <LoopDetails {...split} padding="0" />
       </section>;
     })}
-    {loaded && (!loops.length || loops.some(l => l.managedId)) && <div hidden={failed}><ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={created === READY_NOT_STARTED} /></div>}
-  </>;
+    {loaded && (!loops.length || loops.some(l => l.managedId)) && <div hidden={failed}><ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} onClose={onToggle} hideStart={created === READY_NOT_STARTED} /></div>}
+  </div>;
 }
 
 function ComposerSwitch() {

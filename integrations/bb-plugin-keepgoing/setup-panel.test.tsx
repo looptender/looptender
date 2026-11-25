@@ -274,7 +274,7 @@ test("each step has exactly one prominent button, and the choices are form contr
     assert.deepEqual([...ui.container.querySelectorAll("fieldset > legend")].map(l => l.textContent), ["What should the loop keep going?", "Options"]);
     assert.equal(ui.container.querySelectorAll("input[type=radio]").length, 2); assert.equal(ui.container.querySelectorAll("input[type=checkbox]").length, 1);
     assert.deepEqual([...ui.container.querySelectorAll('button:not([role="tab"])')].map(b => b.textContent), ["Preview setup"]);
-    assert.deepEqual([...ui.container.querySelectorAll('[role="tab"]')].map(b => b.textContent), ["Start a new loop", "Continue a loop"]);
+    assert.deepEqual([...ui.container.querySelectorAll('[role="tab"]')].map(b => b.textContent), ["New loop", "Continue existing"]);
     assert.ok(ui.container.querySelector("label[for]"), "labelled fields");
     fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
     await ui.findByRole("button", { name: "Create setup" });
@@ -286,7 +286,7 @@ test("each step has exactly one prominent button, and the choices are form contr
     assert.deepEqual(primaries(ui), ["Start background supervision"]);
     fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
     await ui.findByText("Supervision started");
-    assert.ok(ui.getByText(/Yes: a background supervisor was launched/)); assert.deepEqual(primaries(ui), []);
+    assert.ok(ui.getByText(/background supervisor launched/)); assert.deepEqual(primaries(ui), ["Done"]);
   } finally { cleanup(); }
 });
 
@@ -396,7 +396,7 @@ test("Continue a loop mode selects a predecessor, derives slug, explains auto-ar
     await ui.findByText("No loop yet");
     const nameInput = ui.getByLabelText("Loop name") as HTMLInputElement;
     assert.equal(nameInput.value, "continue-auth-work");
-    fireEvent.click(ui.getByRole("tab", { name: /Continue a loop/ }));
+    fireEvent.click(ui.getByRole("tab", { name: /Continue existing/ }));
     assert.ok(ui.getByText(/archived automatically once this new loop completes its first check; nothing is deleted/));
     fireEvent.change(ui.getByLabelText("Loop to continue"), { target: { value: candidates[0]!.configPath } });
     assert.equal(nameInput.value, "auth-work-2");
@@ -449,4 +449,54 @@ test("modal styles bound height, tighten spacing, and avoid left-accent borders"
   assert.match(css, /overflow-y:auto/);
   assert.match(css, /min-height:68px/);
   assert.equal(/border-left/i.test(css), false);
+});
+
+test("Minimize button works on form, preview, saved, and started states; Supervision started is compact with Done and collapsed Details & diagnostics", async () => {
+  let closes = 0;
+  const meta = { provider: "acp-antigravity", providerLabel: "Antigravity", model: "gemini-4-neon", modelLabel: "Gemini 4 Neon", reasoningLevel: "high" };
+  const call = async (input: { action: string }): Promise<SetupResult> => {
+    if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket", threadMeta: meta };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [{ id: "c1", status: "ok", message: "Verified" }], threadMeta: meta };
+    if (input.action === "start") return { ok: true, message: "Background supervision started (user service installed; survives reboot). Existing timers were not changed.", record, canStart: false, started: true, checks: [{ id: "c1", status: "ok", message: "Verified" }], threadMeta: meta };
+    return { ok: true, message: "Nothing set up yet", threadMeta: meta };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} onClose={() => closes++} />);
+  try {
+    await ui.findByText("Nothing set up yet");
+    // New vs Continue helper copy clearly distinguishes native BB continuation vs takeover.
+    assert.ok(ui.getByText(/For a brand-new goal on this thread\. \(If you're continuing an existing supervised BB thread directly, it's already covered\.\)/));
+    assert.ok(ui.getByText(/You opened a new BB thread to take over an older loop's goal/));
+
+    // Form state has Minimize.
+    fireEvent.click(ui.getByRole("button", { name: "Minimize Add to Looptender" }));
+    assert.equal(closes, 1);
+
+    // Preview state has Minimize.
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    fireEvent.click(ui.getByRole("button", { name: "Minimize Add to Looptender" }));
+    assert.equal(closes, 2);
+
+    // Saved state has Minimize.
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await ui.findByText("Setup created, switched off");
+    fireEvent.click(ui.getByRole("button", { name: "Minimize Add to Looptender" }));
+    assert.equal(closes, 3);
+
+    // Started state shows crisp 3-line summary, prominent Done button, collapsed Details & diagnostics, and Minimize.
+    fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
+    await ui.findByText("Supervision started");
+    assert.ok(ui.getByText("user service installed"));
+    assert.ok(ui.getByText("Antigravity · Gemini 4 Neon (high)"));
+    assert.deepEqual(primaries(ui), ["Done"]);
+    const accordions = [...ui.container.querySelectorAll("details")] as HTMLDetailsElement[];
+    assert.equal(accordions.length, 1);
+    assert.equal(accordions[0]!.open, false);
+    assert.equal(accordions[0]!.querySelector("summary")?.textContent, "Details & diagnostics (1)");
+
+    fireEvent.click(ui.getByRole("button", { name: "Minimize Add to Looptender" }));
+    assert.equal(closes, 4);
+    fireEvent.click(ui.getByRole("button", { name: "Done" }));
+    assert.equal(closes, 5);
+  } finally { cleanup(); }
 });

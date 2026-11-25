@@ -129,6 +129,98 @@ test("checks have stopped banner chip stays single-line without build differs wh
   } finally { expanded.lifecycle.unmount(); cleanup(); }
 });
 
+test("expanded banner Add to Looptender supports Minimize on every step, Done on Supervision started, and hides Already have a loop once started", async () => {
+  const plan = { loop: "example-loop", project: "/projects/example", configPath: "/private/example/looptender.yaml", stateDir: "/private/example/state", threadId: "thr_banner_min", provider: "codex", limits: { interval: "5m", wakeEvery: "1h", stallAfter: "30m", backoff: "10m", maxNudges: 3, maxReprompts: 3 } };
+  const record = { id: "rec_1", loop: "example-loop", configPath: plan.configPath, threadId: "thr_banner_min", project: plan.project, provider: "codex", environmentId: "env_example", projectId: "proj_example", hostId: "host_example" };
+  let toggles = 0;
+  let started = false;
+  const props = { threadId: `thr_vis_${++n}`, projectId: "proj_example", environment: null, segments: [], isExpanded: true, onToggle: () => { toggles++; } };
+  const ui = renderSlot({ component: app.threadContextSegments[0]!.details! }, props, {
+    rpc: {
+      forThread: () => ({ loops: started ? [loop({ managedId: record.id, managedThreadId: props.threadId, controlState: "enabled" })] : [], errors: [] }),
+      newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }),
+      lineage: () => ({ child: false }),
+      transfer: () => ({ ok: true, message: "No moves", choices: [] }),
+      attachment: () => ({ ok: true, candidates: [], message: "Registry read" }),
+      setup: (raw: unknown) => {
+        const input = raw as { action: string };
+        if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "t1" };
+        if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [] };
+        if (input.action === "start") { started = true; return { ok: true, message: "Background supervision started (user service installed; survives reboot).", record, canStart: false, started: true, checks: [{ id: "c1", status: "ok", message: "Verified" }] }; }
+        return { ok: true, message: "No loop is set up yet." };
+      },
+    },
+  });
+  try {
+    await ui.findByText("No loop is set up yet.");
+    assert.ok(ui.container.querySelector(".kg-banner-body"));
+    assert.ok(ui.getByText("Already have a loop?"));
+    fireEvent.click(ui.getByRole("button", { name: "Minimize Add to Looptender" }));
+    assert.equal(toggles, 1);
+
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    fireEvent.click(ui.getByRole("button", { name: "Minimize Add to Looptender" }));
+    assert.equal(toggles, 2);
+
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await ui.findByRole("button", { name: "Start background supervision" });
+    assert.ok(ui.getByText("Already have a loop?"));
+
+    fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
+    await ui.findByText("Supervision started");
+    assert.equal(ui.queryByText("Already have a loop?"), null);
+    assert.ok(ui.getByText("user service installed"));
+
+    fireEvent.click(ui.getByRole("button", { name: "Done" }));
+    assert.equal(toggles, 3);
+  } finally {
+    ui.lifecycle.unmount();
+    cleanup();
+  }
+});
+
+test("card Add to Looptender collapses via Minimize and Done", async () => {
+  const plan = { loop: "example-loop", project: "/projects/example", configPath: "/private/example/looptender.yaml", stateDir: "/private/example/state", threadId: "thr_card_min", provider: "codex", limits: { interval: "5m", wakeEvery: "1h", stallAfter: "30m", backoff: "10m", maxNudges: 3, maxReprompts: 3 } };
+  const record = { id: "rec_2", loop: "example-loop", configPath: plan.configPath, threadId: "thr_card_min", project: plan.project, provider: "codex", environmentId: "env_example", projectId: "proj_example", hostId: "host_example" };
+  const ui = renderSlot(app.threadContextCardRows[0]!, { threadId: `thr_vis_${++n}`, projectId: "proj_example", environment: null }, {
+    rpc: {
+      forThread: () => ({ loops: [], errors: [] }),
+      newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }),
+      lineage: () => ({ child: false }),
+      transfer: () => ({ ok: true, message: "No moves", choices: [] }),
+      attachment: () => ({ ok: true, candidates: [], message: "Registry read" }),
+      setup: (raw: unknown) => {
+        const input = raw as { action: string };
+        if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "t1" };
+        if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [] };
+        if (input.action === "start") return { ok: true, message: "Background supervision started (user service installed; survives reboot).", record, canStart: false, started: true, checks: [] };
+        return { ok: true, message: "No loop is set up yet." };
+      },
+    },
+  });
+  try {
+    fireEvent.click(await ui.findByRole("button", { name: "Add to Looptender" }));
+    await ui.findByText("No loop is set up yet.");
+    fireEvent.click(ui.getByRole("button", { name: "Minimize Add to Looptender" }));
+    assert.equal(ui.queryByRole("button", { name: "Preview setup" }), null);
+
+    fireEvent.click(ui.getByRole("button", { name: "Add to Looptender" }));
+    await ui.findByText("No loop is set up yet.");
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await ui.findByRole("button", { name: "Start background supervision" });
+    fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
+    await ui.findByText("Supervision started");
+    fireEvent.click(ui.getByRole("button", { name: "Done" }));
+    assert.equal(ui.queryByText("Supervision started"), null);
+  } finally {
+    ui.lifecycle.unmount();
+    cleanup();
+  }
+});
+
 test("clicking Start checks updates the composer chip immediately to starting checks, preserves #541 chip styles, and clears when the next check lands", async () => {
   const overdueLoop = loop({ controlState: "enabled" }, { schedule: { overdue: true, message: "No check has run for 2 hours." }, daemon: { state: "not_recorded" }, lastCheck: { at: "2026-01-01T00:00:00Z", target: "primary", action: "none", outcome: "ok" } });
   let current = overdueLoop;
