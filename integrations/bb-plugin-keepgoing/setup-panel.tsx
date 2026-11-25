@@ -21,7 +21,7 @@ function formatThreadSetup(meta: ThreadSetupMeta | undefined): string | undefine
 
 // `hideStart` leaves starting to another control on the same thread, so a
 // thread never shows two buttons that start the same loop.
-export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { threadId: string; call: Call; onChanged(): void; hideStart?: boolean }) {
+export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = false }: { threadId: string; call: Call; onChanged(): void; onClose?(): void; hideStart?: boolean }) {
   const [intent, setIntent] = useState<"new" | "continue">("new");
   const [threadTitle, setThreadTitle] = useState<string | undefined>();
   const [threadMeta, setThreadMeta] = useState<ThreadSetupMeta | undefined>();
@@ -144,18 +144,59 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
   const following = followStandard && standardRoutes;
   const threadSummary = formatThreadSetup(result?.threadMeta ?? threadMeta);
   const message = result && <p className="msg" role={result.ok ? "status" : "alert"}>{result.message}</p>;
+  const minimizeButton = onClose ? (
+    <button type="button" className="kgs-min" aria-label="Minimize Add to Looptender" title="Minimize Add to Looptender" onClick={onClose}>
+      Minimize
+    </button>
+  ) : null;
   if (result?.record) {
     const started = result.started === true;
     const savedSetup = threadSummary ?? result.record.provider;
+    const runningSummary = /user service installed/i.test(result.message) ? "user service installed" : "background supervisor launched";
+    if (started) {
+      return <section className="kgs" aria-label="Set up thread supervision">
+        <SetupStyles />
+        <div className="card done">
+          <div className="kgs-head">
+            <h3 ref={doneRef} tabIndex={-1}>Supervision started</h3>
+            {minimizeButton}
+          </div>
+          <dl>
+            <dt>Loop</dt><dd>{result.record.loop}</dd>
+            <dt>Setup</dt><dd>{savedSetup}</dd>
+            <dt>Running</dt><dd>{runningSummary}</dd>
+          </dl>
+          {result.warnings && result.warnings.length > 0 && <div className="warn" role="status">
+            {result.warnings.map((w, i) => <p key={i}>{w}</p>)}
+          </div>}
+          <div className="actions"><div className="row"><button type="button" className="btn primary" onClick={() => onClose?.()}>Done</button></div></div>
+          <details><summary>Details &amp; diagnostics{result.checks ? ` (${result.checks.length})` : ""}</summary>
+            <dl>
+              <dt>Goal</dt><dd>{goalLabel(result.goal, result.goalState)}</dd>
+              <dt>Configuration</dt><dd>{result.record.configPath}</dd>
+              {result.record.followsStandard && <><dt>Routes</dt><dd>Follows your standard route list; hands off to it on a rate limit.</dd></>}
+            </dl>
+            <p className="help">Next: nothing to do. looptender now checks on its own; use Pause or Stop in the looptender controls on this thread to hold it.</p>
+            {message}
+            <div className="actions"><div className="row"><button type="button" className="btn" disabled={busy} onClick={() => void act("inspect")}>Refresh diagnostics</button></div></div>
+            {result.checks && <ul>{result.checks.map((c, i) => <li key={`${c.id}-${i}`}>{c.status}: {c.message}{c.fix && ` ${c.fix}`}</li>)}</ul>}
+          </details>
+        </div>
+        {busy && <p role="status" className="help">Checking…</p>}
+      </section>;
+    }
     return <section className="kgs" aria-label="Set up thread supervision">
       <SetupStyles />
       <div className="card done">
-        <h3 ref={doneRef} tabIndex={-1}>{started ? "Supervision started" : created ? "Setup created, switched off" : "Setup saved for this thread"}</h3>
+        <div className="kgs-head">
+          <h3 ref={doneRef} tabIndex={-1}>{created ? "Setup created, switched off" : "Setup saved for this thread"}</h3>
+          {minimizeButton}
+        </div>
         <dl>
           <dt>Loop</dt><dd>{result.record.loop}</dd>
           <dt>Setup</dt><dd>{savedSetup}</dd>
           <dt>Goal</dt><dd>{goalLabel(result.goal, result.goalState)}</dd>
-          {(started || created) && <><dt>Running</dt><dd>{started ? "Yes: a background supervisor was launched on this thread’s host." : "No. The loop is saved switched off and sends nothing until it is started."}</dd></>}
+          {created && <><dt>Running</dt><dd>No. The loop is saved switched off and sends nothing until it is started.</dd></>}
         </dl>
         {result.warnings && result.warnings.length > 0 && <div className="warn" role="status">
           {result.warnings.map((w, i) => <p key={i}>{w}</p>)}
@@ -168,7 +209,6 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
           </div>
         </div>}
         {result.canStart && hideStart && <p className="help">Next: start it with the looptender control at the top of this thread.</p>}
-        {started && <p className="help">Next: nothing to do. looptender now checks on its own; use Pause or Stop in the looptender controls on this thread to hold it.</p>}
         {!(result.canStart && !hideStart) && <div className="actions"><div className="row"><button type="button" className="btn" disabled={busy} onClick={() => void act("inspect")}>Refresh diagnostics</button></div></div>}
         <details><summary>Configuration &amp; paths</summary>
           <dl>
@@ -194,17 +234,24 @@ export function SetupPanel({ threadId, call, onChanged, hideStart = false }: { t
       : "No fallbacks; automatic handoff is off.";
   return <section className="kgs" aria-label="Set up thread supervision" aria-busy={busy}>
     <SetupStyles />
-    <div>
-      <h3>Add to Looptender</h3>
-      <p className="lead">{threadSummary ? `Running on ${threadSummary}. Starts switched off.` : "Preview first; new loops start switched off."}</p>
+    <div className="kgs-head">
+      <div>
+        <h3>Add to Looptender</h3>
+        <p className="lead">{threadSummary ? `Running on ${threadSummary}. Starts switched off.` : "Preview first; new loops start switched off."}</p>
+      </div>
+      {minimizeButton}
     </div>
     <div className="tabs" role="tablist" aria-label="Setup mode">
       <button type="button" role="tab" className="tab" aria-selected={intent === "new"} disabled={busy} onClick={() => selectIntent("new")}>
-        Start a new loop
+        New loop
       </button>
       <button type="button" role="tab" className="tab" aria-selected={intent === "continue"} disabled={busy} onClick={() => selectIntent("continue")}>
-        Continue a loop{candidates.length > 0 ? ` (${candidates.length})` : ""}
+        Continue existing{candidates.length > 0 ? ` (${candidates.length})` : ""}
       </button>
+    </div>
+    <div className="kgs-intent-help">
+      <p className="help"><strong>New loop:</strong> For a brand-new goal on this thread. (If you&apos;re continuing an existing supervised BB thread directly, it&apos;s already covered.)</p>
+      <p className="help"><strong>Continue existing:</strong> You opened a new BB thread to take over an older loop&apos;s goal (e.g. after a model/context switch) — inherits its name and archives the old loop after the first check.</p>
     </div>
     {intent === "continue" && <div className="field">
       <label htmlFor={`kgs-succeeds-${threadId}`}>Loop to continue</label>
