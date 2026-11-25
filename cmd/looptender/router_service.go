@@ -182,7 +182,35 @@ func validateRouterServiceRecord(h routerServiceHost, dir string, rec routerServ
 	if rec.Backend == "systemd" && strings.ContainsAny(rec.Executable, "\"'\\") {
 		return errors.New("systemd executable path must not contain quotes or backslashes")
 	}
+	if err := validateUpstreamURL(rec.Upstream); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateUpstreamURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if !utf8.ValidString(raw) || containsServiceControl(raw) {
+		return errors.New("upstream URL must not contain control characters")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("invalid upstream URL")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if host == "127.0.0.1" || host == "localhost" || host == "::1" {
+			return nil
+		}
+		return errors.New("cleartext http upstream URL is only allowed for loopback")
+	default:
+		return errors.New("upstream URL scheme must be https (or http for loopback)")
+	}
 }
 
 func routerServiceCommand(e env, args []string, h routerServiceHost) int {
@@ -261,12 +289,9 @@ func routerServiceCommand(e env, args []string, h routerServiceHost) int {
 			e.errf("router service: invalid port %d", *portFlag)
 			return exitUsage
 		}
-		if *upstreamFlag != "" {
-			u, err := url.Parse(*upstreamFlag)
-			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-				e.errf("router service: invalid upstream URL")
-				return exitUsage
-			}
+		if err := validateUpstreamURL(*upstreamFlag); err != nil {
+			e.errf("router service: %v", err)
+			return exitUsage
 		}
 	}
 
@@ -481,16 +506,28 @@ func routerServiceInstall(e env, h routerServiceHost, rec routerServiceRecord, r
 		return exitFailed
 	}
 
-	prevCore, hadCore := readOptionalServiceBytes(rec.CoreDefinition)
-	prevFront, hadFront := readOptionalServiceBytes(rec.FrontDefinition)
-	prevRecord, hadRecord := readOptionalServiceBytes(filepath.Join(rec.Dir, routerServiceRecordName))
+	prevCore, hadCore, err := readOptionalServiceBytes(rec.CoreDefinition)
+	if err != nil {
+		e.errf("router service: %v", err)
+		return exitFailed
+	}
+	prevFront, hadFront, err := readOptionalServiceBytes(rec.FrontDefinition)
+	if err != nil {
+		e.errf("router service: %v", err)
+		return exitFailed
+	}
+	prevRecord, hadRecord, err := readOptionalServiceBytes(filepath.Join(rec.Dir, routerServiceRecordName))
+	if err != nil {
+		e.errf("router service: %v", err)
+		return exitFailed
+	}
 
 	rollbackFiles := func() {
 		restoreOrRemove := func(path string, prev []byte, had bool) {
 			if had {
-				_ = writeServiceFile(path, prev)
+				_ = writeRegularServiceFile(path, prev, 0o600)
 			} else {
-				_ = os.Remove(path)
+				_ = removeRegularFile(path)
 			}
 		}
 		restoreOrRemove(rec.FrontDefinition, prevFront, hadFront)
@@ -498,12 +535,12 @@ func routerServiceInstall(e env, h routerServiceHost, rec routerServiceRecord, r
 		restoreOrRemove(filepath.Join(rec.Dir, routerServiceRecordName), prevRecord, hadRecord)
 	}
 
-	if err := writeServiceFile(rec.CoreDefinition, coreDef); err != nil {
+	if err := writeRegularServiceFile(rec.CoreDefinition, coreDef, 0o600); err != nil {
 		rollbackFiles()
 		e.errf("router service: cannot write core definition: %v", err)
 		return exitFailed
 	}
-	if err := writeServiceFile(rec.FrontDefinition, frontDef); err != nil {
+	if err := writeRegularServiceFile(rec.FrontDefinition, frontDef, 0o600); err != nil {
 		rollbackFiles()
 		e.errf("router service: cannot write front definition: %v", err)
 		return exitFailed
@@ -586,17 +623,71 @@ func routerServiceRemove(e env, h routerServiceHost, rec routerServiceRecord, re
 	}
 
 	if rec.Backend == "launchd" {
-		_, _ = h.run(e.ctx, "bootout", rec.launchdDomain()+"/"+rec.FrontLabel)
-		_, _ = h.run(e.ctx, "bootout", rec.launchdDomain()+"/"+rec.CoreLabel)
+		if frontReg := routerServiceRegistration(e.ctx, h, rec, rec.FrontLabel, rec.FrontDefinition); frontReg == "loaded" {
+			if code, err := h.run(e.ctx, "bootout", rec.launchdDomain()+"/"+rec.FrontLabel); err != nil || code != 0 {
+				e.errf("router service: launchd bootout front failed (exit %d, err %v); files retained", code, err)
+				return exitFailed
+			}
+		} else if frontReg == "unknown" {
+			e.errf("router service: front registration unknown; files retained")
+			return exitFailed
+		}
+		if coreReg := routerServiceRegistration(e.ctx, h, rec, rec.CoreLabel, rec.CoreDefinition); coreReg == "loaded" {
+			if code, err := h.run(e.ctx, "bootout", rec.launchdDomain()+"/"+rec.CoreLabel); err != nil || code != 0 {
+				e.errf("router service: launchd bootout core failed (exit %d, err %v); files retained", code, err)
+				return exitFailed
+			}
+		} else if coreReg == "unknown" {
+			e.errf("router service: core registration unknown; files retained")
+			return exitFailed
+		}
+		if routerServiceRegistration(e.ctx, h, rec, rec.FrontLabel, rec.FrontDefinition) != "absent" ||
+			routerServiceRegistration(e.ctx, h, rec, rec.CoreLabel, rec.CoreDefinition) != "absent" {
+			e.errf("router service: service absence not verified; files retained")
+			return exitFailed
+		}
+		for _, path := range []string{rec.FrontDefinition, rec.CoreDefinition, filepath.Join(rec.Dir, routerServiceRecordName)} {
+			if err := removeRegularFile(path); err != nil {
+				e.errf("router service: could not remove %s: %v", path, err)
+				return exitFailed
+			}
+		}
 	} else {
-		_, _ = h.run(e.ctx, "disable", "--now", rec.FrontLabel)
-		_, _ = h.run(e.ctx, "disable", "--now", rec.CoreLabel)
-		_, _ = h.run(e.ctx, "daemon-reload")
-	}
-
-	for _, path := range []string{rec.FrontDefinition, rec.CoreDefinition, filepath.Join(rec.Dir, routerServiceRecordName)} {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			e.errf("router service: could not remove %s: %v", path, err)
+		if frontReg := routerServiceRegistration(e.ctx, h, rec, rec.FrontLabel, rec.FrontDefinition); frontReg == "loaded" {
+			if code, err := h.run(e.ctx, "disable", "--now", rec.FrontLabel); err != nil || code != 0 {
+				e.errf("router service: systemctl disable front failed (exit %d, err %v); files retained", code, err)
+				return exitFailed
+			}
+		} else if frontReg == "unknown" {
+			e.errf("router service: front registration unknown; files retained")
+			return exitFailed
+		}
+		if coreReg := routerServiceRegistration(e.ctx, h, rec, rec.CoreLabel, rec.CoreDefinition); coreReg == "loaded" {
+			if code, err := h.run(e.ctx, "disable", "--now", rec.CoreLabel); err != nil || code != 0 {
+				e.errf("router service: systemctl disable core failed (exit %d, err %v); files retained", code, err)
+				return exitFailed
+			}
+		} else if coreReg == "unknown" {
+			e.errf("router service: core registration unknown; files retained")
+			return exitFailed
+		}
+		for _, path := range []string{rec.FrontDefinition, rec.CoreDefinition} {
+			if err := removeRegularFile(path); err != nil {
+				e.errf("router service: could not remove %s: %v", path, err)
+				return exitFailed
+			}
+		}
+		if code, err := h.run(e.ctx, "daemon-reload"); err != nil || code != 0 {
+			e.errf("router service: systemctl daemon-reload failed (exit %d, err %v); record retained", code, err)
+			return exitFailed
+		}
+		if routerServiceRegistration(e.ctx, h, rec, rec.FrontLabel, rec.FrontDefinition) != "absent" ||
+			routerServiceRegistration(e.ctx, h, rec, rec.CoreLabel, rec.CoreDefinition) != "absent" {
+			e.errf("router service: service absence not verified; record retained")
+			return exitFailed
+		}
+		if err := removeRegularFile(filepath.Join(rec.Dir, routerServiceRecordName)); err != nil {
+			e.errf("router service: could not remove service record: %v", err)
 			return exitFailed
 		}
 	}
@@ -633,12 +724,68 @@ func readRouterServiceRecord(dir string) (routerServiceRecord, bool, error) {
 	return rec, true, nil
 }
 
-func readOptionalServiceBytes(path string) ([]byte, bool) {
+func readOptionalServiceBytes(path string) ([]byte, bool, error) {
+	st, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, false, fmt.Errorf("%s is not a regular file", path)
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, false
+		return nil, false, err
 	}
-	return b, true
+	return b, true, nil
+}
+
+func writeRegularServiceFile(path string, b []byte, mode os.FileMode) error {
+	if st, err := os.Lstat(path); err == nil {
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("refusing to overwrite non-regular file %s", path)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".looptender-service-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	_, err = tmp.Write(b)
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(name, mode)
+	}
+	if err == nil {
+		err = os.Rename(name, path)
+	}
+	if err != nil {
+		_ = os.Remove(name)
+	}
+	return err
+}
+
+func removeRegularFile(path string) error {
+	st, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("refusing to remove non-regular file %s", path)
+	}
+	return os.Remove(path)
 }
 
 func writeRouterServiceReport(e env, rep routerServiceReport, asJSON bool, code int) int {

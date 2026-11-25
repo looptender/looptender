@@ -200,6 +200,54 @@ func TestRouterServiceLaunchdInstallStatusRemoveAndRollback(t *testing.T) {
 		t.Fatalf("unexpected status report: %+v", rep)
 	}
 
+	// Reinstall over an existing installation succeeds and updates definitions.
+	code, stdout, stderr = runRouterServiceWithHost(h, "install", "--dir", dir, "--port", "43124", "--json")
+	if code != exitOK {
+		t.Fatalf("reinstall = %d %s %s", code, stdout, stderr)
+	}
+	reinstalledFront, err := os.ReadFile(rep.Front.Definition)
+	if err != nil || !strings.Contains(string(reinstalledFront), "43124") {
+		t.Fatalf("reinstall did not update front plist: %v %s", err, reinstalledFront)
+	}
+
+	// Failed reinstall restores previous definitions and service-router.json.
+	origRun := h.run
+	h.run = func(ctx context.Context, args ...string) (int, error) {
+		if args[0] == "bootstrap" && strings.Contains(args[2], "router.front.") {
+			return 5, nil
+		}
+		return origRun(ctx, args...)
+	}
+	if code, _, _ = runRouterServiceWithHost(h, "install", "--dir", dir, "--port", "43125"); code != exitFailed {
+		t.Fatalf("expected failed reinstall, got %d", code)
+	}
+	restoredFront, err := os.ReadFile(rep.Front.Definition)
+	if err != nil || string(restoredFront) != string(reinstalledFront) {
+		t.Fatalf("rollback did not restore previous front plist: got %s, want %s", restoredFront, reinstalledFront)
+	}
+	h.run = origRun
+
+	// Reinstall cleanly so both core and front are loaded, then verify remove preserves files when bootout fails.
+	if code, stdout, stderr = runRouterServiceWithHost(h, "install", "--dir", dir, "--port", "43124", "--json"); code != exitOK {
+		t.Fatalf("reinstall before remove failure test = %d %s %s", code, stdout, stderr)
+	}
+	h.run = func(ctx context.Context, args ...string) (int, error) {
+		if args[0] == "bootout" {
+			return 5, nil
+		}
+		return origRun(ctx, args...)
+	}
+	if code, _, _ = runRouterServiceWithHost(h, "remove", "--dir", dir); code != exitFailed {
+		t.Fatalf("expected failed remove when bootout fails, got %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, routerServiceRecordName)); err != nil {
+		t.Fatalf("remove deleted service-router.json despite bootout failure: %v", err)
+	}
+	if _, err := os.Stat(rep.Front.Definition); err != nil {
+		t.Fatalf("remove deleted front plist despite bootout failure: %v", err)
+	}
+	h.run = origRun
+
 	// Dry-run remove changes nothing.
 	code, _, _ = runRouterServiceWithHost(h, "remove", "--dir", dir, "--dry-run")
 	if code != exitOK {
@@ -324,8 +372,49 @@ func TestRouterServiceSystemdAndValidation(t *testing.T) {
 	if code, _, _ := runRouterServiceWithHost(h, "install", "--dir", dir, "--port", "70000"); code != exitUsage {
 		t.Fatalf("expected usage error for out-of-range port, got %d", code)
 	}
-	if code, _, _ := runRouterServiceWithHost(h, "install", "--dir", dir, "--upstream", "ftp://example.com"); code != exitUsage {
-		t.Fatalf("expected usage error for invalid upstream, got %d", code)
+	for _, bad := range []string{
+		"ftp://example.com",
+		"http://example.com",
+		"https://user:pass@example.com",
+		"https://example.com?q=1",
+		"https://example.com#frag",
+		"https://example.com/\n",
+	} {
+		if code, _, _ := runRouterServiceWithHost(h, "install", "--dir", dir, "--upstream", bad); code != exitUsage {
+			t.Fatalf("expected usage error for invalid upstream %q, got %d", bad, code)
+		}
+	}
+	for _, okURL := range []string{"https://api.anthropic.com", "http://127.0.0.1:8080", "http://localhost:8080", "http://[::1]:8080"} {
+		if err := validateUpstreamURL(okURL); err != nil {
+			t.Fatalf("validateUpstreamURL(%q) = %v, want nil", okURL, err)
+		}
+	}
+	// validateRouterServiceRecord also rejects tampered non-loopback http upstream.
+	canonDir, _ := canonicalFuturePath(dir)
+	rec, err := newRouterServiceRecord(h, canonDir, "", 0, "https://api.anthropic.com", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Upstream = "http://example.com"
+	if err := validateRouterServiceRecord(h, canonDir, rec); err == nil {
+		t.Fatal("expected validateRouterServiceRecord to reject cleartext non-loopback http upstream")
+	}
+	// Symlink target at definition path is refused.
+	if err := os.MkdirAll(h.definitionDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, rec.CoreDefinition); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRegularServiceFile(rec.CoreDefinition, []byte("x"), 0o600); err == nil {
+		t.Fatal("expected writeRegularServiceFile to reject symlink target")
+	}
+	if err := removeRegularFile(rec.CoreDefinition); err == nil {
+		t.Fatal("expected removeRegularFile to reject symlink target")
 	}
 	hWin := h
 	hWin.platform = "windows"
