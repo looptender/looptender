@@ -18,10 +18,11 @@ import (
 // fakeSessionpipe stands in for the sessionpipe command: the test binary is
 // the executable doctor resolves (on every platform), and these answers are
 // what it "prints". It records every argument list, so the test can show
-// doctor ran only the two read-only commands.
+// doctor ran only its read-only commands.
 type fakeSessionpipe struct {
 	version string
 	status  string
+	pool    string
 	calls   [][]string
 }
 
@@ -35,6 +36,11 @@ func (f *fakeSessionpipe) run(_ context.Context, _ string, args []string, _ map[
 			return nil, errors.New("exit status 1")
 		}
 		return []byte(f.status), nil
+	case "pool --json":
+		if f.pool == "" {
+			return nil, errors.New("exit status 1")
+		}
+		return []byte(f.pool), nil
 	}
 	return nil, errors.New("unexpected command")
 }
@@ -83,7 +89,7 @@ func TestDoctorSessionpipeTarget(t *testing.T) {
 		t.Errorf("no sink for the file: %+v", got)
 	}
 	for _, call := range f.calls {
-		if j := strings.Join(call, " "); j != "--version" && j != "status --json" {
+		if j := strings.Join(call, " "); j != "--version" && j != "status --json" && j != "pool --json" {
 			t.Errorf("doctor ran sessionpipe %s", j)
 		}
 	}
@@ -283,5 +289,37 @@ func TestSessionpipeHeldWakeShows(t *testing.T) {
 	}
 	if pendingSessionpipeWake(stateDir, "primary", now.Add(time.Hour), time.Hour) != nil {
 		t.Fatal("still held after the interval")
+	}
+}
+
+func TestDoctorSessionpipePoolStatus(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		out     string
+		err     error
+		status  string
+		wantSub string
+	}{
+		"off":        {`{"on":false,"listening":false,"port":0,"accounts":[]}`, nil, "ok", "pool is off"},
+		"down":       {`{"on":true,"listening":false,"port":47812,"accounts":[{"label":"FICTIONAL-LABEL","email":"a@example.com","enabled":true,"status":"ready"}]}`, nil, "error", "connection refused"},
+		"ready":      {`{"on":true,"listening":true,"port":47812,"accounts":[{"label":"FICTIONAL-LABEL","email":"a@example.com","enabled":true,"status":"ready","current":true},{"enabled":true,"status":"limited"}]}`, nil, "ok", "1 of 2 enabled accounts ready"},
+		"exhausted":  {`{"on":true,"listening":true,"port":47812,"accounts":[{"enabled":true,"status":"limited","until":"2026-11-25T13:00:00Z"}]}`, nil, "warning", "none ready"},
+		"degraded":   {`{"on":true,"listening":true,"port":47812,"accounts":[{"enabled":true,"status":"error"}]}`, nil, "warning", "1 enabled accounts in error"},
+		"empty":      {`{"on":true,"listening":true,"port":47812,"accounts":[]}`, nil, "warning", "no enabled accounts"},
+		"bad shape":  {`{"other":true}`, nil, "unavailable", "raw output is withheld"},
+		"cli failed": {"", errors.New("exit status 1"), "unavailable", "raw output is withheld"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var r doctorReport
+			doctorSessionpipePool(&r, "agent.primary.pool", []byte(tc.out), tc.err, now)
+			if len(r.Checks) != 1 || r.Checks[0].Status != tc.status || !strings.Contains(r.Checks[0].Message, tc.wantSub) {
+				t.Fatalf("got %+v, want status %s containing %q", r.Checks, tc.status, tc.wantSub)
+			}
+			for _, secret := range []string{"FICTIONAL-LABEL", "example.com"} {
+				if strings.Contains(r.Checks[0].Message+r.Checks[0].Fix, secret) {
+					t.Fatalf("pool check leaked %q: %+v", secret, r.Checks[0])
+				}
+			}
+		})
 	}
 }
