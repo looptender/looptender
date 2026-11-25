@@ -29,7 +29,10 @@ type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 // One cached lookup per thread, shared by the card row, the banner segment,
 // and its visibility check, so a thread is fetched once per refresh.
 const STALE_MS = 25_000;
+const START_CHECKS_MAX_MS = 120_000;
+type StartingEntry = { baselineCheckAt: string | null; refreshes: number; startedAt: number };
 const cache = new Map<string, { loops: LoopView[]; at: number; inflight: boolean; failed: boolean; references: Map<string, number> }>();
+const startingChecks = new Map<string, Map<string, StartingEntry>>();
 const listeners = new Set<() => void>();
 const notify = () => {
   for (const l of listeners) l();
@@ -38,6 +41,75 @@ const subscribe = (l: () => void) => {
   listeners.add(l);
   return () => listeners.delete(l);
 };
+
+function checkMarker(loop: LoopView): string | null {
+  return loop.details?.lastCheck?.at ?? loop.checkedAt ?? null;
+}
+
+function isOverdueEnabledLoop(loop: LoopView): boolean {
+  return (
+    !loop.imported &&
+    loop.controlState === "enabled" &&
+    !recordsUnreadable(loop.details) &&
+    !loop.details?.archived &&
+    loop.details?.schedule?.overdue === true
+  );
+}
+
+function markStartingChecks(threadId: string, loop: LoopView) {
+  const next = new Map(startingChecks.get(threadId));
+  next.set(loopKey(loop), { baselineCheckAt: checkMarker(loop), refreshes: 0, startedAt: Date.now() });
+  startingChecks.set(threadId, next);
+  notify();
+}
+
+function clearStartingChecks(threadId: string, key: string) {
+  const current = startingChecks.get(threadId);
+  if (!current?.has(key)) return;
+  const next = new Map(current);
+  next.delete(key);
+  if (next.size === 0) startingChecks.delete(threadId);
+  else startingChecks.set(threadId, next);
+}
+
+function reconcileStartingChecks(threadId: string, loops: LoopView[], failed: boolean) {
+  const current = startingChecks.get(threadId);
+  if (!current || current.size === 0) return;
+  if (failed) {
+    startingChecks.delete(threadId);
+    return;
+  }
+  const byKey = new Map(loops.map(l => [loopKey(l), l]));
+  const next = new Map(current);
+  const now = Date.now();
+  let changed = false;
+  for (const [key, entry] of current.entries()) {
+    const loop = byKey.get(key);
+    if (!loop || !isOverdueEnabledLoop(loop) || now - entry.startedAt >= START_CHECKS_MAX_MS) {
+      next.delete(key);
+      changed = true;
+      continue;
+    }
+    const marker = checkMarker(loop);
+    if (marker !== null && marker !== entry.baselineCheckAt) {
+      next.delete(key);
+      changed = true;
+      continue;
+    }
+    const refreshes = entry.refreshes + 1;
+    // Keep the transitional label through the immediate refresh (#1) while the
+    // service starts; clear on a later refresh if the daemon still isn't responsive.
+    if (refreshes >= 2 && loop.details?.daemon?.state !== "responsive") {
+      next.delete(key);
+    } else {
+      next.set(key, { ...entry, refreshes });
+    }
+    changed = true;
+  }
+  if (!changed) return;
+  if (next.size === 0) startingChecks.delete(threadId);
+  else startingChecks.set(threadId, next);
+}
 
 function fetchLoops(rpc: Rpc, threadId: string, force = false) {
   const entry = cache.get(threadId);
@@ -48,9 +120,14 @@ function fetchLoops(rpc: Rpc, threadId: string, force = false) {
     .then((result) => {
       const references = new Map(entry?.references);
       for (const loop of result.loops) if (!references.has(loopKey(loop))) references.set(loopKey(loop), references.size + 1);
-      cache.set(threadId, { loops: result.loops, at: Date.now(), inflight: false, failed: result.errors.length > 0, references });
+      const failed = result.errors.length > 0;
+      cache.set(threadId, { loops: result.loops, at: Date.now(), inflight: false, failed, references });
+      reconcileStartingChecks(threadId, result.loops, failed);
     })
-    .catch(() => cache.set(threadId, { loops: entry?.loops ?? [], at: Date.now(), inflight: false, failed: true, references: entry?.references ?? new Map() }))
+    .catch(() => {
+      cache.set(threadId, { loops: entry?.loops ?? [], at: Date.now(), inflight: false, failed: true, references: entry?.references ?? new Map() });
+      reconcileStartingChecks(threadId, [], true);
+    })
     .finally(notify);
 }
 
@@ -86,14 +163,24 @@ function useLineage(threadId: string, loopsKey = "") {
 function useLoops(threadId: string) {
   const rpc = useRpc<typeof rpcContract>();
   const entry = useSyncExternalStore(subscribe, () => cache.get(threadId));
+  const starting = useSyncExternalStore(subscribe, () => startingChecks.get(threadId));
   const refresh = useCallback(() => fetchLoops(rpc, threadId, true), [rpc, threadId]);
+  const hasStarting = !!starting?.size;
   useEffect(() => {
     fetchLoops(rpc, threadId);
     const timer = setInterval(() => fetchLoops(rpc, threadId), 30_000);
     return () => clearInterval(timer);
   }, [rpc, threadId]);
+  useEffect(() => {
+    if (!hasStarting) return;
+    const timer = setInterval(() => {
+      const current = cache.get(threadId);
+      if (!current?.at || Date.now() - current.at >= 3_500) fetchLoops(rpc, threadId, true);
+    }, 4_000);
+    return () => clearInterval(timer);
+  }, [rpc, threadId, hasStarting]);
   useRealtime("changed", refresh);
-  return { loops: entry?.loops ?? [], references: entry?.references ?? new Map<string, number>(), refresh, failed: entry?.failed ?? false, loaded: !!entry?.at };
+  return { loops: entry?.loops ?? [], references: entry?.references ?? new Map<string, number>(), starting, refresh, failed: entry?.failed ?? false, loaded: !!entry?.at };
 }
 
 // The running build after the state word, so a narrow card never cuts the
@@ -104,18 +191,18 @@ function buildSuffix(loop: LoopView): string {
   return !b.running ? "" : b.differs ? ` ${b.running} · build differs` : ` ${b.running}`;
 }
 
-function label(loop: LoopView): string {
-  const base = stateLabel(loop);
+function label(loop: LoopView, starting = false): string {
+  const base = stateLabel(loop, starting);
   return base === `looptender: ${loop.controlState}` || base === "looptender: enabled" ? base + buildSuffix(loop) : base;
 }
 
-function stateLabel(loop: LoopView): string {
+function stateLabel(loop: LoopView, starting = false): string {
   // status exits 1 and says which record it could not read; the control state beside it cannot be trusted.
   if (recordsUnreadable(loop.details)) return "looptender: records unreadable";
   if (loop.details?.archived) return loop.details.archived.unreadable || !loop.details.archived.at ? "looptender: archive record unreadable" : "looptender: archived";
   if (loop.imported && loop.controlState === "enabled" && ((loop.details?.failedChecks ?? 0) > 0 || ["failed", "error"].includes(loop.details?.lastCheck?.outcome ?? ""))) return "looptender: checks failing";
   if (loop.imported && loop.controlState === "enabled" && !loop.details?.lastCheck) return "looptender: no check recorded";
-  if (loop.controlState === "enabled" && loop.details?.schedule?.overdue) return "looptender: checks have stopped";
+  if (loop.controlState === "enabled" && loop.details?.schedule?.overdue) return starting && !loop.imported ? "looptender: starting checks" : "looptender: checks have stopped";
   if (isWait(loop)) return `looptender: waiting for ${waitFor(loop.details!.wait!.until)}`;
   if (loop.details?.moved?.held && loop.controlState === "awaiting user") return "looptender: moved, resume to start";
   if (loop.controlState === "enabled") {
@@ -190,29 +277,32 @@ function FocusStyle() {
 const isPhone = () => typeof matchMedia === "function" && matchMedia(PHONE).matches;
 const kg = { "data-kg": "" } as const;
 
-function canStartChecks(loop: LoopView): boolean {
-  return (
-    !loop.imported &&
-    loop.controlState === "enabled" &&
-    !recordsUnreadable(loop.details) &&
-    !loop.details?.archived &&
-    loop.details?.schedule?.overdue === true &&
-    loop.details?.daemon?.state !== "responsive"
-  );
+function canStartChecks(loop: LoopView, starting = false): boolean {
+  return !starting && isOverdueEnabledLoop(loop) && loop.details?.daemon?.state !== "responsive";
 }
 
-function StartChecksButton({ loop, threadId, onDone }: { loop: LoopView; threadId: string; onDone: () => void }) {
+function StartChecksButton({ loop, threadId, starting = false, onDone }: { loop: LoopView; threadId: string; starting?: boolean; onDone: () => void }) {
   const rpc = useRpc<typeof rpcContract>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  if (!canStartChecks(loop)) return null;
+  if (!canStartChecks(loop, starting)) return null;
   const act = () => {
     setBusy(true);
     setError("");
     rpc
       .call("startChecks", { configPath: loop.configPath, ...(loop.managedId ? { managedId: loop.managedId } : {}), expectedThreadId: threadId })
-      .then(result => { if (!result.ok) setError(result.message); })
-      .catch(() => setError("Could not start checks. Refresh status before retrying."))
+      .then(result => {
+        if (result.ok) {
+          markStartingChecks(threadId, loop);
+        } else {
+          clearStartingChecks(threadId, loopKey(loop));
+          setError(result.message);
+        }
+      })
+      .catch(() => {
+        clearStartingChecks(threadId, loopKey(loop));
+        setError("Could not start checks. Refresh status before retrying.");
+      })
       .finally(() => { setBusy(false); onDone(); });
   };
   return <>
@@ -406,13 +496,13 @@ function ObservedRole({ loop }: { loop: LoopView }) {
   return <div className="kg-t" style={{ margin: 0, padding: "0 12px 4px 12px", fontSize: 12, opacity: 0.85, overflowWrap: "anywhere" }}>{role}</div>;
 }
 
-function CardLoop({ loop, name, threadId, refresh, failed, created, showName }: { loop: LoopView; name: string; threadId: string; refresh(): void; failed: boolean; created: string | null; showName: boolean }) {
+function CardLoop({ loop, name, threadId, starting, refresh, failed, created, showName }: { loop: LoopView; name: string; threadId: string; starting: boolean; refresh(): void; failed: boolean; created: string | null; showName: boolean }) {
   return <section aria-label={`Loop ${name}`} style={{ overflowWrap: "anywhere", minWidth: 0 }}>
     {(showName || loop.displayName) && <strong style={{ fontSize: 12 }}>{name}<Slug loop={loop} /></strong>}
     <ReferenceDetails loop={loop} name={name} />
-    <ContextRow icon="Repeat" label={failed ? "looptender: status unavailable (previous snapshot)" : created ?? label(loop)}
+    <ContextRow icon="Repeat" label={failed ? "looptender: status unavailable (previous snapshot)" : created ?? label(loop, starting)}
       title={boundedTitle(describe(loop).filter(line => !line.startsWith("Note: ")).join("\n"), 800)} trailing={loop.handoffs > 0 ? `${loop.handoffs} handoffs` : undefined}
-      action={<>{!failed && created !== KEEPING_GOING && <><StartChecksButton loop={loop} threadId={threadId} onDone={refresh} /><ToggleButton loop={loop} threadId={threadId} onDone={refresh} /></>}</>} />
+      action={<>{!failed && created !== KEEPING_GOING && <><StartChecksButton loop={loop} threadId={threadId} starting={starting} onDone={refresh} /><ToggleButton loop={loop} threadId={threadId} onDone={refresh} /></>}</>} />
     {!failed && <ObservedRole loop={loop} />}
     {!failed && <BuildFreshness loop={loop} />}
     {!failed && <Reasons loop={loop} />}
@@ -422,7 +512,7 @@ function CardLoop({ loop, name, threadId, refresh, failed, created, showName }: 
 }
 
 function CardRow({ threadId }: { threadId: string }) {
-  const { loops, references, refresh, failed, loaded } = useLoops(threadId);
+  const { loops, references, starting, refresh, failed, loaded } = useLoops(threadId);
   const { outcome, start, control, loop } = useThreadOutcome(threadId, loops);
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
   const [open, setOpen] = useState(false);
@@ -445,7 +535,7 @@ function CardRow({ threadId }: { threadId: string }) {
     <FocusStyle />
     {failed && <StatusWarning refresh={refresh} />}
     {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} showLabel={false} />}
-    {!loaded ? <ContextRow icon="Repeat" label="looptender: checking status" /> : !loops.length ? <ContextRow icon="Repeat" label="looptender" action={!failed && <button type="button" className="kgs-chip" {...kg} style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>Add to Looptender</button>} /> : loops.map(l => <CardLoop key={loopKey(l)} loop={l} name={referenceName(l, loops, references)} threadId={threadId} refresh={refresh} failed={failed} created={l === loop ? created : null} showName={loops.length > 1} />)}
+    {!loaded ? <ContextRow icon="Repeat" label="looptender: checking status" /> : !loops.length ? <ContextRow icon="Repeat" label="looptender" action={!failed && <button type="button" className="kgs-chip" {...kg} style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>Add to Looptender</button>} /> : loops.map(l => <CardLoop key={loopKey(l)} loop={l} name={referenceName(l, loops, references)} threadId={threadId} starting={!!starting?.has(loopKey(l))} refresh={refresh} failed={failed} created={l === loop ? created : null} showName={loops.length > 1} />)}
     {!failed && loops.some(l => l.managedId) && <button type="button" className="kgs-chip" {...kg} style={buttonStyle} onClick={() => setOpen(!open)} aria-expanded={open}>{loops.length > 1 ? "Thread setup" : "Setup"}</button>}
     {open && <div hidden={failed}><ThreadSetup key={threadId} threadId={threadId} onChanged={refresh} hideStart={created === READY_NOT_STARTED} /></div>}
   </div>;
@@ -454,9 +544,9 @@ function CardRow({ threadId }: { threadId: string }) {
 // The collapsed banner's tooltip: each loop's state and its reasons, cut to a
 // length a person reads. Everything in it is also in the expanded details, so
 // nothing is reachable only by hover.
-function summaryTitle(loops: LoopView[]): string {
+function summaryTitle(loops: LoopView[], starting?: Map<string, StartingEntry>): string {
   // Never the raw note: it is an agent's free text. The expanded details carry it.
-  return boundedTitle(loops.map(l => [label(l), ...reasonLines(l.controlState, null, l.details)].join("\n")).join("\n\n"), 600);
+  return boundedTitle(loops.map(l => [label(l, !!starting?.has(loopKey(l))), ...reasonLines(l.controlState, null, l.details)].join("\n")).join("\n\n"), 600);
 }
 
 // Build differences belong on the collapsed chip only when the loop is in an
@@ -488,8 +578,8 @@ function shortReason(loop: LoopView, base: string): string {
 }
 
 /** The collapsed chip: the state said once, then at most one reason. No version: the details carry it. */
-function chipLabel(loop: LoopView): string {
-  const base = stateLabel(loop);
+function chipLabel(loop: LoopView, starting = false): string {
+  const base = stateLabel(loop, starting);
   return [base, shortReason(loop, base)].filter(Boolean).join(" · ");
 }
 
@@ -522,7 +612,7 @@ const chipTextStyle = {
 } as const;
 
 function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; isExpanded: boolean; onToggle(): void }) {
-  const { loops, failed, loaded } = useLoops(threadId);
+  const { loops, starting, failed, loaded } = useLoops(threadId);
   const { outcome, loop } = useThreadOutcome(threadId, loops);
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
   const only = loops.length === 1 ? loops[0] : undefined;
@@ -531,9 +621,9 @@ function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; i
   // Nothing while the lineage is pending; on a child, no "Add to Looptender" entry.
   if (noLoop && lineage.pending) return null;
   const childText = noLoop && lineage.child ? (lineage.coveredBy ? `Covered by ${lineage.coveredBy.loop}` : "looptender") : undefined;
-  const text = failed ? "looptender: status unavailable" : !loaded ? "looptender: checking status" : loops.length > 1 ? `looptender: ${loops.length} matching loops` : created ?? (only ? chipLabel(only) : childText ?? "Add to Looptender");
+  const text = failed ? "looptender: status unavailable" : !loaded ? "looptender: checking status" : loops.length > 1 ? `looptender: ${loops.length} matching loops` : created ?? (only ? chipLabel(only, !!starting?.has(loopKey(only))) : childText ?? "Add to Looptender");
   return <><FocusStyle />
-    <button type="button" data-kg="chip" onClick={onToggle} aria-expanded={isExpanded} title={failed ? "Status could not be refreshed. Open details to retry." : loops.length ? summaryTitle(loops) : childText ? "This thread is a child; setup is in the details" : "Set up a loop for this thread"}
+    <button type="button" data-kg="chip" onClick={onToggle} aria-expanded={isExpanded} title={failed ? "Status could not be refreshed. Open details to retry." : loops.length ? summaryTitle(loops, starting) : childText ? "This thread is a child; setup is in the details" : "Set up a loop for this thread"}
       style={chipButtonStyle}>
       <span style={chipTextStyle}>{text}</span>
     </button></>;
@@ -541,7 +631,7 @@ function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; i
 
 
 function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded: boolean }) {
-  const { loops, references, refresh, failed, loaded } = useLoops(threadId);
+  const { loops, references, starting, refresh, failed, loaded } = useLoops(threadId);
   const { outcome, start, control, loop } = useThreadOutcome(threadId, loops);
   const created = outcomeLabel(outcome, loop?.controlState, loop?.supervising);
   const lineage = useLineage(threadId, loops.map(l => `${loopKey(l)}:${l.controlState}`).join(","));
@@ -562,19 +652,20 @@ function BannerDetails({ threadId, isExpanded }: { threadId: string; isExpanded:
     {loaded && !failed && <NewThreadOutcome threadId={threadId} outcome={outcome} controlState={loop?.controlState} supervising={loop?.supervising} start={start} control={control} onChanged={refresh} showLabel={false} />}
     {loops.map(l => {
       const name = referenceName(l, loops, references);
+      const isStarting = !!starting?.has(loopKey(l));
       const reasons = reasonLines(l.controlState, l.note, l.details);
       const split = splitDetails(l, reasons);
       return <section key={loopKey(l)} aria-label={`Loop ${name}`} style={{ display: "grid", gap: 8, padding: "4px 12px 8px", fontSize: 12, overflowWrap: "anywhere", minWidth: 0 }}>
         <div className="kg-t" style={{ minWidth: 0, opacity: 0.9 }}>
           {failed && <div>Previous snapshot</div>}
-          <div><strong>Loop {name}</strong><Slug loop={l} />{loops.length > 1 || failed ? <>: {l === loop ? created ?? label(l) : label(l)}</> : null}</div>
+          <div><strong>Loop {name}</strong><Slug loop={l} />{loops.length > 1 || failed ? <>: {l === loop ? created ?? label(l, isStarting) : label(l, isStarting)}</> : null}</div>
           {!failed && observedRoleLabel(l.details) && <div>{observedRoleLabel(l.details)}</div>}
           <ReferenceDetails loop={l} name={name} />
           <BuildFreshness loop={l} />
           {reasons.length > 0 && <ul aria-label="Why" style={{ ...plainList, paddingTop: 4 }}>{reasons.map((line, i) => <li key={i}>{line}</li>)}</ul>}
         </div>
         {/* Under the reason, full width on a phone: not beside the text, where it takes a fifth of the column. */}
-        {!failed && !(l === loop && created === KEEPING_GOING) && <div className="kg-actions" style={actionsStyle}><StartChecksButton loop={l} threadId={threadId} onDone={refresh} /><ToggleButton loop={l} threadId={threadId} onDone={refresh} /></div>}
+        {!failed && !(l === loop && created === KEEPING_GOING) && <div className="kg-actions" style={actionsStyle}><StartChecksButton loop={l} threadId={threadId} starting={isStarting} onDone={refresh} /><ToggleButton loop={l} threadId={threadId} onDone={refresh} /></div>}
         <LoopDetails {...split} padding="0" />
       </section>;
     })}
