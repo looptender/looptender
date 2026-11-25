@@ -286,6 +286,7 @@ export async function commandOnHost(input: { bin: string; record: SetupRecord; o
 }
 
 const serviceUnsupportedPattern = /user-service management currently supports macOS GUI LaunchAgents and Linux systemd user services|unknown subcommand|expected install, remove, or status/i;
+const serviceAlreadyRecordedPattern = /already recorded|existing or unknown registration/i;
 
 /**
  * Start supervision using a reboot-persistent user service (`service install` +
@@ -298,17 +299,35 @@ export async function startServiceOnHost(
   run: Execute = execute,
 ): Promise<{ code: number; data: unknown; registration?: Publication; method?: "service" | "background" }> {
   const { bin, record, enable, json } = input;
-  const svc = await run(bin, ["service", "install", "--json", "-c", record.configPath], "", record.threadId, signal);
+  let svc = await run(bin, ["service", "install", "--json", "-c", record.configPath], "", record.threadId, signal);
   if (svc.code !== 0) {
     if (serviceUnsupportedPattern.test(svc.stderr ?? "")) {
       const bg = await commandOnHost({ bin, record, operation: "start", ...(json ? { json } : {}) }, signal, run);
       return { ...bg, method: "background" };
     }
-    return { code: svc.code, data: svc.data };
+    if (serviceAlreadyRecordedPattern.test(svc.stderr ?? "")) {
+      const st = await run(bin, ["status", "--json", "-c", record.configPath], "", record.threadId, signal);
+      const daemonState = typeof st.data === "object" && st.data !== null ? (Reflect.get(st.data, "daemon") as { state?: unknown } | undefined)?.state : undefined;
+      if (st.code === 0 && daemonState === "responsive") {
+        return { code: svc.code, data: svc.data };
+      }
+      const rm = await run(bin, ["service", "remove", "--json", "-c", record.configPath], "", record.threadId, signal);
+      if (rm.code !== 0) {
+        return { code: rm.code, data: rm.data };
+      }
+      svc = await run(bin, ["service", "install", "--json", "-c", record.configPath], "", record.threadId, signal);
+      if (svc.code !== 0) {
+        return { code: svc.code, data: svc.data };
+      }
+    } else {
+      return { code: svc.code, data: svc.data };
+    }
   }
   if (enable) {
     const en = await run(bin, ["enable", "-c", record.configPath], "", record.threadId, signal);
     if (en.code !== 0) {
+      // Roll back the newly installed service so no orphaned LaunchAgent/systemd unit remains.
+      await run(bin, ["service", "remove", "--json", "-c", record.configPath], "", record.threadId, signal).catch(() => {});
       return { code: en.code, data: en.data };
     }
   }

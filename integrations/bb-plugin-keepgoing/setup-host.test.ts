@@ -506,4 +506,47 @@ test("startServiceOnHost installs user service + enables on macOS/Linux, and fal
   });
   assert.equal(checks.code, 0);
   assert.deepEqual(checksSeen.map(a => a[0]), ["service", "registry"]);
+
+  // 5. already recorded with no responding daemon: removes and reinstalls cleanly
+  const reSeen: string[][] = [];
+  let installAttempts = 0;
+  const re = await startServiceOnHost({ bin: "keepgoing", record, enable: false }, undefined, async (_bin, args) => {
+    reSeen.push([args[0]!, args[1] ?? ""]);
+    if (args[0] === "service" && args[1] === "install") {
+      installAttempts++;
+      return installAttempts === 1
+        ? { code: 1, data: null, stderr: "service: already recorded; use status or remove before reinstalling\n" }
+        : { code: 0, data: { backend: "launchd", registration: "loaded" } };
+    }
+    if (args[0] === "status") return { code: 0, data: { daemon: { state: "not_recorded" } } };
+    if (args[0] === "service" && args[1] === "remove") return { code: 0, data: { registration: "absent" } };
+    if (args[0] === "registry") return { code: 0, data: { entries: [{ id: "loop_0123456789abcdef0123456789abcdef" }] } };
+    return { code: 1, data: null };
+  });
+  assert.equal(re.code, 0);
+  assert.equal(re.method, "service");
+  assert.deepEqual(reSeen, [["service", "install"], ["status", "--json"], ["service", "remove"], ["service", "install"], ["registry", "reconcile"]]);
+
+  // 6. already recorded with responsive daemon: does not remove
+  const liveSeen: string[][] = [];
+  const live = await startServiceOnHost({ bin: "keepgoing", record, enable: false }, undefined, async (_bin, args) => {
+    liveSeen.push([args[0]!, args[1] ?? ""]);
+    if (args[0] === "service" && args[1] === "install") return { code: 1, data: null, stderr: "service: already recorded; use status or remove before reinstalling\n" };
+    if (args[0] === "status") return { code: 0, data: { daemon: { state: "responsive" } } };
+    return { code: 1, data: null };
+  });
+  assert.equal(live.code, 1);
+  assert.deepEqual(liveSeen, [["service", "install"], ["status", "--json"]]);
+
+  // 7. enable failure rolls back by calling service remove
+  const rbSeen: string[][] = [];
+  const rb = await startServiceOnHost({ bin: "keepgoing", record, enable: true }, undefined, async (_bin, args) => {
+    rbSeen.push([args[0]!, args[1] ?? ""]);
+    if (args[0] === "service" && args[1] === "install") return { code: 0, data: { backend: "launchd", registration: "loaded" } };
+    if (args[0] === "enable") return { code: 1, data: null, stderr: "enable refused: loop other-loop already supervises this thread's session\n" };
+    if (args[0] === "service" && args[1] === "remove") return { code: 0, data: { registration: "absent" } };
+    return { code: 1, data: null };
+  });
+  assert.equal(rb.code, 1);
+  assert.deepEqual(rbSeen, [["service", "install"], ["enable", "-c"], ["service", "remove"]]);
 });

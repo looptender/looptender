@@ -436,7 +436,13 @@ export default async function plugin(bb: BbPluginApi) {
     try { s = await status(bin, configPath); } catch { return { ok: false, message: "The loop's status could not be read, so nothing was started." }; }
     const err = eligible(s);
     if (err) return { ok: false, message: err };
-    const svc = await run(bin, ["service", "install", "--json", "-c", configPath]);
+    let svc = await run(bin, ["service", "install", "--json", "-c", configPath]);
+    if (svc.code !== 0 && /already recorded|existing or unknown registration/i.test(svc.stderr)) {
+      const rm = await run(bin, ["service", "remove", "--json", "-c", configPath]);
+      if (rm.code === 0) {
+        svc = await run(bin, ["service", "install", "--json", "-c", configPath]);
+      }
+    }
     if (svc.code === 0) {
       bb.realtime.publish(CHANGED, { at: Date.now() });
       return { ok: true, message: "Checks started via user service (survives reboot)." };
