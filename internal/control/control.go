@@ -115,6 +115,11 @@ func Save(stateDir string, f File) error {
 }
 
 func saveAt(stateDir string, f File, now time.Time) error {
+	_, err := saveRet(stateDir, f, now)
+	return err
+}
+
+func saveRet(stateDir string, f File, now time.Time) (File, error) {
 	// A repeated hold must change the loaded record even when the wall clock
 	// repeats (coarse platform clocks) or moves backwards. Resume tickets bind
 	// to those bytes, so an identical timestamp could accept stale evidence.
@@ -123,13 +128,13 @@ func saveAt(stateDir string, f File, now time.Time) error {
 	}
 	f.UpdatedAt = now.UTC()
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return err
+		return f, err
 	}
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
-		return err
+		return f, err
 	}
-	return writeAtomic(filepath.Join(stateDir, FileName), append(b, '\n'), 0o600)
+	return f, writeAtomic(filepath.Join(stateDir, FileName), append(b, '\n'), 0o600)
 }
 
 // Gate converts the file into the decision engine's view of it.
@@ -208,7 +213,11 @@ func updateCheckedValidated(stateDir string, maxBytes int64, validate func([]byt
 	if err := archiveGuard(stateDir, before, f); err != nil {
 		return before, err
 	}
-	return f, Save(stateDir, f)
+	saved, err := saveRet(stateDir, f, time.Now().UTC())
+	if err != nil {
+		return f, err
+	}
+	return saved, nil
 }
 
 // Caller holds control.lock. Never reopen between validation and decoding.

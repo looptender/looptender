@@ -89,8 +89,11 @@ type dockReport struct {
 	Host  *hostStatus `json:"host,omitempty"`
 	Loops []dockLoop  `json:"loops"`
 	// Archived counts the loops in Loops whose State is "archived"; they are
-	// listed last, need nobody and are left out of Worth.
+	// listed last, need nobody and are left out of Worth. Inactive counts
+	// non-archived loops whose checks stopped or had no new check activity for
+	// at least 72 hours (3 days); they are folded out of NeedsYou and Worth.
 	Archived int `json:"archived"`
+	Inactive int `json:"inactive,omitempty"`
 	// Routes is the same data grouped by route: a model on an account at an
 	// effort level, as configured. Each loop's chain entries name their
 	// route by key, so the views are one feed.
@@ -365,9 +368,12 @@ type dockLoop struct {
 	// Archived is set while the loop is archived (State "archived"): when,
 	// the hold it had, and the note only where the report carries
 	// identifiers. ArchiveLapsed is a record the loop no longer honours.
+	// Inactive is set for non-archived loops with no check activity for at
+	// least dockInactiveAfter (72 hours / 3 days); view grouping only.
 	// Naming is what a list needs to show a readable name.
 	Archived      *archiveView `json:"archived,omitempty"`
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	Inactive      bool         `json:"inactive,omitempty"`
 	Naming        *loopNaming  `json:"naming,omitempty"`
 	// Wait is a wait in force (State waiting_on_condition).
 	Wait *waitView `json:"wait,omitempty"`
@@ -1591,6 +1597,8 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 	for _, l := range r.Loops {
 		if l.Archived != nil {
 			r.Archived++
+		} else if l.Inactive {
+			r.Inactive++
 		}
 	}
 	r.AllClear = complete && omitted == 0 && len(r.NeedsYou) == 0
@@ -1628,7 +1636,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 	r.usage = buildDockUsagePage(usage, now, complete)
 	quiet := map[string]bool{"supervising": true, "paused": true, "off": true, "stopped": true, "finished": true, "waiting_for_you": true, "unknown": true}
 	for _, l := range r.Loops {
-		if l.Archived != nil {
+		if l.Archived != nil || l.Inactive {
 			continue // put out of the way: nothing about it is worth a line
 		}
 		flagged := l.NoProgress != nil && l.NoProgress.Availability == "flagged"
@@ -1713,6 +1721,9 @@ func dockLede(r dockReport) string {
 	s := dockPlural(len(r.Loops)-r.Archived, "loop", "loops")
 	if sup > 0 {
 		s += fmt.Sprintf(", %d supervising", sup)
+	}
+	if r.Inactive > 0 {
+		s += fmt.Sprintf(", %d inactive (3d+)", r.Inactive)
 	}
 	if r.Archived > 0 {
 		s += fmt.Sprintf(", and %d archived", r.Archived)
@@ -1878,6 +1889,9 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		}
 		if snap.ControlState != "superseded" && (c.Paused || c.Stop || c.AwaitingUser || c.Completed) {
 			l.Can = append(l.Can, "resume")
+		}
+		if snap.Archived == nil {
+			l.Can = append(l.Can, "archive")
 		}
 	}
 	if identifiers {
@@ -2255,18 +2269,49 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			need = nil
 		}
 		if a := snap.Archived; a != nil {
-			// Archived: listed apart, needing nobody, with no control offered
+			// Archived: listed apart, needing nobody, offering only unarchive
 			// (resume is refused until it is unarchived, and a group pause or
 			// stop leaves it as it is). Its hold is still shown in Hold.
 			l.Archived = a
 			l.State, l.Phrase, l.PickerState = "archived", "Archived", "Archived"
 			l.Detail = "Archived " + archiveSince(a) + ". It needs nobody and no daemon checks it; looptender unarchive lists it normally again and resumes nothing."
 			// Nothing it waits on is shown: it waits on nobody.
-			l.Can, l.AlsoWaiting, l.Waiting = []string{}, "", nil
+			l.Can, l.AlsoWaiting, l.Waiting = []string{"unarchive"}, "", nil
 			need = nil
 		}
 	}
+	if dockLoopCheckInactive(l, snap, need, now) {
+		l.Inactive = true
+		need = nil
+	}
 	return l, need
+}
+
+const dockInactiveAfter = 72 * time.Hour
+
+// dockLoopCheckInactive reports whether a non-archived loop has stopped checking
+// or had no new check activity for at least dockInactiveAfter (3 days).
+// View grouping only: never mutates loop state or archive.json on disk.
+func dockLoopCheckInactive(l dockLoop, snap *clientSnapshot, need *dockNeed, now time.Time) bool {
+	if snap != nil && snap.Archived != nil {
+		return false
+	}
+	if l.Supervisor == "answering" {
+		return false
+	}
+	if need != nil && need.Kind == "unreadable" {
+		return false
+	}
+	if l.Moved != nil && snap != nil && snap.Runtime != nil && snap.Runtime.OverdueSince != nil && now.Sub(*snap.Runtime.OverdueSince) < dockInactiveAfter {
+		return false
+	}
+	if l.LastCheck.At != nil && !l.LastCheck.At.IsZero() {
+		return now.Sub(*l.LastCheck.At) >= dockInactiveAfter
+	}
+	if snap != nil && snap.Runtime != nil && snap.Runtime.OverdueSince != nil && !snap.Runtime.OverdueSince.IsZero() {
+		return now.Sub(*snap.Runtime.OverdueSince) >= dockInactiveAfter
+	}
+	return false
 }
 
 // dockDropUsedUp removes the used-up note when a limit departure already says
@@ -3226,8 +3271,15 @@ func dockControlWord(snap *clientSnapshot) string {
 }
 
 // dockLoopPriority is the loop's place in the list: its state's, except that a
-// paused loop that is still waiting for a person sorts with those that need one.
+// paused loop that is still waiting for a person sorts with those that need one,
+// 3-day inactive loops follow finished loops, and archived loops sort last.
 func dockLoopPriority(l dockLoop) int {
+	if l.State == "archived" {
+		return dockStatePriority["archived"] + 1
+	}
+	if l.Inactive {
+		return dockStatePriority["archived"]
+	}
 	if l.State == "paused" && l.AlsoWaiting != "" {
 		return dockStatePriority["waiting_for_you"]
 	}

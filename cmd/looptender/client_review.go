@@ -96,7 +96,7 @@ type clientReviewPreview struct {
 }
 
 const (
-	clientReviewUsage   = "usage: looptender client review pause|stop|resume --loop KEY [--directory private-registry] [--json]; looptender client apply pause|stop|resume --loop KEY --expect VALUE [--lanes [--drop-queued]] [--immediately] [--directory private-registry] [--json]; looptender client review pause|stop --all [--json]; looptender client apply pause|stop --all --expect KEY=VALUE... [--lanes] [--json]"
+	clientReviewUsage   = "usage: looptender client review pause|stop|resume|archive|unarchive --loop KEY [--directory private-registry] [--json]; looptender client apply pause|stop|resume|archive|unarchive --loop KEY --expect VALUE [--lanes [--drop-queued]] [--immediately] [--directory private-registry] [--json]; looptender client review pause|stop --all [--json]; looptender client apply pause|stop --all --expect KEY=VALUE... [--lanes] [--json]"
 	clientReviewExpired = "This review expired. Nothing was changed. Review it again."
 	clientReviewOther   = "This review is for another loop or another change. Nothing was changed. Review it again."
 	clientReviewOwned   = "This loop is supervised for another conversation, so it can be resumed only from that conversation or from outside BB. Nothing was changed."
@@ -255,11 +255,15 @@ func clientApply(ctx context.Context, directory, key, action, expect, caller str
 	if !ok {
 		return clientReviewReply{Result: &panelResult{Outcome: "refused", Text: "This loop is no longer registered. Nothing was changed."}}, exitFailed
 	}
-	if action == "resume" {
-		// Said plainly before anything is prepared; the resume itself makes
+	if action == "resume" || action == "archive" || action == "unarchive" {
+		// Said plainly before anything is prepared; the change itself makes
 		// the same check again.
 		if ctl, why := panelReadControl(entry.StateDir); why == "" && control.CheckOwner(ctl, caller, false) != nil {
-			return clientReviewReply{Result: &panelResult{Outcome: "refused", Text: clientReviewOwned}}, exitFailed
+			msg := clientReviewOwned
+			if action != "resume" {
+				msg = "This loop is supervised for another conversation, so it can be " + action + "d only from that conversation or from outside BB. Nothing was changed."
+			}
+			return clientReviewReply{Result: &panelResult{Outcome: "refused", Text: msg}}, exitFailed
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, panelChangeTimeout)

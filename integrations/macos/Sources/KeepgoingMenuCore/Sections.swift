@@ -17,13 +17,15 @@ extension MenuBuilder {
 
     static func isArchived(_ loop: PanelLoop) -> Bool { loop.archived != nil || loop.state == "archived" }
 
+    static func isInactive(_ loop: PanelLoop) -> Bool { loop.inactive == true }
+
     static func isThreadIDSlug(_ slug: String) -> Bool { slug.hasPrefix("bb-thr-") || slug.hasPrefix("thr_") }
 
-    /// The group a loop is listed in. Archived and retired loops are never in
-    /// the first two; a loop needs you only when the CLI says a person is
-    /// needed and it is neither.
+    /// The group a loop is listed in. Archived, retired and 3-day inactive
+    /// loops are never in the first two; a loop needs you only when the CLI
+    /// says a person is needed and it is none of those.
     public static func group(_ loop: PanelLoop) -> LoopGroup {
-        if isArchived(loop) || isRetired(loop) { return .other }
+        if isArchived(loop) || isRetired(loop) || isInactive(loop) { return .other }
         if loop.needsYou { return .needsYou }
         switch loop.state {
         case "paused", "off", "stopped", "finished": return .other
@@ -134,6 +136,7 @@ extension MenuBuilder {
         let flag = loop.noProgress.map(Contract.text) ?? ""
         let reason = loop.reason.map(Contract.text) ?? ""
         if !reason.isEmpty { rows.append(status(reason)) }
+        if !isArchived(loop) && isInactive(loop) { rows.append(status("Inactive for 3+ days")) }
         if !flag.isEmpty { rows.append(status(flag)) }
         let role = observedRole(loop)
         if !role.isEmpty { rows.append(status(role)) }
@@ -167,7 +170,7 @@ extension MenuBuilder {
 
     /// Supervisors that are not on the installed build, among loops still in play.
     static func notOnInstalledCount(_ loops: [PanelLoop]) -> Int {
-        loops.filter { !isArchived($0) && !isRetired($0) }.filter {
+        loops.filter { !isArchived($0) && !isRetired($0) && !isInactive($0) }.filter {
             guard let s = $0.buildFreshness?.state else { return false }
             return s != "current" && s != "updated"
         }.count

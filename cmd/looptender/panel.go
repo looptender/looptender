@@ -1068,9 +1068,10 @@ type panelList struct {
 	Unread          int              `json:"unread"`
 	Omitted         int              `json:"omitted"`
 	// Loops is every loop read, archived ones last (State "archived");
-	// Archived counts those. A list shows the others and one line for these.
+	// Archived counts those, Inactive counts non-archived 3-day inactive loops.
 	Loops    []panelListLoop `json:"loops"`
 	Archived int             `json:"archived"`
+	Inactive int             `json:"inactive,omitempty"`
 	// Volumes is one notice for each volume holding loops' state that is
 	// filling or nearly full (see dockReport.Volumes).
 	Volumes []dockVolume `json:"volumes,omitempty"`
@@ -1170,9 +1171,10 @@ type panelListLoop struct {
 	Moved    *clientMoved `json:"moved,omitempty"`
 	// Archived: as on the page's loop (when, the hold it had, the note with
 	// identifier-shaped tokens hidden). ArchiveLapsed: a record the loop no
-	// longer honours.
+	// longer honours. Inactive: folded because checks stopped >= 3 days ago.
 	Archived      *archiveView `json:"archived,omitempty"`
 	ArchiveLapsed *archiveView `json:"archiveLapsed,omitempty"`
+	Inactive      bool         `json:"inactive,omitempty"`
 	// Naming is the loop's one display name and what goes with it
 	// (loop_naming.go), the same on every surface; no reader composes its
 	// own. Absent when it is the loop's name and nothing more.
@@ -1236,11 +1238,13 @@ func buildPanelList(r dockReport) panelList {
 			row.Waiting = &panelWaiting{Kind: w.Kind, By: w.By, Since: w.Since, AtLeast: w.SinceEvidence == "control_changed"}
 		}
 		// The list carries no note (it never has): when, and the hold.
-		row.Archived, row.ArchiveLapsed = withoutNote(l.Archived), withoutNote(l.ArchiveLapsed)
+		row.Archived, row.ArchiveLapsed, row.Inactive = withoutNote(l.Archived), withoutNote(l.ArchiveLapsed), l.Inactive
 		row.Naming, row.Lineage = l.Naming, l.Lineage // already as lists carry them
 		row.Superseded = l.Hold.State == "superseded" || (l.Archived != nil && l.Archived.ContinuedIn != nil)
 		if row.Archived != nil {
 			out.Archived++
+		} else if row.Inactive {
+			out.Inactive++
 		}
 		out.Loops = append(out.Loops, row)
 	}

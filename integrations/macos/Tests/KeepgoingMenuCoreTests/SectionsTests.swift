@@ -50,6 +50,13 @@ final class SectionsTests: XCTestCase {
         XCTAssertFalse(titles(none).contains { $0.contains("need") })
         // A paused loop that still waits for a person is in Needs you.
         XCTAssertEqual(MenuBuilder.group(loop(5, "p", "paused", "Paused", needs: true)), .needsYou)
+        // A 3-day inactive loop is folded into Other loops and excluded from needs-you count.
+        var folded = loop(6, "inactive-old", "waiting_for_you", "Waiting for you", needs: true)
+        folded.inactive = true
+        XCTAssertEqual(MenuBuilder.group(folded), .other)
+        let withFolded = build(list([folded], needsYou: 1))
+        XCTAssertEqual(withFolded.badge, "")
+        XCTAssertFalse(titles(withFolded).contains { $0.contains("need") })
     }
 
     func testARowIsTheDisplayNameCutAtTheEndAndOneStateWord() {

@@ -33,7 +33,7 @@ import Foundation
         }
         // The loop's choices come from the CLI's own list of what fits.
         let row = everyRow.first { $0.kind == .loop }!
-        guard list.loops[0].can == ["pause", "stop"], row.submenu.compactMap(\.command) == [.openLoop(key: list.loops[0].key), .review(.pause, key: list.loops[0].key), .review(.stop, key: list.loops[0].key)] else {
+        guard list.loops[0].can == ["pause", "stop", "archive"], row.submenu.compactMap(\.command) == [.openLoop(key: list.loops[0].key), .review(.pause, key: list.loops[0].key), .review(.stop, key: list.loops[0].key), .review(.archive, key: list.loops[0].key)] else {
             fatalError("loop choices mismatch")
         }
         // A review reads and changes nothing; the caller checks the files.

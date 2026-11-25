@@ -29,9 +29,9 @@ func TestDockSaysAnObservedTargetIsNeverWoken(t *testing.T) {
 		controls *clientControls
 		want     []string
 	}{
-		{"running", &clientControls{Enabled: true}, []string{"pause"}},
-		{"paused", &clientControls{Enabled: true, Paused: true}, []string{"resume"}},
-		{"held", &clientControls{Enabled: true, AwaitingUser: true}, []string{"pause", "resume"}},
+		{"running", &clientControls{Enabled: true}, []string{"pause", "archive"}},
+		{"paused", &clientControls{Enabled: true, Paused: true}, []string{"resume", "archive"}},
+		{"held", &clientControls{Enabled: true, AwaitingUser: true}, []string{"pause", "resume", "archive"}},
 	} {
 		l, _ := projectDockLoop(dockEvidence{controls: tc.controls, status: observed}.input(), dockNow, defaultStaleAfter, false)
 		if !reflect.DeepEqual(l.Can, tc.want) {
@@ -48,7 +48,7 @@ func TestDockSaysAnObservedTargetIsNeverWoken(t *testing.T) {
 	}
 	// An ordinary target keeps stop.
 	l, _ := projectDockLoop(dockEvidence{controls: &clientControls{Enabled: true}}.input(), dockNow, defaultStaleAfter, false)
-	if !reflect.DeepEqual(l.Can, []string{"pause", "stop"}) || l.Observed {
+	if !reflect.DeepEqual(l.Can, []string{"pause", "stop", "archive"}) || l.Observed {
 		t.Errorf("an ordinary target: can %v observed %v", l.Can, l.Observed)
 	}
 	if r := refOf(config.Agent{Adapter: "claude", Claude: &config.Claude{}}); r.Observed {

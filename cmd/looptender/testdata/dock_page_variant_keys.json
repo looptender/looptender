@@ -48,6 +48,7 @@
  "buildFreshness.command",
  "buildFreshness.action",
  "can",
+ "inactive",
  "observed",
  "observedWakes",
  "observedNote",

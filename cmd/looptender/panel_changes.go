@@ -22,6 +22,7 @@ import (
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/registry"
+	"github.com/looptender/looptender/internal/state"
 )
 
 // Changes from the panel: pause, stop and resume of one loop at a time. They
@@ -248,8 +249,8 @@ type panelChangeReply struct {
 	Result        *panelResult              `json:"result,omitempty"`
 }
 
-var panelActions = map[string]string{"pause": "Pause", "stop": "Stop", "resume": "Resume"}
-var panelDone = map[string]string{"pause": "paused", "stop": "stopped", "resume": "resumed"}
+var panelActions = map[string]string{"pause": "Pause", "stop": "Stop", "resume": "Resume", "archive": "Archive", "unarchive": "Unarchive"}
+var panelDone = map[string]string{"pause": "paused", "stop": "stopped", "resume": "resumed", "archive": "archived", "unarchive": "unarchived"}
 
 // serve answers one change request. rest is the path under the session.
 func (c *panelChanges) serve(w http.ResponseWriter, r *http.Request, rest, session string) {
@@ -455,14 +456,20 @@ func panelReviewForCaller(ctx context.Context, registryDir string, reader *dockR
 	if action == "resume" && control.CheckTransferReady(ctl) != nil {
 		return panelReviewed{}, &panelResult{Outcome: "refused", Text: "This loop is superseded or has a pending transfer. Resume is unavailable; inspect its status. Nothing was changed."}
 	}
-	if action == "resume" && control.CheckOwner(ctl, caller, false) != nil {
-		return panelReviewed{}, &panelResult{Outcome: "refused", Text: "This panel cannot resume the loop with its startup caller. Nothing was changed."}
+	if (action == "resume" || action == "archive" || action == "unarchive") && control.CheckOwner(ctl, caller, false) != nil {
+		return panelReviewed{}, &panelResult{Outcome: "refused", Text: "This panel cannot " + action + " the loop with its startup caller. Nothing was changed."}
 	}
-	if action == "resume" && entryHoldClearer(entry, caller) != nil {
+	if (action == "resume" || action == "archive" || action == "unarchive") && entryHoldClearer(entry, caller) != nil {
 		return panelReviewed{}, &panelResult{Outcome: "refused", Text: panelSupervisedSession + " Nothing was changed."}
 	}
 	// The rest of the loop as it is now, read the way the page reads it.
 	loop := panelLoopNow(ctx, reader, dir, entry, all, now)
+	if action == "archive" && loop.Archived != nil {
+		return panelReviewed{}, &panelResult{Outcome: "refused", Text: "This loop is already archived. Nothing was changed."}
+	}
+	if action == "unarchive" && loop.Archived == nil {
+		return panelReviewed{}, &panelResult{Outcome: "refused", Text: "This loop is not archived. Nothing was changed."}
+	}
 	ttl := panelHoldFormTTL
 	if action == "resume" {
 		// A resume's own ticket is prepared when the person confirms, so
@@ -562,12 +569,137 @@ func panelApply(ctx context.Context, registryDir, id, action, origin, caller, ex
 		done, _ := clientResume(ctx, registryDir, id, "resume", prepared.Ticket, false, caller, origin, expect, time.Now, nil)
 		return done.clientHoldReport
 	}
+	if action == "archive" || action == "unarchive" {
+		return applyClientArchive(ctx, registryDir, id, action, origin, caller, expect)
+	}
 	if opts.Now {
 		// Both the page and client apply retain their actual caller for
 		// caller-last ordering in a stop carried out now.
 		opts.CallerThread = caller
 	}
 	r, _ := applyClientHoldWith(ctx, registryDir, id, action, origin, expect, opts)
+	return r
+}
+
+func applyClientArchive(ctx context.Context, directory, id, operation, origin, caller, expect string) clientHoldReport {
+	r := clientHoldReport{SchemaVersion: 1, RegistrationID: id, Operation: operation, ControlSave: "not_attempted", Issues: []string{}}
+	reject := errors.New("client archive rejected")
+	fail := func(issue string) error { r.Issues = append(r.Issues, issue); return reject }
+	didPauseWrite := false
+	dir, err := registryDirectory(directory)
+	if err != nil {
+		r.Issues = append(r.Issues, "registry_unavailable")
+		return r
+	}
+	err = registry.WithEntry(dir, id, func(entry registry.Entry) error {
+		if ctx.Err() != nil {
+			return fail("cancelled")
+		}
+		if _, ok := clientConfig(entry); !ok {
+			return fail("binding_unavailable")
+		}
+		var initial control.File
+		if readTransferRecord(entry.StateDir, control.FileName, &initial) != nil {
+			return fail("control_unavailable")
+		}
+		checkLocked := func(f control.File) error {
+			if ctx.Err() != nil {
+				return fail("cancelled")
+			}
+			current, ok := clientEntry(dir, id)
+			if !ok || current != entry {
+				return fail("registration_changed")
+			}
+			if expect != "" && !expectDigestMatches(controlDigest(f), expect) {
+				return fail("observation_changed")
+			}
+			if err := control.CheckOwner(f, caller, false); err != nil {
+				return fail("owned")
+			}
+			if err := entryHoldClearer(entry, caller); err != nil {
+				return fail("supervised_session")
+			}
+			r.ControlSave = "unconfirmed"
+			return nil
+		}
+		if operation == "archive" {
+			if arch, aerr := control.LoadArchive(entry.StateDir); aerr != nil {
+				return fail("control_unavailable")
+			} else if arch != nil {
+				return fail("already_archived")
+			}
+			if initial.Supervising() {
+				// Pause before archiving so control.ArchiveLoop finds no supervising run;
+				// verify the reviewed digest inside the control lock first.
+				f, uerr := updateControlFrom(entry.StateDir, "pause", origin, func(f *control.File) error {
+					if err := checkLocked(*f); err != nil {
+						return err
+					}
+					f.Paused = true
+					didPauseWrite = true
+					return nil
+				})
+				if uerr == nil || errors.Is(uerr, errControlHistory) {
+					recordRegistration(entry.StateDir, entry.ID)
+				}
+				if uerr != nil && !errors.Is(uerr, errControlHistory) {
+					return uerr
+				}
+				r.Controls = &clientControls{f.Enabled, f.Paused, f.Stop, f.AwaitingUser, f.Completed}
+				expect = controlDigest(f)
+			}
+			_, f, aerr := control.ArchiveLoop(entry.StateDir, "", time.Now().UTC(), checkLocked)
+			if aerr != nil {
+				if !errors.Is(aerr, reject) {
+					if errors.Is(aerr, control.ErrArchiveSupervising) {
+						return fail("observation_changed")
+					}
+					return aerr
+				}
+				return aerr
+			}
+			r.ControlSave = "confirmed"
+			r.Controls = &clientControls{f.Enabled, f.Paused, f.Stop, f.AwaitingUser, f.Completed}
+			if state.Append(entry.StateDir, state.Event{Loop: entry.Loop, Event: "control", Action: "archive", Reason: f.Summary()}) != nil {
+				r.Issues = append(r.Issues, "run_history_unavailable")
+			}
+			return nil
+		}
+		arch, uerr := control.UnarchiveLoop(entry.StateDir, checkLocked)
+		if uerr != nil {
+			if !errors.Is(uerr, reject) {
+				return uerr
+			}
+			return uerr
+		}
+		if arch == nil {
+			r.ControlSave = "not_attempted"
+			return fail("not_archived")
+		}
+		f, lerr := control.Load(entry.StateDir)
+		if lerr != nil {
+			return fail("control_unavailable")
+		}
+		r.ControlSave = "confirmed"
+		r.Controls = &clientControls{f.Enabled, f.Paused, f.Stop, f.AwaitingUser, f.Completed}
+		if state.Append(entry.StateDir, state.Event{Loop: entry.Loop, Event: "control", Action: "unarchive", Reason: f.Summary()}) != nil {
+			r.Issues = append(r.Issues, "run_history_unavailable")
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, lock.ErrHeld) {
+			if !didPauseWrite {
+				r.ControlSave = "not_attempted"
+			}
+			r.Issues = append(r.Issues, "busy")
+			return r
+		}
+		if !errors.Is(err, reject) && r.ControlSave == "not_attempted" {
+			r.Issues = append(r.Issues, "control_or_registration_unavailable")
+		}
+		return r
+	}
 	return r
 }
 
@@ -690,6 +822,16 @@ func panelPreviewOf(action string, l panelLoop, ctl control.File, expires, now t
 			add("Next check: unknown; " + strings.TrimSuffix(n.Detail, ".") + ".")
 		}
 		add("Confirming prepares this resume's own ticket, so a resume another client prepared and has not used yet can no longer be used.")
+	case "archive":
+		if ctl.Supervising() {
+			add("Archiving pauses supervision first, then moves this loop into the archived list. No files or records are deleted.")
+		} else {
+			add("Moves this loop into the archived list without deleting any files or records.")
+		}
+		add("An archived loop needs nobody, stops daemon checks, and stays out of your active list and badge count. You can bring it back later with Unarchive.")
+	case "unarchive":
+		add("Brings this loop back from the archived list into the normal list without deleting or changing any holds.")
+		add("Nothing is resumed automatically: if its supervision was paused or held, it stays that way until you resume it.")
 	}
 	add("If the loop's control record changes before you confirm, nothing is changed and you are asked to review again.")
 	add("This review expires ", dockUntil(now, expires), ".")
@@ -733,9 +875,11 @@ func panelOutcome(action string, r clientHoldReport) panelResult {
 		return panelResult{Outcome: "done", Text: text}
 	case r.ControlSave == "confirmed":
 		text := map[string]string{
-			"pause":  "Paused: looptender will send nothing; a check already running finishes.",
-			"stop":   "Stop requested: the next check carries it out.",
-			"resume": "Resumed: holds cleared; the next check decides what to send.",
+			"pause":     "Paused: looptender will send nothing; a check already running finishes.",
+			"stop":      "Stop requested: the next check carries it out.",
+			"resume":    "Resumed: holds cleared; the next check decides what to send.",
+			"archive":   "Archived: moved into the archived list without deleting files.",
+			"unarchive": "Unarchived: returned to the normal list. Nothing was resumed.",
 		}[action]
 		if has("incident_history_unavailable") || has("run_history_unavailable") {
 			text += " Its history could not record this change."
@@ -758,6 +902,12 @@ func panelOutcome(action string, r clientHoldReport) panelResult {
 			why = panelSupervisedSession
 		case "archived":
 			why = "The loop is archived. Unarchive it first with looptender unarchive; unarchiving resumes nothing."
+		case "already_archived":
+			why = "This loop is already archived."
+		case "not_archived":
+			why = "This loop is not archived."
+		case "owned":
+			why = "This loop is supervised for another conversation."
 		case "ticket_unavailable":
 			why = "A review could not be prepared."
 		case "cancelled":
