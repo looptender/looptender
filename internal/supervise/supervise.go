@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/looptender/looptender/internal/envvar"
+	"math"
 	"os"
 	"os/exec"
 	"slices"
@@ -22,6 +22,7 @@ import (
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/decide"
+	"github.com/looptender/looptender/internal/envvar"
 	"github.com/looptender/looptender/internal/handoff"
 	"github.com/looptender/looptender/internal/health"
 	"github.com/looptender/looptender/internal/incident"
@@ -1864,11 +1865,19 @@ func (t *tick) quotaSwitchInput(target string) (decide.QuotaSwitch, *time.Time) 
 		if w.ResetsAt != nil && !w.ResetsAt.After(t.now) {
 			continue
 		}
+		if math.IsNaN(w.Used) || math.IsInf(w.Used, 0) || w.Used < 0 || w.Used > 1 {
+			continue
+		}
 		activeWindows++
 		if activeWindows == 1 || w.Used > highest {
 			highest = w.Used
 			winKey = w.Key
-			winReset = w.ResetsAt
+		}
+		if w.Used >= cand.SwitchAt && w.ResetsAt != nil {
+			if winReset == nil || w.ResetsAt.After(*winReset) {
+				t := *w.ResetsAt
+				winReset = &t
+			}
 		}
 	}
 	return decide.QuotaSwitch{

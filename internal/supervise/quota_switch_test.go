@@ -2,6 +2,7 @@ package supervise
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -93,6 +94,75 @@ func TestQuotaSwitchThresholdAtTurnEnd(t *testing.T) {
 		_, res := setup(t, 0, t0.Add(-10*time.Minute), t0.Add(24*time.Hour), 0.99, "")
 		if res.Action != string(decide.Wake) {
 			t.Fatalf("expected Wake when switch_at is 0, got %+v", res)
+		}
+	})
+
+	t.Run("multi-window switch records latest breaching reset time", func(t *testing.T) {
+		w := newWorld(t, true, true)
+		w.cfg.Loop.Probe = config.Probe{Kind: "claude", Model: "example-small"}
+		w.cfg.Loop.SwitchAt = 0.85
+		w.primary(decide.Observation{State: decide.Idle})
+		w.probeOK["claude-other"] = true
+		w.probeOK["codex-main"] = true
+
+		shortReset := t0.Add(2 * time.Hour)
+		weekReset := t0.Add(7 * 24 * time.Hour)
+		reg := &health.Registry{Candidates: map[string]*health.Entry{}}
+		reg.Record("claude-other", probe.Result{OK: true, Tier: probe.Scheduled, At: t0.Add(-5 * time.Minute)})
+		id := probe.UsageIdentity(w.cfg.Loop.PrimaryCandidate())
+		reg.Record("primary", probe.Result{
+			OK:            true,
+			Tier:          probe.Scheduled,
+			At:            t0.Add(-10 * time.Minute),
+			UsageIdentity: id,
+			Usage: &probe.Usage{
+				At:       t0.Add(-10 * time.Minute),
+				Source:   probe.UsageSourceClaude,
+				Identity: id,
+				Windows: []probe.UsageWindow{
+					{Key: "five_hour", Used: 0.90, ResetsAt: &shortReset},
+					{Key: "seven_day", Used: 0.88, ResetsAt: &weekReset},
+				},
+			},
+		})
+		if err := reg.Save(w.cfg.Loop.StateDir); err != nil {
+			t.Fatal(err)
+		}
+		res, err := Tick(context.Background(), w.cfg, w.opts(t0))
+		if err != nil {
+			t.Fatalf("Tick() error = %v", err)
+		}
+		if res.Action != string(decide.Handoff) {
+			t.Fatalf("expected Handoff, got %+v", res)
+		}
+		st := loadState(t, w)
+		if !st.PrimaryResetsAt.Equal(weekReset) {
+			t.Fatalf("PrimaryResetsAt = %s, want %s (+7d)", st.PrimaryResetsAt, weekReset)
+		}
+	})
+
+	t.Run("defensively skips NaN and out-of-range windows in quotaSwitchInput", func(t *testing.T) {
+		w := newWorld(t, true, true)
+		w.cfg.Loop.Probe = config.Probe{Kind: "claude", Model: "example-small"}
+		w.cfg.Loop.SwitchAt = 0.85
+		id := probe.UsageIdentity(w.cfg.Loop.PrimaryCandidate())
+		future := t0.Add(time.Hour)
+		reg := &health.Registry{Candidates: map[string]*health.Entry{
+			"primary": {Usage: &probe.Usage{
+				At:       t0.Add(-5 * time.Minute),
+				Source:   probe.UsageSourceClaude,
+				Identity: id,
+				Windows: []probe.UsageWindow{
+					{Key: "bad_nan", Used: math.NaN(), ResetsAt: &future},
+					{Key: "bad_high", Used: 1.5, ResetsAt: &future},
+					{Key: "good", Used: 0.4, ResetsAt: &future},
+				},
+			}},
+		}}
+		tk := &tick{cfg: w.cfg, loop: w.cfg.Loop, fb: w.cfg.FallbackSet, reg: reg, now: t0}
+		got, reset := tk.quotaSwitchInput(state.Primary)
+		if !got.ReadingAvailable || got.Stale || got.HighestUsed != 0.4 || got.Window != "good" || reset != nil {
+			t.Fatalf("unexpected quotaSwitchInput = %+v reset=%v", got, reset)
 		}
 	})
 }
