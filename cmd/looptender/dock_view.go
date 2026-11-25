@@ -111,6 +111,9 @@ type dockReport struct {
 	// withheld wakes across loops, as a plain count. The page itself is
 	// served from dockUsagePath, worded by the same read.
 	UsagePicker string `json:"usagePicker"`
+	// Router is a read-only summary of the local account router when its
+	// directory exists; nil when unconfigured so it adds zero bytes.
+	Router *routerSummary `json:"router,omitempty"`
 	// usage is that page, kept out of this response for its size.
 	usage dockUsagePage
 }

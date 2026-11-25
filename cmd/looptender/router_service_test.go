@@ -422,3 +422,50 @@ func TestRouterServiceSystemdAndValidation(t *testing.T) {
 		t.Fatalf("expected unsupported platform failure on windows, got %d", code)
 	}
 }
+
+func TestRouterServiceRegistrationSummary(t *testing.T) {
+	t.Setenv("BB_THREAD_ID", "")
+	t.Setenv(control.SupervisedLoopVar, "")
+
+	h, dir, _, calls, mu := makeFakeRouterServiceHost(t, "darwin")
+	if got := routerServiceRegistrationSummary(context.Background(), dir, false, h); got != "not_installed" {
+		t.Fatalf("expected not_installed before install, got %q", got)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("expected zero service manager calls when unrecorded, got %v", *calls)
+	}
+
+	if code, _, stderr := runRouterServiceWithHost(h, "install", "--dir", dir); code != exitOK {
+		t.Fatalf("install failed: %d %s", code, stderr)
+	}
+	if got := routerServiceRegistrationSummary(context.Background(), dir, true, h); got != "unavailable" {
+		t.Fatalf("expected offline summary to return unavailable, got %q", got)
+	}
+	if got := routerServiceRegistrationSummary(context.Background(), dir, false, h); got != "loaded" {
+		t.Fatalf("expected loaded summary after install, got %q", got)
+	}
+
+	// Only core loaded -> partial; neither loaded -> absent.
+	h.run = func(_ context.Context, args ...string) (int, error) {
+		mu.Lock()
+		*calls = append(*calls, append([]string(nil), args...))
+		mu.Unlock()
+		if len(args) >= 2 && args[0] == "print" && strings.Contains(args[1], ".front.") {
+			return 113, nil
+		}
+		return 0, nil
+	}
+	if got := routerServiceRegistrationSummary(context.Background(), dir, false, h); got != "partial" {
+		t.Fatalf("expected partial summary when front is absent, got %q", got)
+	}
+
+	h.run = func(_ context.Context, args ...string) (int, error) {
+		if len(args) >= 2 && args[0] == "print" && strings.Contains(args[1], ".router.") {
+			return 113, nil
+		}
+		return 0, nil
+	}
+	if got := routerServiceRegistrationSummary(context.Background(), dir, false, h); got != "absent" {
+		t.Fatalf("expected absent summary when both units are unloaded, got %q", got)
+	}
+}

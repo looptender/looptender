@@ -37,7 +37,7 @@ func dockFixtureReader(t *testing.T) (*dockReader, string) {
 	root := t.TempDir()
 	dir := dockScratch(t, root, dockNow)
 	runsClock(t, dockNow)
-	return &dockReader{directory: dir, refresh: dockDefaultRefresh, staleAfter: defaultStaleAfter, query: inspectDaemon, now: func() time.Time { return dockNow }}, root
+	return &dockReader{directory: dir, refresh: dockDefaultRefresh, staleAfter: defaultStaleAfter, query: inspectDaemon, now: func() time.Time { return dockNow }, routerDir: filepath.Join(root, "router-absent")}, root
 }
 
 func dockLoopNamed(t *testing.T, r dockReport, name string) dockLoop {

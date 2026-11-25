@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -109,10 +110,29 @@ func routerStatusCommand(e env, args []string) int {
 		return exitFailed
 	}
 
+	out := readRouterStatus(dir)
+
+	if *asJSON {
+		enc := json.NewEncoder(e.stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(out)
+		return exitOK
+	}
+	stateWord := "off"
+	if out.Enabled {
+		stateWord = "on"
+	}
+	fmt.Fprintf(e.stdout, "router: %s (directory %s, answering %v, pointed %d)\n", stateWord, out.Directory, out.Answering, out.PointedCount)
+	return exitOK
+}
+
+func readRouterStatus(dir string) routerStatusOut {
 	out := routerStatusOut{Directory: "untrusted"}
 	if _, err := os.Lstat(dir); os.IsNotExist(err) {
 		out.Directory = "missing"
-	} else if _, err := channel.CheckDirectory(dir); err == nil {
+		return out
+	}
+	if _, err := channel.CheckDirectory(dir); err == nil {
 		out.Directory = "private"
 		if st, err := readRouterState(dir); err == nil {
 			out.Enabled = st.Enabled
@@ -128,19 +148,29 @@ func routerStatusCommand(e env, args []string) int {
 			out.Answering = true
 		}
 	}
+	return out
+}
 
-	if *asJSON {
-		enc := json.NewEncoder(e.stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
-		return exitOK
+func readRouterSummary(ctx context.Context, flagDir string, offline bool) (routerSummary, bool) {
+	dir, err := resolveRouterDir(flagDir)
+	if err != nil {
+		return routerSummary{}, false
 	}
-	stateWord := "off"
-	if out.Enabled {
-		stateWord = "on"
+	st := readRouterStatus(dir)
+	if st.Directory == "missing" {
+		return routerSummary{}, false
 	}
-	fmt.Fprintf(e.stdout, "router: %s (directory %s, answering %v, pointed %d)\n", stateWord, out.Directory, out.Answering, out.PointedCount)
-	return exitOK
+	svc := "unavailable"
+	if st.Directory == "private" {
+		svc = routerServiceRegistrationSummary(ctx, dir, offline, localRouterServiceHost())
+	}
+	return routerSummary{
+		Directory:    st.Directory,
+		Answering:    st.Answering,
+		Enabled:      st.Enabled,
+		PointedCount: st.PointedCount,
+		Service:      svc,
+	}, true
 }
 
 func supervisedCaller() bool {
