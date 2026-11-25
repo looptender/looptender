@@ -98,7 +98,23 @@ test("long names, versions and paths wrap: every text container allows a break a
   const ui = mount([long]);
   try {
     const chip = await ui.summary.findByRole("button", { name: /^looptender: awaiting user/ });
-    assert.equal((chip as HTMLElement).style.overflowWrap, "anywhere"); assert.equal((chip as HTMLElement).style.minWidth, "0px");
+    assert.equal((chip as HTMLElement).style.whiteSpace, "nowrap");
+    assert.equal((chip as HTMLElement).style.overflow, "hidden");
+    assert.equal((chip as HTMLElement).style.textOverflow, "ellipsis");
+    assert.equal((chip as HTMLElement).style.minWidth, "0px");
+    assert.equal((chip as HTMLElement).style.maxWidth, "100%");
+    assert.equal((chip as HTMLElement).style.flexShrink, "1");
+    assert.equal((chip as HTMLElement).style.overflowWrap, "");
+    assert.equal((chip as HTMLElement).style.paddingLeft, "8px");
+    const chipText = chip.querySelector("span") as HTMLElement;
+    assert.ok(chipText);
+    assert.equal(chipText.style.whiteSpace, "nowrap");
+    assert.equal(chipText.style.overflow, "hidden");
+    assert.equal(chipText.style.textOverflow, "ellipsis");
+    assert.equal(chipText.style.minWidth, "0px");
+    assert.equal(chipText.style.maxWidth, "100%");
+    const css = ui.summary.container.querySelector("style")?.textContent ?? "";
+    assert.match(css, /button\[data-kg=chip\] \{ padding: 0 0 0 8px !important; min-width: 0; \}/);
     const section = await ui.details.findByRole("region", { name: /Loop a-very-long/ });
     assert.equal((section as HTMLElement).style.overflowWrap, "anywhere");
     const sentence = section.querySelector(".kg-actions .kg-t") as HTMLElement;
@@ -137,4 +153,74 @@ test("on a phone Pause is two steps even for this thread's own loop; on a wide s
   const wide = mount([loop()]);
   try { assert.ok(await wide.details.findByRole("button", { name: "Pause example-loop" })); } finally { done(wide.summary, wide.details); phone = true; }
   void calls;
+});
+
+test("checks have stopped omits build differs on the collapsed chip while keeping build details in the expanded card", async () => {
+  const diffRuntime = { ...base.runtime, recordedBuild: "v0.2.0-dev.1111111", binaryComparison: "different" };
+  const diffFreshness = { state: "different", text: "Different build from the installed one", action: "Start checks to run the installed build." };
+  for (const daemonState of ["not_recorded", "responsive"]) {
+    const ui = mount([loop({ controlState: "enabled" }, { schedule: { overdue: true, message: "No check has run for 2 hours." }, daemon: { state: daemonState }, runtime: diffRuntime, buildFreshness: diffFreshness })]);
+    try {
+      const chip = await ui.summary.findByRole("button", { name: "looptender: checks have stopped" });
+      assert.equal(chip.textContent, "looptender: checks have stopped");
+      assert.equal((chip.textContent ?? "").includes("build differs"), false);
+      assert.ok(await ui.details.findByText("Different build from the installed one"));
+      assert.ok(within(ui.details.getByRole("list", { name: "Details" })).getByText(/^Build: last check ran v0\.2\.0-dev\.1111111 · installed v0\.2\.0-dev\.aaaaaaa/));
+    } finally { done(ui.summary, ui.details); }
+  }
+
+  for (const [label, candidate, expected] of [
+    ["enabled with stopped daemon", loop({ controlState: "enabled" }, { daemon: { state: "not_recorded" }, runtime: diffRuntime }), "looptender: enabled"],
+    ["completed", loop({ controlState: "completed" }, { runtime: diffRuntime }), "looptender: completed"],
+    ["moved", loop({ controlState: "awaiting user" }, { moved: { held: true, text: "Moved." }, runtime: diffRuntime }), "looptender: moved, resume to start"],
+    ["watching", loop({ controlState: "enabled", supervising: false }, { runtime: diffRuntime }), "looptender: watching thr_example"],
+    ["enabled with responsive daemon", loop({ controlState: "enabled" }, { daemon: { state: "responsive" }, runtime: diffRuntime }), "looptender: enabled · build differs"],
+  ] as const) {
+    const ui = mount([candidate]);
+    try {
+      await ui.summary.findByRole("button", { name: expected });
+    } finally {
+      done(ui.summary, ui.details);
+    }
+    void label;
+  }
+});
+
+test("every composer-bar chip variant shares the single-line ellipsis and left-spacing constraints", async () => {
+  const assertSingleLineChip = (chip: HTMLElement) => {
+    assert.equal(chip.style.whiteSpace, "nowrap");
+    assert.equal(chip.style.overflow, "hidden");
+    assert.equal(chip.style.textOverflow, "ellipsis");
+    assert.equal(chip.style.minWidth, "0px");
+    assert.equal(chip.style.maxWidth, "100%");
+    assert.equal(chip.style.flexShrink, "1");
+    assert.equal(chip.style.paddingLeft, "8px");
+    assert.equal(chip.style.overflowWrap, "");
+    const text = chip.querySelector("span") as HTMLElement;
+    assert.ok(text);
+    assert.equal(text.style.whiteSpace, "nowrap");
+    assert.equal(text.style.overflow, "hidden");
+    assert.equal(text.style.textOverflow, "ellipsis");
+    assert.equal(text.style.minWidth, "0px");
+    assert.equal(text.style.maxWidth, "100%");
+  };
+  const props = (id: string) => ({ threadId: id, projectId: "proj_example", environment: null, segments: [], isExpanded: false, onToggle() {} });
+  const variants: [string, Record<string, () => unknown>, string][] = [
+    ["covered child", { forThread: () => ({ loops: [], errors: [] }), newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }), lineage: () => ({ child: true, coveredBy: { threadId: "thr_parent_example", loop: "looptender-coordinator-example" } }) }, "Covered by looptender-coordinator-example"],
+    ["bare child", { forThread: () => ({ loops: [], errors: [] }), newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }), lineage: () => ({ child: true }) }, "looptender"],
+    ["add entry", { forThread: () => ({ loops: [], errors: [] }), newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }), lineage: () => ({ child: false }) }, "Add to Looptender"],
+    ["checking status", { forThread: () => new Promise(() => {}), newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }), lineage: () => ({ child: false }) }, "looptender: checking status"],
+    ["status unavailable", { forThread: () => { throw new Error("offline"); }, newThread: () => ({ ok: true, message: "", outcome: { state: "none", message: "" } }), lineage: () => ({ child: false }) }, "looptender: status unavailable"],
+    ["multiple loops", { forThread: () => ({ loops: [loop({ loop: "one", configPath: "/private/example/1.yaml" }), loop({ loop: "two", configPath: "/private/example/2.yaml" })], errors: [] }), lineage: () => ({ child: false }) }, "looptender: 2 matching loops"],
+  ];
+  for (const [kind, rpc, name] of variants) {
+    const ui = renderSlot({ component: seg.summary }, props(`thr_chip_${++n}`), { rpc });
+    try {
+      const chip = await ui.findByRole("button", { name });
+      assertSingleLineChip(chip);
+    } finally {
+      done(ui);
+    }
+    void kind;
+  }
 });
