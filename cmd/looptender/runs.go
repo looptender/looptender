@@ -51,6 +51,9 @@ const (
 	recordRecorded    = "recorded"
 	recordNotRecorded = "not_recorded"
 	recordUnavailable = "unavailable"
+	// Registration reasons when Registration is not_recorded.
+	registrationNoRunYet   = "registered_no_run_yet"
+	registrationNotInGraph = "not_recorded_in_graph"
 )
 
 // runsRefPattern is every character a recorded reference can contain. --id is
@@ -72,19 +75,30 @@ type runsLoop struct {
 	// Registration says whether the graph has seen this registry reference
 	// used: recorded, not_recorded, or unavailable when the graph is.
 	Registration string `json:"registration,omitempty"`
+	// RegistrationReason distinguishes a loop registered before its first run
+	// (registered_no_run_yet) from one whose existing graph has not recorded
+	// the reference (not_recorded_in_graph).
+	RegistrationReason string `json:"registrationReason,omitempty"`
 	// Binding is set with a registry selector: available when the registered
 	// configuration still names this loop and runtime directory, otherwise
 	// unavailable, and then nothing is read from the registered directory.
-	Binding      string      `json:"binding,omitempty"`
-	Loop         string      `json:"loop,omitempty"`
-	Graph        runsGraph   `json:"graph"`
-	Control      runsControl `json:"control"`
-	Conflict     string      `json:"conflict,omitempty"`
-	ActiveTarget runsTarget  `json:"activeTarget"`
-	Current      *runsRun    `json:"current,omitempty"`
-	Recent       []runsRun   `json:"recent"`
-	OmittedRuns  int         `json:"omittedRuns"`
-	Blocker      runsBlocker `json:"blocker"`
+	Binding       string                `json:"binding,omitempty"`
+	Loop          string                `json:"loop,omitempty"`
+	Registrations []runsRegistrationRef `json:"registrations,omitempty"`
+	Graph         runsGraph             `json:"graph"`
+	Control       runsControl           `json:"control"`
+	Conflict      string                `json:"conflict,omitempty"`
+	ActiveTarget  runsTarget            `json:"activeTarget"`
+	Current       *runsRun              `json:"current,omitempty"`
+	Recent        []runsRun             `json:"recent"`
+	OmittedRuns   int                   `json:"omittedRuns"`
+	Blocker       runsBlocker           `json:"blocker"`
+}
+
+type runsRegistrationRef struct {
+	RegistrationID string `json:"registrationId"`
+	Registration   string `json:"registration"`
+	Reason         string `json:"reason,omitempty"`
 }
 
 type runsGraph struct {
@@ -385,17 +399,60 @@ func readRegisteredRunsWith(entry registry.Entry, allEntries []registry.Entry, a
 				Owner: runsOwner{Availability: blockerUnknown, Reason: "binding_unavailable", Supervised: runsSupervised{Availability: "registry_not_consulted"}},
 				Lock:  runsUnavailable{Availability: recordUnavailable, Reason: "lock_holder_not_identified"}}}, nil, true
 	}
-	c := &runsContext{dir: entry.StateDir, cfg: cfg, limit: limit, staleAfter: stale, registry: allEntries, registryKnown: allKnown, viaRegistry: true, validated: validated}
+	c := &runsContext{dir: entry.StateDir, cfg: cfg, limit: limit, staleAfter: stale, registry: allEntries, registryKnown: allKnown, viaRegistry: true, selectedRegistration: entry.ID, validated: validated}
 	loop, bad := c.readLoop(limitRuns)
 	loop.RegistrationID, loop.Loop, loop.Binding = entry.ID, entry.Loop, recordAvailable
-	loop.Registration = recordUnavailable
-	if loop.Graph.Availability == rungraph.Available || loop.Graph.Availability == rungraph.Missing {
-		loop.Registration = recordNotRecorded
-		if n, status := c.g.Lookup(entry.ID); status == rungraph.Found && n.Type == rungraph.RegistrationNode {
-			loop.Registration = recordRecorded
+	loop.Registration, loop.RegistrationReason = c.registrationState(entry.ID)
+	return loop, c, bad
+}
+
+func (c *runsContext) registrationState(id string) (string, string) {
+	switch c.available {
+	case rungraph.Available:
+		if n, status := c.g.Lookup(id); status == rungraph.Found && n.Type == rungraph.RegistrationNode {
+			return recordRecorded, ""
+		}
+		return recordNotRecorded, registrationNotInGraph
+	case rungraph.Missing:
+		return recordNotRecorded, registrationNoRunYet
+	default:
+		return recordUnavailable, ""
+	}
+}
+
+func (c *runsContext) ownRegistrations() []runsRegistrationRef {
+	if !c.registryKnown {
+		return nil
+	}
+	own, err := canonicalFuturePath(c.dir)
+	if err != nil {
+		own = c.dir
+	}
+	var out []runsRegistrationRef
+	for _, entry := range c.registry {
+		if entry.StateDir != own {
+			continue
+		}
+		if _, ok := c.validConfig(entry); !ok {
+			out = append(out, runsRegistrationRef{RegistrationID: entry.ID, Registration: recordUnavailable})
+			continue
+		}
+		reg, reason := c.registrationState(entry.ID)
+		out = append(out, runsRegistrationRef{RegistrationID: entry.ID, Registration: reg, Reason: reason})
+	}
+	return out
+}
+
+func (c *runsContext) isRegisteredRef(ref string) bool {
+	if c.viaRegistry {
+		return c.selectedRegistration != "" && ref == c.selectedRegistration
+	}
+	for _, r := range c.ownRegistrations() {
+		if r.RegistrationID == ref && r.Registration != recordUnavailable {
+			return true
 		}
 	}
-	return loop, c, bad
+	return false
 }
 
 func runsEntries(dir, id string, all bool) ([]registry.Entry, bool) {
@@ -418,10 +475,11 @@ type runsContext struct {
 	active    string
 	// registry is consulted only to resolve a blocking conversation to a
 	// registered loop. viaRegistry selects the registered-view display rules.
-	registry      []registry.Entry
-	registryKnown bool
-	viaRegistry   bool
-	staleAfter    time.Duration
+	registry             []registry.Entry
+	registryKnown        bool
+	viaRegistry          bool
+	selectedRegistration string
+	staleAfter           time.Duration
 	// candidateList is the registry's validated BB loops, built once.
 	candidateList    []runsCandidate
 	candidatesLoaded bool
@@ -471,6 +529,9 @@ func (c *runsContext) readLoop(limitRuns int) (runsLoop, bool) {
 	}
 	c.waiting = c.blocker(st, stateKnown, ctl, controlKnown)
 	loop.Blocker = c.waiting
+	if c.registryKnown && !c.viaRegistry {
+		loop.Registrations = c.ownRegistrations()
+	}
 	if c.available != rungraph.Available {
 		return loop, failed
 	}
@@ -643,11 +704,17 @@ func (c *runsContext) readNode(ref string) *runsNode {
 	g := &c.g
 	if g.LoopID == "" {
 		out.Status = rungraph.NotRecorded
+		if c.isRegisteredRef(ref) && c.available == rungraph.Missing {
+			out.Reason = registrationNoRunYet
+		}
 		return out
 	}
 	n, status := g.Lookup(ref)
 	out.Status = status
 	if status != rungraph.Found {
+		if status == rungraph.NotRecorded && c.isRegisteredRef(ref) {
+			out.Reason = registrationNotInGraph
+		}
 		return out
 	}
 	out.Type, out.Source = n.Type, n.Source
@@ -729,13 +796,30 @@ func printRuns(w io.Writer, r runsReport) {
 	for _, l := range r.Loops {
 		fmt.Fprintln(w)
 		if l.RegistrationID != "" {
-			fmt.Fprintf(w, "registration: %s (%s) loop: %s\n", l.RegistrationID, l.Registration, runsSafe(l.Loop))
+			switch l.RegistrationReason {
+			case registrationNoRunYet:
+				fmt.Fprintf(w, "registration: %s (%s: registered, no run yet) loop: %s\n", l.RegistrationID, l.Registration, runsSafe(l.Loop))
+			case registrationNotInGraph:
+				fmt.Fprintf(w, "registration: %s (%s: loop has runs not yet linked to this reference) loop: %s\n", l.RegistrationID, l.Registration, runsSafe(l.Loop))
+			default:
+				fmt.Fprintf(w, "registration: %s (%s) loop: %s\n", l.RegistrationID, l.Registration, runsSafe(l.Loop))
+			}
 			if l.Binding != recordAvailable {
 				fmt.Fprintln(w, "binding: unavailable; the registered configuration is missing or now names another loop or runtime directory, so nothing was read")
 				continue
 			}
 		} else if l.Loop != "" {
 			fmt.Fprintf(w, "loop: %s\n", runsSafe(l.Loop))
+		}
+		for _, reg := range l.Registrations {
+			switch reg.Reason {
+			case registrationNoRunYet:
+				fmt.Fprintf(w, "registration: %s (%s: registered, no run yet)\n", reg.RegistrationID, reg.Registration)
+			case registrationNotInGraph:
+				fmt.Fprintf(w, "registration: %s (%s: loop has runs not yet linked to this reference)\n", reg.RegistrationID, reg.Registration)
+			default:
+				fmt.Fprintf(w, "registration: %s (%s)\n", reg.RegistrationID, reg.Registration)
+			}
 		}
 		fmt.Fprintf(w, "graph: %s", l.Graph.Availability)
 		if l.Graph.LoopID != "" {
@@ -777,9 +861,14 @@ func printRuns(w io.Writer, r runsReport) {
 	if n := r.Node; n != nil {
 		fmt.Fprintf(w, "\nreference %s: %s", runsSafe(n.Ref), n.Status)
 		if n.Status != rungraph.Found {
-			if n.Status == recordUnavailable && n.Reason != "" {
+			switch {
+			case n.Status == rungraph.NotRecorded && n.Reason == registrationNoRunYet:
+				fmt.Fprint(w, " (registered in the registry, no run yet)")
+			case n.Status == rungraph.NotRecorded && n.Reason == registrationNotInGraph:
+				fmt.Fprint(w, " (registered in the registry, not yet recorded in the existing graph)")
+			case n.Status == recordUnavailable && n.Reason != "":
 				fmt.Fprintf(w, " (%s; a child listing that is not current is not followed)", n.Reason)
-			} else if n.Status == recordUnavailable {
+			case n.Status == recordUnavailable:
 				fmt.Fprint(w, " (the graph or binding could not be read, so the reference may exist)")
 			}
 			fmt.Fprintln(w)

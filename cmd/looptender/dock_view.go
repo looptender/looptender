@@ -595,6 +595,7 @@ type dockChainEntry struct {
 	acct           dockAccountFacts
 	identity       string
 	probeOK        bool
+	probeClass     string
 }
 
 // dockRoute is one route across every loop that names it. keepgoing knows it
@@ -641,8 +642,12 @@ type dockRoute struct {
 	// is too old), or empty. Routes are listed with these first.
 	Attention string `json:"attention,omitempty"`
 	// Lanes is always unknown in this schema.
-	Lanes    string `json:"lanes"`
-	identity string
+	Lanes           string `json:"lanes"`
+	identity        string
+	probeClass      string
+	probeAt         *time.Time
+	probeOK         bool
+	probeFromActive bool
 }
 
 type dockRouteLoop struct {
@@ -733,8 +738,97 @@ func dockRouteMeta(tool, model, account, provider, effort, enter string) []strin
 	return out
 }
 
+// dockMaxUsageLimitAge is the longest rolling provider quota window (7 days);
+// an undated usage-limit record older than this is historical, not active.
+const dockMaxUsageLimitAge = 7 * 24 * time.Hour
+
+func dockLoopInactive(l dockLoop) bool {
+	if l.Archived != nil {
+		return true
+	}
+	switch l.State {
+	case "stopped", "finished", "off":
+		return true
+	}
+	return false
+}
+
+// dockLatestEndedReset returns the latest window reset time when every window
+// in u has already ended (Availability == "stale" with at least one reset).
+func dockLatestEndedReset(u dockUsageTarget) time.Time {
+	if u.Availability != "stale" || len(u.Windows) == 0 {
+		return time.Time{}
+	}
+	var latest time.Time
+	for _, w := range u.Windows {
+		if !w.Stale || w.ResetsAt == nil {
+			return time.Time{}
+		}
+		if w.ResetsAt.After(latest) {
+			latest = *w.ResetsAt
+		}
+	}
+	return latest
+}
+
+// dockUsageWindowEndedBefore reports whether u shows every recorded window has
+// ended and eventAt was not after the latest ended reset.
+func dockUsageWindowEndedBefore(u dockUsageTarget, eventAt *time.Time) bool {
+	latest := dockLatestEndedReset(u)
+	if latest.IsZero() {
+		return false
+	}
+	return eventAt == nil || !eventAt.After(latest)
+}
+
+// dockRateLimitExpired reports whether a rate_limit probe failure is historical
+// rather than an active limit.
+func dockRateLimitExpired(probeAt time.Time, u dockUsageTarget, now time.Time, fromActiveLoop bool, staleAfter time.Duration) (bool, string) {
+	if dockUsageWindowEndedBefore(u, &probeAt) {
+		return true, "that window has ended"
+	}
+	if u.Availability == "available" {
+		return false, ""
+	}
+	if !probeAt.IsZero() && now.Sub(probeAt) > dockMaxUsageLimitAge {
+		return true, "that limit window may have ended"
+	}
+	if !fromActiveLoop && staleAfter > 0 && !probeAt.IsZero() && now.Sub(probeAt) > staleAfter {
+		return true, "that limit is from a loop that is no longer running"
+	}
+	return false, ""
+}
+
+// dockDepartureExpired reports whether a dockLeftLimit departure is no longer
+// an active limit on the route.
+func dockDepartureExpired(d dockDeparture, u dockUsageTarget, probeOK bool, probeAt *time.Time, now time.Time, staleAfter time.Duration) (bool, string) {
+	if d.How != dockLeftLimit || d.ResetPassed {
+		return false, ""
+	}
+	if probeOK && probeAt != nil && (d.At == nil || probeAt.After(*d.At)) {
+		return true, "A later test passed."
+	}
+	if d.ResetsAt != nil || d.ResetFar {
+		return false, ""
+	}
+	if dockUsageWindowEndedBefore(u, d.At) {
+		return true, "That limit window has since ended."
+	}
+	if d.At != nil && now.Sub(*d.At) > dockMaxUsageLimitAge {
+		return true, "That limit window may have ended."
+	}
+	if d.loopInactive && staleAfter > 0 && (d.At == nil || now.Sub(*d.At) > staleAfter) {
+		return true, "The loop is no longer running."
+	}
+	return false, ""
+}
+
 // dockRoutes groups every loop's chain by route. Newest evidence wins.
 func dockRoutes(loops []dockLoop, now time.Time) ([]dockRoute, int) {
+	return dockRoutesWithStale(loops, now, defaultStaleAfter)
+}
+
+func dockRoutesWithStale(loops []dockLoop, now time.Time, staleAfter time.Duration) ([]dockRoute, int) {
 	index := map[string]int{}
 	routes := []dockRoute{}
 	omitted := 0
@@ -747,6 +841,7 @@ func dockRoutes(loops []dockLoop, now time.Time) ([]dockRoute, int) {
 		m[i].by[pos] = append(m[i].by[pos], ref)
 	}
 	for _, l := range loops {
+		inactive := dockLoopInactive(l)
 		for _, e := range l.Chain.Entries {
 			i, ok := index[e.Route]
 			if !ok {
@@ -765,6 +860,9 @@ func dockRoutes(loops []dockLoop, now time.Time) ([]dockRoute, int) {
 			switch {
 			case e.ProbeAge != nil && (n.ProbeAge == nil || *e.ProbeAge < *n.ProbeAge) && e.Readiness != "current":
 				n.Readiness, n.Phrase, n.ProbeAge = e.Readiness, e.Phrase, e.ProbeAge
+				n.probeClass, n.probeAt, n.probeOK, n.probeFromActive = e.probeClass, e.ProbedAt, e.probeOK, !inactive
+			case e.ProbeAge != nil && n.ProbeAge != nil && *e.ProbeAge == *n.ProbeAge && e.Readiness == n.Readiness && !inactive:
+				n.probeFromActive = true
 			case e.Position > 0 && n.ProbeAge == nil && n.Readiness == "unknown" && e.Readiness != "current":
 				// Never tested anywhere: say why (turned off, or not tested yet).
 				n.Readiness, n.Phrase = e.Readiness, e.Phrase
@@ -777,7 +875,7 @@ func dockRoutes(loops []dockLoop, now time.Time) ([]dockRoute, int) {
 			if a := l.Away; a != nil {
 				for _, d := range a.Departures {
 					if d.Position == e.Position {
-						d.Others, d.loop, d.key = a.departureText(d, l.Name, now), l.Name, l.Key
+						d.Others, d.loop, d.key, d.loopInactive = a.departureText(d, l.Name, now), l.Name, l.Key, inactive
 						n.LeftBy = append(n.LeftBy, d)
 					}
 				}
@@ -829,6 +927,24 @@ func dockRoutes(loops []dockLoop, now time.Time) ([]dockRoute, int) {
 	}
 	for i := range routes {
 		r := &routes[i]
+		if r.Readiness == "not_ready" && r.probeClass == "rate_limit" && r.probeAt != nil {
+			if expired, note := dockRateLimitExpired(*r.probeAt, r.Usage, now, r.probeFromActive, staleAfter); expired {
+				r.Readiness = "unknown"
+				r.Phrase = dockProbePhrase(false, "rate_limit", dockAgo(now, *r.probeAt)) + "; " + note
+			}
+		}
+		for k := range r.LeftBy {
+			d := &r.LeftBy[k]
+			if d.atLimit() {
+				if expired, note := dockDepartureExpired(*d, r.Usage, r.probeOK, r.probeAt, now, staleAfter); expired {
+					d.expired = true
+					if note != "" && d.expiredNote == "" {
+						d.expiredNote = note
+						d.Others = txt(d.Others, " "+note)
+					}
+				}
+			}
+		}
 		r.Standby, r.Unknown = group(stand[i], r), group(unknown[i], r)
 		if n := len(r.RunningNow); n > 0 {
 			r.UseText = dockPlural(n, "loop on it now", "loops on it now")
@@ -1225,6 +1341,12 @@ func dockShareAcrossLoops(loops []dockLoop, routes []dockRoute, now time.Time) {
 				e.Usage.FromAnotherLoop = true
 				e.Usage.ReadLine = "Usage read " + dockAgo(now, *u.ObservedAt) + ", by another loop on this route"
 			}
+			if e.Readiness == "not_ready" && e.probeClass == "rate_limit" && e.ProbedAt != nil {
+				if expired, note := dockRateLimitExpired(*e.ProbedAt, e.Usage, now, true, 0); expired {
+					e.Readiness = "unknown"
+					e.Phrase = dockProbePhrase(false, "rate_limit", dockAgo(now, *e.ProbedAt)) + "; " + note
+				}
+			}
 			newer := r.ProbeAge != nil && (e.ProbeAge == nil || *r.ProbeAge < *e.ProbeAge)
 			if newer && r.Phrase != e.Phrase && r.Readiness != "current" && r.Readiness != "main" && r.Readiness != "unknown" {
 				e.After = append(e.After, "Another loop tested it more recently ("+strings.ToLower(r.Phrase[:1])+r.Phrase[1:]+").")
@@ -1492,7 +1614,7 @@ func buildDockReport(inputs []dockInput, now time.Time, refresh, staleAfter time
 		}
 		return strings.ToLower(r.Loops[i].Name) < strings.ToLower(r.Loops[j].Name)
 	})
-	r.Routes, r.RoutesOmitted = dockRoutes(r.Loops, now)
+	r.Routes, r.RoutesOmitted = dockRoutesWithStale(r.Loops, now, staleAfter)
 	dockShareAcrossLoops(r.Loops, r.Routes, now)
 	r.Allowances, r.AllowancesOmitted = dockAllowances(r.Routes, r.Loops, now)
 	dockMarkOldUsage(&r, staleAfter)
@@ -2158,7 +2280,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			need = nil
 		}
 	}
-	if dockLoopInactive(l, snap, need, now) {
+	if dockLoopCheckInactive(l, snap, need, now) {
 		l.Inactive = true
 		need = nil
 	}
@@ -2167,10 +2289,10 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 
 const dockInactiveAfter = 72 * time.Hour
 
-// dockLoopInactive reports whether a non-archived loop has stopped checking
+// dockLoopCheckInactive reports whether a non-archived loop has stopped checking
 // or had no new check activity for at least dockInactiveAfter (3 days).
 // View grouping only: never mutates loop state or archive.json on disk.
-func dockLoopInactive(l dockLoop, snap *clientSnapshot, need *dockNeed, now time.Time) bool {
+func dockLoopCheckInactive(l dockLoop, snap *clientSnapshot, need *dockNeed, now time.Time) bool {
 	if snap != nil && snap.Archived != nil {
 		return false
 	}
@@ -2948,6 +3070,12 @@ func dockHandoffChain(in *dockChainInput, use dockRouteUse, test dockTesting, f 
 			// health.Due: the scheduled tests allowed per day are spent.
 			notTested = "the day's tests are used up"
 		}
+		if ok && row.Last != nil {
+			e.probeClass = row.Last.ErrorClass
+		}
+		if ok {
+			e.Usage = dockUsageOf(row.Usage, now)
+		}
 		switch {
 		case cand.Disabled:
 			e.Readiness, e.Phrase = "disabled", "Turned off in its configuration"
@@ -2978,13 +3106,18 @@ func dockHandoffChain(in *dockChainInput, use dockRouteUse, test dockTesting, f 
 				}
 			}
 		default:
-			e.Readiness, e.Phrase = "not_ready", dockProbePhrase(row.Last.OK, row.Last.ErrorClass, age)
+			if row.Last.ErrorClass == "rate_limit" {
+				if expired, note := dockRateLimitExpired(row.Last.At, e.Usage, now, true, 0); expired {
+					e.Readiness, e.Phrase = "unknown", dockProbePhrase(row.Last.OK, row.Last.ErrorClass, age)+"; "+note
+				} else {
+					e.Readiness, e.Phrase = "not_ready", dockProbePhrase(row.Last.OK, row.Last.ErrorClass, age)
+				}
+			} else {
+				e.Readiness, e.Phrase = "not_ready", dockProbePhrase(row.Last.OK, row.Last.ErrorClass, age)
+			}
 			if row.Last.OK && notTested != "" {
 				e.Phrase += "; " + notTested
 			}
-		}
-		if ok {
-			e.Usage = dockUsageOf(row.Usage, now)
 		}
 		if e.Usage.Availability == "unavailable" {
 			e.Usage.Reason = dockUsageReason(cand, row, ok, e.Current)

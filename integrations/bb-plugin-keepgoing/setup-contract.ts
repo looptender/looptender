@@ -245,7 +245,9 @@ export function slugFromPredecessor(
   let base = predecessor.loop;
   if (/^bb-thr[-_]/.test(base) && predecessor.displayName) {
     const fromDisplay = slugFromTitle(predecessor.displayName, "");
-    if (fromDisplay && !fromDisplay.startsWith("bb-")) base = fromDisplay;
+    if (fromDisplay && fromDisplay !== "bb-" && !/^(?:bb-)?thr[-_]/.test(fromDisplay)) {
+      base = fromDisplay;
+    }
   }
   const numbered = base.match(/^(.*)-(\d+)$/);
   const stem = toSlug(numbered ? numbered[1]! : base).slice(0, 56).replace(/-+$/g, "") || "loop";

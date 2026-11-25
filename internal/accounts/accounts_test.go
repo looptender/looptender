@@ -309,3 +309,70 @@ func TestLoginProjectionNamesSelectedCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestAccountsRemoveOptimisticRevisionAndPrivacy(t *testing.T) {
+	dir, first := fixture(t)
+	credDir := filepath.Join(t.TempDir(), "cred-dir")
+	if err := os.MkdirAll(credDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	credFile := filepath.Join(credDir, "auth.json")
+	if err := os.WriteFile(credFile, []byte(`{"example":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var second Entry
+	err := Update(dir, func(f *File) error {
+		second = NewEntry(*f, Entry{
+			Label:     "Example explicit",
+			Provider:  "codex",
+			Mode:      "explicit_directory",
+			Directory: credDir,
+			CLI:       filepath.Join(dir, "cli"),
+			Workdir:   dir,
+		}, "thr_example_owner", time.Now().UTC(), os.Environ())
+		f.Entries = append(f.Entries, second)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Mismatched revision refuses without modifying accounts.json.
+	if _, err := Remove(dir, second.ID, strings.Repeat("00", 16)); !errors.Is(err, ErrChanged) {
+		t.Fatalf("expected ErrChanged on revision mismatch, got %v", err)
+	}
+	if _, err := Remove(dir, "not-a-token", ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("expected ErrInvalid on invalid id, got %v", err)
+	}
+
+	// Matching revision removes only the target entry and leaves disk credentials untouched.
+	removed, err := Remove(dir, second.ID, second.Revision)
+	if err != nil {
+		t.Fatalf("remove with matching revision: %v", err)
+	}
+	if removed.ID != second.ID || removed.Label != second.Label {
+		t.Fatalf("unexpected removed entry: %+v", removed)
+	}
+	f, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Entries) != 1 || f.Entries[0].ID != first.ID {
+		t.Fatalf("expected only first entry remaining, got %+v", f.Entries)
+	}
+	if b, err := os.ReadFile(credFile); err != nil || string(b) != `{"example":true}` {
+		t.Fatalf("provider directory/file must not be touched: err=%v bytes=%q", err, b)
+	}
+
+	// Removing the same ID again fails cleanly with ErrChanged; empty revision removes remaining entry.
+	if _, err := Remove(dir, second.ID, ""); !errors.Is(err, ErrChanged) {
+		t.Fatalf("expected ErrChanged on missing id, got %v", err)
+	}
+	if _, err := Remove(dir, first.ID, ""); err != nil {
+		t.Fatalf("remove without revision failed: %v", err)
+	}
+	f, err = Load(dir)
+	if err != nil || len(f.Entries) != 0 {
+		t.Fatalf("expected empty entries, got %+v (err=%v)", f.Entries, err)
+	}
+}

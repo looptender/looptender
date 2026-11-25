@@ -646,6 +646,13 @@ details[open] > .how-summary::before { transform: rotate(45deg); }
 .account-quota .work-facts { margin: .8rem 0; font-variant-numeric: tabular-nums; }
 .account-quota-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .8rem; }
 .account-quota .btn { white-space: normal; max-width: 100%; min-height: 2.75rem; }
+.account-remove { margin-top: 1.2rem; padding-top: 1rem; border-top: 1px solid var(--line); min-width: 0; overflow-wrap: anywhere; }
+.account-remove-review { border: 1px solid var(--border-ui); border-radius: var(--radius); padding: .9rem 1rem; background: var(--sunk); }
+.account-remove-review h4 { margin: 0 0 .45rem; font-size: .95rem; }
+.account-remove-review p { margin: .35rem 0; max-width: 72ch; color: var(--ink); }
+.account-remove-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .8rem; }
+.account-remove .btn, .account-remove-result .btn { white-space: normal; max-width: 100%; min-height: 2.75rem; }
+.account-remove-result { margin-top: .9rem; }
 
 /* Configuration uses ordinary labelled controls, retaining drafts on reads. */
 .route-editor { overflow-wrap: anywhere; min-width: 0; }

@@ -217,6 +217,7 @@ type dockServed struct {
 	AccountQuotaProviders   []string `json:"accountQuotaProviders,omitempty"` // explicit provider allowlist; absent means legacy Codex only
 	AccountQuota            bool     `json:"accountQuota,omitempty"`          // explicit reviewed account-scoped refresh
 	AccountConnectProviders []string `json:"accountConnectProviders,omitempty"`
+	AccountRemove           bool     `json:"accountRemove,omitempty"`
 	SendAllowanceEdit       bool     `json:"sendAllowanceEdit,omitempty"`
 	AccountSelectionReview  bool     `json:"accountSelectionReview,omitempty"`
 }

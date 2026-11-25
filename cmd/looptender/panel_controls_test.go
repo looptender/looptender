@@ -53,7 +53,7 @@ func TestTheDefaultPanelPausesStopsAndResumesOnly(t *testing.T) {
 		t.Fatalf("build replacement offered: %d %+v", resp.StatusCode, p)
 	}
 	// The other changes' endpoints answer nothing.
-	for _, prefix := range []string{panelRoutesPrefix, panelAccountConnectPrefix, panelAccountSelectionPrefix, panelAccountQuotaPrefix, panelSendAllowancePrefix} {
+	for _, prefix := range []string{panelRoutesPrefix, panelAccountConnectPrefix, panelAccountSelectionPrefix, panelAccountQuotaPrefix, panelAccountRemovePrefix, panelSendAllowancePrefix} {
 		req, _ := http.NewRequest(http.MethodPost, w.page+prefix+"x/prepare", strings.NewReader(`{}`))
 		req.Header.Set("Origin", w.origin)
 		req.Header.Set("Sec-Fetch-Site", "same-origin")

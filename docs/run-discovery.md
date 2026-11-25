@@ -2,7 +2,7 @@
 
 looptender should answer “what is running, where is its conversation, and which run is blocking it?” through durable local references. Users should be able to follow those references immediately in CLI/JSON output, without reconstructing a scheduled run from timestamps, Git history or directory searches. The optional menu and BB plugin should consume the same contract.
 
-This is a data and navigation model in progress. Three parts exist in source and are in v0.2.0: the [identity and run-boundary contract](#identity-and-run-boundary-contract-d1-internal), the [persisted reference graph](#persisted-reference-graph-d2) that records it in each loop's state directory, and the read-only [`keepgoing runs` command](#cli-navigation-d3) that shows it. It also shows [what a loop is waiting on](#what-a-loop-is-waiting-on-d4-partial): lanes and the owning conversation. There is no provider-link resolver, lock-holder lookup or GUI navigation. The [D1–D6 roadmap criteria](roadmap.md#priority-run-and-conversation-discoverability-planned) track delivery; D1 and D3 are checked, D2 and D4 are partial, and D5–D6 are planned. D3 has one [live check](#live-check) on a BB target; the rest of its evidence is from fixtures. The plan creates no scheduler, agent orchestrator, new dashboard, graph database or server.
+This is a data and navigation model in progress. Three parts exist in source and are in v0.2.0: the [identity and run-boundary contract](#identity-and-run-boundary-contract-d1-internal), the [persisted reference graph](#persisted-reference-graph-d2) that records it in each loop's state directory, and the read-only [`keepgoing runs` command](#cli-navigation-d3) that shows it. It also shows [what a loop is waiting on](#what-a-loop-is-waiting-on-d4-partial): lanes and the owning conversation. There is no provider-link resolver, lock-holder lookup or GUI navigation. The [D1–D6 roadmap criteria](roadmap.md#priority-run-and-conversation-discoverability-planned) track delivery; D1, D2 and D3 are checked (fixture-verified; D3 also has one [live check](#live-check) on a BB target), D4 is partial, and D5–D6 are planned. The rest of the evidence is from fixtures. The plan creates no scheduler, agent orchestrator, new dashboard, graph database or server.
 
 ## Routine, run and chat are different nodes
 
@@ -74,10 +74,10 @@ Each loop's state directory holds one private record, `graph.json`, written by `
 | --- | --- | --- |
 | Durable loop `supervision_…` | `graph.json` in the loop's state directory | Allocated by the first graph write for that directory. It follows the directory, not the config path, loop name or registry. |
 | Registry reference `loop_…` | The registry; the graph keeps a list of references it has recorded | Recorded by `registry add` when the loop already has a graph, and when a control operation reaches the loop through that reference (registered client pause, stop or resume). |
-| Routine and invocation | `graph.json`, on the run they opened or triggered | Supplied by the caller with `--routine` on `enable`, `resume` or `tick`. Never generated or inferred. |
+| Routine and invocation | `graph.json`, on the run they opened or triggered | Supplied by the caller with `--routine` on `enable`, `resume`, `start`, `daemon` or `tick`. Never generated or inferred. |
 | Run `run_…`, attempt `attempt_…` | `graph.json` | Allocated when a run opens or a send intent is recorded. |
 
-A registry reference maps to a durable loop through its entry's runtime directory: the durable loop is the one recorded in that directory's `graph.json`. The mapping is **recorded** only once the graph lists that reference. `registry add` records it when the loop already has a graph, and writes nothing otherwise: registry commands never create a runtime file, so a loop registered before its first run resolves as **not recorded** until `registry add` is repeated after that run, or a registered control operation uses the reference. `registry add` is safe to repeat; it returns the same reference. Removing and adding again creates a new reference, recorded as its own entry with its own time; the earlier one stays as history. A reader shows the not-recorded state instead of presenting a loop's runs as belonging to a reference the graph has not recorded. The graph's list says a reference was recorded then, not that it is still registered; the registry answers that, and `registry remove` does not edit the graph. The list keeps 16. When it is full the oldest reference recorded only by `registry add` goes first, so repeated remove and add cannot push out a reference that a control operation used.
+A registry reference maps to a durable loop through its entry's runtime directory: the durable loop is the one recorded in that directory's `graph.json`. The mapping is **recorded** only once the graph lists that reference. `registry add` records it when the loop already has a graph, and writes nothing otherwise: registry commands never create a runtime file, so a loop registered before its first run keeps `registration: not_recorded` with reason `registered_no_run_yet` (distinguished from `not_recorded_in_graph` when runs exist without that reference, and from unknown IDs) until `enable`, `start`, repeating `registry add` after that run, or a registered control operation records the reference. `registry add` is safe to repeat; it returns the same reference. Removing and adding again creates a new reference, recorded as its own entry with its own time; the earlier one stays as history. A reader shows the not-recorded state (`registered_no_run_yet` when the graph is missing) instead of presenting a loop's runs as belonging to a reference the graph has not recorded or fabricating run records. The graph's list says a reference was recorded then, not that it is still registered; the registry answers that, and `registry remove` does not edit the graph. The list keeps 16. When it is full the oldest reference recorded only by `registry add` goes first, so repeated remove and add cannot push out a reference that a control operation used.
 
 ### What is recorded, and when
 
@@ -91,8 +91,8 @@ A registry reference maps to a durable loop through its entry's runtime director
 | Attempt outcome `adapter_returned` or `adapter_error` | After that adapter call returns | `adapter_call` |
 | Run → goal revision | A check finds a valid `goal.json` while the run is open | `goal_record` |
 | Run → chat/session | A check's target is a BB thread (its configured thread ID, or the thread looptender created for a handoff to a `bb.new_thread` candidate) or a headless Claude, Codex or Cursor runner with a saved UUID-shaped resume ID | `configured_target`, `created_thread` or `runner_session_file` |
-| Run's opening invocation | An accepted `enable` or `resume` that opens a run carries `--routine` | the run's own source |
-| Run → routine invocation (trigger) | `tick`, `enable` or `resume` carries `--routine` while a run is already open | `external` |
+| Run's opening invocation | An accepted `enable`, `start` or `resume` that opens a run carries `--routine` | the run's own source |
+| Run → routine invocation (trigger) | `tick`, `enable`, `resume`, `start` or `daemon` carries `--routine` while a run is already open (or adopted on first check) | `external` |
 | Registry reference | `registry add` finds an existing graph | `registry_add` |
 | Registry reference | A registered client control operation succeeds; this also upgrades a reference first recorded by an add | `registered_control` |
 | Waiting record | A check observes a BB target: the verified listing of its direct lanes, by key, replacing the previous one. Cleared when the run closes. | `child_listing` |
@@ -108,21 +108,23 @@ A scheduler that calls looptender can say which entry and which trigger it is:
 keepgoing tick   -c loop.yaml --routine example-scheduler/nightly/2026-11-13
 keepgoing enable -c loop.yaml --routine example-scheduler/nightly/2026-11-13
 keepgoing resume -c loop.yaml --routine example-scheduler/nightly/2026-11-14
+keepgoing start  -c loop.yaml --routine example-scheduler/nightly/2026-11-14 --background
+keepgoing daemon -c loop.yaml --routine example-scheduler/nightly/2026-11-14
 ```
 
 A BB script automation that runs `keepgoing tick` should pass `--routine bb-automation/<automation id>`: `status`, `doctor`, the panel and the `check_gap` report then name that automation when checks stop. The check also records the identity it was started with in `state.json` (`startedBy`), replaced at every check.
 
-The value is `source/routine` or `source/routine/invocation`. Each part is 1–128 letters, digits and `. _ : @ -`, starting with a letter or digit. A timestamp with `+00:00`, a name with a space or an ID containing `/` does not fit; pass an identifier that does. `start`, `daemon` and the other commands do not take the flag.
+The value is `source/routine` or `source/routine/invocation`. Each part is 1–128 letters, digits and `. _ : @ -`, starting with a letter or digit. A timestamp with `+00:00`, a name with a space or an ID containing `/` does not fit; pass an identifier that does. Other commands do not take the flag. `start --background` forwards the validated `--routine` token to the background daemon process via `__start-background`, containing no secrets or arbitrary shell characters.
 
 A value that cannot be recorded, including an empty one, is handled by what the command is for:
 
 - **`tick` runs the check anyway.** The identity is diagnostic only, so a scheduler sending an unusable value must not stop supervision. The check behaves exactly as it would without the flag, records no identity, and adds one warning to its output and its `runs.jsonl` event: `routine identity ignored: …`. The value is not echoed.
-- **`enable` and `resume` refuse with a usage error** that changes nothing and does not echo the value. These are explicit control operations, usually run by a person or a setup script, where a wrong identity should be corrected.
+- **`enable`, `resume`, `start` and `daemon` refuse with a usage error** that changes nothing and does not echo the value (`start --background --json` emits `reason: "invalid_routine"`). These are explicit entry/control operations where a wrong identity should be corrected.
 
 The identity is recorded and nothing more. It never reaches a decision, and a trigger never opens, reopens or closes a run:
 
-- `enable` or `resume` that opens a run records the invocation on that run.
-- `tick`, `enable` or `resume` while a run is already open records a trigger link on it. A repeated invocation is one link. A routine that supplies no invocation ID has one link per run, because its triggers cannot be told apart.
+- `enable`, `start` or `resume` that opens a run records the invocation on that run.
+- `tick`, `enable`, `resume`, `start` or `daemon` while a run is already open records a trigger link on it (and `daemon` checks also refresh `startedBy` in `state.json`). A repeated invocation is one link. A routine that supplies no invocation ID has one link per run, because its triggers cannot be told apart.
 - With no open run, including after completion and on a disabled or held loop with no run, nothing is recorded. Dry runs record nothing.
 
 Triggers have their own bound. A run keeps its first trigger and its newest seven; the ones between are dropped and counted as `triggers`. A scheduler that sends a new ID on every check therefore cannot push out a chat/session link, a goal link, a send or an earlier run. If chat and goal links alone fill the shared 256-link bound, trigger links are removed first.
@@ -178,7 +180,7 @@ keepgoing runs --registry-id loop_0123456789abcdef0123456789abcdef
 keepgoing runs --all                              # every registered loop with its current run
 ```
 
-Use exactly one selector; the default is `-c looptender.yaml`, or `keepgoing.yaml` when only that is in the working directory ([configuration](configuration.md)). `--directory` names a private registry directory for `--registry-id` and `--all`. Two registered loops can share a name: their registry references keep them apart, and each shows only its own records. With a registry selector the report also says whether the graph has recorded that reference (`recorded`) or not (`not_recorded`); see [where identity lives](#where-identity-lives).
+Use exactly one selector; the default is `-c looptender.yaml`, or `keepgoing.yaml` when only that is in the working directory ([configuration](configuration.md)). `--directory` names a private registry directory for `--registry-id` and `--all`, and with `-c` or `--state-dir` also surfaces any validated `registrations[]` matching that loop's state directory. Two registered loops can share a name: their registry references keep them apart, and each shows only its own records. With a registry selector the report also says whether the graph has recorded that reference (`recorded`) or not (`not_recorded`, with `registrationReason` `registered_no_run_yet` before the first run or `not_recorded_in_graph` when runs exist without that link); see [where identity lives](#where-identity-lives). When following `--id <loop_…>` against a consulted registry before the loop's first run, `node.status` stays `not_recorded` and `node.reason` is `registered_no_run_yet` (distinct from missing/unknown IDs), never fabricating a run record.
 
 A registry selector checks the binding first, as registered status does: the registered configuration must still load and still name the same loop and runtime directory. If it does not, the entry shows `binding: unavailable`, nothing is read from the registered directory, and the command exits 1. A lookup through such an entry answers `unavailable`.
 
@@ -230,7 +232,7 @@ A lookup answers `found`, `not_recorded`, `not_recorded_or_expired` when retenti
 | --- | --- |
 | `schemaVersion`, `readAt`, `view` | `2`, the read time, and `loop`, `node` or `registry`. Schema 1 had a `blocker` that was always `unavailable`. |
 | `loops[]` | One entry per selected loop |
-| `loops[].registrationId`, `registration`, `binding`, `loop` | With a registry selector: the reference, its mapping state, and whether its configuration binding still holds; loop name when known |
+| `loops[].registrationId`, `registration`, `registrationReason`, `binding`, `loop`, `registrations[]` | With a registry selector: the reference, its mapping state, reason when `not_recorded` (`registered_no_run_yet` or `not_recorded_in_graph`), and whether its configuration binding still holds; loop name when known; `registrations[]` lists matching entries when `--directory` is passed with `-c` or `--state-dir` |
 | `loops[].graph` | `availability` (`available`, `missing`, `unsupported`, `corrupt`), `loopId`, `updatedAt`, `dropped` counts |
 | `loops[].control`, `conflict`, `activeTarget` | Saved control summary, any boundary conflict, and the saved active target alias; each has `availability` `not_recorded` when its file does not exist |
 | `loops[].current`, `recent[]`, `omittedRuns` | The current run and earlier runs, newest first |
@@ -238,7 +240,7 @@ A lookup answers `found`, `not_recorded`, `not_recorded_or_expired` when retenti
 | `sessions[]` | `ref`, `provider`, `id`, `target`, `evidence`, `source`, `recordedAt`, `link` |
 | `attempts` | `total`, `unconfirmed`, and the newest three in `latest[]` with `outcome` (`intent`, `adapter_returned`, `adapter_error`) and `session` |
 | `loops[].blocker` | `availability` (`blocked`, `held`, `listed`, `none`, `unknown`), `reason`, `checkedAt`, `ageSeconds`, `stale`, `target`, `lastCheckCause`, `children[]` with `ref`, `status`, `holds` and `supervised` (`registrationId`, `loop`, `run`), `omittedChildren`, `owner`, and `lock` (always `unavailable`); see [what a loop is waiting on](#what-a-loop-is-waiting-on-d4-partial) |
-| `node` | With `--id`: `ref`, `status`, `type`, `recordedAt`, `source`, `edges[]`, `omittedEdges`, and the run or send detail; for a chat/session, its `attempts[]`, `omittedAttempts` and `ambiguousAttempts` |
+| `node` | With `--id`: `ref`, `status`, `reason` (e.g. `registered_no_run_yet` / `not_recorded_in_graph` for unlinked registered references), `type`, `recordedAt`, `source`, `edges[]`, `omittedEdges`, and the run or send detail; for a chat/session, its `attempts[]`, `omittedAttempts` and `ambiguousAttempts` |
 | `omitted`, `limitations[]` | Registered loops not shown, and fixed statements of what the report cannot establish |
 
 Output holds identifiers, target aliases, action names, sources and times. It holds no prompt, goal text, control note, path or URL. Chat and session IDs are the ones `status` and registered status already show.

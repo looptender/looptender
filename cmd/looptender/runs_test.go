@@ -1469,3 +1469,59 @@ func TestRunsNeverNamesTheLoopItselfAndRejectsAnUnreadableRegistry(t *testing.T)
 		}
 	}
 }
+
+// A loop registered before its first run surfaces its registry reference
+// explicitly as registered with no run yet across registry and -c views, and
+// start --routine automatically links the registration once the first run opens.
+func TestRunsDistinguishesRegisteredBeforeFirstRunFromMissingAndUnknown(t *testing.T) {
+	regDir, entry := clientFixture(t)
+	// Before first run: --registry-id, --all, and -c --directory distinguish
+	// registered_no_run_yet without creating runtime files or fabricating runs.
+	for name, args := range map[string][]string{
+		"registry-id":   {"--registry-id", entry.ID, "--directory", regDir},
+		"all":           {"--all", "--directory", regDir},
+		"config":        {"-c", entry.ConfigPath, "--directory", regDir},
+		"id registered": {"--registry-id", entry.ID, "--directory", regDir, "--id", entry.ID},
+		"config id":     {"-c", entry.ConfigPath, "--directory", regDir, "--id", entry.ID},
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, r, raw := runsExec(t, args...)
+			if code != exitOK || len(r.Loops) != 1 || r.Loops[0].Graph.Availability != rungraph.Missing || r.Loops[0].Current != nil {
+				t.Fatalf("%s: %d %s", name, code, raw)
+			}
+			var text, errs bytes.Buffer
+			if textCode := run(context.Background(), append([]string{"runs"}, args...), &text, &errs); textCode != exitOK {
+				t.Fatalf("%s text exit %d: %s %s", name, textCode, text.String(), errs.String())
+			}
+			if strings.HasPrefix(name, "id") || name == "config id" {
+				if r.Node == nil || r.Node.Status != rungraph.NotRecorded || r.Node.Reason != registrationNoRunYet || !strings.Contains(text.String(), "registered in the registry, no run yet") {
+					t.Fatalf("%s: node=%+v text=%s", name, r.Node, text.String())
+				}
+			} else if r.Loops[0].RegistrationID != "" {
+				if r.Loops[0].Registration != recordNotRecorded || r.Loops[0].RegistrationReason != registrationNoRunYet || !strings.Contains(text.String(), "registered, no run yet") {
+					t.Fatalf("%s: loop=%+v text=%s", name, r.Loops[0], text.String())
+				}
+			} else {
+				if len(r.Loops[0].Registrations) != 1 || r.Loops[0].Registrations[0].RegistrationID != entry.ID || r.Loops[0].Registrations[0].Reason != registrationNoRunYet || !strings.Contains(text.String(), "registered, no run yet") {
+					t.Fatalf("%s: regs=%+v text=%s", name, r.Loops[0].Registrations, text.String())
+				}
+			}
+		})
+	}
+	// Unknown IDs carry no registration reason.
+	if _, r, _ := runsExec(t, "--registry-id", entry.ID, "--directory", regDir, "--id", runsID("run_", 9)); r.Node.Status != rungraph.NotRecorded || r.Node.Reason != "" {
+		t.Fatalf("unknown ref reason: %+v", r.Node)
+	}
+	if _, err := os.Stat(entry.StateDir); !os.IsNotExist(err) {
+		t.Fatal("runs before first run created runtime files")
+	}
+
+	// Opening a run outside registry publication leaves not_recorded_in_graph distinct.
+	if err := control.Save(entry.StateDir, control.File{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	runsSync(t, entry.StateDir, false, "enable", 1)
+	if _, r, _ := runsExec(t, "--registry-id", entry.ID, "--directory", regDir, "--id", entry.ID); r.Loops[0].Registration != recordNotRecorded || r.Loops[0].RegistrationReason != registrationNotInGraph || r.Node.Reason != registrationNotInGraph {
+		t.Fatalf("post-run unrecorded ref: loop=%+v node=%+v", r.Loops[0], r.Node)
+	}
+}

@@ -152,6 +152,9 @@ func startLaunched(e env, executable, path string, cfg *config.Config, allowShar
 	if allowShare {
 		child = append(child, "--allow-second-loop")
 	}
+	if s := routineFlagString(suppliedRoutine(e.ctx)); s != "" {
+		child = append(child, "--routine", s)
+	}
 	// One start at a time for this loop, from its clean-up to its daemon's
 	// acknowledgement, so one start never takes another's launch for stale.
 	launchLock, err := acquireLaunchLock(e.ctx, stateDir)

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -517,6 +518,75 @@ func TestTelegramTopicSendFallbackToDMOnBadRequest(t *testing.T) {
 		t.Fatalf("expected fallback from thread 999 to DM (0): attempts=%v delivered=%+v", attempts, delivered)
 	}
 }
+
+func TestTelegramTopicSendNoFallbackOnNonBadRequest(t *testing.T) {
+	const tok = "123456789:EXAMPLE_TOPIC_NO_FALLBACK_TOKEN"
+
+	t.Run("HTTP 500 does not retry DM", func(t *testing.T) {
+		var attempts []int64
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var msg tgSentRecord
+			_ = json.NewDecoder(r.Body).Decode(&msg)
+			attempts = append(attempts, msg.MessageThreadID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"ok":false,"error_code":500,"description":"Internal Server Error"}`))
+		}))
+		defer srv.Close()
+
+		client, err := telegram.NewClient(telegram.ClientConfig{Token: tok, BaseURL: srv.URL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = sendTelegramReply(context.Background(), client, telegram.SendMessageRequest{
+			ChatID:          7001,
+			MessageThreadID: 999,
+			Text:            "status reply",
+		})
+		if err == nil {
+			t.Fatal("expected error from HTTP 500")
+		}
+		if len(attempts) != 1 || attempts[0] != 999 {
+			t.Fatalf("expected single topic attempt without DM fallback on HTTP 500, got attempts=%v", attempts)
+		}
+	})
+
+	t.Run("network error does not retry DM", func(t *testing.T) {
+		var attempts []int64
+		client, err := telegram.NewClient(telegram.ClientConfig{
+			Token:   tok,
+			BaseURL: "https://api.telegram.org",
+			HTTPClient: &http.Client{
+				Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					var msg tgSentRecord
+					if r.Body != nil {
+						_ = json.NewDecoder(r.Body).Decode(&msg)
+					}
+					attempts = append(attempts, msg.MessageThreadID)
+					return nil, errors.New("dial tcp: connection refused")
+				}),
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = sendTelegramReply(context.Background(), client, telegram.SendMessageRequest{
+			ChatID:          7001,
+			MessageThreadID: 999,
+			Text:            "status reply",
+		})
+		if err == nil {
+			t.Fatal("expected network error")
+		}
+		if len(attempts) != 1 || attempts[0] != 999 {
+			t.Fatalf("expected single topic attempt without DM fallback on transport error, got attempts=%v", attempts)
+		}
+	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestTelegramStatusSurfacesUsageLimitWaitAndOverdue(t *testing.T) {
 	const tok = "123456789:EXAMPLE_LIMIT_WAIT_STATUS_TOKEN"

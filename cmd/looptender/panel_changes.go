@@ -94,6 +94,7 @@ type panelForm struct {
 	quota     *accountQuotaSelection
 	connect   *panelAccountConnectReview
 	selection *panelAccountSelectionReview
+	remove    *panelAccountRemoveReview
 	allowance *panelSendAllowanceReview
 }
 
@@ -201,7 +202,7 @@ func panelReadAction(body io.Reader) (panelChangeRequest, bool) {
 	if (req.Action != "stop" && (req.Lanes || req.Immediately || req.DropQueued)) || (req.DropQueued && !req.Lanes) {
 		return req, false
 	}
-	return req, panelActions[req.Action] != "" || panelBuildActions[req.Action] != "" || req.Action == panelAccountQuotaAction || req.Action == panelAccountSelectionAction
+	return req, panelActions[req.Action] != "" || panelBuildActions[req.Action] != "" || req.Action == panelAccountQuotaAction || req.Action == panelAccountSelectionAction || req.Action == panelAccountRemoveAction
 }
 
 // panelPreview is what the page shows before the person confirms. Every
@@ -254,7 +255,7 @@ var panelDone = map[string]string{"pause": "paused", "stop": "stopped", "resume"
 // serve answers one change request. rest is the path under the session.
 func (c *panelChanges) serve(w http.ResponseWriter, r *http.Request, rest, session string) {
 	if c.controlsOnly {
-		for _, p := range []string{panelSendAllowancePrefix, panelAccountConnectPrefix, panelRoutesPrefix, panelAccountSelectionPrefix, panelAccountQuotaPrefix} {
+		for _, p := range []string{panelSendAllowancePrefix, panelAccountConnectPrefix, panelRoutesPrefix, panelAccountSelectionPrefix, panelAccountQuotaPrefix, panelAccountRemovePrefix} {
 			if strings.HasPrefix(rest, p) {
 				http.Error(w, "refused", http.StatusForbidden)
 				return
@@ -267,6 +268,10 @@ func (c *panelChanges) serve(w http.ResponseWriter, r *http.Request, rest, sessi
 	}
 	if strings.HasPrefix(rest, panelAccountConnectPrefix) {
 		c.serveAccountConnect(w, r, rest, session)
+		return
+	}
+	if strings.HasPrefix(rest, panelAccountRemovePrefix) {
+		c.serveAccountRemove(w, r, rest, session)
 		return
 	}
 	if strings.HasPrefix(rest, panelRoutesPrefix) {
@@ -288,7 +293,7 @@ func (c *panelChanges) serve(w http.ResponseWriter, r *http.Request, rest, sessi
 	}
 	req, ok := panelReadAction(http.MaxBytesReader(w, r.Body, panelMaxBody))
 	// A build change is for one loop only, never for every loop at once.
-	if !ok || req.Action == panelAccountQuotaAction || req.Action == panelAccountSelectionAction || (step == "prepare" && (req.Lanes || req.Immediately || req.DropQueued)) || (key == panelGroupKey && panelBuildActions[req.Action] != "") || (c.controlsOnly && panelBuildActions[req.Action] != "") {
+	if !ok || req.Action == panelAccountQuotaAction || req.Action == panelAccountSelectionAction || req.Action == panelAccountRemoveAction || (step == "prepare" && (req.Lanes || req.Immediately || req.DropQueued)) || (key == panelGroupKey && panelBuildActions[req.Action] != "") || (c.controlsOnly && panelBuildActions[req.Action] != "") {
 		http.Error(w, "refused", http.StatusBadRequest)
 		return
 	}

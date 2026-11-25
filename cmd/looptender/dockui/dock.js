@@ -23,7 +23,7 @@
   // What looptender did: worded by the same read as API, served on its own
   // for its size, and read only for the Usage page and a loop's page.
   var USAGE = "api/v1/usage";
-  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false };
+  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false, accountRemove: null };
 
   var TONES = {
     supervising: "good", waiting_for_you: "attn", waiting_on_limit: "limit", waiting_on_network: "limit", checks_failing: "warn",
@@ -2108,6 +2108,90 @@
     } else box.appendChild(el("p", "sub", c.provider === "claude-code" ? "Claude usage retrieval requires a panel with changes allowed on Darwin arm64 and the inspected native Claude Code 2.1.326 image. Each selection is checked before a request; other images remain unavailable." : c.provider === "antigravity" ? "Antigravity usage retrieval requires a panel with changes allowed. It runs agy /usage in read-only plan mode without an ordinary model turn." : "Review a refresh in a panel with changes allowed."));
     return box;
   }
+  function accountRemoveSupported() {
+    return changesOn() && !!(state.server && state.server.accountRemove);
+  }
+  function accountRemoveReply(d, id, step) {
+    function text(v) { return typeof v === "string" && v.trim().length > 0 && v.length <= 16384; }
+    if (!d || d.schemaVersion !== 1 || (!!d.preview === !!d.result)) throw new Error("account remove reply");
+    if (d.result) {
+      var outcomes = step === "prepare" ? ["refused", "review_again"] : ["done", "refused", "review_again"];
+      if (outcomes.indexOf(d.result.outcome) < 0 || !text(d.result.text)) throw new Error("account remove outcome");
+      return d;
+    }
+    var p = d.preview;
+    if (step !== "prepare" || p.action !== "remove_account" || p.key !== id ||
+        !text(p.title) || !text(p.confirm) || !text(p.lost) || !text(p.refused) ||
+        typeof p.form !== "string" || !/^[a-f0-9]{64}$/.test(p.form) ||
+        typeof p.expiresAt !== "string" || !isFinite(Date.parse(p.expiresAt)) ||
+        !Array.isArray(p.lines) || !p.lines.length || p.lines.length > 32 ||
+        !p.lines.every(function (line) { return Array.isArray(line) && line.length > 0 && line.length <= 32 && line.every(function (part) { return part && text(part.t) && !part.at; }); })) throw new Error("account remove preview");
+    return d;
+  }
+  function accountRemoveRequest(c, confirm) {
+    if (!accountRemoveSupported()) return;
+    var old = state.accountRemove, p = confirm && old && old.id === c.id && old.preview;
+    if (confirm && !p) return;
+    var request = { id: c.id, sessionForm: state.server.form, busy: true, preview: p || null };
+    state.accountRemove = request;
+    state.accountOpen[c.id] = true;
+    render(false, true);
+    post("api/v1/account-remove/" + encodeURIComponent(c.id) + "/" + (confirm ? "confirm" : "prepare"),
+      confirm ? p.form : state.server.form, { action: "remove_account" })
+      .then(function (d) { return accountRemoveReply(d, c.id, confirm ? "confirm" : "prepare"); })
+      .then(function (d) { request.preview = d.preview; request.result = d.result; })
+      .catch(function (err) {
+        var refused = err && err.status >= 400 && err.status < 500;
+        request.preview = null;
+        request.result = { text: !confirm ? "The account removal review could not be prepared. Nothing was removed." : refused ? p.refused : p.lost };
+      }).then(function () {
+        if (state.accountRemove !== request) return;
+        if (state.server && state.server.form !== request.sessionForm) { state.accountRemove = null; render(false, true); return; }
+        request.busy = false;
+        render(false, true);
+        focusOn(request.preview ? "remove-cancel-" + c.id : "remove-result-" + c.id);
+        if (request.result) announce(request.result.text);
+        if (confirm && request.result && request.result.outcome === "done") {
+          savedAccounts = { reference: "", status: "", data: null, serial: 0, abort: null };
+          clearTimeout(state.timer);
+          load(true);
+        }
+      });
+  }
+  function accountRemoveBox(c) {
+    if (!accountRemoveSupported()) return null;
+    var current = state.accountRemove && state.accountRemove.id === c.id ? state.accountRemove : null;
+    if (current && current.sessionForm && state.server && current.sessionForm !== state.server.form) {
+      state.accountRemove = null;
+      current = null;
+    }
+    var box = el("div", "account-remove");
+    if (!current) {
+      var openBtn = button("Remove from catalog…", "account-remove-" + c.id, "", function () { accountRemoveRequest(c, false); });
+      openBtn.setAttribute("aria-label", "Remove " + c.label + " from catalog");
+      box.appendChild(openBtn);
+      return box;
+    }
+    var review = el("div", "account-remove-review");
+    if (current.preview) {
+      review.appendChild(el("h4", null, current.preview.title));
+      list(current.preview.lines).forEach(function (line) { review.appendChild(el("p", null, say(line))); });
+      var controls = el("div", "account-remove-actions");
+      controls.appendChild(button("Cancel", "remove-cancel-" + c.id, "", function () { state.accountRemove = null; render(false, true); focusOn("account-remove-" + c.id); }, current.busy));
+      controls.appendChild(button(current.busy ? "Removing…" : current.preview.confirm, "remove-confirm-" + c.id, "is-primary", function () { accountRemoveRequest(c, true); }, current.busy));
+      review.appendChild(controls);
+    } else if (current.result) {
+      var res = el("p", null, current.result.text);
+      res.tabIndex = -1; res.setAttribute("data-focus", "remove-result-" + c.id);
+      review.appendChild(res);
+      review.appendChild(button("Close", "remove-close-" + c.id, "", function () { state.accountRemove = null; render(false, true); focusOn("account-" + c.id); }));
+    } else {
+      review.appendChild(el("p", "sub", "Preparing removal review…"));
+    }
+    box.appendChild(review);
+    return box;
+  }
+
   function renderAccounts(d, pane) {
     var a = d.accounts || {};
     pane.appendChild(back());
@@ -2131,6 +2215,12 @@
         feedback.tabIndex = -1; feedback.setAttribute("data-focus", "quota-result-" + outcome.id);
         pane.appendChild(feedback);
       }
+      var removeOutcome = state.accountRemove;
+      if (removeOutcome && removeOutcome.result) {
+        var removeFeedback = el("p", null, removeOutcome.result.text);
+        removeFeedback.tabIndex = -1; removeFeedback.setAttribute("data-focus", "remove-result-" + removeOutcome.id);
+        pane.appendChild(removeFeedback);
+      }
       Object.keys(accountConnections).forEach(function (id) {
         var connection = accountConnections[id];
         if (connection.sessionForm && connection.sessionForm !== state.server.form) return;
@@ -2148,6 +2238,15 @@
     var cards = list(a.cards), uses = list(d.accountUses), byCard = Object.create(null);
     uses.forEach(function (u) { if (u.card) byCard[u.card] = u; });
     var unnamed = uses.filter(function (u) { return u.context; });
+    var removeDone = state.accountRemove && state.accountRemove.result && !cards.some(function (x) { return x.id === state.accountRemove.id; }) ? state.accountRemove : null;
+    if (removeDone) {
+      var doneBox = el("div", "panel account-remove-result");
+      var doneText = el("p", null, removeDone.result.text);
+      doneText.tabIndex = -1; doneText.setAttribute("data-focus", "remove-result-" + removeDone.id);
+      doneBox.appendChild(doneText);
+      doneBox.appendChild(button("Close", "remove-close-" + removeDone.id, "", function () { state.accountRemove = null; render(false, true); }));
+      pane.appendChild(doneBox);
+    }
     if (!cards.length && !unnamed.length) {
       pane.appendChild(emptyBox("No accounts selected here yet", FIRST_RUN));
       pane.appendChild(addAccountBox(true));
@@ -2261,6 +2360,8 @@
         status_unavailable: "The latest status command did not establish a recognized login result."
       };
       if (c.reason) body.appendChild(el("p", "account-note", reasons[c.reason] || "The latest account check is unavailable."));
+      var removeBox = accountRemoveBox(c);
+      if (removeBox) body.appendChild(removeBox);
       details.appendChild(body);
       details.addEventListener("toggle", function () { if (details.isConnected) state.accountOpen[c.id] = details.open; });
       li.appendChild(details);

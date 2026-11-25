@@ -2,26 +2,36 @@
 """The decision behind the required "Build and test" names.
 
 Reads the `needs` context as JSON (env NEEDS) and exits 0 only if the run is
-good: the plan job succeeded and every other job succeeded. The one exception
-is a run the plan marked a duplicate (its commit already passed in the merge
-queue): its jobs were skipped on purpose, and skipped is accepted for them
-only. Failure and cancelled always fail, and a skipped job on any other run
-fails: a job the gate cannot see succeed must not let a merge through.
+good: the plan job succeeded and every other job succeeded (or was explicitly
+skipped by the plan). Failure and cancelled always fail, and an unexpected skip
+always fails: a job the gate cannot see succeed must not let a merge through.
 """
 import json
 import os
 import sys
+
+# Maps each gated job in needs to the plan output flag that permits skipping it.
+JOB_PLAN_FLAGS = {
+    'race': 'run_race',
+    'checks': 'run_checks',
+    'bb-plugin': 'run_bb_plugin',
+    'windows-acl': 'run_windows',
+    'windows-processes': 'run_windows',
+}
 
 
 def verdict(needs):
     plan = needs.get('plan')
     if not plan or plan.get('result') != 'success':
         return False, ['plan: ' + (plan or {}).get('result', 'missing')]
-    duplicate = plan.get('outputs', {}).get('duplicate') == 'true'
+    outputs = plan.get('outputs', {})
+    duplicate = outputs.get('duplicate') == 'true'
     lines, ok = [], True
     for name, need in sorted(needs.items()):
         result = need.get('result')
-        good = result == 'success' or (duplicate and name != 'plan' and result == 'skipped')
+        flag = JOB_PLAN_FLAGS.get(name, '')
+        skip_allowed = name != 'plan' and (duplicate or (flag != '' and outputs.get(flag) == 'false'))
+        good = result == 'success' or (skip_allowed and result == 'skipped')
         ok = ok and good
         lines.append(f'{name}: {result}' + ('' if good else '  <-- not accepted'))
     if len(needs) < 2:
