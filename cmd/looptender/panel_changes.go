@@ -641,12 +641,7 @@ func applyClientArchive(ctx context.Context, directory, id, operation, origin, c
 					return uerr
 				}
 				r.Controls = &clientControls{f.Enabled, f.Paused, f.Stop, f.AwaitingUser, f.Completed}
-				// Recompute digest from the reloaded control record before ArchiveLoop acquires lock.
-				reloaded, lerr := control.Load(entry.StateDir)
-				if lerr != nil {
-					return fail("control_unavailable")
-				}
-				expect = controlDigest(reloaded)
+				expect = controlDigest(f)
 			}
 			_, f, aerr := control.ArchiveLoop(entry.StateDir, "", time.Now().UTC(), checkLocked)
 			if aerr != nil {

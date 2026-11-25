@@ -820,9 +820,10 @@
   // parent's observation. No relationship is inferred from names or order.
   function workBranch(l, d, retainedOpen, folded) {
     var quiet = folded || l.inactive || l.state === "archived" || (l.state === "paused" && !l.alsoWaiting) || l.state === "stopped" || l.state === "finished" || l.state === "off";
+    var inlineActive = folded && state.change && state.change.key === l.key;
     var li = el("li", "work-branch" + (quiet ? " is-quiet" : "")), details = el("details");
     details.dataset.loop = l.key;
-    details.open = Object.prototype.hasOwnProperty.call(state.treeOpen, l.key) ? state.treeOpen[l.key] : (!folded && !!needFor(l.key));
+    details.open = inlineActive || (Object.prototype.hasOwnProperty.call(state.treeOpen, l.key) ? state.treeOpen[l.key] : (!folded && !!needFor(l.key)));
     retainedOpen[l.key] = details.open;
     var summary = el("summary", "work-summary");
     summary.setAttribute("data-focus", "tree-" + l.key);
@@ -886,6 +887,10 @@
       });
     }
     body.appendChild(foot);
+    if (inlineActive) {
+      var inlineChange = changeBox(l, false, true);
+      if (inlineChange) body.appendChild(inlineChange);
+    }
     details.appendChild(body);
     details.addEventListener("toggle", function () {
       if (details.isConnected) state.treeOpen[l.key] = details.open;
@@ -907,7 +912,7 @@
     active.forEach(function (l) { ul.appendChild(workBranch(l, d, retainedOpen, false)); });
     if (folded.length) {
       var fold = el("details", "work-older");
-      fold.open = !!state.treeOpen["older-folded"];
+      fold.open = !!state.treeOpen["older-folded"] || folded.some(function (x) { return state.change && state.change.key === x.key; });
       retainedOpen["older-folded"] = fold.open;
       var parts = [];
       if (inactiveCount) parts.push("Inactive 3d+ (" + inactiveCount + ")");
@@ -1559,7 +1564,7 @@
     return b;
   }
   // all: the change to every loop at once (key "all"), on the overview.
-  function changeBox(l, all) {
+  function changeBox(l, all, inlineOnly) {
     var c = state.change && state.change.key === l.key ? state.change : null;
     if (!changesOn() && !c) return null;
     var box = el("section", "panel change");
@@ -1630,7 +1635,7 @@
       if (c.result.retry && changesOn()) again.appendChild(button("Review again", "change-retry", "", function () { prepareChange(l.key, c.action); }));
       again.appendChild(button("Close", "change-close", "", function () { state.change = null; render(false, true); focusOn("act-" + c.action); }));
       box.appendChild(again);
-      if (!changesOn()) return box;
+      if (inlineOnly || !changesOn()) return box;
     }
     if (c && c.busy) {
       box.appendChild(el("p", "change-line", "Preparing the review…"));

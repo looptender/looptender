@@ -409,6 +409,53 @@ async function notifyScenario(label, setup) {
   for (const e of t.errors) failures.push("notices: " + e);
 }
 
+{
+  // Quick actions inside folded .work-older on #/ prepare, render review UI inline, and confirm cleanly.
+  const vc = new VirtualConsole(); vc.on("jsdomError", () => {});
+  const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "http://127.0.0.1:1/s/token/", virtualConsole: vc });
+  const w = dom.window;
+  const d = clone(fixture.dock);
+  const old = d.loops[0];
+  old.inactive = true;
+  old.can = ["pause", "stop", "archive"];
+  const key = old.key;
+  const formHex = "a".repeat(64);
+  w.fetch = async (url, opts) => {
+    const path = String(url).split("?")[0].replace(/^.*\/s\/[^/]+\//, "");
+    if (opts && opts.method === "POST" && path === `api/v1/loops/${key}/prepare`) {
+      return { ok: true, status: 200, json: async () => ({ schemaVersion: 1, preview: { action: "archive", key, title: `Archive ${old.name}?`, lines: [[{ t: "Moves this loop into the archived list without deleting files." }]], confirm: `Archive ${old.name}`, form: formHex, expiresAt: "2030-01-01T12:02:00Z", lost: "Lost.", refused: "Refused." } }), text: async () => "" };
+    }
+    if (opts && opts.method === "POST" && path === `api/v1/loops/${key}/confirm`) {
+      return { ok: true, status: 200, json: async () => ({ schemaVersion: 1, result: { outcome: "done", text: "Archived: moved into the archived list without deleting files." } }), text: async () => "" };
+    }
+    const server = { ...clone(fixture.server), changes: "on", form: "form-value" };
+    const found = { "api/v1/dock": d, "api/v1/server": server, "api/v1/usage": fixture.usage }[path];
+    return { ok: found !== undefined, status: found !== undefined ? 200 : 404, json: async () => clone(found), text: async () => JSON.stringify(found) };
+  };
+  w.TextEncoder = TextEncoder; w.scrollTo = () => {}; w.focus = () => {}; w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} }); w.Element.prototype.scrollIntoView = () => {};
+  w.eval(js);
+  const tick = () => new Promise((r) => setTimeout(r, 25));
+  const settle = async () => { await tick(); await tick(); await tick(); await tick(); };
+  await settle();
+  const quickBtn = w.document.querySelector(`#pane .work-older [data-loop="${key}"] .work-quick-actions [data-focus="act-archive"]`);
+  if (!quickBtn) failures.push("folded quick action button missing on #/");
+  else {
+    quickBtn.click();
+    await settle();
+    const review = w.document.querySelector(`#pane .work-older [data-loop="${key}"] .change.is-review`);
+    const cancel = review && review.querySelector('[data-focus="change-cancel"]');
+    const confirm = review && review.querySelector('[data-focus="change-confirm"]');
+    if (!review || !cancel || !confirm) failures.push("clicking Archive in folded row on #/ did not render inline review box with Cancel/Confirm buttons");
+    else {
+      confirm.click();
+      await settle();
+      const res = w.document.querySelector(`#pane .work-older [data-loop="${key}"] [data-focus="change-result"]`);
+      if (!res || !/Archived: moved into the archived list/.test(res.textContent)) failures.push("confirming inline Archive on #/ did not render result: " + (res && res.textContent));
+    }
+  }
+  w.close();
+}
+
 if (unlisted.size) failures.push(`the variants set loop fields that dock_page_variant_keys.json does not list (add them, and they will be checked against dockLoop's JSON tags): ${[...unlisted].join(", ")}`);
 if (failures.length) {
   console.error(`dock.js failed while rendering ${failures.length} time(s):`);
