@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -157,5 +158,75 @@ func TestOpeningThePanelAgainStrengthensItsMode(t *testing.T) {
 	}
 	if code, out, _ := w.run("panel", "status", "--json", "--panel-directory", w.dir); code != exitOK || !strings.Contains(out, `"mode":"all"`) {
 		t.Fatalf("status: %d %s", code, out)
+	}
+}
+
+func TestDefaultPanelAndClientArchiveAndUnarchiveAfterReview(t *testing.T) {
+	t.Setenv("BB_THREAD_ID", "")
+	w := newPanelControlsWorld(t)
+	e := w.entry(t, "docs-site-refresh")
+	key := dockKey(e.ID)
+
+	// Supervising loop can be reviewed & archived from the default panel without deleting files.
+	_, archPrep := w.post(t, key, "prepare", w.form, `{"action":"archive"}`, nil)
+	if archPrep.Preview == nil || archPrep.Preview.Action != "archive" || archPrep.Preview.Confirm != "Archive docs-site-refresh" {
+		t.Fatalf("archive prepare: %+v", archPrep)
+	}
+	var previewText strings.Builder
+	for _, line := range archPrep.Preview.Lines {
+		previewText.WriteString(line.render(dockNow))
+		previewText.WriteByte('\n')
+	}
+	if !strings.Contains(previewText.String(), "No files or records are deleted") || !strings.Contains(previewText.String(), "Unarchive") {
+		t.Fatalf("archive preview text missing explanation: %s", previewText.String())
+	}
+	// Group archive must still be refused.
+	if resp, gp := w.post(t, panelGroupKey, "prepare", w.form, `{"action":"archive"}`, nil); resp.StatusCode == http.StatusOK && (gp.Preview != nil || gp.Result == nil || gp.Result.Outcome != "refused") {
+		t.Fatalf("group archive not refused: %d %+v", resp.StatusCode, gp)
+	}
+	_, archDone := w.post(t, key, "confirm", archPrep.Preview.Form, `{"action":"archive"}`, nil)
+	if archDone.Result == nil || archDone.Result.Outcome != "done" || !strings.Contains(archDone.Result.Text, "Archived") {
+		t.Fatalf("archive confirm: %+v", archDone.Result)
+	}
+	if arch, err := control.LoadArchive(e.StateDir); err != nil || arch == nil {
+		t.Fatalf("expected archive record on disk: arch=%+v err=%v", arch, err)
+	}
+	if !controlOf(t, e).Paused {
+		t.Fatalf("expected supervising loop to be paused when archived: %+v", controlOf(t, e))
+	}
+
+	// Once archived, panel offers unarchive, and client review/apply unarchives cleanly without resuming.
+	regDir := filepath.Join(w.root, "registry")
+	var listJSON panelList
+	code, listOut, listErr := runWith("panel", "list", "--json", "--directory", regDir, "--offline")
+	if code != exitOK || json.Unmarshal([]byte(listOut), &listJSON) != nil {
+		t.Fatalf("panel list: code=%d err=%s out=%s", code, listErr, listOut)
+	}
+	var found *panelListLoop
+	for i := range listJSON.Loops {
+		if listJSON.Loops[i].Key == key {
+			found = &listJSON.Loops[i]
+		}
+	}
+	if found == nil || found.State != "archived" || strings.Join(found.Can, ",") != "unarchive" {
+		t.Fatalf("archived loop row: %+v", found)
+	}
+
+	// Client review + apply unarchive (path shared with macOS menu).
+	var rev clientReviewReply
+	code, revOut, revErr := runWith("client", "review", "unarchive", "--loop", key, "--directory", regDir, "--json")
+	if code != exitOK || json.Unmarshal([]byte(revOut), &rev) != nil || rev.Preview == nil || rev.Preview.Action != "unarchive" {
+		t.Fatalf("client review unarchive: code=%d err=%s out=%s", code, revErr, revOut)
+	}
+	var app clientReviewReply
+	code, appOut, appErr := runWith("client", "apply", "unarchive", "--loop", key, "--expect", rev.Preview.Expect, "--directory", regDir, "--json")
+	if code != exitOK || json.Unmarshal([]byte(appOut), &app) != nil || app.Result == nil || app.Result.Outcome != "done" {
+		t.Fatalf("client apply unarchive: code=%d err=%s out=%s", code, appErr, appOut)
+	}
+	if arch, err := control.LoadArchive(e.StateDir); err != nil || arch != nil {
+		t.Fatalf("expected archive record removed: arch=%+v err=%v", arch, err)
+	}
+	if !controlOf(t, e).Paused {
+		t.Fatalf("unarchive should leave holds intact without resuming: %+v", controlOf(t, e))
 	}
 }

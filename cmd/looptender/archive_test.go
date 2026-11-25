@@ -230,7 +230,7 @@ func TestDockAndPanelListShowArchivedLoopsApart(t *testing.T) {
 		t.Fatalf("report: needs %+v archived %d lede %q", r.NeedsYou, r.Archived, r.Lede)
 	}
 	last := r.Loops[len(r.Loops)-1]
-	if last.State != "archived" || last.Phrase != "Archived" || len(last.Can) != 0 || last.Archived == nil || strings.Contains(last.Archived.Note, "/Users/") {
+	if last.State != "archived" || last.Phrase != "Archived" || strings.Join(last.Can, ",") != "unarchive" || last.Archived == nil || strings.Contains(last.Archived.Note, "/Users/") {
 		t.Fatalf("archived loop: %+v", last)
 	}
 	for _, w := range r.Worth {
@@ -462,5 +462,90 @@ func TestArchiveNotesInstalledUserService(t *testing.T) {
 	code, out, errs := f.run("archive")
 	if code != exitOK || !strings.Contains(out, "Its user service remains installed; remove it with `looptender service remove") {
 		t.Fatalf("archive with service: code=%d out=%q err=%q", code, out, errs)
+	}
+}
+
+func TestThreeDayInactiveLoopsFoldReadOnlyAndExcludeBadgeCount(t *testing.T) {
+	d, root := dockFixtureReader(t)
+	// Backdate one awaiting-user loop to 71h59m ago (active) and add one at
+	// 72h00m (inactive) + one overdue loop with checks stopped 72h ago, then
+	// verify reading never mutates any file on disk.
+	var staleEntry, thresholdEntry registry.Entry
+	reg, err := registry.Load(d.directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range reg.Entries {
+		switch e.Loop {
+		case "billing-api-migration":
+			thresholdEntry = e
+		case "nightly-dependency-bumps":
+			staleEntry = e
+		}
+	}
+	saveCheckAt := func(e registry.Entry, at time.Time) {
+		sf, err := state.Load(e.StateDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sf.CheckedAt = at
+		sf.LastCheck = dockFixtureCheck(at, "idle", "none", "ok")
+		if err := state.Save(e.StateDir, sf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saveCheckAt(thresholdEntry, dockNow.Add(-71*time.Hour-59*time.Minute))
+	saveCheckAt(staleEntry, dockNow.Add(-72*time.Hour))
+
+	before := treeDigest(t, root)
+	r := d.read(context.Background(), false)
+	after := treeDigest(t, root)
+	if before != after {
+		t.Fatal("read-only dock refresh mutated state files on disk while folding 3-day inactive loops")
+	}
+
+	activeHeld := dockLoopNamed(t, r, "billing-api-migration")
+	if activeHeld.Inactive || len(r.NeedsYou) != 1 || r.NeedsYou[0].Key != activeHeld.Key {
+		t.Fatalf("71h59m loop should remain active and in needsYou: inactive=%v needs=%+v", activeHeld.Inactive, r.NeedsYou)
+	}
+	folded := dockLoopNamed(t, r, "nightly-dependency-bumps")
+	if !folded.Inactive || r.Inactive != 1 || r.Archived != 0 || !strings.Contains(r.Lede, "1 inactive (3d+)") {
+		t.Fatalf("72h loop should be inactive without archiving on disk: inactive=%v r.Inactive=%d archived=%d lede=%q", folded.Inactive, r.Inactive, r.Archived, r.Lede)
+	}
+	for _, w := range r.Worth {
+		if w.Loop == "nightly-dependency-bumps" {
+			t.Fatalf("3-day inactive loop should not appear in Worth: %+v", w)
+		}
+	}
+	list := buildPanelList(r)
+	if list.Inactive != 1 || list.NeedsYou != 1 {
+		t.Fatalf("panel list counts: inactive=%d needsYou=%d", list.Inactive, list.NeedsYou)
+	}
+	var listFolded *panelListLoop
+	for i := range list.Loops {
+		if list.Loops[i].Key == folded.Key {
+			listFolded = &list.Loops[i]
+		}
+	}
+	if listFolded == nil || !listFolded.Inactive || listFolded.NeedsYou || listFolded.Archived != nil {
+		t.Fatalf("panel list inactive row: %+v", listFolded)
+	}
+
+	// An awaiting_user loop checked 72h ago drops out of NeedsYou and clears the badge.
+	saveCheckAt(thresholdEntry, dockNow.Add(-72*time.Hour))
+	d.forget()
+	r2 := d.read(context.Background(), false)
+	if len(r2.NeedsYou) != 0 || !r2.AllClear || r2.Inactive != 2 {
+		t.Fatalf("expected badge count 0 and AllClear when held loop is 3d+ inactive: needs=%d allClear=%v inactive=%d", len(r2.NeedsYou), r2.AllClear, r2.Inactive)
+	}
+	// An answering daemon stays active even if LastCheck is old.
+	answering := dockEvidence{controls: &clientControls{Enabled: true}}.input()
+	old := dockNow.Add(-96 * time.Hour)
+	answering.Status.State.CheckedAt = old
+	answering.Status.State.LastCheck = &state.Check{At: old, Outcome: "succeeded"}
+	answering.Daemon = daemonStatus{State: "responsive"}
+	lAns, _ := projectDockLoop(answering, dockNow, defaultStaleAfter, false)
+	if lAns.Inactive {
+		t.Fatal("loop with answering daemon should not fold as inactive")
 	}
 }

@@ -1,0 +1,2 @@
+- Panel and macOS menu bar: added reviewed Archive and Unarchive controls on loops without deleting files on disk.
+- Panel and macOS menu bar: added read-only 3-day (72h) inactive auto-folding so loops without recent check activity fold out of the active list and urgent badge count without mutating loop state on disk.

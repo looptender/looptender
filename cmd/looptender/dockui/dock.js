@@ -479,8 +479,9 @@
     ul.setAttribute("aria-labelledby", "pick-loops");
     list(d.loops).forEach(function (l) {
       var li = el("li");
-      var row = pickRow("#/loop/" + l.key, "dot-" + (l.alsoWaiting ? "attn" : TONES[l.state] || "unknown"), l.name, l.pickerState, r.view === "loop" && r.key === l.key);
-      if ((l.state === "paused" && !l.alsoWaiting) || l.state === "stopped" || l.state === "finished" || l.state === "off") row.classList.add("is-quiet");
+      var dotTone = (l.alsoWaiting && !l.inactive) ? "attn" : l.inactive ? "calm" : TONES[l.state] || "unknown";
+      var row = pickRow("#/loop/" + l.key, "dot-" + dotTone, l.name, l.pickerState, r.view === "loop" && r.key === l.key);
+      if (l.inactive || l.state === "archived" || (l.state === "paused" && !l.alsoWaiting) || l.state === "stopped" || l.state === "finished" || l.state === "off") row.classList.add("is-quiet");
       li.appendChild(row);
       ul.appendChild(li);
     });
@@ -817,75 +818,114 @@
   // descendant tree. Keep each registered loop visible independently, even
   // when a lane links to it: its own control state may differ from the
   // parent's observation. No relationship is inferred from names or order.
+  function workBranch(l, d, retainedOpen, folded) {
+    var quiet = folded || l.inactive || l.state === "archived" || (l.state === "paused" && !l.alsoWaiting) || l.state === "stopped" || l.state === "finished" || l.state === "off";
+    var li = el("li", "work-branch" + (quiet ? " is-quiet" : "")), details = el("details");
+    details.dataset.loop = l.key;
+    details.open = Object.prototype.hasOwnProperty.call(state.treeOpen, l.key) ? state.treeOpen[l.key] : (!folded && !!needFor(l.key));
+    retainedOpen[l.key] = details.open;
+    var summary = el("summary", "work-summary");
+    summary.setAttribute("data-focus", "tree-" + l.key);
+    var name = el("span", "work-name", l.name);
+    // The glossary's role: its last verified listing has lanes.
+    if (l.lanes && l.lanes.role === "coordinator") name.appendChild(el("span", "work-role", "coordinator"));
+    if (l.provider) { var chip = el("span", "work-role", l.provider + (l.model ? " \u00B7 " + l.model : "")); chip.title = "Configured provider and model"; name.appendChild(chip); }
+    if (l.observed) name.appendChild(el("span", "work-role work-observed", observedLabel(l)));
+    if (l.inactive) name.appendChild(el("span", "work-role work-inactive", "inactive 3d+"));
+    summary.appendChild(name);
+    var status = el("span", "work-status");
+    var tone = l.inactive ? "calm" : (TONES[l.state] || "unknown");
+    if (l.alsoWaiting && !l.inactive) tone = "attn";
+    if (l.lanesFailed && tone === "good") tone = "warn";
+    status.appendChild(el("span", "dot dot-" + tone));
+    status.appendChild(el("span", null, l.phrase));
+    var silent = supervisorAge(l);
+    if (silent) status.appendChild(el("span", "sub work-silent", silent));
+    var freshChip = freshnessChip(l);
+    if (freshChip) status.appendChild(freshChip);
+    if (l.state === "finished") status.appendChild(tag("calm", "Unverified"));
+    if (l.lanesFailed) status.appendChild(tag("needs", l.lanesFailed));
+    var rowWaits = waitsLine(l.waiting, d.readAt, true);
+    if (rowWaits) { rowWaits.classList.add("sub", "work-waits"); status.appendChild(rowWaits); }
+    summary.appendChild(status);
+    if (l.lanes && l.lanes.summary) summary.appendChild(el("span", "sub work-observation", "Lanes: " + l.lanes.summary));
+    // Age in plain words, as for usage readings; see lastCheck().
+    summary.appendChild(el("span", "sub work-age", (l.lastCheck && l.lastCheck.text) || "Last check unknown"));
+    var mr = l.migrationReview;
+    if (mr && mr.availability === "available" && mr.counts && mr.counts.unfinished > 0) {
+      summary.appendChild(el("span", "sub work-migration", "Migration review: " + mr.text));
+    }
+    details.appendChild(summary);
+    var body = el("div", "work-body");
+    body.appendChild(el("p", "detail", l.detail));
+    if (l.observed && l.observedNote) body.appendChild(el("p", "sub observed-note", l.observedNote));
+    if (l.sessionpipeWake && l.sessionpipeWake.text) body.appendChild(el("p", "sub sessionpipe-wake", "Wake: " + l.sessionpipeWake.text));
+    var facts = el("dl", "work-facts");
+    facts.appendChild(fact("Last decision", l.decision ? say(l.decision.phrase) : "Unknown"));
+    facts.appendChild(fact("Next check", nextCheck(l.nextCheck || { availability: "unknown" })));
+    if (l.checkedBy && l.checkedBy.text) facts.appendChild(fact("Checked", l.checkedBy.text));
+    body.appendChild(facts);
+    body.appendChild(laneBox(l, true));
+    var more = body.querySelector("details.lane-more"), moreKey = l.key + "/lanes";
+    if (more) {
+      more.open = !!state.treeOpen[moreKey];
+      retainedOpen[moreKey] = more.open;
+      more.addEventListener("toggle", function () {
+        if (more.isConnected) state.treeOpen[moreKey] = more.open;
+      });
+    }
+    var foot = el("div", "work-quick-actions");
+    foot.appendChild(link("#/loop/" + l.key, "Inspect " + l.name, "work-inspect"));
+    if (folded && changesOn()) {
+      var can = list(l.can);
+      ["unarchive", "archive", "resume"].forEach(function (act) {
+        if (can.indexOf(act) >= 0) {
+          var label = l.observed && OBSERVED_ACTION_LABEL[act] ? OBSERVED_ACTION_LABEL[act] : ACTION_LABEL[act];
+          if (label) foot.appendChild(button(label + "\u2026", "act-" + act, "", function () { prepareChange(l.key, act); }));
+        }
+      });
+    }
+    body.appendChild(foot);
+    details.appendChild(body);
+    details.addEventListener("toggle", function () {
+      if (details.isConnected) state.treeOpen[l.key] = details.open;
+    });
+    li.appendChild(details);
+    return li;
+  }
+
   function workTree(d) {
     var p = panel("Loops");
     var ul = el("ul", "work-tree");
     var retainedOpen = Object.create(null);
+    var active = [], folded = [], inactiveCount = 0, archivedCount = 0;
     list(d.loops).forEach(function (l) {
-      var quiet = (l.state === "paused" && !l.alsoWaiting) || l.state === "stopped" || l.state === "finished" || l.state === "off";
-      var li = el("li", "work-branch" + (quiet ? " is-quiet" : "")), details = el("details");
-      details.dataset.loop = l.key;
-      details.open = Object.prototype.hasOwnProperty.call(state.treeOpen, l.key) ? state.treeOpen[l.key] : !!needFor(l.key);
-      retainedOpen[l.key] = details.open;
-      var summary = el("summary", "work-summary");
-      summary.setAttribute("data-focus", "tree-" + l.key);
-      var name = el("span", "work-name", l.name);
-      // The glossary's role: its last verified listing has lanes.
-      if (l.lanes && l.lanes.role === "coordinator") name.appendChild(el("span", "work-role", "coordinator"));
-      if (l.provider) { var chip = el("span", "work-role", l.provider + (l.model ? " \u00B7 " + l.model : "")); chip.title = "Configured provider and model"; name.appendChild(chip); }
-      if (l.observed) name.appendChild(el("span", "work-role work-observed", observedLabel(l)));
-      summary.appendChild(name);
-      var status = el("span", "work-status");
-      var tone = TONES[l.state] || "unknown";
-      if (l.alsoWaiting) tone = "attn";
-      if (l.lanesFailed && tone === "good") tone = "warn";
-      status.appendChild(el("span", "dot dot-" + tone));
-      status.appendChild(el("span", null, l.phrase));
-      var silent = supervisorAge(l);
-      if (silent) status.appendChild(el("span", "sub work-silent", silent));
-      var freshChip = freshnessChip(l);
-      if (freshChip) status.appendChild(freshChip);
-      if (l.state === "finished") status.appendChild(tag("calm", "Unverified"));
-      if (l.lanesFailed) status.appendChild(tag("needs", l.lanesFailed));
-      var rowWaits = waitsLine(l.waiting, d.readAt, true);
-      if (rowWaits) { rowWaits.classList.add("sub", "work-waits"); status.appendChild(rowWaits); }
-      summary.appendChild(status);
-      if (l.lanes && l.lanes.summary) summary.appendChild(el("span", "sub work-observation", "Lanes: " + l.lanes.summary));
-      // Age in plain words, as for usage readings; see lastCheck().
-      summary.appendChild(el("span", "sub work-age", (l.lastCheck && l.lastCheck.text) || "Last check unknown"));
-      var mr = l.migrationReview;
-      if (mr && mr.availability === "available" && mr.counts && mr.counts.unfinished > 0) {
-        summary.appendChild(el("span", "sub work-migration", "Migration review: " + mr.text));
-      }
-      details.appendChild(summary);
-      var body = el("div", "work-body");
-      body.appendChild(el("p", "detail", l.detail));
-      if (l.observed && l.observedNote) body.appendChild(el("p", "sub observed-note", l.observedNote));
-      if (l.sessionpipeWake && l.sessionpipeWake.text) body.appendChild(el("p", "sub sessionpipe-wake", "Wake: " + l.sessionpipeWake.text));
-      var facts = el("dl", "work-facts");
-      facts.appendChild(fact("Last decision", l.decision ? say(l.decision.phrase) : "Unknown"));
-      facts.appendChild(fact("Next check", nextCheck(l.nextCheck || { availability: "unknown" })));
-      if (l.checkedBy && l.checkedBy.text) facts.appendChild(fact("Checked", l.checkedBy.text));
-      body.appendChild(facts);
-      body.appendChild(laneBox(l, true));
-      var more = body.querySelector("details.lane-more"), moreKey = l.key + "/lanes";
-      if (more) {
-        more.open = !!state.treeOpen[moreKey];
-        retainedOpen[moreKey] = more.open;
-        more.addEventListener("toggle", function () {
-          if (more.isConnected) state.treeOpen[moreKey] = more.open;
-        });
-      }
-      body.appendChild(link("#/loop/" + l.key, "Inspect " + l.name, "work-inspect"));
-      details.appendChild(body);
-      details.addEventListener("toggle", function () {
-        if (details.isConnected) state.treeOpen[l.key] = details.open;
-      });
-      li.appendChild(details);
-      ul.appendChild(li);
+      if (l.state === "archived") { archivedCount++; folded.push(l); }
+      else if (l.inactive) { inactiveCount++; folded.push(l); }
+      else { active.push(l); }
     });
+    active.forEach(function (l) { ul.appendChild(workBranch(l, d, retainedOpen, false)); });
+    if (folded.length) {
+      var fold = el("details", "work-older");
+      fold.open = !!state.treeOpen["older-folded"];
+      retainedOpen["older-folded"] = fold.open;
+      var parts = [];
+      if (inactiveCount) parts.push("Inactive 3d+ (" + inactiveCount + ")");
+      if (archivedCount) parts.push((inactiveCount ? "archived" : "Archived") + " (" + archivedCount + ")");
+      fold.appendChild(el("summary", "work-older-summary", parts.join(" and ")));
+      var olderList = el("ul", "work-tree work-tree-older");
+      folded.forEach(function (l) { olderList.appendChild(workBranch(l, d, retainedOpen, true)); });
+      fold.appendChild(olderList);
+      fold.addEventListener("toggle", function () {
+        if (fold.isConnected) state.treeOpen["older-folded"] = fold.open;
+      });
+      p.appendChild(ul);
+      if (!active.length) p.appendChild(el("p", "sub work-older-empty", "No active loops right now. Expand older or archived loops below if needed."));
+      p.appendChild(fold);
+    } else {
+      p.appendChild(ul);
+    }
     state.treeOpen = retainedOpen;
-    p.appendChild(ul);
     if (!d.complete || d.registry.omitted) p.appendChild(el("p", "more", "This read does not include every registered loop. Missing loops are not assumed stopped or clear."));
     return p;
   }
@@ -1088,6 +1128,7 @@
     }
     var need = needFor(key);
     if (!need) pane.appendChild(el("p", "detail", l.detail));
+    if (l.inactive) pane.appendChild(el("p", "sub build-line work-inactive-note", "Auto-folded from the active list after 3+ days without check activity. Archive moves it out of the way without deleting files."));
     var pageWaits = need ? null : waitsLine(l.waiting, d.readAt, true);
     if (pageWaits) { pageWaits.classList.add("sub"); pane.appendChild(el("p", "waits-line", null)).appendChild(pageWaits); }
     if (need) {
@@ -1407,7 +1448,7 @@
   // ---- Changes: pause, stop and resume, on a panel started with --allow-changes ----
   // Every sentence comes from the server. Each change is prepared, shown,
   // and only then confirmed; nothing is retried by itself.
-  var ACTION_LABEL = { pause: "Pause", stop: "Stop", resume: "Resume" };
+  var ACTION_LABEL = { pause: "Pause", stop: "Stop", resume: "Resume", archive: "Archive", unarchive: "Unarchive" };
   var OBSERVED_ACTION_LABEL = { pause: "Pause checking", resume: "Resume checking" };
   function changesOn() { return !!(state.server && state.server.changes === "on" && state.server.form); }
   function post(path, form, body) {

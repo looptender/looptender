@@ -59,10 +59,13 @@ public struct PanelLoop: Decodable, Equatable {
     /// observedWakes is true (woken only when idle).
     public var observed: Bool? = nil
     public var observedWakes: Bool? = nil
+    /// Set when the loop has had no check activity for at least 3 days (72h).
+    public var inactive: Bool? = nil
 
-    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil, naming: PanelNaming? = nil, archived: PanelArchived? = nil, checkedAt: String? = nil, reason: String? = nil, waiting: PanelWaiting? = nil, superseded: Bool? = nil, observed: Bool? = nil, observedWakes: Bool? = nil) {
+    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil, naming: PanelNaming? = nil, archived: PanelArchived? = nil, checkedAt: String? = nil, reason: String? = nil, waiting: PanelWaiting? = nil, superseded: Bool? = nil, observed: Bool? = nil, observedWakes: Bool? = nil, inactive: Bool? = nil) {
         self.observed = observed
         self.observedWakes = observedWakes
+        self.inactive = inactive
         self.superseded = superseded
         self.waiting = waiting
         self.naming = naming
@@ -158,6 +161,7 @@ public struct PanelList: Decodable, Equatable {
     /// "Build X installed … · N supervisors on it · M older"; absent from a
     /// CLI that predates it.
     public var buildFreshness: PanelFreshnessSummary? = nil
+    public var inactive: Int? = nil
 }
 
 /// What `keepgoing panel status --json` says about the panel's background
@@ -633,6 +637,12 @@ public enum MenuBuilder {
         if !obs && can.contains("stop") {
             changes.append(action("Stop…", .review(.stop, key: loop.key), symbol: "stop.circle", help: "Shows what stopping does, then asks you to confirm."))
         }
+        if !isArchived(loop) && can.contains("archive") {
+            changes.append(action("Archive…", .review(.archive, key: loop.key), symbol: "archivebox", help: "Shows what archiving does without deleting files, then asks you to confirm."))
+        }
+        if isArchived(loop) && can.contains("unarchive") {
+            changes.append(action("Unarchive…", .review(.unarchive, key: loop.key), symbol: "tray.and.arrow.up", help: "Shows what unarchiving does without resuming, then asks you to confirm."))
+        }
         return changes.isEmpty ? rows : rows + [separator] + changes
     }
 
@@ -655,10 +665,10 @@ public enum MenuBuilder {
             guard Contract.validKey(key), Contract.validExpect(expect), action == .stop || (!lanes && !immediately && !dropQueued), !dropQueued || lanes else { return nil }
             return ["client", "apply", action.rawValue, "--loop", key, "--expect", expect] + (lanes ? ["--lanes"] : []) + (immediately ? ["--immediately"] : [])
                 + (dropQueued ? ["--drop-queued"] : []) + ["--json"]
-        case .reviewAll(let action): return action != .resume ? ["client", "review", action.rawValue, "--all", "--json"] : nil
+        case .reviewAll(let action): return (action == .pause || action == .stop) ? ["client", "review", action.rawValue, "--all", "--json"] : nil
         case .applyAll(let action, let expects, let lanes):
             let keys = expects.map(\.key)
-            guard action != .resume, !lanes || action == .stop, (1...128).contains(expects.count), Set(keys).count == keys.count,
+            guard (action == .pause || action == .stop), !lanes || action == .stop, (1...128).contains(expects.count), Set(keys).count == keys.count,
                   expects.allSatisfy({ Contract.validKey($0.key) && Contract.validExpect($0.expect) }) else { return nil }
             var arguments: [String] = ["client", "apply", action.rawValue, "--all"]
             for e in expects { arguments += ["--expect", e.key + "=" + e.expect] }

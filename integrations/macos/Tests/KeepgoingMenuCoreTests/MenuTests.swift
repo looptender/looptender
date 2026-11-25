@@ -517,4 +517,34 @@ final class MenuTests: XCTestCase {
         XCTAssertTrue(wakeOnly.submenu.contains { $0.title == "Resume checking…" && $0.command == .review(.resume, key: "l000000000002") })
         XCTAssertFalse(wakeOnly.submenu.contains { $0.title.hasPrefix("Stop") || $0.command == .review(.stop, key: "l000000000002") })
     }
+
+    func testMenuOffersArchiveForActiveAndUnarchiveForArchivedLoopsAndFoldsInactive() throws {
+        let json = """
+        {"schemaVersion":1,"readAt":"2030-01-01T12:00:00Z","registry":"available","complete":true,"allClear":true,"needsYou":0,"unread":0,"omitted":0,"archived":1,"inactive":1,
+         "loops":[
+           {"key":"l000000000001","name":"example-active","state":"supervising","phrase":"Supervising","needsYou":false,"can":["pause","stop","archive"]},
+           {"key":"l000000000002","name":"example-stale","state":"not_checked_recently","phrase":"Not checked recently","needsYou":false,"inactive":true,"can":["pause","stop","archive"]},
+           {"key":"l000000000003","name":"example-old","state":"archived","phrase":"Archived","needsYou":false,"archived":{"at":"2030-01-01T00:00:00Z","hold":"paused"},"can":["unarchive"]}
+         ]}
+        """
+        let decoded = try JSONDecoder().decode(PanelList.self, from: Data(json.utf8))
+        let model = MenuBuilder.build(.read(decoded, at: now), now: now)
+        let top = model.rows.filter { $0.kind == .loop }
+        XCTAssertEqual(top.map(\.title), ["example-active"])
+        let activeSubmenu = try XCTUnwrap(top.first?.submenu)
+        XCTAssertEqual(activeSubmenu.last?.title, "Archive…")
+        XCTAssertEqual(activeSubmenu.last?.command, .review(.archive, key: "l000000000001"))
+
+        let other = try XCTUnwrap(model.rows.first { $0.title.hasPrefix("Other loops") })
+        XCTAssertEqual(other.title, "Other loops (2)")
+        let staleRow = try XCTUnwrap(other.submenu.first { $0.title == "example-stale" })
+        XCTAssertTrue(staleRow.submenu.contains { $0.title == "Inactive for 3+ days" })
+        XCTAssertTrue(staleRow.submenu.contains { $0.title == "Archive…" && $0.command == .review(.archive, key: "l000000000002") })
+
+        let archRow = try XCTUnwrap(other.submenu.first { $0.title == "example-old" })
+        XCTAssertTrue(archRow.submenu.contains { $0.title == "Unarchive…" && $0.command == .review(.unarchive, key: "l000000000003") })
+        XCTAssertFalse(archRow.submenu.contains { $0.title == "Archive…" })
+        XCTAssertNil(MenuBuilder.arguments(.reviewAll(.archive)))
+        XCTAssertNil(MenuBuilder.arguments(.reviewAll(.unarchive)))
+    }
 }

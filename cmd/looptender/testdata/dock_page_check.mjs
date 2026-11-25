@@ -206,6 +206,37 @@ const expectations = [
   }),
     [{ hash: "#/", fn: (w) => (/Observed, woken only when idle/.test(text(w, "#pane .work-tree .work-observed")) && /Wake: last wake refused: folder/.test(text(w, "#pane .work-tree .sessionpipe-wake")) ? null : "the Overview row lacks the wake_only label or wake line") },
      { hash: "loop", fn: (w, h) => h.endsWith(fixture.dock.loops[0].key) ? (/Observed, woken only when idle/.test(text(w, "#pane .pane-head .work-observed")) && /Wake: last wake refused: folder/.test(text(w, "#pane .sessionpipe-wake")) ? null : "loop page lacks wake_only label or wake line") : null }]],
+  ["3-day inactive and archived loops fold into a collapsible group with archive and unarchive controls", (d) => {
+    const old = d.loops[0];
+    old.inactive = true;
+    old.can = ["pause", "stop", "archive"];
+    const arch = d.loops[1];
+    arch.state = "archived";
+    arch.phrase = "Archived";
+    arch.pickerState = "Archived";
+    arch.archived = { at: "2030-01-01T00:00:00Z", hold: "paused" };
+    arch.can = ["unarchive"];
+    return d;
+  },
+    [{ hash: "#/", fn: (w) => {
+      const older = w.document.querySelector("#pane .work-older");
+      if (!older) return "folded older/archived group missing";
+      const sum = text(w, "#pane .work-older-summary");
+      const btns = [...older.querySelectorAll(".work-quick-actions button")].map((b) => b.textContent);
+      return /Inactive 3d\+ \(1\)/.test(sum) && /archived \(1\)/.test(sum) && btns.includes("Archive\u2026") && btns.includes("Unarchive\u2026")
+        ? null : "older group missing expected summary or buttons: " + sum + " " + JSON.stringify(btns);
+    } },
+     { hash: "loop", fn: (w, h) => {
+       if (h.endsWith(fixture.dock.loops[0].key)) {
+         const acts = [...w.document.querySelectorAll("#pane .change-buttons button")].map((b) => b.textContent);
+         return acts.includes("Archive\u2026") && /Auto-folded/.test(text(w, "#pane .work-inactive-note")) ? null : "inactive loop detail missing Archive or note";
+       }
+       if (h.endsWith(fixture.dock.loops[1].key)) {
+         const acts = [...w.document.querySelectorAll("#pane .change-buttons button")].map((b) => b.textContent);
+         return JSON.stringify(acts) === JSON.stringify(["Unarchive\u2026"]) ? null : "archived loop detail buttons: " + JSON.stringify(acts);
+       }
+       return null;
+     } }], { ...fixture.server, changes: "on", form: "form-value" }],
   ["unconfigured router renders nothing on the Overview", (d) => { delete d.router; return d; },
     [{ hash: "#/", fn: (w) => (!w.document.querySelector("#pane .router-card") ? null : "router card appeared when report.router was absent") }]],
   ["null router renders nothing on the Overview", (d) => { d.router = null; return d; },
