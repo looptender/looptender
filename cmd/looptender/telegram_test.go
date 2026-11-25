@@ -196,7 +196,7 @@ func telegramCLIWorkflowAgainstStandIn(t *testing.T, showQR bool) {
 	if err := json.Unmarshal(statusOut.Bytes(), &st); err != nil {
 		t.Fatalf("decode status json: %v", err)
 	}
-	if !st.Paired || st.BotUsername != "example_looptender_bot" || st.Mode != telegram.ModeAlerts || !st.TopicsEnabled || !st.TokenPresent {
+	if !st.Paired || st.BotUsername != "example_looptender_bot" || st.Mode != telegram.ModeAlerts || st.DeviceLabel != telegram.DefaultDeviceLabel || !st.TopicsEnabled || !st.TokenPresent {
 		t.Fatalf("unexpected status view: %+v", st)
 	}
 

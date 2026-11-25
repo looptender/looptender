@@ -76,6 +76,7 @@ func telegramSetupCommand(e env, args []string, stdin io.Reader) int {
 	dirFlag := fs.String("dir", "", "private state directory for Telegram pairing (default: user state dir)")
 	regFlag := fs.String("registry", "", "private loop registry directory for optional topic creation")
 	modeFlag := fs.String("mode", telegram.ModeAlerts, "channel mode: alerts (redacted default) or chat (explicit opt-in)")
+	deviceLabelFlag := fs.String("device-label", "", "optional non-identifying device label for Telegram alerts (default: \"this computer\")")
 	acceptNonE2E := fs.Bool("accept-non-e2e", false, "acknowledge Telegram Bot API is not end-to-end encrypted (required for --mode chat)")
 	tokenEnv := fs.String("token-env", telegram.TokenEnv, "environment variable to read the @BotFather token from")
 	tokenStdin := fs.Bool("token-stdin", false, "read the @BotFather token from standard input instead of the environment")
@@ -231,6 +232,7 @@ func telegramSetupCommand(e env, args []string, stdin io.Reader) int {
 	rec := telegram.PairingRecord{
 		SchemaVersion:    telegram.PairingSchemaVersion,
 		Mode:             mode,
+		DeviceLabel:      telegram.SanitizeDeviceLabel(*deviceLabelFlag),
 		BotID:            me.ID,
 		BotUsername:      me.Username,
 		AllowedUserID:    matched.UserID,
@@ -268,9 +270,8 @@ func telegramSetupCommand(e env, args []string, stdin io.Reader) int {
 		}
 	}
 
-	host, _ := os.Hostname()
 	confirmText := telegram.FormatAlert(telegram.AlertSummary{
-		Device:  host,
+		Device:  telegram.EffectiveDeviceLabel(rec),
 		Loop:    "telegram",
 		Event:   "paired",
 		Summary: fmt.Sprintf("Paired in %s mode. Configure loop.report.format: telegram to receive alerts here.", mode),
@@ -289,6 +290,7 @@ type telegramStatusView struct {
 	Paired        bool   `json:"paired"`
 	BotUsername   string `json:"botUsername,omitempty"`
 	Mode          string `json:"mode,omitempty"`
+	DeviceLabel   string `json:"deviceLabel,omitempty"`
 	TopicsEnabled bool   `json:"topicsEnabled,omitempty"`
 	LoopTopics    int    `json:"loopTopics,omitempty"`
 	TokenPresent  bool   `json:"tokenPresent"`
@@ -330,6 +332,7 @@ func telegramStatusCommand(e env, args []string) int {
 	if ok {
 		v.BotUsername = rec.BotUsername
 		v.Mode = rec.Mode
+		v.DeviceLabel = telegram.EffectiveDeviceLabel(rec)
 		v.TopicsEnabled = rec.TopicsEnabled
 		v.LoopTopics = len(rec.LoopTopics)
 		v.PairedAt = rec.PairedAt.UTC().Format(time.RFC3339)
@@ -345,6 +348,7 @@ func telegramStatusCommand(e env, args []string) int {
 	}
 	fmt.Fprintf(e.stdout, "Telegram: paired to @%s\n", v.BotUsername)
 	fmt.Fprintf(e.stdout, "Mode: %s\n", v.Mode)
+	fmt.Fprintf(e.stdout, "Device label: %s\n", v.DeviceLabel)
 	fmt.Fprintf(e.stdout, "Private-chat topics enabled: %t (%d loop topics)\n", v.TopicsEnabled, v.LoopTopics)
 	fmt.Fprintf(e.stdout, "Token present: %t\n", v.TokenPresent)
 	if v.TokenFile == "not_private" {
@@ -388,9 +392,8 @@ func telegramTestCommand(e env, args []string) int {
 		e.errf("telegram test: not paired; run `looptender telegram setup` first")
 		return exitFailed
 	}
-	host, _ := os.Hostname()
 	text := telegram.FormatAlert(telegram.AlertSummary{
-		Device:  host,
+		Device:  telegram.EffectiveDeviceLabel(rec),
 		Loop:    "test",
 		Event:   "test",
 		Summary: "Test alert from looptender",

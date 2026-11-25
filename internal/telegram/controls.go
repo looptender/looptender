@@ -256,10 +256,15 @@ type LoopStatusItem struct {
 	Loop           string
 	Outcome        string
 	ControlState   string
+	Observed       bool
 	Paused         bool
 	Stop           bool
 	AwaitingUser   bool
 	Completed      bool
+	Overdue        bool
+	LimitWait      string
+	WaitUntil      string
+	DiskLevel      string
 	Freshness      string
 	LastAction     string
 	LastOutcome    string
@@ -304,6 +309,9 @@ func FormatStatusMessage(device string, items []LoopStatusItem, now time.Time) (
 		}
 
 		var details []string
+		if item.Observed {
+			details = append(details, "observed")
+		}
 		var holds []string
 		if item.Paused {
 			holds = append(holds, "paused")
@@ -319,6 +327,18 @@ func FormatStatusMessage(device string, items []LoopStatusItem, now time.Time) (
 		}
 		if len(holds) > 0 {
 			details = append(details, "holds: "+strings.Join(holds, ","))
+		}
+		if w := sanitizeInline(item.WaitUntil); w != "" {
+			details = append(details, "wait: "+w)
+		}
+		if lw := sanitizeInline(item.LimitWait); lw != "" {
+			details = append(details, lw)
+		}
+		if item.Overdue {
+			details = append(details, "checks overdue")
+		}
+		if dl := sanitizeInline(item.DiskLevel); dl != "" {
+			details = append(details, "disk: "+dl)
 		}
 		if f := sanitizeInline(item.Freshness); f != "" {
 			details = append(details, "check: "+f)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	"github.com/looptender/looptender/internal/incident"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/registry"
+	"github.com/looptender/looptender/internal/snapshot"
 	"github.com/looptender/looptender/internal/telegram"
 )
 
@@ -133,7 +135,6 @@ func telegramPollCommand(e env, args []string) int {
 		return exitUsage
 	}
 	clearPollerExit(dir)
-	host, _ := os.Hostname()
 	code := runTelegramPoller(e, telegramPollConfig{
 		Dir:         dir,
 		RegistryDir: regDir,
@@ -142,7 +143,6 @@ func telegramPollCommand(e env, args []string) int {
 		StaleAfter:  *staleAfter,
 		Offline:     *offline,
 		Once:        *once,
-		Host:        host,
 		Now:         time.Now,
 		Sleep:       telegramSleepContext,
 		DaemonQuery: inspectDaemon,
@@ -256,8 +256,30 @@ func runTelegramPoller(e env, cfg telegramPollConfig) int {
 	}
 }
 
+func sendTelegramReply(ctx context.Context, client *telegram.Client, req telegram.SendMessageRequest) (telegram.SentMessage, error) {
+	msg, err := client.SendMessage(ctx, req)
+	if err != nil && req.MessageThreadID > 0 {
+		var apiErr *telegram.APIError
+		if errors.As(err, &apiErr) && apiErr.HTTPStatus == http.StatusBadRequest {
+			// If the forum topic was deleted or topics were disabled, fall back
+			// cleanly to the paired single private DM so the reply is not lost.
+			req.MessageThreadID = 0
+			return client.SendMessage(ctx, req)
+		}
+	}
+	return msg, err
+}
+
+func pollerDeviceLabel(cfg telegramPollConfig, rec telegram.PairingRecord) string {
+	if dev := strings.TrimSpace(cfg.Host); dev != "" {
+		return dev
+	}
+	return telegram.EffectiveDeviceLabel(rec)
+}
+
 func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram.PairingRecord, u telegram.Update) {
 	now := cfg.Now().UTC()
+	device := pollerDeviceLabel(cfg, current)
 	if u.Message != nil {
 		if !telegram.AuthorizeMessage(prior, u, now, 0) {
 			return // not from the paired chat: never answered
@@ -265,7 +287,7 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 		if !telegram.AuthorizeMessage(prior, u, now, cfg.StaleAfter) {
 			// From the paired chat but too old to act on (sent while this
 			// computer slept or was offline): say so, act on nothing.
-			_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+			_, _ = sendTelegramReply(e.ctx, cfg.Client, telegram.SendMessageRequest{
 				ChatID:             current.AllowedChatID,
 				MessageThreadID:    u.Message.MessageThreadID,
 				Text:               "That message was too old to act on: it arrived while this computer was asleep or offline. Send /status again.",
@@ -281,8 +303,8 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 		switch cmd {
 		case "status":
 			onlyLoop, _ := telegram.LookupLoopByThreadID(current, threadID)
-			text, markup := buildTelegramStatus(e.ctx, cfg, now, onlyLoop)
-			_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+			text, markup := buildTelegramStatus(e.ctx, cfg, device, now, onlyLoop)
+			_, _ = sendTelegramReply(e.ctx, cfg.Client, telegram.SendMessageRequest{
 				ChatID:             current.AllowedChatID,
 				MessageThreadID:    threadID,
 				Text:               text,
@@ -290,21 +312,21 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 				ReplyMarkup:        markup,
 			})
 		case "help", "start":
-			_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+			_, _ = sendTelegramReply(e.ctx, cfg.Client, telegram.SendMessageRequest{
 				ChatID:             current.AllowedChatID,
 				MessageThreadID:    threadID,
 				Text:               telegram.FormatHelpMessage(current.Mode),
 				LinkPreviewOptions: &telegram.LinkPreviewOptions{IsDisabled: true},
 			})
 		case "pause", "stop":
-			_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+			_, _ = sendTelegramReply(e.ctx, cfg.Client, telegram.SendMessageRequest{
 				ChatID:             current.AllowedChatID,
 				MessageThreadID:    threadID,
 				Text:               "Send /status and tap Pause or Stop on the loop you want to hold.",
 				LinkPreviewOptions: &telegram.LinkPreviewOptions{IsDisabled: true},
 			})
 		case "resume":
-			_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+			_, _ = sendTelegramReply(e.ctx, cfg.Client, telegram.SendMessageRequest{
 				ChatID:             current.AllowedChatID,
 				MessageThreadID:    threadID,
 				Text:               "Send /status and tap Prepare resume on the held loop you want to review.",
@@ -353,6 +375,9 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 
 		switch action.Action {
 		case telegram.ActionPrepareResume:
+			if entry, found := clientEntry(cfg.RegistryDir, action.RegistrationID); found {
+				clearTelegramRestartConfirmed(entry.StateDir)
+			}
 			expect := ""
 			if action.ExpectPrefix != "" {
 				expect = controlExpectPrefixTag + action.ExpectPrefix
@@ -365,13 +390,13 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 					Text:            toast,
 				})
 				text := telegram.FormatAlert(telegram.AlertSummary{
-					Device:  cfg.Host,
+					Device:  device,
 					Loop:    loopName,
 					Event:   "control_prepare_resume",
 					Summary: summary,
 					At:      now,
 				})
-				_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+				_, _ = sendTelegramReply(e.ctx, cfg.Client, telegram.SendMessageRequest{
 					ChatID:             current.AllowedChatID,
 					MessageThreadID:    threadID,
 					Text:               text,
@@ -380,7 +405,7 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 				return
 			}
 			rev := telegram.ResumeReview{
-				Device:         cfg.Host,
+				Device:         device,
 				Loop:           loopName,
 				RegistrationID: action.RegistrationID,
 				TicketID:       report.Ticket,
@@ -423,7 +448,7 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 				CallbackQueryID: cbID,
 				Text:            "Review resume",
 			})
-			_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+			_, _ = sendTelegramReply(e.ctx, cfg.Client, telegram.SendMessageRequest{
 				ChatID:             current.AllowedChatID,
 				MessageThreadID:    threadID,
 				Text:               text,
@@ -435,15 +460,15 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 		case telegram.ActionRestart:
 			// The first tap for a stopped or finished loop asks again, in its
 			// own words, with the same ticket; nothing is cleared here.
-			text, markup, ok := telegramRestartQuestion(cfg, action, loopName)
+			text, markup, ok := telegramRestartQuestion(cfg, device, action, loopName)
 			toast := "Start again?"
 			if !ok {
 				toast = "Ticket expired; prepare again"
-				text, markup = telegram.FormatAlert(telegram.AlertSummary{Device: cfg.Host, Loop: loopName, Event: "control_resume",
+				text, markup = telegram.FormatAlert(telegram.AlertSummary{Device: device, Loop: loopName, Event: "control_resume",
 					Summary: "The resume review expired or the loop changed. Send /status and tap Prepare resume again.", At: now}), nil
 			}
 			_ = cfg.Client.AnswerCallbackQuery(e.ctx, telegram.AnswerCallbackQueryRequest{CallbackQueryID: cbID, Text: toast})
-			_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+			_, _ = sendTelegramReply(e.ctx, cfg.Client, telegram.SendMessageRequest{
 				ChatID:             current.AllowedChatID,
 				MessageThreadID:    threadID,
 				Text:               text,
@@ -459,19 +484,19 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 					if loopCfg, ok := clientConfig(entry); ok {
 						if binding, _, berr := clientResumeBinding(entry, loopCfg, caller); berr == nil {
 							if t, terr := loadClientTicket(entry.StateDir); terr == nil && t.ID == action.TicketID && !t.Consumed && cfg.Now().UTC().Before(t.ExpiresAt) && binding == t.Binding {
-								if !telegramRestartConfirmed(entry.StateDir, action.TicketID) {
+								if !telegramRestartConfirmed(entry.StateDir, action.TicketID, now) {
 									_ = cfg.Client.AnswerCallbackQuery(e.ctx, telegram.AnswerCallbackQueryRequest{
 										CallbackQueryID: cbID,
 										Text:            "Confirm start again first",
 									})
 									text := telegram.FormatAlert(telegram.AlertSummary{
-										Device:  cfg.Host,
+										Device:  device,
 										Loop:    loopName,
 										Event:   "control_resume",
 										Summary: "This loop was stopped or marked finished. Send /status, tap Prepare resume, and confirm the start-again prompt first.",
 										At:      now,
 									})
-									_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+									_, _ = sendTelegramReply(e.ctx, cfg.Client, telegram.SendMessageRequest{
 										ChatID:             current.AllowedChatID,
 										MessageThreadID:    threadID,
 										Text:               text,
@@ -482,8 +507,8 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 							}
 						}
 					}
-					clearTelegramRestartConfirmed(entry.StateDir)
 				}
+				clearTelegramRestartConfirmed(entry.StateDir)
 			}
 			report, code := clientResume(e.ctx, cfg.RegistryDir, action.RegistrationID, "resume", action.TicketID, false, caller, "telegram", "", cfg.Now, nil)
 			toast, summary := formatTelegramResumeOutcome(report, code)
@@ -492,13 +517,13 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 				Text:            toast,
 			})
 			text := telegram.FormatAlert(telegram.AlertSummary{
-				Device:  cfg.Host,
+				Device:  device,
 				Loop:    loopName,
 				Event:   "control_resume",
 				Summary: summary,
 				At:      now,
 			})
-			_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+			_, _ = sendTelegramReply(e.ctx, cfg.Client, telegram.SendMessageRequest{
 				ChatID:             current.AllowedChatID,
 				MessageThreadID:    threadID,
 				Text:               text,
@@ -518,13 +543,13 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 			Text:            toast,
 		})
 		text := telegram.FormatAlert(telegram.AlertSummary{
-			Device:  cfg.Host,
+			Device:  device,
 			Loop:    loopName,
 			Event:   "control_" + action.Action,
 			Summary: summary,
 			At:      now,
 		})
-		_, _ = cfg.Client.SendMessage(e.ctx, telegram.SendMessageRequest{
+		_, _ = sendTelegramReply(e.ctx, cfg.Client, telegram.SendMessageRequest{
 			ChatID:             current.AllowedChatID,
 			MessageThreadID:    threadID,
 			Text:               text,
@@ -533,14 +558,14 @@ func handleTelegramUpdate(e env, cfg telegramPollConfig, prior, current telegram
 	}
 }
 
-func buildTelegramStatus(ctx context.Context, cfg telegramPollConfig, now time.Time, onlyLoop string) (string, *telegram.InlineKeyboardMarkup) {
+func buildTelegramStatus(ctx context.Context, cfg telegramPollConfig, device string, now time.Time, onlyLoop string) (string, *telegram.InlineKeyboardMarkup) {
 	f, err := registry.Load(cfg.RegistryDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return telegram.FormatStatusMessage(cfg.Host, nil, now)
+			return telegram.FormatStatusMessage(device, nil, now)
 		}
 		return telegram.FormatAlert(telegram.AlertSummary{
-			Device:  cfg.Host,
+			Device:  device,
 			Loop:    "status",
 			Event:   "unavailable",
 			Summary: "Loop registry is unavailable on this device.",
@@ -567,14 +592,33 @@ func buildTelegramStatus(ctx context.Context, cfg telegramPollConfig, now time.T
 		}
 		if st.Snapshot != nil {
 			item.ControlState = st.Snapshot.ControlState
+			if st.Snapshot.Target != nil && st.Snapshot.Target.Adapter == "sessionpipe" {
+				item.Observed = true
+			}
 			if st.Snapshot.Controls != nil {
 				item.Paused = st.Snapshot.Controls.Paused
 				item.Stop = st.Snapshot.Controls.Stop
 				item.AwaitingUser = st.Snapshot.Controls.AwaitingUser
 				item.Completed = st.Snapshot.Controls.Completed
 			}
+			if st.Snapshot.Wait != nil {
+				item.WaitUntil = st.Snapshot.Wait.Until
+			}
+			if u := st.Snapshot.UsageLimit; u != nil && u.Held == "" {
+				if u.ResetPassed {
+					item.LimitWait = "usage limit (reset passed)"
+				} else if !u.ResetsAt.IsZero() {
+					item.LimitWait = "usage limit until " + u.ResetsAt.UTC().Format(time.RFC3339)
+				} else {
+					item.LimitWait = "usage limit"
+				}
+			}
 			if st.Snapshot.Runtime != nil {
 				item.Freshness = st.Snapshot.Runtime.Freshness
+				item.Overdue = st.Snapshot.Runtime.Overdue
+			}
+			if st.Snapshot.DiskSpace != nil {
+				item.DiskLevel = st.Snapshot.DiskSpace.Level
 			}
 			if st.Snapshot.LastCheck != nil {
 				item.LastAction = st.Snapshot.LastCheck.Action
@@ -602,7 +646,7 @@ func buildTelegramStatus(ctx context.Context, cfg telegramPollConfig, now time.T
 		}
 		items = append(items, item)
 	}
-	return telegram.FormatStatusMessage(cfg.Host, items, now)
+	return telegram.FormatStatusMessage(device, items, now)
 }
 
 func formatTelegramHoldOutcome(action string, r clientHoldReport, code int) (toast, summary string) {
@@ -671,20 +715,21 @@ func formatTelegramResumeOutcome(r clientResumeReport, code int) (toast, summary
 
 // telegramRestartQuestion is the second message for a stopped or finished
 // loop: false when the ticket is gone, used or expired.
-func telegramRestartQuestion(cfg telegramPollConfig, action telegram.ControlCallback, loopName string) (string, *telegram.InlineKeyboardMarkup, bool) {
+func telegramRestartQuestion(cfg telegramPollConfig, device string, action telegram.ControlCallback, loopName string) (string, *telegram.InlineKeyboardMarkup, bool) {
 	entry, found := clientEntry(cfg.RegistryDir, action.RegistrationID)
 	if !found {
 		return "", nil, false
 	}
 	t, err := loadClientTicket(entry.StateDir)
 	if err != nil || t.ID != action.TicketID || t.Consumed || !cfg.Now().UTC().Before(t.ExpiresAt) {
+		clearTelegramRestartConfirmed(entry.StateDir)
 		return "", nil, false
 	}
 	var ctl control.File
 	if readTransferRecord(entry.StateDir, control.FileName, &ctl) != nil {
 		return "", nil, false
 	}
-	r := telegram.ResumeReview{Device: cfg.Host, Loop: loopName, RegistrationID: action.RegistrationID, TicketID: t.ID, ExpiresAt: t.ExpiresAt,
+	r := telegram.ResumeReview{Device: device, Loop: loopName, RegistrationID: action.RegistrationID, TicketID: t.ID, ExpiresAt: t.ExpiresAt,
 		Paused: ctl.Paused, Stop: ctl.Stop, AwaitingUser: ctl.AwaitingUser, Completed: ctl.Completed, SetBy: holdSetters(entry.StateDir)}
 	if !r.Restarts() {
 		return "", nil, false
@@ -693,35 +738,43 @@ func telegramRestartQuestion(cfg telegramPollConfig, action telegram.ControlCall
 	if err != nil {
 		return "", nil, false
 	}
-	saveTelegramRestartConfirmed(entry.StateDir, t.ID)
+	if err := saveTelegramRestartConfirmed(entry.StateDir, t.ID, t.ExpiresAt); err != nil {
+		return "", nil, false
+	}
 	return text, markup, true
 }
 
-func saveTelegramRestartConfirmed(stateDir, ticketID string) {
-	b, err := json.Marshal(struct {
-		TicketID string `json:"ticketId"`
-	}{TicketID: ticketID})
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(filepath.Join(stateDir, telegramRestartFile), b, 0o600)
+type telegramRestartRecord struct {
+	TicketID  string    `json:"ticketId"`
+	ExpiresAt time.Time `json:"expiresAt"`
 }
 
-func telegramRestartConfirmed(stateDir, ticketID string) bool {
+func saveTelegramRestartConfirmed(stateDir, ticketID string, expiresAt time.Time) error {
+	b, err := json.Marshal(telegramRestartRecord{TicketID: ticketID, ExpiresAt: expiresAt.UTC()})
+	if err != nil {
+		return err
+	}
+	return snapshot.WriteFileAtomic(filepath.Join(stateDir, telegramRestartFile), append(b, '\n'), 0o600, true)
+}
+
+func telegramRestartConfirmed(stateDir, ticketID string, now time.Time) bool {
 	if ticketID == "" {
 		return false
 	}
-	var rec struct {
-		TicketID string `json:"ticketId"`
-	}
+	var rec telegramRestartRecord
 	if readTransferRecord(stateDir, telegramRestartFile, &rec) != nil {
+		clearTelegramRestartConfirmed(stateDir)
 		return false
 	}
-	return rec.TicketID == ticketID
+	if rec.TicketID != ticketID || rec.ExpiresAt.IsZero() || !now.UTC().Before(rec.ExpiresAt) {
+		clearTelegramRestartConfirmed(stateDir)
+		return false
+	}
+	return true
 }
 
 func clearTelegramRestartConfirmed(stateDir string) {
-	_ = os.Remove(filepath.Join(stateDir, telegramRestartFile))
+	_ = snapshot.Remove(filepath.Join(stateDir, telegramRestartFile))
 }
 
 func recordPollerExit(dir, msg string) {
@@ -740,7 +793,7 @@ func recordPollerExit(dir, msg string) {
 	if len(clean) > 200 {
 		clean = clean[:197] + "..."
 	}
-	_ = os.WriteFile(filepath.Join(dir, telegramPollerLastErrorFile), []byte(clean+"\n"), 0o600)
+	_ = snapshot.WriteFileAtomic(filepath.Join(dir, telegramPollerLastErrorFile), []byte(clean+"\n"), 0o600, false)
 }
 
 func clearPollerExit(dir string) {

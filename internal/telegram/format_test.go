@@ -37,3 +37,29 @@ func TestFormatAlertTruncatesToTelegramLimit(t *testing.T) {
 		t.Fatalf("expected ellipsis suffix")
 	}
 }
+
+func TestDeviceLabelPrivacyAndSanitization(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty", in: "", want: ""},
+		{name: "whitespace_and_control", in: " \t\n\x00 ", want: ""},
+		{name: "collapses_whitespace_and_strips_control", in: " work\x07\tmac\nmini ", want: "work mac mini"},
+		{name: "bounded_to_64_runes", in: strings.Repeat("a", MaxDeviceLabelRunes+10), want: strings.Repeat("a", MaxDeviceLabelRunes-1) + "…"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SanitizeDeviceLabel(tc.in); got != tc.want {
+				t.Fatalf("SanitizeDeviceLabel(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+	if got := EffectiveDeviceLabel(PairingRecord{}); got != DefaultDeviceLabel {
+		t.Fatalf("default EffectiveDeviceLabel = %q, want %q", got, DefaultDeviceLabel)
+	}
+	if got := EffectiveDeviceLabel(PairingRecord{DeviceLabel: "  home\x00box  "}); got != "homebox" {
+		t.Fatalf("configured EffectiveDeviceLabel = %q, want %q", got, "homebox")
+	}
+}
