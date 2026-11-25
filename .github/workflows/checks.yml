@@ -73,12 +73,20 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      actions: read # reads the merge-queue run of the pushed commit
-      pull-requests: read # lists a draft pull request's changed files
+      actions: read # reads the merge-queue / PR runs of the commit
+      pull-requests: read # lists pull request changed files
     outputs:
       os: ${{ steps.plan.outputs.os }}
       checks_os: ${{ steps.plan.outputs.checks_os }}
       duplicate: ${{ steps.plan.outputs.duplicate }}
+      scope: ${{ steps.plan.outputs.scope }}
+      run_race: ${{ steps.plan.outputs.run_race }}
+      run_checks: ${{ steps.plan.outputs.run_checks }}
+      run_bb_plugin: ${{ steps.plan.outputs.run_bb_plugin }}
+      run_windows: ${{ steps.plan.outputs.run_windows }}
+      run_swift: ${{ steps.plan.outputs.run_swift }}
+      run_smoke: ${{ steps.plan.outputs.run_smoke }}
+      run_macos_race: ${{ steps.plan.outputs.run_macos_race }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,6 +94,7 @@ jobs:
       - id: plan
         env:
           EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
           DRAFT: ${{ github.event.pull_request.draft }}
           PR: ${{ github.event.pull_request.number }}
           SHA: ${{ github.sha }}
@@ -96,7 +105,7 @@ jobs:
   bb-plugin:
     name: BB plugin typecheck
     needs: plan
-    if: needs.plan.outputs.duplicate != 'true'
+    if: needs.plan.outputs.duplicate != 'true' && needs.plan.outputs.run_bb_plugin != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -109,6 +118,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+          cache: "npm"
+          cache-dependency-path: integrations/bb-plugin-keepgoing/package-lock.json
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.11"
@@ -140,7 +151,7 @@ jobs:
     # expression here would appear raw on a duplicate push. Not required.
     name: Windows access diagnostics (storage and controls)
     needs: plan
-    if: needs.plan.outputs.duplicate != 'true'
+    if: needs.plan.outputs.duplicate != 'true' && needs.plan.outputs.run_windows != 'false'
     runs-on: windows-2022
     permissions:
       contents: read
@@ -277,7 +288,7 @@ jobs:
   windows-processes:
     name: Windows access diagnostics (processes)
     needs: plan
-    if: needs.plan.outputs.duplicate != 'true'
+    if: needs.plan.outputs.duplicate != 'true' && needs.plan.outputs.run_windows != 'false'
     runs-on: windows-2022
     permissions:
       contents: read
@@ -346,7 +357,7 @@ jobs:
   race:
     name: "${{ inputs.base && 'Scope preview - ' || '' }}Race partition ${{ matrix.part }} (${{ matrix.os }})"
     needs: plan
-    if: needs.plan.outputs.duplicate != 'true'
+    if: needs.plan.outputs.duplicate != 'true' && needs.plan.outputs.run_race != 'false'
     strategy:
       fail-fast: false
       matrix:
@@ -433,7 +444,7 @@ jobs:
   checks:
     name: "${{ inputs.base && 'Scope preview - ' || '' }}Other checks (${{ matrix.os }})"
     needs: plan
-    if: needs.plan.outputs.duplicate != 'true'
+    if: needs.plan.outputs.duplicate != 'true' && needs.plan.outputs.run_checks != 'false'
     strategy:
       fail-fast: false # a macOS failure must not cancel the Ubuntu leg and lose its results
       matrix:
@@ -483,35 +494,62 @@ jobs:
         run: |
           python3 scripts/ci-windows-inventory-test.py
           python3 scripts/ci-windows-inventory.py
+      - name: Check that every macOS-only source file is covered by the macOS race suite
+        if: runner.os == 'Linux'
+        run: |
+          python3 scripts/ci-macos-race-test.py
+          python3 scripts/ci-macos-race.py --check
+      - name: Check generated adapters documentation on docs-only pull requests
+        if: runner.os == 'Linux' && (needs.plan.outputs.scope == 'docs' || steps.scope.outputs.scope == 'docs')
+        run: python3 scripts/ci-go-test-ran.py go test ./internal/adapter/capability -run '^TestDocumentMatchesTheTable$' -count=1
+      - name: Check Panel UI Go tests on dockui-only pull requests
+        if: runner.os == 'Linux' && needs.plan.outputs.scope == 'dockui' && steps.scope.outputs.scope != 'docs'
+        run: |
+          go vet ./cmd/looptender
+          python3 scripts/ci-go-test-ran.py go test -race ./cmd/looptender -run '^(TestDock|TestPanel)' -count=1
       - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-        if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
+        if: runner.os == 'Linux' && steps.scope.outputs.scope != 'docs' && needs.plan.outputs.scope != 'docs' && needs.plan.outputs.scope != 'dockui' && needs.plan.outputs.scope != 'macos-only'
       - run: go vet ./...
-        if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
+        if: runner.os == 'Linux' && steps.scope.outputs.scope != 'docs' && needs.plan.outputs.scope != 'docs' && needs.plan.outputs.scope != 'dockui' && needs.plan.outputs.scope != 'macos-only'
       - run: go build ./...
-        if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
+        if: (runner.os == 'macOS' && steps.scope.outputs.scope != 'docs') || (runner.os == 'Linux' && steps.scope.outputs.scope != 'docs' && needs.plan.outputs.scope != 'docs' && needs.plan.outputs.scope != 'dockui' && needs.plan.outputs.scope != 'macos-only')
       - name: Check third-party notices match the executable's modules
-        if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
+        if: runner.os == 'Linux' && steps.scope.outputs.scope != 'docs' && needs.plan.outputs.scope != 'docs' && needs.plan.outputs.scope != 'dockui' && needs.plan.outputs.scope != 'macos-only'
         run: scripts/third-party-notices.sh --check
       - name: Check race partition coverage and failure handling
         if: runner.os == 'Linux'
         run: python3 scripts/ci-race-test.py
+      - name: Run macOS-specific Go packages and OS/service tests under the race detector
+        if: runner.os == 'macOS' && steps.scope.outputs.scope != 'docs' && needs.plan.outputs.run_macos_race != 'false'
+        run: python3 -u scripts/ci-macos-race.py
       - name: Smoke check setup and recovery with local fixtures
-        if: steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04'
+        if: steps.scope.outputs.scope != 'docs' && needs.plan.outputs.scope != 'docs' && needs.plan.outputs.scope != 'dockui' && needs.plan.outputs.run_smoke != 'false'
         run: |
           go build -trimpath -ldflags "-X main.version=smoke-${GITHUB_SHA}" -o "$RUNNER_TEMP/keepgoing-smoke" ./cmd/looptender
           python3 scripts/smoke-release.py "$RUNNER_TEMP/keepgoing-smoke"
           python3 -u scripts/smoke-recovery.py "$RUNNER_TEMP/keepgoing-smoke" --include-cursor
+      - name: Cache SwiftPM build artifacts for macOS menu
+        if: runner.os == 'macOS' && steps.scope.outputs.scope != 'docs' && needs.plan.outputs.run_swift != 'false'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: integrations/macos/.build
+          key: ${{ runner.os }}-swift-${{ hashFiles('integrations/macos/Package.swift', 'integrations/macos/Package.resolved', 'integrations/macos/Sources/**', 'integrations/macos/Tests/**') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-
       - name: Build and test the optional macOS menu preview
-        if: runner.os == 'macOS' && (steps.scope.outputs.scope != 'docs' || matrix.os == 'ubuntu-24.04')
+        if: runner.os == 'macOS' && steps.scope.outputs.scope != 'docs' && needs.plan.outputs.run_swift != 'false'
         run: |
+          if [ ! -x "$RUNNER_TEMP/keepgoing-smoke" ]; then
+            go build -trimpath -ldflags "-X main.version=smoke-${GITHUB_SHA}" -o "$RUNNER_TEMP/keepgoing-smoke" ./cmd/looptender
+          fi
           swift build --package-path integrations/macos
           swift test --package-path integrations/macos
           python3 integrations/macos/scripts/smoke-contract.py "$RUNNER_TEMP/keepgoing-smoke"
       - name: Verify native Linux ACL metadata fixture
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.scope.outputs.scope != 'docs' && needs.plan.outputs.scope != 'docs' && needs.plan.outputs.scope != 'dockui' && needs.plan.outputs.scope != 'macos-only'
         run: python3 scripts/ci-go-test-ran.py go test -v ./cmd/looptender -run '^TestLinuxACLMetadataDetectsDefaultACLHiddenByModeBits$' -count=1
       - name: Cross-compile for Windows
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.scope.outputs.scope != 'docs' && needs.plan.outputs.scope != 'docs' && needs.plan.outputs.scope != 'dockui' && needs.plan.outputs.scope != 'macos-only'
         run: GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/looptender
       - name: Work skipped for a documentation-only change
         if: steps.scope.outputs.scope == 'docs' && matrix.os != 'ubuntu-24.04'
