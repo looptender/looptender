@@ -378,6 +378,101 @@ async function notifyScenario(label, setup) {
   for (const e of t.errors) failures.push("notices: " + e);
 }
 
+// Account catalog removal: hidden unless --allow-changes sets accountRemove; when enabled,
+// Remove opens a reviewed confirmation mentioning accounts.json and untouched disk logins,
+// and confirming removes the card on reload and keeps a confirmation notice visible.
+{
+  const errors = [];
+  const vc = new VirtualConsole(); vc.on("jsdomError", () => {});
+  const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "http://127.0.0.1:1/s/token/", virtualConsole: vc });
+  const w = dom.window;
+  const acctA = { id: "0123456789abcdef0123456789abcdef", label: "Example primary", provider: "claude-code", selection: "inherited", auth: { text: "Selected CLI reports login", state: "reported_present", freshness: "fresh" }, plan: { text: "Max", state: "reported", freshness: "fresh" }, routes: "none", configuredModel: { missing: "not_recorded" }, observedModel: { missing: "not_recorded" } };
+  const acctB = { id: "fedcba9876543210fedcba9876543210", label: "Example extra", provider: "claude-code", selection: "explicit_directory", auth: { text: "No login reported", state: "reported_absent", freshness: "fresh" }, plan: { text: "Unavailable", state: "unavailable", freshness: "fresh" }, routes: "none", configuredModel: { missing: "not_recorded" }, observedModel: { missing: "not_recorded" } };
+  let cards = [clone(acctA), clone(acctB)];
+  let ref = "ref-initial";
+  let allowRemove = false;
+  const calls = [];
+  w.fetch = async (url, opts) => {
+    const path = String(url).split("?")[0].replace(/^.*\/s\/[^/]+\//, "");
+    if (opts && opts.method === "POST" && path === `api/v1/account-remove/${acctB.id}/prepare`) {
+      calls.push("prepare");
+      return { ok: true, status: 200, json: async () => ({
+        schemaVersion: 1,
+        preview: {
+          action: "remove_account",
+          key: acctB.id,
+          title: `Remove ${acctB.label} from catalog?`,
+          confirm: "Remove from catalog",
+          form: "b".repeat(64),
+          expiresAt: "2035-01-01T00:00:00Z",
+          lines: [
+            [{ t: `Removes only this entry from accounts.json: Claude Code \u00B7 ${acctB.label}.` }],
+            [{ t: "Provider credentials and files on disk are untouched." }],
+            [{ t: "Warning: registered loop routes still reference this account (loop example-loop, route spare)." }]
+          ],
+          lost: "lost",
+          refused: "refused"
+        }
+      }) };
+    }
+    if (opts && opts.method === "POST" && path === `api/v1/account-remove/${acctB.id}/confirm`) {
+      calls.push("confirm");
+      cards = [clone(acctA)];
+      ref = "ref-after-remove";
+      return { ok: true, status: 200, json: async () => ({
+        schemaVersion: 1,
+        result: { outcome: "done", text: `Removed ${acctB.label} from the account catalog. Provider logins and files on disk were left untouched.` }
+      }) };
+    }
+    if (path.startsWith("api/v1/saved-accounts")) {
+      const payload = { schemaVersion: 1, reference: ref, accounts: { state: "available", complete: true, cards: clone(cards) } };
+      return { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) };
+    }
+    const baseDock = clone(fixture.dock);
+    baseDock.accountsReference = ref;
+    baseDock.selectedAccounts = cards.length;
+    baseDock.accounts = { state: "available", complete: true, cards: clone(cards) };
+    const server = allowRemove ? { ...clone(fixture.server), changes: "on", accountRemove: true, form: "a".repeat(64) } : clone(fixture.server);
+    const found = { "api/v1/dock": baseDock, "api/v1/server": server, "api/v1/usage": fixture.usage }[path];
+    return { ok: found !== undefined, status: found !== undefined ? 200 : 404, json: async () => clone(found), text: async () => JSON.stringify(found) };
+  };
+  w.TextEncoder = TextEncoder; w.scrollTo = () => {}; w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} }); w.Element.prototype.scrollIntoView = () => {};
+  w.eval(js);
+  const tick = () => new Promise((r) => setTimeout(r, 25));
+  await tick(); await tick();
+  w.location.hash = "#/accounts"; w.dispatchEvent(new w.Event("hashchange"));
+  await tick(); await tick();
+  if (w.document.querySelector(".account-remove")) errors.push("Remove button rendered without accountRemove enabled");
+  allowRemove = true;
+  w.document.querySelector("#refresh").click();
+  await tick(); await tick(); await tick();
+  const removeBtn = w.document.querySelector(`[data-focus="account-remove-${acctB.id}"]`);
+  if (!removeBtn) errors.push("Remove from catalog button missing when accountRemove is enabled");
+  else {
+    removeBtn.click();
+    await tick(); await tick();
+    const review = w.document.querySelector(".account-remove-review");
+    const reviewText = review ? review.textContent : "";
+    if (!review || !/accounts\.json/.test(reviewText) || !/untouched/.test(reviewText) || !/loop example-loop, route spare/.test(reviewText)) {
+      errors.push("remove review did not render safety note and route reference warning: " + reviewText);
+    } else {
+      const confirmBtn = w.document.querySelector(`[data-focus="remove-confirm-${acctB.id}"]`);
+      if (!confirmBtn) errors.push("confirm button missing inside remove review");
+      else {
+        confirmBtn.click();
+        await tick(); await tick(); await tick();
+        const cardCount = w.document.querySelectorAll("#pane .account-card").length;
+        const doneBanner = w.document.querySelector("#pane .account-remove-result");
+        if (cardCount !== 1) errors.push(`expected 1 account card after remove, got ${cardCount}`);
+        if (!doneBanner || !/left untouched/.test(doneBanner.textContent)) errors.push("confirmation banner missing after removed card disappeared");
+      }
+    }
+  }
+  if (calls.join(",") !== "prepare,confirm") errors.push("expected prepare,confirm calls, got " + calls.join(","));
+  w.close();
+  for (const e of errors) failures.push("account-remove: " + e);
+}
+
 if (unlisted.size) failures.push(`the variants set loop fields that dock_page_variant_keys.json does not list (add them, and they will be checked against dockLoop's JSON tags): ${[...unlisted].join(", ")}`);
 
 // Accounts page UX: eliminate duplicate "Not checked", surface local login file

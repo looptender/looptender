@@ -5,6 +5,7 @@
 // one prominent action, focus rings).
 const css = `
 .kgs{display:grid;gap:12px;padding:12px 14px;max-width:540px;min-width:240px;max-height:min(76vh,620px);overflow-y:auto;font-size:13px;line-height:1.4;color:inherit;box-sizing:border-box}
+.kgs [role=tabpanel]{display:grid;gap:12px}
 .kgs *,.kgs *::before,.kgs *::after{box-sizing:border-box}
 .kgs h3,.kgs h4,.kgs p{margin:0}
 .kgs h3[tabindex]:focus{outline:none}

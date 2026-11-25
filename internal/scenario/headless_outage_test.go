@@ -2,9 +2,12 @@ package scenario
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/looptender/looptender/internal/adapter/runner"
 )
 
 // headlessSession is the session the stand-in headless CLIs report (see
@@ -22,13 +25,13 @@ const (
 // report, so no loop is held and nothing here waits on it any more.
 var headlessKnown = map[string][]Waiting{}
 
-// TestScenarioHeadlessOutage is the owner's outage on a headless Claude Code
-// or Codex loop: a turn breaks when the network drops, the host sleeps so
-// checks run irregularly, the network returns behind a captive portal, and
+// TestScenarioHeadlessOutage is the owner's outage on a headless Claude Code,
+// Codex or Cursor loop: a turn breaks when the network drops, the host sleeps
+// so checks run irregularly, the network returns behind a captive portal, and
 // the portal clears. It replaces cmd/looptender's TestOfflineScenarioHeadless.
 func TestScenarioHeadlessOutage(t *testing.T) {
 	t.Parallel()
-	for _, cli := range []string{"claude", "codex"} {
+	for _, cli := range []string{"claude", "codex", "cursor"} {
 		for _, o := range outages {
 			t.Run(cli+"/"+o.name, func(t *testing.T) {
 				t.Parallel()
@@ -69,15 +72,19 @@ func runHeadlessOutage(t *testing.T, cli string, o outage, known map[string][]Wa
 		w.At(drop.Add(at))
 		offline = append(offline, w.Tick())
 	}
-	var sentOffline, heldOffline, reportedOffline []error
+	var sentOffline, heldOffline, shownOffline, reportedOffline []error
 	for _, s := range offline {
 		sentOffline = append(sentOffline, stepErr(s, nothingSent(s)))
 		heldOffline = append(heldOffline, stepErr(s, holds(s)))
 		reportedOffline = append(reportedOffline, stepErr(s, noReports(s)))
+		if s.Tick["network"] != "down" {
+			shownOffline = append(shownOffline, fmt.Errorf("%s: tick line has network %v", s.At.Format(time.RFC3339), s.Tick["network"]))
+		}
 	}
 	last := offline[len(offline)-1]
 	expect(last, expectNoSendOffline, all(sentOffline...))
 	expect(last, expectNoHoldOffline, all(heldOffline...))
+	expect(last, expectNetworkShown, all(shownOffline...))
 	expect(last, expectNoReportOffline, all(reportedOffline...))
 
 	w.At(drop.Add(o.length))
@@ -187,6 +194,164 @@ func TestScenarioHeadlessFirstTurnFails(t *testing.T) {
 			w.Advance(10 * time.Minute)
 			s = w.Tick()
 			w.Check(s, "reset authority does not replay", all(action(s, "await_user"), nothingSent(s), holds(s, "awaitingUser")))
+		})
+	}
+}
+
+// TestScenarioHeadlessOutageBudget verifies that many offline checks across
+// hours (far exceeding max_reprompts and tight max_sends) spend no re-prompt or
+// send allowance, preserve the exact saved session ID, wait through captive
+// portals, and recover with --resume on the first online check before the send
+// limit triggers only after the allowed number of real turns.
+func TestScenarioHeadlessOutageBudget(t *testing.T) {
+	t.Parallel()
+	for _, cli := range []string{"claude", "codex", "cursor"} {
+		t.Run(cli, func(t *testing.T) {
+			t.Parallel()
+			w := NewWorld(t, scenarioStart)
+			w.InitHeadless(cli, "await_user", "complete", "stop")
+			w.EditConfig(func(loop map[string]any) {
+				loop["errors"] = map[string]any{"max_reprompts": 2, "backoff": "10m", "failover_on": []string{}}
+				loop["limits"] = map[string]any{"max_sends": 3}
+			})
+			targetDir := runner.Dir(filepath.Join(filepath.Dir(w.Config), "state", "targets", "primary"))
+			w.Control("enable")
+
+			// Turn 1 establishes the session (send 1 of 3).
+			w.Advance(time.Minute)
+			s := w.Tick()
+			w.Check(s, "first turn", all(action(s, "wake"), sentExactly(s, Send{Kind: "turn", Thread: cli})))
+
+			// Outage begins; wake 2 runs into the outage and fails (send 2 of 3).
+			w.Net.Offline()
+			w.Advance(10 * time.Minute)
+			s = w.Tick()
+			w.Check(s, "broken turn", all(action(s, "wake"), sentExactly(s, Send{Kind: "turn", Thread: cli, Mode: headlessSession})))
+
+			// 12 offline checks across 6h: far exceeds max_reprompts=2 and max_sends=3.
+			for i := 1; i <= 12; i++ {
+				w.Advance(30 * time.Minute)
+				s = w.Tick()
+				w.Check(s, fmt.Sprintf("offline check %d waits without burning budgets", i), all(
+					action(s, "none"),
+					reasonIs(s, "network down; waiting for connectivity"),
+					nothingSent(s),
+					holds(s),
+					noReports(s),
+				))
+				if s.Tick["network"] != "down" {
+					w.Failf(s, "offline check %d: network=%v, want down", i, s.Tick["network"])
+				}
+				if got, err := targetDir.InspectSession(); err != nil || got != headlessSession {
+					w.Failf(s, "offline check %d: saved session = %q (%v), want %q", i, got, err, headlessSession)
+				}
+			}
+
+			// Captive portal also waits cleanly without spending budget or losing session.
+			w.Net.Portal()
+			w.Advance(15 * time.Minute)
+			s = w.Tick()
+			w.Check(s, "captive portal waits", all(action(s, "none"), nothingSent(s), holds(s), noReports(s)))
+
+			// Connectivity returns: the remaining 1 send recovers the exact session via reprompt.
+			w.Net.Online()
+			w.Advance(time.Minute)
+			s = w.Tick()
+			w.Check(s, "first online check reprompts exact session", all(
+				action(s, "reprompt"),
+				sentExactly(s, Send{Kind: "turn", Thread: cli, Mode: headlessSession}),
+				holds(s),
+			))
+			if got, err := targetDir.InspectSession(); err != nil || got != headlessSession {
+				w.Failf(s, "post-recovery saved session = %q (%v), want %q", got, err, headlessSession)
+			}
+
+			// Send limit (3 sends total) only applies on the next wake after recovery.
+			w.Advance(10 * time.Minute)
+			s = w.Tick()
+			w.Check(s, "send limit reached only after real recovery turn", all(
+				action(s, "await_user"),
+				nothingSent(s),
+				holds(s, "awaitingUser"),
+			))
+		})
+	}
+}
+
+// TestScenarioHeadlessOutageHoldPrecedence verifies that pause and stop win
+// immediately over an offline outage wait across headless Claude Code, Codex
+// and Cursor loops, send nothing while held even once connectivity returns, and
+// resume recovers the saved session after a pause.
+func TestScenarioHeadlessOutageHoldPrecedence(t *testing.T) {
+	t.Parallel()
+	for _, cli := range []string{"claude", "codex", "cursor"} {
+		t.Run(cli+"/pause", func(t *testing.T) {
+			t.Parallel()
+			w := NewWorld(t, scenarioStart)
+			w.InitHeadless(cli, "await_user", "complete", "stop")
+			w.Control("enable")
+
+			w.Advance(time.Minute)
+			s := w.Tick()
+			w.Check(s, "first turn", all(action(s, "wake"), sentExactly(s, Send{Kind: "turn", Thread: cli})))
+
+			w.Net.Offline()
+			w.Advance(10 * time.Minute)
+			s = w.Tick()
+			w.Check(s, "broken turn", all(action(s, "wake"), sentExactly(s, Send{Kind: "turn", Thread: cli, Mode: headlessSession})))
+
+			w.Advance(5 * time.Minute)
+			s = w.Tick()
+			w.Check(s, "offline waits before pause", all(action(s, "none"), nothingSent(s), holds(s)))
+
+			// Pause during outage must hold and supersede offline checks even after network returns.
+			w.Control("pause")
+			w.Advance(5 * time.Minute)
+			s = w.Tick()
+			w.Check(s, "pause wins while offline", all(action(s, "none"), reasonIs(s, "paused"), nothingSent(s), holds(s, "paused"), noReports(s)))
+
+			w.Net.Online()
+			w.Advance(5 * time.Minute)
+			s = w.Tick()
+			w.Check(s, "pause remains in force after connectivity returns", all(action(s, "none"), reasonIs(s, "paused"), nothingSent(s), holds(s, "paused")))
+
+			// Explicit resume clears pause and recovers the exact saved session.
+			w.Control("resume")
+			w.Advance(time.Minute)
+			s = w.Tick()
+			w.Check(s, "resume recovers saved session", all(action(s, "reprompt"), sentExactly(s, Send{Kind: "turn", Thread: cli, Mode: headlessSession}), holds(s)))
+		})
+
+		t.Run(cli+"/stop", func(t *testing.T) {
+			t.Parallel()
+			w := NewWorld(t, scenarioStart)
+			w.InitHeadless(cli, "await_user", "complete", "stop")
+			w.Control("enable")
+
+			w.Advance(time.Minute)
+			s := w.Tick()
+			w.Check(s, "first turn", all(action(s, "wake"), sentExactly(s, Send{Kind: "turn", Thread: cli})))
+
+			w.Net.Offline()
+			w.Advance(10 * time.Minute)
+			s = w.Tick()
+			w.Check(s, "broken turn", all(action(s, "wake"), sentExactly(s, Send{Kind: "turn", Thread: cli, Mode: headlessSession})))
+
+			w.Advance(5 * time.Minute)
+			s = w.Tick()
+			w.Check(s, "offline waits before stop", all(action(s, "none"), nothingSent(s), holds(s)))
+
+			// Stop during outage wins immediately and stays stopped after connectivity returns.
+			s = w.Control("stop")
+			w.Check(s, "stop sets hold during outage", all(exit(s, 0), holds(s, "stop"), nothingSent(s)))
+			w.Advance(5 * time.Minute)
+			s = w.Tick()
+			w.Check(s, "stop wins while offline", all(action(s, "none"), reasonIs(s, "stop requested; session not running"), nothingSent(s), holds(s, "stop"), noReports(s)))
+
+			w.Net.Online()
+			w.Advance(5 * time.Minute)
+			s = w.Tick()
+			w.Check(s, "stop remains held after connectivity returns", all(action(s, "none"), reasonIs(s, "stop requested; session not running"), nothingSent(s), holds(s, "stop"), noReports(s)))
 		})
 	}
 }

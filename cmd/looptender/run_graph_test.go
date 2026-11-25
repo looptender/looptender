@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/looptender/looptender/internal/registry"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -290,6 +291,8 @@ func TestRoutineFlagRecordsSchedulerIdentityWithoutChangingSupervision(t *testin
 	before := snapshotTree(t, stateDir)
 	for _, args := range [][]string{
 		{"enable", "--routine", "PRIVATE value"}, {"enable", "--routine", "nightly"}, {"resume", "--routine", "a/b/c/d"}, {"enable", "--routine", ""}, {"resume", "--routine", ""},
+		{"daemon", "--routine", "PRIVATE value"}, {"daemon", "--routine", "nightly"}, {"daemon", "--routine", "a/b/c/d"}, {"daemon", "--routine", ""},
+		{"start", "--routine", "PRIVATE value"}, {"start", "--routine", "nightly"}, {"start", "--routine", "a/b/c/d"}, {"start", "--routine", ""},
 		{"pause", "--routine", "example-scheduler/nightly"}, {"status", "--routine", "example-scheduler/nightly"}, {"pause", "--routine", ""},
 	} {
 		code, out, errs := f.run(args...)
@@ -466,5 +469,77 @@ func TestRunsNamesTheSupervisedConversationALoopIsWaitingOn(t *testing.T) {
 	// No child thread ID was ever written to the parent's graph.
 	if raw, _ := os.ReadFile(filepath.Join(parentState, rungraph.FileName)); strings.Contains(string(raw), "thr_child") {
 		t.Fatal("the child thread ID reached the parent's graph")
+	}
+}
+
+// daemon --routine records its scheduler identity on the loop's open/adopted run
+// and check state, and daemon --dry-run --routine leaves the graph untouched.
+func TestDaemonRoutineRecordsSchedulerIdentity(t *testing.T) {
+	f := newFixture(t)
+	stateDir := filepath.Join(f.dir, "state")
+	if code, _, errs := f.run("enable"); code != exitOK {
+		t.Fatal(errs)
+	}
+	var dryOut, dryErr safeBuffer
+	dryCtx, dryCancel := context.WithCancel(context.Background())
+	go func() {
+		waitFor(t, func() bool { return strings.Contains(dryOut.String(), "\n") }, "dry-run daemon tick")
+		dryCancel()
+	}()
+	run(dryCtx, []string{"daemon", "-c", f.cfg, "--dry-run", "--routine", "example-scheduler/nightly/inv-dry"}, &dryOut, &dryErr)
+	g := graphOf(t, f)
+	for _, l := range g.Links {
+		if l.Kind == rd.InvocationLink {
+			t.Fatalf("dry-run daemon recorded invocation link: %#v", l)
+		}
+	}
+
+	var out safeBuffer
+	d := graphProcess(f, "daemon", "--routine", "example-scheduler/nightly/inv-daemon")
+	d.Stdout = &out
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return strings.Contains(out.String(), "\n") }, "daemon tick")
+	_ = d.Process.Kill()
+	_, _ = d.Process.Wait()
+	g = graphOf(t, f)
+	var gotInv []string
+	for _, l := range g.Links {
+		if l.Kind == rd.InvocationLink {
+			gotInv = append(gotInv, l.Routine.Invocation)
+		}
+	}
+	if len(gotInv) != 1 || gotInv[0] != "inv-daemon" {
+		t.Fatalf("daemon routine links: %v (stateDir=%s)", gotInv, stateDir)
+	}
+}
+
+// Registering before start --routine automatically links the pre-existing
+// registry reference once start opens the loop's first run.
+func TestStartLinksPreRegisteredReferenceAndRecordsRoutine(t *testing.T) {
+	fStart := newFixture(t)
+	regDir := filepath.Join(t.TempDir(), "reg")
+	t.Setenv(registryDirEnv, regDir)
+	if code, out, errs := registryRun(t, regDir, "add", "-c", fStart.cfg); code != 0 {
+		t.Fatal(out, errs)
+	}
+	reg, err := registry.Load(regDir)
+	if err != nil || len(reg.Entries) != 1 {
+		t.Fatalf("%+v %v", reg, err)
+	}
+	entry := reg.Entries[0]
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var startErr bytes.Buffer
+	code := startCommand(env{ctx, io.Discard, &startErr}, []string{"--foreground", "-c", entry.ConfigPath, "--routine", "example-scheduler/nightly/inv-pre"}, func(control.File, bool) error {
+		cancel()
+		return nil
+	})
+	if code != exitOK {
+		t.Fatalf("start after pre-register: %d %s", code, startErr.String())
+	}
+	if _, r, raw := runsExec(t, "--registry-id", entry.ID, "--directory", regDir, "--id", entry.ID); r.Loops[0].Registration != recordRecorded || r.Loops[0].Current == nil || r.Loops[0].Current.Invocation != "routine:example-scheduler/nightly/inv-pre" || r.Node.Status != rungraph.Found {
+		t.Fatalf("after start: %s", raw)
 	}
 }

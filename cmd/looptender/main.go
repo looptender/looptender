@@ -71,7 +71,7 @@ Local client discovery:
   client pause|stop        Save a restrictive hold for a registered loop
   client prepare-resume    Prepare a short-lived snapshot/ticket for review
   client resume            Clear holds using an unchanged prepared ticket
-  accounts list|add|update|check|usage  Select private account contexts; explicit status only, no model calls
+  accounts list|add|update|remove|check|usage  Select private account contexts; explicit status only, no model calls
   accounts connect|disconnect  Connect a subscription: a new private directory, the provider's own sign-in, a label; or take one out of the list
   registry add|list|remove|reconcile  Register private loop references; never start supervision
   migrate                  Say what moving the per-user directories from keepgoing/ to looptender/ would do;
@@ -86,7 +86,7 @@ Goal metadata:
 
 Control:
   enable | disable         Turn supervision on or off (nothing is sent while off)
-                           enable, resume and tick take --routine source/routine[/invocation]
+                           enable, resume, start, daemon and tick take --routine source/routine[/invocation]
                            to record which scheduler entry and trigger called them
   pause | resume           Pause; resume also clears stop, awaiting-user, and completion
   stop                     Stop the running session on the next pass, then send nothing
@@ -192,9 +192,21 @@ type routineKey struct{}
 // routineIgnoredKey marks a tick whose --routine value could not be recorded.
 type routineIgnoredKey struct{}
 
+const routineUsageMsg = "--routine takes source/routine or source/routine/invocation; each part is 1-128 letters, digits and . _ : @ -, starting with a letter or digit"
+
 func suppliedRoutine(ctx context.Context) rd.RoutineRef {
 	r, _ := ctx.Value(routineKey{}).(rd.RoutineRef)
 	return r
+}
+
+func routineFlagString(r rd.RoutineRef) string {
+	if r == (rd.RoutineRef{}) {
+		return ""
+	}
+	if r.Invocation == "" {
+		return r.Source + "/" + r.Routine
+	}
+	return r.Source + "/" + r.Routine + "/" + r.Invocation
 }
 
 func (e env) errf(format string, a ...any) { fmt.Fprintf(e.stderr, format+"\n", a...) }
@@ -415,8 +427,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.Visit(func(fl *flag.Flag) { routineSet = routineSet || fl.Name == "routine" })
 	if routineSet {
 		// Never echo the value: it is supplied by another program.
-		if cmd != "enable" && cmd != "resume" && cmd != "tick" {
-			e.errf("--routine is only supported by enable, resume, and tick")
+		if cmd != "enable" && cmd != "resume" && cmd != "tick" && cmd != "daemon" {
+			e.errf("--routine is only supported by enable, resume, tick, start, and daemon")
 			return exitUsage
 		}
 		r, err := rd.ParseRoutine(*f.routine)
@@ -428,7 +440,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			// run when its scheduler sends a value keepgoing cannot record.
 			e.ctx = context.WithValue(e.ctx, routineIgnoredKey{}, true)
 		default:
-			e.errf("--routine takes source/routine or source/routine/invocation; each part is 1-128 letters, digits and . _ : @ -, starting with a letter or digit")
+			e.errf("%s", routineUsageMsg)
 			return exitUsage
 		}
 	}

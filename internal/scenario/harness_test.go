@@ -29,8 +29,9 @@ import (
 )
 
 // keepgoingBin is built once for the whole suite. standinDir holds the
-// stand-ins (bb, claude, codex, example-agent) and a link to git: one directory shared by
-// every scenario, and the whole PATH each scenario's commands see.
+// stand-ins (bb, claude, codex, agent, example-agent) and a link to git: one
+// directory shared by every scenario, and the whole PATH each scenario's
+// commands see.
 var keepgoingBin, standinDir string
 
 func TestMain(m *testing.M) {
@@ -101,6 +102,7 @@ func installStandins(bin, scratch string) error {
 	for name, args := range map[string][]string{
 		"claude":        {"-p", "warm"},
 		"codex":         {"app-server"},
+		"agent":         {"--version"},
 		"example-agent": {"warm"},
 	} {
 		if _, err := d.Alias("bb", name, env, args...); err != nil {

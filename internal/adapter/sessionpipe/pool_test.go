@@ -252,4 +252,13 @@ func TestSettingsFileUsesPoolPort(t *testing.T) {
 	if _, err := SettingsFileUsesPoolPort(sub, 47812); !errors.Is(err, ErrNotRegular) {
 		t.Fatalf("directory: %v, want ErrNotRegular", err)
 	}
+
+	// Symlink target is refused without following it.
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(p, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SettingsFileUsesPoolPort(link, 47812); !errors.Is(err, ErrNotRegular) {
+		t.Fatalf("symlink: %v, want ErrNotRegular", err)
+	}
 }

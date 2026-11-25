@@ -28,6 +28,7 @@
   "TestDaemonCarriesOutAStopWhenItsConfigurationIsGone": 2.9,
   "TestDaemonShutdownUnverifiedExitIsBounded": 5.0,
   "TestDaemonStatusLifecycleAndConfigReload": 5.5,
+  "TestDaemonSwitchesToAndFromTheEarlierHandoverForm": 42.2,
   "TestDockAccountUsesStayCompact": 2.4,
   "TestDockFourByteNamesStayUnderTheResponseBound": 5.1,
   "TestDockLoopArgStaysUnderTheResponseBound": 5.1,
@@ -75,6 +76,7 @@
   "TestPanelSendAllowanceHTTPGuards": 3.4,
   "TestPanelSendAllowanceRefusesChangedEvidence": 9.1,
   "TestPanelServerExitsWhenIdleAndLeavesLoopsAlone": 4.0,
+  "TestPanelServerInheritsNothingFromItsCaller": 15.4,
   "TestPanelServerWhoseLockFileIsDeletedExitsAndLeavesTheNewOneWorking": 6.9,
   "TestPanelStatusAndListReportTheOldLocationAndStopRetiresIt": 2.7,
   "TestPanelSuspendedServerIsRunningButNotAnswering": 36.2,
@@ -102,10 +104,10 @@
   "TestTransferReconcileSupersessionBoundaries": 4.9
  },
  "packages": {
-  "internal/incident": 175,
-  "internal/supervise": 150,
-  "internal/adapter/runner": 147,
-  "internal/scenario": 133,
+  "internal/supervise": 200,
+  "internal/adapter/runner": 190,
+  "internal/scenario": 170,
+  "internal/incident": 135,
   "internal/window": 70,
   "internal/adapter/conformance": 52,
   "internal/rungraph": 30

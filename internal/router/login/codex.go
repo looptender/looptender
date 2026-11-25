@@ -103,6 +103,11 @@ func codexCredentialStore(dir string, ownUID int) (string, error) {
 			line = line[:idx]
 		}
 		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			// Stop at the first TOML table header so table-scoped keys
+			// are never misread as top-level settings.
+			return "", nil
+		}
 		k, v, ok := strings.Cut(line, "=")
 		if !ok || strings.TrimSpace(k) != "cli_auth_credentials_store" {
 			continue

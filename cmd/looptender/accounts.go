@@ -33,7 +33,7 @@ func accountsDirectory(path string) (string, error) {
 }
 func accountsCommand(e env, args []string, run accountRun) int {
 	if len(args) == 0 {
-		e.errf("usage: accounts list|add|update|check|usage|connect|disconnect [flags]")
+		e.errf("usage: accounts list|add|update|remove|check|usage|connect|disconnect [flags]")
 		return exitUsage
 	}
 	op := args[0]
@@ -48,6 +48,7 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	accountDir := fs.String("account-dir", "", "existing selected account directory; never copied")
 	workdir := fs.String("workdir", "", "selected working directory")
 	expect := fs.String("expect", "", "required current revision for update")
+	expectRevision := fs.String("revision", "", "expected current revision for remove")
 	asJSON := fs.Bool("json", false, "print minimized structured result")
 	like := fs.String("like", "", "connect: take the executable and working directory from this entry")
 	force := fs.Bool("force", false, "disconnect: even when a loop names the account")
@@ -60,8 +61,9 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	supplied := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { supplied[f.Name] = true })
 	for k := range supplied {
-		allowed := k == "directory" || k == "json" || ((op == "check" || op == "update" || op == "usage") && k == "id") ||
+		allowed := k == "directory" || k == "json" || ((op == "check" || op == "update" || op == "usage" || op == "remove") && k == "id") ||
 			((op == "add" || op == "update") && (k == "label" || k == "provider" || k == "selection" || k == "cli" || k == "account-dir" || k == "workdir" || (op == "update" && k == "expect"))) ||
+			(op == "remove" && k == "revision") ||
 			(op == "connect" && (k == "label" || k == "provider" || k == "cli" || k == "workdir" || k == "like")) ||
 			(op == "disconnect" && (k == "label" || k == "id" || k == "force"))
 		if !allowed {
@@ -69,7 +71,7 @@ func accountsCommand(e env, args []string, run accountRun) int {
 			return exitUsage
 		}
 	}
-	if op != "list" && op != "add" && op != "update" && op != "check" && op != "usage" && op != "connect" && op != "disconnect" {
+	if op != "list" && op != "add" && op != "update" && op != "remove" && op != "check" && op != "usage" && op != "connect" && op != "disconnect" {
 		return exitUsage
 	}
 	path, err := accountsDirectory(*dir)
@@ -85,6 +87,9 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	}
 	if op == "disconnect" {
 		return accountsDisconnect(e, path, *id, *label, *force, *asJSON, accountUses)
+	}
+	if op == "remove" {
+		return accountsRemove(e, path, *id, *expectRevision, *asJSON, accountUses)
 	}
 	now := time.Now().UTC()
 	caller := os.Getenv("BB_THREAD_ID")
@@ -481,3 +486,96 @@ var (
 	limitAccountsDir string
 	limitAccountRun  accountRun = accountExec
 )
+
+type accountRemoveOut struct {
+	SchemaVersion      int               `json:"schemaVersion"`
+	Removed            bool              `json:"removed"`
+	ID                 string            `json:"id"`
+	Label              string            `json:"label"`
+	Provider           string            `json:"provider"`
+	References         []string          `json:"references,omitempty"`
+	ReferencesComplete bool              `json:"referencesComplete"`
+	Revisions          map[string]string `json:"revisions"`
+	Accounts           accounts.View     `json:"accounts"`
+}
+
+// accountsRemove deletes only the selected entry from accounts.json, leaving
+// provider credentials, logins, and directories on disk untouched, and reports
+// any registered loop references so callers can update or verify routes.
+func accountsRemove(e env, dir, id, expectedRevision string, asJSON bool, uses func(catalogDir, id string) ([]string, bool)) int {
+	if strings.TrimSpace(id) == "" {
+		e.errf("accounts remove: name the account with --id")
+		return exitUsage
+	}
+	catalog, err := accounts.Load(dir)
+	if err != nil || accounts.Find(&catalog, id) == nil {
+		e.errf("accounts remove: account not found; nothing was changed")
+		return exitFailed
+	}
+	guard, err := accounts.CheckGuard(dir, id)
+	if err != nil {
+		if errors.Is(err, lock.ErrHeld) {
+			e.errf("accounts remove: operation already running")
+			return exitSkipped
+		}
+		e.errf("accounts remove: catalog unavailable")
+		return exitFailed
+	}
+	defer guard.Release()
+
+	removed, err := accounts.Remove(dir, id, expectedRevision)
+	if err != nil {
+		if errors.Is(err, lock.ErrHeld) {
+			e.errf("accounts remove: operation already running")
+			return exitSkipped
+		}
+		if errors.Is(err, accounts.ErrChanged) {
+			e.errf("accounts remove: selection or revision changed; review again")
+		} else {
+			e.errf("accounts remove: catalog unavailable; nothing was changed")
+		}
+		return exitFailed
+	}
+
+	var refs []string
+	refsComplete := false
+	if uses != nil {
+		refs, refsComplete = uses(dir, removed.ID)
+	}
+	view := accounts.ReadView(dir, time.Now().UTC())
+	if !view.Complete {
+		e.errf("accounts: catalog unavailable")
+		return exitFailed
+	}
+	revisions := map[string]string{}
+	if after, loadErr := accounts.Load(dir); loadErr == nil {
+		for _, selected := range after.Entries {
+			revisions[selected.ID] = selected.Revision
+		}
+	}
+	if asJSON {
+		out := accountRemoveOut{
+			SchemaVersion:      1,
+			Removed:            true,
+			ID:                 removed.ID,
+			Label:              removed.Label,
+			Provider:           removed.Provider,
+			References:         refs,
+			ReferencesComplete: refsComplete,
+			Revisions:          revisions,
+			Accounts:           view,
+		}
+		if json.NewEncoder(e.stdout).Encode(out) != nil {
+			return exitFailed
+		}
+		return exitOK
+	}
+	fmt.Fprintf(e.stdout, "Removed %q (%s, %s) from the account catalog.\n", removed.Label, removed.Provider, removed.ID)
+	fmt.Fprintln(e.stdout, "Provider credentials, logins, and directories on disk were not touched.")
+	if len(refs) > 0 {
+		fmt.Fprintf(e.stdout, "Warning: registered loop routes still reference this account: %s. Edit those routes or run `looptender doctor`.\n", strings.Join(refs, "; "))
+	} else if !refsComplete {
+		fmt.Fprintln(e.stdout, "Warning: could not inspect every registered loop for remaining route references; run `looptender doctor`.")
+	}
+	return exitOK
+}

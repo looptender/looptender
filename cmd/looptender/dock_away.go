@@ -54,11 +54,17 @@ type dockDeparture struct {
 	Others dockText `json:"others"`
 	loop   string
 	key    string
+	// expired marks a limit departure whose usage window has since ended, a
+	// newer test passed, the undated limit is older than a week, or the loop
+	// itself is no longer running without a future reset.
+	expired      bool
+	expiredNote  string
+	loopInactive bool
 }
 
-// atLimit is a usage limit whose reported reset has not passed, or was not
-// reported.
-func (d dockDeparture) atLimit() bool { return d.How == dockLeftLimit && !d.ResetPassed }
+// atLimit is a usage limit whose reported reset has not passed and has not
+// otherwise expired.
+func (d dockDeparture) atLimit() bool { return d.How == dockLeftLimit && !d.ResetPassed && !d.expired }
 
 // dockAway is what is recorded about a loop that is not on its first route.
 type dockAway struct {
@@ -210,6 +216,21 @@ func dockAwayOf(st *statusOut, chain *dockChainInput, entries []dockChainEntry, 
 				}
 			}
 		}
+		if d.How == dockLeftLimit && !d.ResetPassed {
+			var entry *dockChainEntry
+			if pos >= 0 && pos < len(entries) {
+				entry = &entries[pos]
+			}
+			var usage dockUsageTarget
+			var probeOK bool
+			var probeAt *time.Time
+			if entry != nil {
+				usage, probeOK, probeAt = entry.Usage, entry.probeOK, entry.ProbedAt
+			}
+			if expired, note := dockDepartureExpired(d, usage, probeOK, probeAt, now, 0); expired {
+				d.expired, d.expiredNote = true, note
+			}
+		}
 		found[pos] = true
 		a.Departures = append(a.Departures, d)
 		cur = m.from
@@ -340,11 +361,8 @@ func (a *dockAway) departureText(d dockDeparture, subject string, now time.Time)
 	default:
 		s = txt("Why " + lowerFirst(who) + " left this route is not recorded.")
 	}
-	if d.Position != 0 {
-		return s
-	}
 	// Only the first route has a reported reset and a return.
-	if d.How == dockLeftLimit {
+	if d.How == dockLeftLimit && d.Position == 0 {
 		switch {
 		case d.ResetFar:
 			s = txt(s, " The provider reported a reset more than a year away; it is not shown.")
@@ -355,6 +373,12 @@ func (a *dockAway) departureText(d dockDeparture, subject string, now time.Time)
 		default:
 			s = txt(s, " The provider reported a reset for ", tm(*d.ResetsAt, "datetime"), " (in "+dockSpan(d.ResetsAt.Sub(now))+").")
 		}
+	}
+	if d.How == dockLeftLimit && d.expired && d.expiredNote != "" {
+		s = txt(s, " "+d.expiredNote)
+	}
+	if d.Position != 0 {
+		return s
 	}
 	forWhom := "this loop"
 	if subject != "" {

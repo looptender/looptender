@@ -218,6 +218,7 @@ type dockServed struct {
 	AccountQuota            bool     `json:"accountQuota,omitempty"`          // explicit reviewed account-scoped refresh
 	AccountCheck            bool     `json:"accountCheck,omitempty"`          // bounded status check on Accounts open (--allow-changes)
 	AccountConnectProviders []string `json:"accountConnectProviders,omitempty"`
+	AccountRemove           bool     `json:"accountRemove,omitempty"`
 	SendAllowanceEdit       bool     `json:"sendAllowanceEdit,omitempty"`
 	AccountSelectionReview  bool     `json:"accountSelectionReview,omitempty"`
 }

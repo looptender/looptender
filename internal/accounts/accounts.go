@@ -443,6 +443,42 @@ func Find(f *File, id string) *Entry {
 	}
 	return nil
 }
+
+// Remove deletes only the catalog entry identified by id from accounts.json,
+// leaving provider credentials, logins, and directories on disk untouched.
+// When expectedRevision is non-empty, removal succeeds only if the stored
+// entry's Revision matches.
+func Remove(dir, id, expectedRevision string) (Entry, error) {
+	if !validToken(id) {
+		return Entry{}, ErrInvalid
+	}
+	if expectedRevision != "" && !validToken(expectedRevision) {
+		return Entry{}, ErrChanged
+	}
+	var removed Entry
+	err := Update(dir, func(f *File) error {
+		at := -1
+		for i := range f.Entries {
+			if f.Entries[i].ID == id {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			return ErrChanged
+		}
+		if expectedRevision != "" && f.Entries[at].Revision != expectedRevision {
+			return ErrChanged
+		}
+		removed = f.Entries[at]
+		f.Entries = append(f.Entries[:at:at], f.Entries[at+1:]...)
+		return nil
+	})
+	if err != nil {
+		return Entry{}, err
+	}
+	return removed, nil
+}
 func NewEntry(f File, e Entry, caller string, now time.Time, env []string) Entry {
 	e.ID = token()
 	e.Revision = token()
