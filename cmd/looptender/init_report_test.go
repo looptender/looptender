@@ -302,3 +302,30 @@ func TestInitTaskFileSnapshotBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestInitBBPreservesExplicitNonClaudeProvider(t *testing.T) {
+	for _, provider := range []string{"acp-antigravity", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			f := newSetupFixture(t)
+			args := append(f.args(), "--json", "--agent", "bb", "--thread", "thr_example_bb", "--provider", provider)
+			code, out, errOut := f.run(t, args, "")
+			if code != 0 {
+				t.Fatalf("init %s: %d %s", provider, code, errOut)
+			}
+			r := decodeInitReport(t, out)
+			if r.Primary.Agent.Adapter != "bb" || r.Primary.Agent.Provider != provider || r.Primary.Agent.Group != provider || len(r.Fallbacks) != 0 || r.NewThreadOffer != nil {
+				t.Fatalf("unexpected report for %s: %+v", provider, r)
+			}
+			if strings.Contains(out, "claude") {
+				t.Fatalf("unexpected claude mention in report for %s: %s", provider, out)
+			}
+			cfg, err := config.Load(r.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Loop.Provider != provider || cfg.Loop.Group != provider || cfg.FallbackSet != nil {
+				t.Fatalf("unexpected config for %s: %+v", provider, cfg.Loop)
+			}
+		})
+	}
+}

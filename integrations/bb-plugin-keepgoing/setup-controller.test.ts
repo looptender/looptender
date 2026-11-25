@@ -387,8 +387,8 @@ test("an enabled loop nothing supervises can still be started: that error is wha
   assert.notEqual(r.canStart, true); assert.ok(!g.calls.includes("start"));
 });
 
-test("a takeover the CLI offers is previewed by default, can be turned off, and binds the creation", async () => {
-  for (const takeover of ["on", "off"] as const) {
+test("a takeover the CLI offers is off by default, can be opted into, and binds the creation", async () => {
+  for (const takeover of ["off", "on"] as const) {
     const f = fixture();
     const seen: unknown[] = [];
     const offer = { provider: "claude-code", model: "example-claude-model" };
@@ -398,9 +398,9 @@ test("a takeover the CLI offers is previewed by default, can be turned off, and 
       if (choice === "none" || choice === undefined) return { plan: structuredClone(f.plan) };
       return { plan: { ...structuredClone(f.plan), takeover: { provider: choice.provider, model: choice.model, permission: "accept-edits", text: "On a usage limit on codex: a new conversation on claude-code takes over." } } };
     };
-    const p = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", ...(takeover === "off" ? { takeover } : {}) });
+    const p = await f.controller.call({ action: "preview", threadId: "thr_example", name: "example-loop", task: "Fictional private task", ...(takeover === "on" ? { takeover } : {}) });
     assert.equal(p.ok, true, p.message);
-    assert.deepEqual(p.plan?.takeoverOffer, offer, "the offer stays visible to turn it back on");
+    assert.deepEqual(p.plan?.takeoverOffer, offer, "the offer stays available in Options to turn on");
     if (takeover === "on") {
       assert.deepEqual(seen, ["detect", offer]); assert.equal(p.plan?.takeover?.provider, "claude-code"); assert.match(p.message, /a new conversation on claude-code takes over/);
     } else {
@@ -413,6 +413,23 @@ test("a takeover the CLI offers is previewed by default, can be turned off, and 
     assert.equal(created.ok, true, created.message);
     assert.deepEqual(seen.slice(-2), takeover === "on" ? [offer, offer] : ["none", "none"]);
   }
+});
+
+test("inspect and preview surface threadMeta from BB metadata and fall back safely when unavailable", async () => {
+  const f = fixture();
+  f.target.provider = "acp-antigravity";
+  f.plan.provider = "acp-antigravity";
+  f.d.threadMeta = async () => ({ provider: "acp-antigravity", providerLabel: "Antigravity", model: "gemini-4-neon", modelLabel: "Gemini 4 Neon", reasoningLevel: "high" });
+  const inspected = await f.controller.call({ action: "inspect", threadId: "thr_example" });
+  assert.deepEqual(inspected.threadMeta, { provider: "acp-antigravity", providerLabel: "Antigravity", model: "gemini-4-neon", modelLabel: "Gemini 4 Neon", reasoningLevel: "high" });
+  const preview = await f.preview();
+  assert.deepEqual(preview.threadMeta, inspected.threadMeta);
+
+  // A threadMeta lookup error falls back to target.provider without leaking error text.
+  f.d.threadMeta = async () => { throw new Error("PRIVATE-META-ERROR"); };
+  const fallback = await f.controller.call({ action: "inspect", threadId: "thr_example" });
+  assert.deepEqual(fallback.threadMeta, { provider: "acp-antigravity" });
+  assert.ok(!JSON.stringify(fallback).includes("PRIVATE-META-ERROR"));
 });
 
 test("a CLI that offers no takeover is asked nothing more", async () => {

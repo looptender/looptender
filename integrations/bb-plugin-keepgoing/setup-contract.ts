@@ -151,6 +151,14 @@ export function failureMessage(f: SetupFailure, creating: boolean, name?: string
   }
 }
 export const checkSchema = z.object({ id: text, status: z.enum(["ok", "warning", "error", "unavailable"]), message: text, fix: z.string().max(4096).optional() });
+export const threadSetupMetaSchema = z.object({
+  provider: z.string().min(1).max(64),
+  providerLabel: z.string().min(1).max(120).optional(),
+  model: z.string().min(1).max(256).optional(),
+  modelLabel: z.string().min(1).max(120).optional(),
+  reasoningLevel: z.string().min(1).max(64).optional(),
+});
+export type ThreadSetupMeta = z.infer<typeof threadSetupMetaSchema>;
 export const setupResult = z.object({
   ok: z.boolean(), message: z.string(), ticket: z.string().optional(), plan: planSchema.optional(),
   record: recordSchema.optional(), goal: goalSummarySchema.nullable().optional(), goalState: goalStateSchema.optional(), checks: z.array(checkSchema).optional(), canStart: z.boolean().optional(),
@@ -170,6 +178,9 @@ export const setupResult = z.object({
   // Thread title from BB metadata (never transcript content), used for a
   // readable default loop slug.
   threadTitle: z.string().max(200).optional(),
+  // Running provider and model metadata from BB (never transcript content),
+  // so Add to Looptender reflects the thread's actual setup.
+  threadMeta: threadSetupMetaSchema.optional(),
   // Existing loops on this host that this thread can continue (--succeeds),
   // ordered with same-project non-archived loops first.
   continuationCandidates: z.array(continuationCandidateSchema).max(128).optional(),

@@ -2,7 +2,7 @@ import { publicationMessage, type Publication } from "./registry-contract.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { goalDetails } from "./status-details.ts";
-import { conversationTask, checkSchema, failureMessage, refusalMessage, refusedReportSchema, setupInput, targetOf, statusFollowsStandard, type ContinuationCandidate, type Refusal, type SetupFailure, type SetupTarget, type SetupPlan, type SetupRecord, type SetupResult } from "./setup-contract.ts";
+import { conversationTask, checkSchema, failureMessage, refusalMessage, refusedReportSchema, setupInput, targetOf, statusFollowsStandard, type ContinuationCandidate, type Refusal, type SetupFailure, type SetupTarget, type SetupPlan, type SetupRecord, type SetupResult, type ThreadSetupMeta } from "./setup-contract.ts";
 import { planBounds, sameBounds, type Bounds } from "./new-thread-contract.ts";
 import type { TakeoverChoice } from "./setup-host.ts";
 
@@ -21,6 +21,8 @@ export interface SetupDependencies {
   conversation?(threadId: string): Promise<"none" | "unknown">;
   // Thread title from BB metadata (never transcript content), for default slug.
   threadTitle?(threadId: string): Promise<string | undefined>;
+  // Thread provider/model metadata from BB (never transcript content).
+  threadMeta?(threadId: string): Promise<ThreadSetupMeta | undefined>;
   // Existing loops on this host that a new setup can continue (--succeeds).
   continuationCandidates?(bin: string, target: SetupTarget): Promise<ContinuationCandidate[]>;
   changed(): void;
@@ -125,8 +127,9 @@ export function createSetupController(d: SetupDependencies) {
     const task = builtIn ? conversationTask(input.note) : input.task ?? "";
     const withGoal = input.withGoal ?? false;
     const followStandard = input.followStandard ?? false;
-    // A takeover is offered only when the setup does not follow the list.
-    const takeover = followStandard ? "off" : input.takeover ?? "on";
+    // A takeover is opt-in ("off" by default) so non-Claude threads never
+    // silently default to another provider's model.
+    const takeover = followStandard ? "off" : input.takeover ?? "off";
     if (!task.trim() || Buffer.byteLength(task) > 262144) throw new SetupPolicyError("Enter a task of at most 256 KiB.");
     if (input.action === "preview") {
       if (!input.name) throw new SetupPolicyError("Enter a loop name using lowercase letters, digits, and hyphens.");
@@ -165,7 +168,9 @@ export function createSetupController(d: SetupDependencies) {
       // to show; not following must come back with none.
       if (followStandard !== (plan.routes !== undefined)) throw new SetupPolicyError("Setup did not report the route choice that was asked for. Nothing was created.");
       previews.set(ticket, { target, name: input.name, taskHash: digest(task), withGoal, followStandard, takeover, choice, ...(input.succeeds ? { succeeds: input.succeeds, succeedsMeta } : {}), bounds, bin, plan, expires: Date.now() + 300_000 });
-      return { ok: true, ticket, plan, ...(builtIn ? { task } : {}), message: followStandard ? "Preview only. Creating this setup leaves supervision disabled. It follows your standard route list and hands off to it on a rate limit." : plan.takeover ? `Preview only. Creating this setup leaves supervision disabled. ${plan.takeover.text}` : "Preview only. Creating this setup leaves supervision disabled; fallbacks and automatic handoffs are off." };
+      let threadMeta: ThreadSetupMeta | undefined;
+      try { threadMeta = (await d.threadMeta?.(input.threadId)) ?? { provider: target.provider }; } catch { threadMeta = { provider: target.provider }; }
+      return { ok: true, ticket, plan, ...(threadMeta ? { threadMeta } : {}), ...(builtIn ? { task } : {}), message: followStandard ? "Preview only. Creating this setup leaves supervision disabled. It follows your standard route list and hands off to it on a rate limit." : plan.takeover ? `Preview only. Creating this setup leaves supervision disabled. ${plan.takeover.text}` : "Preview only. Creating this setup leaves supervision disabled; fallbacks and automatic handoffs are off." };
     }
     const preview = previews.get(input.ticket ?? "");
     previews.delete(input.ticket ?? ""); // one attempt, including failure; never replay a creation
@@ -231,6 +236,8 @@ export function createSetupController(d: SetupDependencies) {
         try { conversation = (await d.conversation?.(input.threadId)) ?? "unknown"; } catch { /* cannot tell */ }
         let threadTitle: string | undefined;
         try { threadTitle = await d.threadTitle?.(input.threadId); } catch { /* fallback slug */ }
+        let threadMeta: ThreadSetupMeta | undefined;
+        try { threadMeta = (await d.threadMeta?.(input.threadId)) ?? (resolvedTarget ? { provider: resolvedTarget.provider } : undefined); } catch { threadMeta = resolvedTarget ? { provider: resolvedTarget.provider } : undefined; }
         let continuationCandidates: ContinuationCandidate[] | undefined;
         try {
           if (resolvedBin && resolvedTarget && d.continuationCandidates) {
@@ -242,6 +249,7 @@ export function createSetupController(d: SetupDependencies) {
           ...(standardRoutes ? { standardRoutes: true as const } : {}),
           conversation,
           ...(threadTitle ? { threadTitle } : {}),
+          ...(threadMeta ? { threadMeta } : {}),
           ...(continuationCandidates ? { continuationCandidates } : {}),
         };
       }
