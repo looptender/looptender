@@ -102,7 +102,7 @@ func dockCommand(e env, args []string) int {
 		e.errf("dock: no random source for the access token")
 		return exitFailed
 	}
-	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: *refresh, staleAfter: *staleAfter, query: inspectDaemon, versions: true}
+	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: *refresh, staleAfter: *staleAfter, query: inspectDaemon, versions: true, routerOffline: *offline}
 	if *offline {
 		reader.query = func(ctx context.Context, dir, current string, _ bool) daemonStatus {
 			return inspectDaemon(ctx, dir, current, true)
@@ -357,9 +357,11 @@ type dockReader struct {
 	// they hash no service file and read no client report. panelDir is
 	// where the clients' reports are read from; empty means the default
 	// panel directory. services caches service file digests.
-	versions bool
-	panelDir string
-	services dockServiceFiles
+	versions      bool
+	panelDir      string
+	routerDir     string // test/private router override; empty uses default
+	routerOffline bool
+	services      dockServiceFiles
 }
 
 type dockCached struct {
@@ -541,6 +543,9 @@ func (d *dockReader) read(ctx context.Context, identifiers bool) (result dockRep
 	r.Notify = readNotifyState(panelClientsDir(d.panelDir), now)
 	h := readHost(ctx)
 	r.Host = &h
+	if rs, ok := readRouterSummary(ctx, d.routerDir, d.routerOffline); ok {
+		r.Router = &rs
+	}
 	if n := hostNotices(&h, now); len(n) > 0 {
 		r.Notices = append(n, r.Notices...)
 	}

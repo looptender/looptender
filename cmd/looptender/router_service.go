@@ -471,6 +471,43 @@ func routerServiceStatus(e env, h routerServiceHost, rec routerServiceRecord, re
 	return writeRouterServiceReport(e, rep, asJSON, exitOK)
 }
 
+func routerServiceRegistrationSummary(ctx context.Context, dir string, offline bool, h routerServiceHost) string {
+	canonDir, err := canonicalFuturePath(dir)
+	if err != nil {
+		canonDir = dir
+	}
+	rec, recorded, err := readRouterServiceRecord(canonDir)
+	if err != nil {
+		return "unavailable"
+	}
+	if !recorded {
+		return "not_installed"
+	}
+	if offline || (h.platform != "darwin" && h.platform != "linux") || h.uid < 0 || h.home == "" {
+		return "unavailable"
+	}
+	if validateRouterServiceRecord(h, canonDir, rec) != nil {
+		return "unavailable"
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	coreReg := routerServiceRegistration(queryCtx, h, rec, rec.CoreLabel, rec.CoreDefinition)
+	frontReg := routerServiceRegistration(queryCtx, h, rec, rec.FrontLabel, rec.FrontDefinition)
+	switch {
+	case coreReg == "loaded" && frontReg == "loaded":
+		return "loaded"
+	case coreReg == "absent" && frontReg == "absent":
+		return "absent"
+	case coreReg == "loaded" || frontReg == "loaded":
+		return "partial"
+	default:
+		return "unknown"
+	}
+}
+
 func routerServiceInstall(e env, h routerServiceHost, rec routerServiceRecord, recorded, dryRun, asJSON bool) int {
 	coreDef, frontDef, err := routerServiceDefinitions(h, rec)
 	if err != nil {

@@ -61,6 +61,7 @@ type doctorReport struct {
 	Sessions      map[string]*sessionStatus `json:"sessions,omitempty"`
 	Daemon        *daemonStatus             `json:"daemon,omitempty"`
 	BBAutomation  *bbAutomationStatus       `json:"bbAutomation,omitempty"`
+	Router        *routerSummary            `json:"router,omitempty"`
 }
 
 func (r *doctorReport) add(id, status, message, fix string) {
@@ -336,6 +337,7 @@ func doctor(e env, args []string, run doctorRun) int {
 	if home, err := os.UserHomeDir(); err == nil {
 		doctorAccountDefaultDirectories(&r, doctorAccountsCatalog, home)
 	}
+	doctorRouter(e.ctx, &r, "", *offline)
 	queryCtx, cancel := context.WithTimeout(e.ctx, *timeout)
 	d := inspectDaemon(queryCtx, cfg.Loop.StateDir, version, *offline)
 	cancel()
@@ -554,6 +556,13 @@ func printDoctor(e env, r doctorReport, asJSON bool) int {
 	fmt.Fprintf(e.stdout, "next check: %s\n", r.NextCheck)
 	if r.Daemon != nil && r.Daemon.State == "responsive" {
 		fmt.Fprintf(e.stdout, "daemon: %s; dry run %t; live build %s\n", r.Daemon.Phase, r.Daemon.DryRun, r.Daemon.BinaryComparison)
+	}
+	if r.Router != nil {
+		stateWord := "off"
+		if r.Router.Enabled {
+			stateWord = "on"
+		}
+		fmt.Fprintf(e.stdout, "router: %s (directory %s, answering %v, pointed %d, service %s)\n", stateWord, r.Router.Directory, r.Router.Answering, r.Router.PointedCount, r.Router.Service)
 	}
 	for _, c := range r.Checks {
 		fmt.Fprintf(e.stdout, "[%s] %s: %s\n", c.Status, c.ID, c.Message)
