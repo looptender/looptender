@@ -216,6 +216,7 @@ type dockServed struct {
 	RouteChanges            string   `json:"routeChanges,omitempty"`
 	AccountQuotaProviders   []string `json:"accountQuotaProviders,omitempty"` // explicit provider allowlist; absent means legacy Codex only
 	AccountQuota            bool     `json:"accountQuota,omitempty"`          // explicit reviewed account-scoped refresh
+	AccountCheck            bool     `json:"accountCheck,omitempty"`          // bounded status check on Accounts open (--allow-changes)
 	AccountConnectProviders []string `json:"accountConnectProviders,omitempty"`
 	SendAllowanceEdit       bool     `json:"sendAllowanceEdit,omitempty"`
 	AccountSelectionReview  bool     `json:"accountSelectionReview,omitempty"`
@@ -481,6 +482,7 @@ func (d *dockReader) read(ctx context.Context, identifiers bool) (result dockRep
 				if logins, err := accounts.LoadLogins(dir); err == nil {
 					accounts.AttachLogins(&view, logins)
 				}
+				attachLocalAccountStatus(&view, f, os.Environ(), d.clock())
 			}
 		}
 		dockLinkAccountRoutes(&view, result)

@@ -379,6 +379,140 @@ async function notifyScenario(label, setup) {
 }
 
 if (unlisted.size) failures.push(`the variants set loop fields that dock_page_variant_keys.json does not list (add them, and they will be checked against dockLoop's JSON tags): ${[...unlisted].join(", ")}`);
+
+// Accounts page UX: eliminate duplicate "Not checked", surface local login file
+// hints, expose direct Review selection on context_changed, and run one bounded
+// auto-check pass on #/accounts open when accountCheck is enabled.
+{
+  const errs = [];
+  const vc = new VirtualConsole(); vc.on("jsdomError", (e) => errs.push(String(e.message || e)));
+  const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "http://127.0.0.1:1/s/token/#/accounts", virtualConsole: vc });
+  const w = dom.window;
+  const checkPosts = [];
+  const acctState = [
+    {
+      id: "00000000000000000000000000000001", label: "Work Claude", provider: "claude-code", selection: "inherited",
+      auth: { text: "Not checked", state: "unchecked", freshness: "unavailable" },
+      plan: { text: "Not checked", state: "unavailable", freshness: "unavailable", missing: "not_checked" },
+      configuredModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+      observedModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+      uses: "unavailable", identity: "selected_context_only", needsPerson: false
+    },
+    {
+      id: "00000000000000000000000000000002", label: "Codex Local", provider: "codex", selection: "explicit_directory",
+      localAuth: "file_present",
+      auth: { text: "Not checked", state: "unchecked", freshness: "unavailable" },
+      plan: { text: "Not checked", state: "unavailable", freshness: "unavailable", missing: "not_checked" },
+      configuredModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+      observedModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+      uses: "unavailable", identity: "selected_context_only", needsPerson: false
+    },
+    {
+      id: "00000000000000000000000000000003", label: "Drifted Claude", provider: "claude-code", selection: "inherited",
+      auth: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+      plan: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+      configuredModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+      observedModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+      reason: "context_changed", attention: "context_changed", uses: "unavailable", identity: "selected_context_only", needsPerson: true
+    }
+  ];
+  let curRef = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const makeDock = () => {
+    const d = clone(fixture.dock);
+    d.accountsReference = curRef;
+    d.selectedAccounts = acctState.length;
+    d.accounts = { state: "available", complete: true, cards: [] };
+    return d;
+  };
+  const makeSaved = () => ({ schemaVersion: 1, reference: curRef, readAt: fixture.dock.readAt, accounts: { state: "available", complete: true, cards: clone(acctState) } });
+  const srvCfg = { ...clone(fixture.server), servedBy: "panel", changes: "on", form: "a".repeat(64), accountCheck: true, accountSelectionReview: true, accountQuota: true, accountQuotaProviders: ["codex", "claude-code"] };
+  w.fetch = async (url, opts) => {
+    const path = String(url).split("?")[0].replace(/^.*\/s\/[^/]+\//, "");
+    if (opts && opts.method === "POST" && path.startsWith("api/v1/account-checks/")) {
+      const cid = path.split("/")[3];
+      checkPosts.push(cid);
+      curRef = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+      const item = acctState.find((x) => x.id === cid);
+      if (item) {
+        item.auth = { text: "Selected CLI reports login", state: "reported_present", freshness: "fresh", ageSeconds: 0, source: item.provider + " status" };
+        item.plan = { text: "Max", state: "reported", value: "max", freshness: "fresh", source: item.provider + " status" };
+        delete item.localAuth;
+      }
+      return { ok: true, status: 200, json: async () => ({ schemaVersion: 1, result: { outcome: "done", text: "Account login check completed." } }), text: async () => "" };
+    }
+    if (path === "api/v1/saved-accounts") {
+      const body = makeSaved();
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    }
+    const found = { "api/v1/dock": makeDock(), "api/v1/server": srvCfg, "api/v1/usage": fixture.usage }[path];
+    return { ok: found !== undefined, status: found !== undefined ? 200 : 404, json: async () => clone(found), text: async () => JSON.stringify(found) };
+  };
+  w.TextEncoder = TextEncoder; w.scrollTo = () => {}; w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} }); w.Element.prototype.scrollIntoView = () => {};
+  w.addEventListener("error", (e) => errs.push(String(e.message || e)));
+  w.addEventListener("unhandledrejection", (e) => errs.push(String(e.reason || e)));
+  w.eval(js);
+  const tick = () => new Promise((r) => setTimeout(r, 25));
+  await tick(); await tick(); await tick(); await tick();
+  // Wait for bounded auto-check pass and reload.
+  await tick(); await tick(); await tick(); await tick();
+  if (checkPosts.length !== 2 || checkPosts.includes("00000000000000000000000000000003")) {
+    errs.push(`expected 2 bounded auto-checks (skipping context_changed), got ${JSON.stringify(checkPosts)}`);
+  }
+  const cards = [...w.document.querySelectorAll("#pane .account-card")];
+  if (cards.length !== 3) errs.push(`expected 3 account cards, got ${cards.length}`);
+  else {
+    if (!/Selected CLI reports login/.test(cards[0].textContent) || !/Max/.test(cards[0].textContent)) errs.push("auto-checked first card did not refresh login/plan");
+    if (!/Review selection/.test(cards[2].textContent)) errs.push("context_changed card lacks Review selection action");
+  }
+  // Read-only view: verify no duplicate "Not checked" per unchecked row & localAuth file hint shows cleanly.
+  const roRef = "cccccccccccccccccccccccccccccccc";
+  const roDom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "http://127.0.0.1:1/s/token/#/accounts", virtualConsole: vc });
+  const rw = roDom.window;
+  const roPosts = [];
+  const roCards = [
+    {
+      id: "00000000000000000000000000000001", label: "Work Claude", provider: "claude-code", selection: "inherited",
+      auth: { text: "Not checked", state: "unchecked", freshness: "unavailable" },
+      plan: { text: "Not checked", state: "unavailable", freshness: "unavailable", missing: "not_checked" },
+      configuredModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+      observedModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+      uses: "unavailable", identity: "selected_context_only", needsPerson: false
+    },
+    {
+      id: "00000000000000000000000000000002", label: "Codex Local", provider: "codex", selection: "explicit_directory",
+      localAuth: "file_present",
+      auth: { text: "Not checked", state: "unchecked", freshness: "unavailable" },
+      plan: { text: "Not checked", state: "unavailable", freshness: "unavailable", missing: "not_checked" },
+      configuredModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+      observedModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+      uses: "unavailable", identity: "selected_context_only", needsPerson: false
+    }
+  ];
+  rw.fetch = async (url, opts) => {
+    if (opts && opts.method === "POST") roPosts.push(url);
+    const path = String(url).split("?")[0].replace(/^.*\/s\/[^/]+\//, "");
+    if (path === "api/v1/saved-accounts") {
+      const body = { schemaVersion: 1, reference: roRef, readAt: fixture.dock.readAt, accounts: { state: "available", complete: true, cards: roCards } };
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    }
+    const roDock = makeDock();
+    roDock.accountsReference = roRef;
+    roDock.selectedAccounts = roCards.length;
+    const found = { "api/v1/dock": roDock, "api/v1/server": fixture.server, "api/v1/usage": fixture.usage }[path];
+    return { ok: found !== undefined, status: found !== undefined ? 200 : 404, json: async () => clone(found), text: async () => JSON.stringify(found) };
+  };
+  rw.TextEncoder = TextEncoder; rw.scrollTo = () => {}; rw.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} }); rw.Element.prototype.scrollIntoView = () => {};
+  rw.eval(js);
+  await tick(); await tick(); await tick(); await tick();
+  if (roPosts.length !== 0) errs.push("read-only panel sent POST requests on Accounts load");
+  const roEls = [...rw.document.querySelectorAll("#pane .account-card")];
+  const roNotChecked = (roEls[0]?.textContent.match(/Not checked/g) || []).length;
+  if (roNotChecked !== 1) errs.push(`unchecked row repeated 'Not checked' ${roNotChecked} times, want 1`);
+  if (!/Local login file present/.test(roEls[1]?.textContent || "")) errs.push("read-only Codex card lacked Local login file present hint");
+  rw.close();
+  w.close();
+  for (const e of errs) failures.push("accounts: " + e);
+}
 if (failures.length) {
   console.error(`dock.js failed while rendering ${failures.length} time(s):`);
   for (const f of failures.slice(0, 30)) console.error("  " + f);
