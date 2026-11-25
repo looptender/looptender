@@ -56,6 +56,7 @@ MACOS_SENSITIVE_INTERNAL = (
     'internal/diskspace/',
     'internal/snapshot/',
     'internal/legacyretire/',
+    'internal/testexec/',
     'internal/router/channel/',
     'internal/router/core/',
     'internal/router/login/',
@@ -66,6 +67,11 @@ MACOS_SENSITIVE_INTERNAL = (
     'internal/state/',
     'internal/supervise/',
     'internal/scenario/',
+    'internal/config/',
+    'internal/registry/',
+    'internal/report/',
+    'internal/probe/',
+    'internal/netretry/',
 )
 
 
@@ -114,6 +120,7 @@ def needs_macos_race(files):
         if '_darwin' in f or '_unix' in f or f.startswith(MACOS_SENSITIVE_INTERNAL):
             return True
         if f.startswith(('cmd/looptender/service', 'cmd/looptender/router_service', 'cmd/looptender/control_freeze',
+                         'cmd/looptender/legacy_retire', 'cmd/looptender/panel_claude_quota', 'cmd/looptender/panel_account_selection',
                          'cmd/looptender/doctor_ac', 'cmd/looptender/start', 'cmd/looptender/adopt',
                          'cmd/looptender/replace_build', 'scripts/ci-macos-race', '.github/workflows/checks.yml')) or f in ('go.mod', 'go.sum'):
             return True

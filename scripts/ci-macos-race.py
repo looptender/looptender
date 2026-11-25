@@ -8,7 +8,7 @@ every platform-independent unit and scenario test across three macOS runners.
 
 Usage:
   ci-macos-race.py           Run platform packages, unix/darwin package subsets, and cmd macOS tests under -race
-  ci-macos-race.py --check   Verify every *_darwin* source/test file in the tree is covered (runs on any OS)
+  ci-macos-race.py --check   Verify every darwin-targeted/guarded source and test file is covered (runs on any OS)
 """
 import collections
 import glob
@@ -22,6 +22,16 @@ import time
 
 ROOT = Path(os.environ.get('CI_MACOS_RACE_ROOT') or Path(__file__).resolve().parents[1])
 
+ALL_OS = ('linux', 'darwin', 'freebsd', 'netbsd', 'openbsd', 'solaris', 'aix',
+          'js', 'plan9', 'ios', 'android', 'illumos', 'dragonfly', 'windows', 'unix')
+KNOWN_ARCH = ('amd64', 'arm64', '386', 'arm', 'ppc64', 'ppc64le', 's390x',
+              'riscv64', 'wasm', 'mips', 'mipsle', 'mips64', 'mips64le', 'loong64')
+SKIP_PARTS = ('/testdata/', 'node_modules/', '.git/', 'vendor/', '.bb/', '.agents/')
+PACKAGE_LINE = re.compile(r'^\s*package\s+\w+', re.M)
+GO_BUILD_LINE = re.compile(r'^\s*//go:build\s+(.+?)\s*$', re.M)
+DARWIN_WORD = re.compile(r'\bdarwin\b')
+DARWIN_GOOS_LINE = re.compile(r'^[^\n]*\bruntime\.GOOS\b[^\n]*"darwin"')
+
 # Packages in internal/ whose primary behavior is OS, process, filesystem,
 # launchd, APFS, or Unix socket handling. Run whole package under -race.
 PLATFORM_PACKAGES = (
@@ -32,6 +42,7 @@ PLATFORM_PACKAGES = (
     './internal/diskspace',
     './internal/snapshot',
     './internal/legacyretire',
+    './internal/testexec',
     './internal/router/channel',
     './internal/router/core',
     './internal/router/login',
@@ -53,44 +64,127 @@ UNIX_TEST_GLOBS = {
     './internal/supervise': ('internal/supervise/*_darwin*_test.go', 'internal/supervise/*_unix*_test.go'),
 }
 
-# cmd/looptender test files exercising macOS launchd/service/daemon/socket/freeze/unix behavior.
+# cmd/looptender test files exercising macOS launchd/service/daemon/socket/freeze/darwin behavior.
 CMD_TEST_GLOBS = (
     'cmd/looptender/*_darwin*_test.go',
     'cmd/looptender/*_unix*_test.go',
     'cmd/looptender/service*_test.go',
     'cmd/looptender/router_service*_test.go',
     'cmd/looptender/control_freeze*_test.go',
+    'cmd/looptender/legacy_retire*_test.go',
+    'cmd/looptender/panel_claude_quota_test.go',
+    'cmd/looptender/panel_account_selection_test.go',
+    'cmd/looptender/replace_build_security_test.go',
 )
 
 TEST_FUNC = re.compile(r'^func ((?:Test|Example|Fuzz)\w*)\(', re.M)
+
+
+def _eval_build_expr(expr, goos, *, cgo=True):
+    """Evaluate a //go:build expression for one GOOS under -race (cgo enabled)."""
+    def tag(m):
+        name = m[0]
+        if name == goos or (name == 'unix' and goos != 'windows'):
+            return 'True'
+        if name == 'cgo':
+            return str(cgo)
+        return str(bool(re.fullmatch(r'go1\.\d+', name)))
+
+    py = re.sub(r'[A-Za-z_][\w.]*', tag, expr).replace('&&', ' and ').replace('||', ' or ').replace('!', ' not ')
+    return bool(eval(py, {'__builtins__': {}}, {'True': True, 'False': False}))
+
+
+def _header_before_package(text):
+    m = PACKAGE_LINE.search(text)
+    return text[:m.start()] if m else text
+
+
+def _filename_os_tag(path):
+    name = path.name
+    if name.endswith('_test.go'):
+        stem = name[:-len('_test.go')]
+    elif name.endswith('.go'):
+        stem = name[:-len('.go')]
+    else:
+        return ''
+    parts = stem.split('_')
+    if len(parts) >= 2 and parts[-1] in KNOWN_ARCH:
+        parts = parts[:-1]
+    if len(parts) >= 2 and parts[-1] in ALL_OS:
+        return parts[-1]
+    return ''
+
+
+def builds_on_darwin(path, text, *, cgo=True):
+    """Return True if path compiles on darwin under -race according to filename OS suffix and //go:build tags."""
+    os_tag = _filename_os_tag(path)
+    if os_tag and not _eval_build_expr(os_tag, 'darwin', cgo=cgo):
+        return False
+    header = _header_before_package(text)
+    for expr in GO_BUILD_LINE.findall(header):
+        if not _eval_build_expr(expr, 'darwin', cgo=cgo):
+            return False
+    return True
+
+
+def _is_darwin_guarded(path, text):
+    """Return True if a darwin-building file uses *_darwin* naming, a darwin build tag, or a darwin runtime.GOOS guard."""
+    if '_darwin' in path.name:
+        return True
+    header = _header_before_package(text)
+    if any(DARWIN_WORD.search(expr) for expr in GO_BUILD_LINE.findall(header)):
+        return True
+    for raw in text.splitlines():
+        code = raw.split('//', 1)[0]
+        if '"linux"' in code:
+            continue
+        if DARWIN_GOOS_LINE.search(code):
+            return True
+    return False
 
 
 def collect_tests(root, patterns):
     names = set()
     for pat in patterns:
         for match in sorted(glob.glob(str(root / pat))):
-            text = Path(match).read_text(errors='replace')
+            path = Path(match)
+            text = path.read_text(errors='replace')
+            if not builds_on_darwin(path, text):
+                continue
             names.update(TEST_FUNC.findall(text))
     return sorted(names)
 
 
 def darwin_files(root=ROOT):
     out = []
-    for path in sorted(root.rglob('*_darwin*.go')):
+    for path in sorted(root.rglob('*.go')):
         rel = path.relative_to(root).as_posix()
-        if '/testdata/' in '/' + rel or 'node_modules/' in rel:
+        padded = '/' + rel
+        if any(seg in padded for seg in SKIP_PARTS):
             continue
-        out.append(rel)
+        text = path.read_text(errors='replace')
+        if not builds_on_darwin(path, text):
+            continue
+        if _is_darwin_guarded(path, text):
+            out.append(rel)
     return out
 
 
 def verify_coverage(root=ROOT):
-    """Fail if any *_darwin*.go file sits outside our macOS platform test coverage."""
+    """Fail if any darwin-targeted/guarded file sits outside our macOS platform test coverage."""
     covered_pkgs = set(PLATFORM_PACKAGES) | set(UNIX_TEST_GLOBS) | {'./cmd/looptender'}
+    cmd_matched = {
+        Path(m).relative_to(root).as_posix()
+        for pat in CMD_TEST_GLOBS
+        for m in glob.glob(str(root / pat))
+    }
     uncovered = []
     for rel in darwin_files(root):
         pkg = './' + Path(rel).parent.as_posix()
-        if pkg not in covered_pkgs:
+        if pkg == './cmd/looptender':
+            if rel.endswith('_test.go') and rel not in cmd_matched:
+                uncovered.append((rel, pkg))
+        elif pkg not in covered_pkgs:
             uncovered.append((rel, pkg))
         elif pkg in UNIX_TEST_GLOBS and rel.endswith('_test.go'):
             matched = {

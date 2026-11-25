@@ -84,6 +84,13 @@ class PlanTests(unittest.TestCase):
         self.assertFalse(got[4]['run_windows'])
         self.assertTrue(got[4]['run_macos_race'])
 
+    def test_ready_testexec_or_darwin_cmd_pr_runs_macos_race(self):
+        for changed in ('internal/testexec/testexec.go', 'cmd/looptender/legacy_retire.go', 'cmd/looptender/panel_claude_quota_test.go'):
+            with self.subTest(changed=changed):
+                got = plan.plan('pull_request', 'false', NEVER, lambda: [changed])
+                self.assertEqual(got[3], plan.FULL)
+                self.assertTrue(got[4]['run_macos_race'])
+
     def test_ready_for_review_skips_duplicate_when_no_macos_needed_and_sha_passed(self):
         got = plan.plan('pull_request', 'false', NEVER, lambda: ['docs/testing.md'],
                         action='ready_for_review', passed_pull_request=lambda: 888)
