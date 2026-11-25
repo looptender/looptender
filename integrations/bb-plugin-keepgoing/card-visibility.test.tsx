@@ -104,3 +104,27 @@ test("Start checks button appears only on enabled, unheld, non-archived overdue 
     } finally { neg.lifecycle.unmount(); cleanup(); }
   }
 });
+
+test("checks have stopped banner chip stays single-line without build differs when build differs", async () => {
+  const overdueDiff = loop({ controlState: "enabled" }, {
+    schedule: { overdue: true, message: "No check has run for 2 hours." },
+    daemon: { state: "not_recorded" },
+    runtime: { state: "recent", source: "state", freshness: "recent", recordedBuild: "v0.2.0-dev.1111111", installedBuild: "v0.2.0-dev.aaaaaaa", binaryComparison: "different" },
+    buildFreshness: { state: "different", text: "Different build from the installed one" },
+  });
+  const summary = banner([overdueDiff], "summary");
+  try {
+    const chip = await summary.findByRole("button", { name: "looptender: checks have stopped" });
+    assert.equal(chip.style.whiteSpace, "nowrap");
+    assert.equal(chip.style.overflow, "hidden");
+    assert.equal(chip.style.textOverflow, "ellipsis");
+    assert.equal(chip.style.minWidth, "0px");
+    assert.equal(chip.style.maxWidth, "100%");
+    assert.equal(chip.style.flexShrink, "1");
+    assert.equal(chip.style.paddingLeft, "8px");
+  } finally { summary.lifecycle.unmount(); cleanup(); }
+  const expanded = banner([overdueDiff], "details");
+  try {
+    await expanded.findByText("Different build from the installed one");
+  } finally { expanded.lifecycle.unmount(); cleanup(); }
+});

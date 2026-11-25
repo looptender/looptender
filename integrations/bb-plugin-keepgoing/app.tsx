@@ -175,7 +175,7 @@ const STYLE = [
   `@media ${PHONE} {`,
   "  button[data-kg]:not(.kgs-chip) { min-height: 44px !important; min-width: 44px; box-sizing: border-box; display: inline-flex !important; align-items: center; font-size: 14px !important; line-height: 20px !important; padding: 0 14px !important; }",
   "  summary[data-kg] { display: list-item !important; min-height: 44px; box-sizing: border-box; padding: 12px 0; font-size: 14px !important; line-height: 20px !important; cursor: pointer; }",
-  "  button[data-kg=chip] { padding: 0 !important; }",
+  "  button[data-kg=chip] { padding: 0 0 0 8px !important; min-width: 0; }",
   "  .kg-actions button[data-kg] { flex: 1 1 140px; justify-content: center; }",
   "  .kg-t { font-size: 14px !important; line-height: 20px !important; }",
   "}",
@@ -448,13 +448,23 @@ function summaryTitle(loops: LoopView[]): string {
   return boundedTitle(loops.map(l => [label(l), ...reasonLines(l.controlState, null, l.details)].join("\n")).join("\n\n"), 600);
 }
 
+// Build differences belong on the collapsed chip only when the loop is in an
+// active/resumable state and its daemon is not known to be stopped; stopped or
+// terminal states keep build details inside the expanded card.
+const CHIP_BUILD_DIFFERS_STATES = new Set(["looptender: enabled", "looptender: paused", "looptender: awaiting user"]);
+function showBuildDiffersOnChip(loop: LoopView, base: string): boolean {
+  if (!CHIP_BUILD_DIFFERS_STATES.has(base)) return false;
+  const daemonState = loop.details?.daemon?.state;
+  return !daemonState || daemonState === "responsive";
+}
+
 // The one reason worth a few words beside the state on a collapsed chip: the one
 // that matters most now, from a fixed set of phrases, never free text (a note may
 // carry paths, ids or names; the expanded card holds it). A reason that needs a
 // person comes before one that resolves by itself: a send limit, a passed
 // deadline (held until a person acts, and it wins over a limit wait), a low disk,
 // then a usage limit that resets on its own, then a build that differs.
-function shortReason(loop: LoopView): string {
+function shortReason(loop: LoopView, base: string): string {
   const d = loop.details;
   if (recordsUnreadable(d) || d?.archived || isWait(loop)) return "";
   if (d?.sends?.reached) return "send limit reached";
@@ -462,14 +472,43 @@ function shortReason(loop: LoopView): string {
   if (d?.disk) return "disk low";
   const wait = d?.limitWait;
   if (wait && wait.state !== "none" && !wait.resetPassed) return "waiting on a usage limit";
-  if (buildSummary(d?.runtime).differs) return "build differs";
+  if (buildSummary(d?.runtime).differs && showBuildDiffersOnChip(loop, base)) return "build differs";
   return "";
 }
 
 /** The collapsed chip: the state said once, then at most one reason. No version: the details carry it. */
 function chipLabel(loop: LoopView): string {
-  return [stateLabel(loop), shortReason(loop)].filter(Boolean).join(" · ");
+  const base = stateLabel(loop);
+  return [base, shortReason(loop, base)].filter(Boolean).join(" · ");
 }
+
+const chipButtonStyle = {
+  background: "none",
+  border: 0,
+  padding: "0 0 0 8px",
+  boxSizing: "border-box",
+  font: "inherit",
+  color: "inherit",
+  cursor: "pointer",
+  textAlign: "left",
+  display: "inline-flex",
+  alignItems: "center",
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  minWidth: 0,
+  maxWidth: "100%",
+  flexShrink: 1,
+} as const;
+
+const chipTextStyle = {
+  display: "block",
+  minWidth: 0,
+  maxWidth: "100%",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+} as const;
 
 function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; isExpanded: boolean; onToggle(): void }) {
   const { loops, failed, loaded } = useLoops(threadId);
@@ -484,8 +523,8 @@ function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; i
   const text = failed ? "looptender: status unavailable" : !loaded ? "looptender: checking status" : loops.length > 1 ? `looptender: ${loops.length} matching loops` : created ?? (only ? chipLabel(only) : childText ?? "Add to Looptender");
   return <><FocusStyle />
     <button type="button" data-kg="chip" onClick={onToggle} aria-expanded={isExpanded} title={failed ? "Status could not be refreshed. Open details to retry." : loops.length ? summaryTitle(loops) : childText ? "This thread is a child; setup is in the details" : "Set up a loop for this thread"}
-      style={{ background: "none", border: 0, padding: 0, font: "inherit", color: "inherit", cursor: "pointer", textAlign: "left", minWidth: 0, overflowWrap: "anywhere" }}>
-      {text}
+      style={chipButtonStyle}>
+      <span style={chipTextStyle}>{text}</span>
     </button></>;
 }
 
