@@ -142,8 +142,19 @@ unsupported; use their own controls. This is not generic API authentication.
 
 No credentials, email or provider account identifiers are accepted as fields.
 Labels are owner-selected plain text up to 120 bytes, not identity evidence.
-The catalog holds at most 64 entries. There is no removal/route-assignment
-command in this slice.
+The catalog holds at most 64 entries.
+
+## Remove an account from the catalog
+
+    looptender accounts remove --id CONNECTION_ID [--revision REVISION] [--json]
+
+Removes only the catalog entry from `accounts.json` (and requires `--revision`
+to match when supplied). It never touches, signs out, or deletes provider
+credentials, logins, or configuration directories on disk, and it reports any
+registered loop routes that still name the removed account ID so you can update
+them or check with `looptender doctor`. When the panel is started with
+`--allow-changes`, each account card on the Accounts page also offers a reviewed
+**Remove from catalog** action with the same guarantees.
 
 ## Explicit status check
 
