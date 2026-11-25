@@ -24,7 +24,7 @@ const productName = "looptender"
 // TestBundledComponentVersions keeps them equal to the plugin's package.json
 // and the menu's VERSION file.
 const (
-	bundledPluginVersion = "0.3.1"
+	bundledPluginVersion = "0.4.0"
 	bundledMenuVersion   = "0.1.0"
 )
 
