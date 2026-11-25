@@ -30,7 +30,7 @@ Telegram Bot API traffic is encrypted in transit to Telegram (TLS), **not end-to
 
 | Mode | Default | What crosses Telegram | What can it do on the device? |
 | --- | --- | --- | --- |
-| **`alerts`** | Yes | Redacted event summaries only (loop name, event type, recorded cause, device name, hold/limit counts). Never prompts, transcripts, diffs, file paths, or credentials. | Receive alerts; `/status` read-only view; `Pause` and `Stop` holds; `Resume` only through a short-lived single-use ticket bound to the exact hold (`client prepare-resume` / `client resume`). |
+| **`alerts`** | Yes | Redacted event summaries only (loop name, event type, recorded cause, device label defaulting to `"this computer"`, hold/limit counts). Never prompts, transcripts, diffs, file paths, hostnames (unless explicitly set with `--device-label`), or credentials. | Receive alerts; `/status` read-only view; `Pause` and `Stop` holds; `Resume` only through a short-lived single-use ticket bound to the exact hold (`client prepare-resume` / `client resume`). |
 | **`chat`** | No (explicit opt-in) | Everything in `alerts`, plus human steering messages sent in a loop's topic and bounded, opt-in summaries of the agent's latest completed turn. Setup states plainly that Telegram servers see this text. | Everything in `alerts`, plus forwarding a human reply in a topic as the next prompt to a held (`await-user`) or idle loop, and starting a new bounded loop for an explicitly allowlisted repository. |
 
 Rules that hold in **both** modes:
@@ -47,7 +47,7 @@ Rules that hold in **both** modes:
 No third-party setup service is involved; only the person and their device ever hold the bot token:
 
 1. Create a bot via `@BotFather` (`/newbot`), choose a name and username, and copy the token.
-2. Run `looptender telegram setup` with the token supplied through its configured environment variable or standard input (`--token-stdin`). Standard input is not a hidden-input prompt. Setup writes the token with `0600` permissions to private state outside the repository. Use the default `alerts` mode; although setup can record `--mode chat --accept-non-e2e`, chat steering remains planned in TG5.
+2. Run `looptender telegram setup` with the token supplied through its configured environment variable or standard input (`--token-stdin`). Standard input is not a hidden-input prompt. Setup writes the token with `0600` permissions to private state outside the repository. Use the default `alerts` mode; although setup can record `--mode chat --accept-non-e2e`, chat steering remains planned in TG5. Pass `--device-label` if you want a custom label on Telegram alerts instead of the non-identifying `"this computer"` default (the OS hostname is never sent automatically).
 3. looptender validates the token with `getMe`, attempts to register the slash menu with `setMyCommands`, and prints a one-time deep link. Add `--qr` to also render that same link locally as a terminal QR (no bot token or additional requests):
    ```text
    https://t.me/example_looptender_bot?start=pair_<nonce>
@@ -88,9 +88,10 @@ While the computer sleeps nothing polls. A `/status` that arrives more than 10 m
 
 ## Resume from the phone
 
-- `/status` offers **Prepare resume** only for a held loop that a resume would start again: not for one superseded, disabled or archived.
+- `/status` offers **Prepare resume** only for a held loop that a resume would start again: not for one superseded, disabled or archived. It also surfaces redacted flags for observed (`sessionpipe`) targets, active usage-limit waits, explicit waits, overdue checks, and low disk space.
 - The review lists each hold it would clear and who set it, in fixed words: a person, the loop's own agent, another BB thread, a local client (the menu, the panel or Telegram), a check by the supervisor, or someone the records do not show (from the incident history). It never carries the hold's note: the note is free text and the Bot API is not end-to-end encrypted; when there is one, the review says to see it on the computer.
-- A loop that was stopped or marked finished takes a second tap: the review's button only asks, and a separate message, "This loop was stopped. Start it again?" (or "marked finished"), carries the confirmation. An await-user or a pause alone is resumed with one Confirm.
+- A loop that was stopped or marked finished takes a second tap: the review's button only asks, and a separate message, "This loop was stopped. Start it again?" (or "marked finished"), carries the confirmation. The restart confirmation record is written atomically (`0600`) with the ticket's expiry and cleared automatically when expired, superseded, or consumed. An await-user or a pause alone is resumed with one Confirm.
+- When a forum topic reply fails with HTTP 400 (for example if the topic was deleted or topics were disabled), the poller falls back to sending the reply to the paired private DM so the response is not dropped.
 
 ## What Resume from Telegram proves, and what it does not
 

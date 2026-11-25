@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/looptender/looptender/internal/control"
+	"github.com/looptender/looptender/internal/decide"
+	"github.com/looptender/looptender/internal/state"
 	"github.com/looptender/looptender/internal/telegram"
 )
 
@@ -344,5 +346,205 @@ func TestTelegramPollerLastExitInServiceStatus(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Last exit: not paired") {
 		t.Fatalf("expected Last exit line, got: %s", out.String())
+	}
+}
+
+func TestTelegramDeviceLabelPrivacyAndOverride(t *testing.T) {
+	const tok = "123456789:EXAMPLE_DEVICE_PRIVACY_TOKEN"
+	now := time.Now().UTC().Truncate(time.Second)
+	tgDir := setupPairedTelegramDir(t, tok, now)
+	regDir, _ := clientFixture(t)
+	host, _ := os.Hostname()
+
+	var testOut, errBuf bytes.Buffer
+	if code := telegramCommand(env{ctx: context.Background(), stdout: &testOut, stderr: &errBuf}, []string{"test", "--dir", tgDir, "--dry-run"}); code != exitOK {
+		t.Fatalf("test --dry-run: %d %s", code, errBuf.String())
+	}
+	if !strings.Contains(testOut.String(), "("+telegram.DefaultDeviceLabel+")") {
+		t.Fatalf("expected default device label in test alert: %s", testOut.String())
+	}
+	if host != "" && host != telegram.DefaultDeviceLabel && strings.Contains(testOut.String(), host) {
+		t.Fatalf("default test alert leaked OS hostname %q: %s", host, testOut.String())
+	}
+
+	s := newTGStandin(t, tok, tgDir, regDir)
+	statusMsgs := s.send(tgCommand("/status"))
+	if len(statusMsgs) != 1 || !strings.Contains(statusMsgs[0].Text, "("+telegram.DefaultDeviceLabel+")") {
+		t.Fatalf("expected default device label in /status: %+v", statusMsgs)
+	}
+	if host != "" && host != telegram.DefaultDeviceLabel && strings.Contains(statusMsgs[0].Text, host) {
+		t.Fatalf("/status leaked OS hostname %q: %s", host, statusMsgs[0].Text)
+	}
+
+	// Configured explicit device label overrides the default across test and /status.
+	rec, ok, err := telegram.LoadPairing(tgDir)
+	if err != nil || !ok {
+		t.Fatalf("LoadPairing: %v", err)
+	}
+	rec.DeviceLabel = "example-workstation"
+	if err := telegram.SavePairing(tgDir, rec); err != nil {
+		t.Fatalf("SavePairing: %v", err)
+	}
+	testOut.Reset()
+	if code := telegramCommand(env{ctx: context.Background(), stdout: &testOut, stderr: &errBuf}, []string{"test", "--dir", tgDir, "--dry-run"}); code != exitOK || !strings.Contains(testOut.String(), "(example-workstation)") {
+		t.Fatalf("configured device label missing in test alert: %d %s", code, testOut.String())
+	}
+	statusMsgs = s.send(tgCommand("/status"))
+	if len(statusMsgs) != 1 || !strings.Contains(statusMsgs[0].Text, "(example-workstation)") {
+		t.Fatalf("configured device label missing in /status: %+v", statusMsgs)
+	}
+}
+
+func TestTelegramRestartConfirmationAtomicAndExpiry(t *testing.T) {
+	const tok = "123456789:EXAMPLE_RESTART_EXPIRY_TOKEN"
+	now := time.Now().UTC().Truncate(time.Second)
+	tgDir := setupPairedTelegramDir(t, tok, now)
+	regDir, entry := clientFixture(t)
+	if err := control.Save(entry.StateDir, control.File{Enabled: true, Stop: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := newTGStandin(t, tok, tgDir, regDir)
+	prep := tgButton(t, s.send(tgCommand("/status")), "Prepare resume ")
+	again := tgButton(t, s.send(tgTap(prep)), "Start ")
+	question := s.send(tgTap(again))
+	confirm := tgButton(t, question, "Yes, start ")
+	if confirm == "" {
+		t.Fatalf("missing confirm button: %+v", question)
+	}
+	restartPath := filepath.Join(entry.StateDir, telegramRestartFile)
+	info, err := os.Stat(restartPath)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("restart record stat=%v mode=%o", err, info.Mode().Perm())
+	}
+	cb, ok := telegram.DecodeControlCallback(confirm)
+	if !ok {
+		t.Fatalf("decode confirm: %q", confirm)
+	}
+	if !telegramRestartConfirmed(entry.StateDir, cb.TicketID, now) {
+		t.Fatal("expected fresh restart confirmation to verify")
+	}
+	// Once expired, telegramRestartConfirmed rejects and removes the stale file.
+	if err := saveTelegramRestartConfirmed(entry.StateDir, cb.TicketID, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if telegramRestartConfirmed(entry.StateDir, cb.TicketID, now) {
+		t.Fatal("expected expired restart confirmation to be rejected")
+	}
+	if _, err := os.Stat(restartPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale restart confirmation to be cleaned up, err=%v", err)
+	}
+	// Preparing a fresh resume also clears any leftover restart confirmation.
+	if err := saveTelegramRestartConfirmed(entry.StateDir, cb.TicketID, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	s.send(tgTap(prep))
+	if _, err := os.Stat(restartPath); !os.IsNotExist(err) {
+		t.Fatalf("expected Prepare resume to clear stale restart confirmation, err=%v", err)
+	}
+}
+
+func TestTelegramTopicSendFallbackToDMOnBadRequest(t *testing.T) {
+	const tok = "123456789:EXAMPLE_TOPIC_FALLBACK_TOKEN"
+	now := time.Now().UTC().Truncate(time.Second)
+	tgDir := setupPairedTelegramDir(t, tok, now)
+	regDir, entry := clientFixture(t)
+	rec, ok, err := telegram.LoadPairing(tgDir)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	rec.TopicsEnabled = true
+	rec.LoopTopics = map[string]int64{entry.Loop: 999}
+	if err := telegram.SavePairing(tgDir, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var queued []telegram.Update
+	var attempts []int64
+	var delivered []tgSentRecord
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := strings.TrimPrefix(r.URL.Path, "/bot"+tok+"/")
+		w.Header().Set("Content-Type", "application/json")
+		switch method {
+		case "getUpdates":
+			mu.Lock()
+			batch := queued
+			queued = nil
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": batch})
+		case "sendMessage":
+			var msg tgSentRecord
+			_ = json.NewDecoder(r.Body).Decode(&msg)
+			mu.Lock()
+			attempts = append(attempts, msg.MessageThreadID)
+			if msg.MessageThreadID > 0 {
+				mu.Unlock()
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"ok":false,"error_code":400,"description":"Bad Request: message thread not found"}`))
+				return
+			}
+			delivered = append(delivered, msg)
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":400,"date":1795000400}}`))
+		default:
+			http.Error(w, "unknown", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	mu.Lock()
+	queued = []telegram.Update{{
+		UpdateID: 11,
+		Message: &telegram.Message{
+			MessageID:       1,
+			MessageThreadID: 999,
+			Date:            now.Unix(),
+			From:            &telegram.User{ID: 7001},
+			Chat:            telegram.Chat{ID: 7001, Type: "private"},
+			Text:            "/status",
+		},
+	}}
+	mu.Unlock()
+	var out, errb bytes.Buffer
+	if code := telegramCommand(env{ctx: context.Background(), stdout: &out, stderr: &errb}, []string{
+		"poll", "--once", "--offline", "--dir", tgDir, "--registry", regDir, "--api-url", srv.URL, "--poll-wait", "1s",
+	}); code != exitOK {
+		t.Fatalf("poll failed: %d %s", code, errb.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(attempts) != 2 || attempts[0] != 999 || attempts[1] != 0 || len(delivered) != 1 || delivered[0].MessageThreadID != 0 {
+		t.Fatalf("expected fallback from thread 999 to DM (0): attempts=%v delivered=%+v", attempts, delivered)
+	}
+}
+
+func TestTelegramStatusSurfacesUsageLimitWaitAndOverdue(t *testing.T) {
+	const tok = "123456789:EXAMPLE_LIMIT_WAIT_STATUS_TOKEN"
+	now := time.Now().UTC().Truncate(time.Second)
+	tgDir := setupPairedTelegramDir(t, tok, now)
+	regDir, entry := clientFixture(t)
+	setControlAt(t, entry.StateDir, control.File{Enabled: true}, now.Add(-5*time.Hour))
+	resetAt := now.Add(2 * time.Hour)
+	if err := state.SaveUsageLimit(entry.StateDir, &state.UsageLimit{
+		Target:     state.Primary,
+		Provider:   "claude-code",
+		Window:     decide.LimitWindow{Key: "seven_day", Label: "Weekly limit", Reason: "seven_day"},
+		ResetsAt:   resetAt,
+		ObservedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Record 3 usual 10m gaps and a 4h-old check so schedule reads overdue.
+	if err := state.Save(entry.StateDir, state.File{
+		ActiveTarget: state.Primary,
+		CheckedAt:    now.Add(-4 * time.Hour),
+		ScheduleGaps: []time.Duration{10 * time.Minute, 10 * time.Minute, 10 * time.Minute},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := newTGStandin(t, tok, tgDir, regDir)
+	msgs := s.send(tgCommand("/status"))
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Text, "usage limit until "+resetAt.Format(time.RFC3339)) || !strings.Contains(msgs[0].Text, "checks overdue") {
+		t.Fatalf("expected usage limit and overdue in /status, got: %+v", msgs)
 	}
 }

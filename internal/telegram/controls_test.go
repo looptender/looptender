@@ -398,3 +398,34 @@ func TestRedactLoopNameAcrossTelegramSurfaces(t *testing.T) {
 		t.Fatalf("RedactLoopName(my-thr-loop) = %q", got)
 	}
 }
+
+func TestFormatStatusMessageEnrichedFields(t *testing.T) {
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	text, _ := FormatStatusMessage(DefaultDeviceLabel, []LoopStatusItem{
+		{
+			RegistrationID: "loop_cccccccccccccccccccccccccccccccc",
+			Loop:           "observed-loop",
+			Outcome:        "available",
+			ControlState:   "enabled",
+			Observed:       true,
+			Overdue:        true,
+			LimitWait:      "usage limit until 2026-11-28T05:00:00Z",
+			WaitUntil:      "limit-reset",
+			DiskLevel:      "low",
+			Freshness:      "stale",
+		},
+	}, now)
+	for _, want := range []string{
+		"looptender status (this computer) — 1 registered loop(s)",
+		"observed",
+		"wait: limit-reset",
+		"usage limit until 2026-11-28T05:00:00Z",
+		"checks overdue",
+		"disk: low",
+		"check: stale",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("status missing %q:\n%s", want, text)
+		}
+	}
+}

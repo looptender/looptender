@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -87,8 +88,10 @@ func TestTelegramReportFromPairedStateAndDeliveryHistory(t *testing.T) {
 	if gotPayload["chat_id"] != float64(7001) || gotPayload["message_thread_id"] != float64(88) {
 		t.Fatalf("unexpected payload routing: %+v", gotPayload)
 	}
-	if text, _ := gotPayload["text"].(string); !strings.Contains(text, "[await_user] example-loop") || !strings.Contains(text, "hold: no_progress_timeout") {
+	if text, _ := gotPayload["text"].(string); !strings.Contains(text, "[await_user] example-loop (this computer)") || !strings.Contains(text, "hold: no_progress_timeout") {
 		t.Fatalf("unexpected formatted text: %q", text)
+	} else if host, herr := os.Hostname(); herr == nil && host != "" && host != telegram.DefaultDeviceLabel && strings.Contains(text, host) {
+		t.Fatalf("alert leaked OS hostname %q: %q", host, text)
 	}
 
 	hist, err := LoadDeliveries(loopDir)

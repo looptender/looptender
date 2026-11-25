@@ -162,6 +162,7 @@ func TestPairingPersistence(t *testing.T) {
 	rec := PairingRecord{
 		SchemaVersion:    PairingSchemaVersion,
 		Mode:             ModeAlerts,
+		DeviceLabel:      "example-box",
 		BotID:            100001,
 		BotUsername:      "example_looptender_bot",
 		AllowedUserID:    7001,
@@ -189,7 +190,7 @@ func TestPairingPersistence(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("LoadPairing: ok=%t err=%v", ok, err)
 	}
-	if got.AllowedUserID != 7001 || got.LoopTopics["example-loop"] != 77 || got.Mode != ModeAlerts {
+	if got.AllowedUserID != 7001 || got.LoopTopics["example-loop"] != 77 || got.Mode != ModeAlerts || got.DeviceLabel != "example-box" {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
 

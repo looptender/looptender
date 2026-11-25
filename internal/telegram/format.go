@@ -8,7 +8,35 @@ import (
 	"unicode"
 )
 
+const (
+	// DefaultDeviceLabel is the non-identifying device label sent to Telegram
+	// when no explicit redacted device label is configured.
+	DefaultDeviceLabel = "this computer"
+
+	// MaxDeviceLabelRunes bounds an optional explicit Telegram device label.
+	MaxDeviceLabelRunes = 64
+)
+
 var threadSlugPattern = regexp.MustCompile(`^(bb-thr-|thr_)[0-9A-Za-z_-]+$`)
+
+// SanitizeDeviceLabel strips control characters and bounds an optional explicit
+// device label. An empty or control-only string returns "".
+func SanitizeDeviceLabel(label string) string {
+	clean := sanitizeInline(strings.Join(strings.Fields(label), " "))
+	if clean == "" {
+		return ""
+	}
+	return TruncateRunes(clean, MaxDeviceLabelRunes)
+}
+
+// EffectiveDeviceLabel returns the configured redacted device label, or
+// DefaultDeviceLabel when none is configured. It never falls back to os.Hostname.
+func EffectiveDeviceLabel(rec PairingRecord) string {
+	if label := SanitizeDeviceLabel(rec.DeviceLabel); label != "" {
+		return label
+	}
+	return DefaultDeviceLabel
+}
 
 // RedactLoopName replaces loop names that are raw BB thread IDs
 // (bb-thr-..., thr_...) with "A loop", matching the notices redaction rule.

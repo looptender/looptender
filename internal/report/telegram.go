@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -43,23 +42,29 @@ func newTelegramWebhook(cfg config.Report, get func(string) string) (*Webhook, e
 
 	var chatID int64
 	var loopTopics map[string]int64
+	device := telegram.DefaultDeviceLabel
+	if dir != "" {
+		rec, ok, err := telegram.LoadPairing(dir)
+		if err != nil {
+			if strings.TrimSpace(get(telegram.ChatIDEnv)) == "" {
+				return nil, errors.New("report: paired Telegram state is unavailable")
+			}
+		} else if ok {
+			device = telegram.EffectiveDeviceLabel(rec)
+			if strings.TrimSpace(get(telegram.ChatIDEnv)) == "" {
+				chatID = rec.AllowedChatID
+				if rec.TopicsEnabled && len(rec.LoopTopics) > 0 {
+					loopTopics = rec.LoopTopics
+				}
+			}
+		}
+	}
 	if rawChat := strings.TrimSpace(get(telegram.ChatIDEnv)); rawChat != "" {
 		id, err := strconv.ParseInt(rawChat, 10, 64)
 		if err != nil || id == 0 {
 			return nil, fmt.Errorf("report: %s must be a non-zero integer chat id", telegram.ChatIDEnv)
 		}
 		chatID = id
-	} else if dir != "" {
-		rec, ok, err := telegram.LoadPairing(dir)
-		if err != nil {
-			return nil, errors.New("report: paired Telegram state is unavailable")
-		}
-		if ok {
-			chatID = rec.AllowedChatID
-			if rec.TopicsEnabled && len(rec.LoopTopics) > 0 {
-				loopTopics = rec.LoopTopics
-			}
-		}
 	}
 	if chatID == 0 {
 		return nil, fmt.Errorf("report: %s must be set or Telegram must be paired with `looptender telegram setup`", telegram.ChatIDEnv)
@@ -74,7 +79,6 @@ func newTelegramWebhook(cfg config.Report, get func(string) string) (*Webhook, e
 	if err != nil {
 		return nil, fmt.Errorf("report: %w", err)
 	}
-	host, _ := os.Hostname()
 	return &Webhook{
 		cfg: cfg,
 		now: time.Now,
@@ -82,7 +86,7 @@ func newTelegramWebhook(cfg config.Report, get func(string) string) (*Webhook, e
 			client:     client,
 			chatID:     chatID,
 			loopTopics: loopTopics,
-			device:     host,
+			device:     device,
 		},
 	}, nil
 }

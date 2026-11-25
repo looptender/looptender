@@ -147,6 +147,7 @@ func MatchPairingUpdate(u Update, expectedNonce string, now, expiresAt time.Time
 type PairingRecord struct {
 	SchemaVersion    int              `json:"schemaVersion"`
 	Mode             string           `json:"mode"`
+	DeviceLabel      string           `json:"deviceLabel,omitempty"`
 	BotID            int64            `json:"botId"`
 	BotUsername      string           `json:"botUsername"`
 	AllowedUserID    int64            `json:"allowedUserId"`
