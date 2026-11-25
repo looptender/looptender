@@ -120,7 +120,7 @@ func TestDoctorSessionpipeWalksTheSteps(t *testing.T) {
 	}
 	// No sink yet: the sink is the step to take, before the file.
 	r, next := walk(&fakeSessionpipe{version: "0.18.2", status: sessionpipeStatusJSON("file:/elsewhere", 0, "null", "null", "current")})
-	if got := strings.Join(ids(r), ","); got != "observed,cli,version,hooks,sink,events_file,limits,next" {
+	if got := strings.Join(ids(r), ","); got != "observed,cli,version,hooks,sink,pool,events_file,limits,next" {
 		t.Fatalf("order: %s", got)
 	}
 	if next.Status != "error" || !strings.Contains(next.Message, "(sink)") || !strings.Contains(next.Fix, "sessionpipe sink add") {

@@ -230,7 +230,10 @@ loop:
   (that is, the agent is still answering), the next is not sent.
   - The record, `targets/<id>/sessionpipe-ask.json`, holds the process ID and
     its start time, when the wake started, how it ended and the refusal code,
-    and no text. A process ID that now names another process does not count.
+    and no text. Non-regular, oversized, corrupt or future-dated records do not
+    hold wakes pending. A process ID that now names another process does not count.
+  - A check cancelled while an ask is in flight still waits in the background
+    to record that ask's final outcome without overwriting any newer wake.
   - A wake over a day old no longer holds the next one back.
   - `status` prints a `wake:` line while one is outstanding, saying since
     when; its JSON has `sessionpipeWake`. The dock JSON and web panel also
@@ -257,8 +260,7 @@ loop:
 
 ### Doctor
 
-`doctor` runs only `sessionpipe --version` and `sessionpipe status --json`, and
-prints neither output, the events file's path, nor anything in it. The checks
+`doctor` runs only `sessionpipe --version`, `sessionpipe status --json`, `sessionpipe ask status` (with `send: wake_only`), and `sessionpipe pool --json` (for `claude-code` targets), and prints none of their raw outputs, account names or emails, the events file's path, or anything in it. The checks
 run in setup order, and the last, `next`, names the first one that failed
 (an error before a warning) with its next step, or says every check passed:
 
@@ -270,6 +272,7 @@ run in setup order, and the last, `next`, names the first one that failed
 | `agent.<id>.hooks` | sessionpipe has no current hooks for the session's harness |
 | `agent.<id>.send` | with `send: wake_only` only: asking is off in sessionpipe, or its background service is not running. It reads `sessionpipe ask status` and prints none of it |
 | `agent.<id>.sink` | no file sink writes the events file, or it sends above tier 0 (warning when it is paused) |
+| `agent.<id>.pool` | for `claude-code` only: `sessionpipe pool --json` shows the pool is on with its listener down (`error`, since pointed sessions get connection refused), or listening with all accounts limited, in error, or empty (`warning`). Counts and sanitized earliest reset only; no account labels, emails, UUIDs, paths or tokens are kept |
 | `agent.<id>.events_file` | the file is missing (a warning when the sink is set up and only no event was written yet) or not a regular file, or other users can write it (warning when they can read it). Windows reports the DACL check instead of mode bits |
 | `agent.<id>.limits` | never: it says usage and error classes are not read |
 | `agent.<id>.next` | some step above needs attention: it repeats that step's fix |

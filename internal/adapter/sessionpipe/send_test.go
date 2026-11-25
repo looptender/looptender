@@ -1,6 +1,7 @@
 package sessionpipe
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -47,6 +48,10 @@ func fakeSessionpipe(mode string) int {
 		fmt.Fprintf(os.Stderr, "sessionpipe ask: refused (%s): FICTIONAL daemon words about /a/folder\n", strings.TrimPrefix(mode, "refuse:"))
 		return 1
 	case mode == "nodaemon":
+		fmt.Fprintln(os.Stderr, "sessionpipe ask: no control daemon is answering on this machine. The person runs `sessionpipe ask on` once at its terminal.")
+		return 1
+	case mode == "slow-nodaemon":
+		time.Sleep(150 * time.Millisecond)
 		fmt.Fprintln(os.Stderr, "sessionpipe ask: no control daemon is answering on this machine. The person runs `sessionpipe ask on` once at its terminal.")
 		return 1
 	case mode == "chatty":
@@ -329,5 +334,63 @@ func TestWakeHoldIgnoresAWakeRecordedInTheFuture(t *testing.T) {
 	}
 	if held, _, _, _ := WakeHold(dir, now, time.Hour); held {
 		t.Fatal("a wake recorded in the future holds the next")
+	}
+}
+
+// Cancelling the check context mid-wake still records the refusal once the
+// ask command exits, so the next check holds back rather than retrying blindly.
+func TestSendContextCancelledStillRecordsOutcome(t *testing.T) {
+	w := newWakeFixture(t, "slow-nodaemon")
+	w.a.ackWindow = 2 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	if err := w.a.Send(ctx, "Carry on", adapter.ModeAuto); err != nil {
+		t.Fatalf("cancelled Send returned error: %v", err)
+	}
+	rec := w.outcome(t)
+	if rec.Outcome != "refused" || rec.Code != "no_daemon" {
+		t.Fatalf("after ctx cancel: %+v, want refused/no_daemon", rec)
+	}
+	if held, _, code, _ := WakeHold(w.a.dir, rec.StartedAt.Add(5*time.Minute), time.Hour); !held || code != "no_daemon" {
+		t.Fatalf("WakeHold after late refusal: held=%v code=%q", held, code)
+	}
+}
+
+// PendingWake ignores future-dated records (clock jump backward) as well as
+// corrupt or oversized records.
+func TestPendingWakeIgnoresFutureClockAndBadFiles(t *testing.T) {
+	dir := t.TempDir()
+	a := &Adapter{dir: dir}
+	now := time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)
+	if err := a.saveAsk(askRecord{PID: os.Getpid(), StartedAt: now.Add(time.Hour), Outcome: "delivering"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, pending := PendingWake(dir, now); pending {
+		t.Fatal("future-dated wake treated as pending")
+	}
+	if err := os.WriteFile(a.askPath(), []byte(`{"pad":"`+strings.Repeat("x", maxAskRecord+64)+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, pending := PendingWake(dir, now); pending {
+		t.Fatal("oversized record treated as pending")
+	}
+}
+
+// A late background completion from an earlier wake never overwrites a newer
+// wake already recorded in sessionpipe-ask.json.
+func TestLateEndedDoesNotOverwriteNewerWake(t *testing.T) {
+	dir := t.TempDir()
+	a := &Adapter{dir: dir}
+	tOld := time.Date(2026, 11, 24, 8, 0, 0, 0, time.UTC)
+	tNew := tOld.Add(2 * time.Minute)
+	newer := askRecord{PID: os.Getpid(), StartedAt: tNew, Outcome: "delivering"}
+	if err := a.saveAsk(newer); err != nil {
+		t.Fatal(err)
+	}
+	older := askRecord{PID: os.Getpid() + 999999, StartedAt: tOld, Outcome: "delivering"}
+	_ = a.ended(older, errors.New("exit status 1"), []byte("sessionpipe ask: no control daemon is answering\n"))
+	got, ok := a.loadAsk()
+	if !ok || got.Outcome != "delivering" || !got.StartedAt.Equal(tNew) || got.PID != newer.PID {
+		t.Fatalf("newer wake overwritten: %+v (ok=%v)", got, ok)
 	}
 }

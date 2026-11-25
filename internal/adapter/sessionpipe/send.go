@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/looptender/looptender/internal/adapter"
@@ -44,6 +45,22 @@ const askStale = 24 * time.Hour
 // maxStderr bounds what is read of the ask's stderr: enough for its one
 // refusal line, never its progress (--quiet sends none).
 const maxStderr = 4 << 10
+
+// maxAskRecord caps the wake record file size so a corrupt or oversized file
+// is ignored safely.
+const maxAskRecord = 64 << 10
+
+var askDirLocks sync.Map // clean target directory -> *sync.Mutex
+
+func askLock(dir string) *sync.Mutex {
+	k := filepath.Clean(dir)
+	if mu, ok := askDirLocks.Load(k); ok {
+		return mu.(*sync.Mutex)
+	}
+	mu := &sync.Mutex{}
+	actual, _ := askDirLocks.LoadOrStore(k, mu)
+	return actual.(*sync.Mutex)
+}
 
 // askRecord holds no text: when, which process, and how it ended.
 type askRecord struct {
@@ -96,9 +113,12 @@ func askEnv(env []string) []string {
 // process, the same one by process ID and start time, is alive and it is
 // under a day old. It reads the record only.
 func PendingWake(dir string, now time.Time) (since time.Time, pending bool) {
+	mu := askLock(dir)
+	mu.Lock()
+	defer mu.Unlock()
 	a := &Adapter{dir: dir}
 	r, ok := a.loadAsk()
-	if !ok || r.Outcome != "delivering" || now.Sub(r.StartedAt) >= askStale || !alive(r.PID) {
+	if !ok || r.Outcome != "delivering" || r.StartedAt.After(now) || now.Sub(r.StartedAt) >= askStale || !alive(r.PID) {
 		return time.Time{}, false
 	}
 	if r.ProcStart != "" {
@@ -118,7 +138,12 @@ var readProcStart = procStart
 func (a *Adapter) askPath() string { return filepath.Join(a.dir, AskRecordFile) }
 
 func (a *Adapter) loadAsk() (askRecord, bool) {
-	b, err := os.ReadFile(a.askPath())
+	p := a.askPath()
+	info, err := os.Lstat(p)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxAskRecord {
+		return askRecord{}, false
+	}
+	b, err := os.ReadFile(p)
 	var r askRecord
 	if err != nil || json.Unmarshal(b, &r) != nil {
 		return askRecord{}, false
@@ -178,7 +203,11 @@ func (a *Adapter) Send(ctx context.Context, prompt string, mode adapter.Mode) er
 		return adapter.ErrNotStarted{Reason: "sessionpipe could not be run: " + pathless(err).Error()}
 	}
 	rec := askRecord{PID: cmd.Process.Pid, ProcStart: readProcStart(cmd.Process.Pid), StartedAt: started, Outcome: "delivering"}
-	if err := a.saveAsk(rec); err != nil {
+	mu := askLock(a.dir)
+	mu.Lock()
+	saveErr := a.saveAsk(rec)
+	mu.Unlock()
+	if saveErr != nil {
 		// The ask is running; without its record the next wake cannot know.
 		_ = cmd.Process.Kill()
 		_, _ = io.Copy(io.Discard, stderr)
@@ -199,10 +228,12 @@ func (a *Adapter) Send(ctx context.Context, prompt string, mode adapter.Mode) er
 	if window <= 0 {
 		window = AckWindow
 	}
+	timer := time.NewTimer(window)
+	defer timer.Stop()
 	select {
 	case r := <-done:
 		return a.ended(rec, r.err, r.stderr)
-	case <-time.After(window):
+	case <-timer.C:
 		// Accepted and under way: the daemon holds it now. Waiting in the
 		// background reaps the process if this one lives that long.
 		go func() {
@@ -211,8 +242,12 @@ func (a *Adapter) Send(ctx context.Context, prompt string, mode adapter.Mode) er
 		}()
 		return nil
 	case <-ctx.Done():
-		// The check is ending; the ask keeps going, and its record says so.
-		go func() { <-done }()
+		// The check is ending; the ask keeps going, and its outcome is still
+		// recorded when it finishes so a late refusal still holds.
+		go func() {
+			r := <-done
+			_ = a.ended(rec, r.err, r.stderr)
+		}()
 		return nil
 	}
 }
@@ -248,8 +283,15 @@ func (a *Adapter) ended(rec askRecord, waitErr error, stderr []byte) error {
 		rec.Outcome = "unknown"
 		result = fmt.Errorf("sessionpipe ask ended with code %d; whether the wake reached the session is unknown", code)
 	}
-	rec.PID, rec.ProcStart = 0, ""
-	_ = a.saveAsk(rec)
+	// Do not let a delayed background completion overwrite a newer wake.
+	mu := askLock(a.dir)
+	mu.Lock()
+	defer mu.Unlock()
+	cur, ok := a.loadAsk()
+	if ok && cur.PID == rec.PID && cur.StartedAt.Equal(rec.StartedAt) && cur.Outcome == "delivering" {
+		rec.PID, rec.ProcStart = 0, ""
+		_ = a.saveAsk(rec)
+	}
 	return result
 }
 
@@ -279,8 +321,11 @@ func refusal(b []byte) string {
 // session that moved on would still wait out the interval. It reads the two
 // records only.
 func WakeHold(dir string, now time.Time, interval time.Duration) (held bool, outcome, code string, until time.Time) {
+	mu := askLock(dir)
+	mu.Lock()
 	a := &Adapter{dir: dir}
 	r, ok := a.loadAsk()
+	mu.Unlock()
 	if !ok || (r.Outcome != "refused" && r.Outcome != "failed" && r.Outcome != "unknown") {
 		return false, "", "", time.Time{}
 	}

@@ -45,8 +45,10 @@ func sessionpipeSinkCommand() string {
 }
 
 // doctorSessionpipe checks an observed sessionpipe target. It runs only
-// `sessionpipe --version` and `sessionpipe status --json`, both read-only, and
-// never prints their output, the events file's path or anything in it.
+// `sessionpipe --version`, `sessionpipe status --json`, `sessionpipe ask
+// status` (when opted in to wake_only), and `sessionpipe pool --json` (for
+// claude-code), all read-only, and never prints their raw output, account
+// identifiers, emails, events file path, or anything in it.
 //
 // The checks run in the order a person sets the target up: the sessionpipe
 // command, its version, its hooks for the session's harness, the file sink,
@@ -130,7 +132,12 @@ func doctorSessionpipeTool(ctx context.Context, r *doctorReport, prefix string, 
 		r.add(prefix+".sink", "unavailable", "sessionpipe status --json failed, timed out, or exceeded its output limit.", "Run sessionpipe doctor; raw output is withheld.")
 		return sinkUnchecked
 	}
-	return doctorSessionpipeStatus(r, prefix, out, harness, s.EventsFile)
+	sink := doctorSessionpipeStatus(r, prefix, out, harness, s.EventsFile)
+	if harness == "claude-code" {
+		poolOut, poolErr := call("pool", "--json")
+		doctorSessionpipePool(r, prefix+".pool", poolOut, poolErr, time.Now())
+	}
+	return sink
 }
 
 // doctorSessionpipeFileStep checks the events file. A missing file with a
@@ -367,5 +374,38 @@ func doctorSessionpipeWake(r *doctorReport, id, stateDir string, now time.Time, 
 		r.add(id, "warning", "A wake has been outstanding for a long time: "+pw.Text, "Look at the session: sessionpipe delivered the wake and the agent is still answering, or the delivery is stuck in sessionpipe. Wakes resume once it ends.")
 	default:
 		r.add(id, "ok", "A wake is being answered: "+pw.Text, "")
+	}
+}
+
+// doctorSessionpipePool reports read-only sessionpipe Claude Code pool state
+// and its daemon-stop failure mode without exposing account names, emails or
+// file paths.
+func doctorSessionpipePool(r *doctorReport, id string, out []byte, err error, now time.Time) {
+	if err != nil {
+		r.add(id, "unavailable", "sessionpipe pool --json could not be queried (older sessionpipe or unreadable pool output); raw output is withheld.", "")
+		return
+	}
+	sum, parseErr := sessionpipe.ParsePoolStatus(out, now)
+	if parseErr != nil {
+		r.add(id, "unavailable", "sessionpipe pool --json returned an unrecognized shape; raw output is withheld.", "")
+		return
+	}
+	switch sum.Health {
+	case sessionpipe.PoolOff:
+		r.add(id, "ok", "sessionpipe's Claude Code pool is off; sessions connect with their own login.", "")
+	case sessionpipe.PoolDown:
+		r.add(id, "error", "sessionpipe's Claude Code pool is on, but its listener is down: every session pointed at the pool gets connection refused and looptender cannot route around that.", "Start sessionpipe's control daemon or turn its pool off (`sessionpipe pool off`) yourself; looptender never changes pool state.")
+	case sessionpipe.PoolEmpty:
+		r.add(id, "warning", "sessionpipe's Claude Code pool is listening, but has no enabled accounts. While the pool is on, a stopped daemon causes connection refused for pointed sessions.", "Check pool accounts with `sessionpipe pool` yourself.")
+	case sessionpipe.PoolExhausted:
+		reset := "unknown reset time"
+		if sum.EarliestReset != nil {
+			reset = "earliest reset " + sum.EarliestReset.Local().Format(time.RFC3339)
+		}
+		r.add(id, "warning", fmt.Sprintf("sessionpipe's Claude Code pool is listening with %d of %d enabled accounts limited and none ready (%s). If sessionpipe's daemon stops while the pool is on, pointed sessions get connection refused.", sum.LimitedAccounts, sum.EnabledAccounts, reset), "Wait for the reset or inspect the pool with `sessionpipe pool` yourself.")
+	case sessionpipe.PoolDegraded:
+		r.add(id, "warning", fmt.Sprintf("sessionpipe's Claude Code pool is listening with %d enabled accounts in error and none ready. If sessionpipe's daemon stops while the pool is on, pointed sessions get connection refused.", sum.ErrorAccounts), "Check pool account status and secrets store with `sessionpipe pool` yourself.")
+	case sessionpipe.PoolReady:
+		r.add(id, "ok", fmt.Sprintf("sessionpipe's Claude Code pool is listening (%d of %d enabled accounts ready). Tier-0 events do not identify which pooled account serves a turn; if sessionpipe's daemon stops while the pool is on, pointed sessions get connection refused.", sum.ReadyAccounts, sum.EnabledAccounts), "")
 	}
 }
