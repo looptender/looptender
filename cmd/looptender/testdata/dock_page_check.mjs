@@ -68,6 +68,8 @@ variants.push(["fresh: pending", (l) => { l.buildFreshness = { state: "pending",
 variants.push(["fresh: older, paused", (l) => { l.state = "paused"; l.phrase = "Paused"; l.buildFreshness = { state: "older", text: "Older build \u00B7 restart the supervisor to update", detail: "Runs v0.1.0.", action: "Run this, then start supervision again the way it was started.", command: "looptender daemon-shutdown -c CONFIG" }; }]);
 variants.push(["fresh: different, no command", (l) => { l.buildFreshness = { state: "different", text: "Different build from the installed one", detail: "Runs v0.1.0; installed v0.2.0.", action: "Stop its process, then start supervision again." }; }]);
 variants.push(["fresh: none", (l) => { delete l.buildFreshness; }]);
+variants.push(["observed never woken", (l) => { l.observed = true; l.observedWakes = false; l.observedNote = "Observed, never woken: looptender reads this session's tier-0 sessionpipe events and never sends to, wakes, re-prompts or stops it."; l.can = ["pause"]; }]);
+variants.push(["observed wake_only with held wake", (l) => { l.observed = true; l.observedWakes = true; l.observedNote = "Observed, woken only when idle: looptender wakes it through sessionpipe ask when idle."; l.can = ["pause", "resume"]; l.sessionpipeWake = { since: "2030-01-01T00:00:00Z", forSeconds: 0, held: true, outcome: "refused", code: "folder", until: "2030-01-01T01:00:00Z", text: "last wake refused: folder, next attempt after 2030-01-01T01:00:00Z or the session's next turn; nothing is sent until then" }; }]);
 variants.push(["long detail", (l) => { l.detail = long; }]);
 
 function scenario(mutateData) {
@@ -99,14 +101,14 @@ scenarios.push(["no needs", (d) => { d.needsYou = []; d.needsLine = "Nothing nee
 
 const routes = ["#/", "#/versions", "#/usage", "#/routes", "#/accounts"];
 
-async function render(name, data, checks = []) {
+async function render(name, data, checks = [], server = fixture.server) {
   const errors = [];
   const vc = new VirtualConsole();
   vc.on("jsdomError", (e) => errors.push(String(e.detail && e.detail.stack || e.message || e)));
   vc.on("error", (e) => errors.push(String(e)));
   const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "http://127.0.0.1:1/s/token/", virtualConsole: vc });
   const w = dom.window;
-  const body = { "api/v1/dock": data, "api/v1/server": fixture.server, "api/v1/usage": fixture.usage };
+  const body = { "api/v1/dock": data, "api/v1/server": server, "api/v1/usage": fixture.usage };
   w.fetch = async (url) => {
     const path = String(url).split("?")[0].replace(/^.*\/s\/[^/]+\//, "");
     const found = body[path];
@@ -181,8 +183,31 @@ const expectations = [
     [{ hash: "#/", fn: (w) => { const t = text(w, "#pane .work-tree"); return /function|\[object|native code|\{\s*\}|undefined|NaN/.test(t) ? "a prototype name printed garbage: " + t.match(/.{0,40}(function|\[object|native code|undefined|NaN).{0,40}/)[0] : null; } }]],
   ["the Overview tree names an unsupervised loop", (d) => target(d, (l) => { l.state = "not_checked_recently"; l.phrase = "Not supervised"; }),
     [{ hash: "#/", fn: (w) => (/Not supervised/.test(text(w, "#pane .work-tree")) ? null : "no 'Not supervised' row in the Overview tree") }]],
+  ["an observed never-woken loop renders its plain label, observedNote and checking action labels", (d) => target(d, (l) => {
+    l.observed = true; l.observedWakes = false;
+    l.observedNote = "Observed, never woken: looptender reads this session's tier-0 sessionpipe events and never sends to, wakes, re-prompts or stops it.";
+    l.can = ["pause", "resume"];
+  }),
+    [{ hash: "#/", fn: (w) => (/Observed, never woken/.test(text(w, "#pane .work-tree .work-observed")) && /never sends to, wakes/.test(text(w, "#pane .work-tree .observed-note")) ? null : "the Overview row lacks the observed label or note") },
+     { hash: "loop", fn: (w, h) => {
+       if (!h.endsWith(fixture.dock.loops[0].key)) return null;
+       const head = text(w, "#pane .pane-head .work-observed");
+       const note = text(w, "#pane .observed-note");
+       const acts = [...w.document.querySelectorAll("#pane .change-buttons button")].map((b) => b.textContent);
+       if (head !== "Observed, never woken") return "loop page heading lacks 'Observed, never woken': " + head;
+       if (!/never sends to, wakes/.test(note)) return "loop page lacks observedNote near routes: " + note;
+       if (!acts.includes("Pause checking\u2026") || !acts.includes("Resume checking\u2026") || acts.some((a) => /Stop/.test(a))) return "unexpected observed buttons: " + JSON.stringify(acts);
+       return null;
+     } }], { ...fixture.server, changes: "on", form: "form-value" }],
+  ["an observed wake_only loop renders its wake_only label and outstanding wake line", (d) => target(d, (l) => {
+    l.observed = true; l.observedWakes = true;
+    l.observedNote = "Observed, woken only when idle: looptender wakes it through sessionpipe ask when it is between turns.";
+    l.sessionpipeWake = { since: "2030-01-01T00:00:00Z", forSeconds: 0, held: true, outcome: "refused", code: "folder", until: "2030-01-01T01:00:00Z", text: "last wake refused: folder, next attempt after 2030-01-01T01:00:00Z or the session's next turn; nothing is sent until then" };
+  }),
+    [{ hash: "#/", fn: (w) => (/Observed, woken only when idle/.test(text(w, "#pane .work-tree .work-observed")) && /Wake: last wake refused: folder/.test(text(w, "#pane .work-tree .sessionpipe-wake")) ? null : "the Overview row lacks the wake_only label or wake line") },
+     { hash: "loop", fn: (w, h) => h.endsWith(fixture.dock.loops[0].key) ? (/Observed, woken only when idle/.test(text(w, "#pane .pane-head .work-observed")) && /Wake: last wake refused: folder/.test(text(w, "#pane .sessionpipe-wake")) ? null : "loop page lacks wake_only label or wake line") : null }]],
 ];
-for (const [name, mutate, checks] of expectations) await render(name, scenario(mutate), checks);
+for (const [name, mutate, checks, server] of expectations) await render(name, scenario(mutate), checks, server || fixture.server);
 
 // A failed render's banner ends with the next render that works: the Overview
 // is made to throw (as it did on real data), then a page that renders is opened

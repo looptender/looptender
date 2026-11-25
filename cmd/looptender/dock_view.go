@@ -350,9 +350,15 @@ type dockLoop struct {
 	Can []string `json:"can"`
 	// Observed is set when the loop's target is observed, never woken (a
 	// sessionpipe session): looptender never sends to, wakes, re-prompts or
-	// stops it. ObservedNote says so in a sentence for the page.
-	Observed     bool   `json:"observed,omitempty"`
-	ObservedNote string `json:"observedNote,omitempty"`
+	// stops it. ObservedWakes is set with Observed when the loop opted in
+	// with sessionpipe.send: wake_only. ObservedNote says so in a sentence
+	// for the page.
+	Observed      bool   `json:"observed,omitempty"`
+	ObservedWakes bool   `json:"observedWakes,omitempty"`
+	ObservedNote  string `json:"observedNote,omitempty"`
+	// SessionpipeWake is set while a wake of an observed sessionpipe session
+	// is being answered or is held after a wake that did not get through.
+	SessionpipeWake *sessionpipeWakeStatus `json:"sessionpipeWake,omitempty"`
 	// Archived is set while the loop is archived (State "archived"): when,
 	// the hold it had, and the note only where the report carries
 	// identifiers. ArchiveLapsed is a record the loop no longer honours.
@@ -1772,7 +1778,10 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 		l.CurrentRoute = dockTarget{Availability: "known", Role: dockRole(st.Target), Tool: dockTool(a.Adapter),
 			Provider: clip(a.Provider, dockMaxText), Model: clip(a.Model, dockMaxText)}
 		if a.Observed {
-			l.Observed, l.ObservedNote = true, observedNotice(a.Wakes)
+			l.Observed, l.ObservedWakes, l.ObservedNote = true, a.Wakes, observedNotice(a.Wakes)
+		}
+		if st.SessionpipeWake != nil {
+			l.SessionpipeWake = st.SessionpipeWake
 		}
 		if identifiers {
 			l.CurrentRoute.Name = clip(st.Target, dockMaxText)
@@ -2357,7 +2366,53 @@ func dockHoldNeed(st *statusOut, hold *dockHold, identifiers bool) *dockNeed {
 		since := t
 		n.Since, n.SinceEvidence = &since, "control_changed"
 	}
+	if st.TargetConfigured && st.TargetAgent.Observed {
+		dockObservedHoldAdvice(n, st, cause)
+	}
 	return n
+}
+
+// dockObservedHoldAdvice keeps hold advice honest for an observed sessionpipe
+// loop: resume continues checking (and idle wakes when wake_only), never sends
+// directly, and stop is never offered as a hold recovery button.
+func dockObservedHoldAdvice(n *dockNeed, st *statusOut, cause string) {
+	if n == nil || st == nil {
+		return
+	}
+	gone := (cause == "" || cause == "other") && st.State.LastCheck != nil &&
+		st.State.LastCheck.Action == "await_user" && strings.HasPrefix(st.State.LastCheck.Reason, "target gone")
+	if gone {
+		n.Reason = "The observed session ended or was forgotten."
+	}
+	wakes := st.TargetAgent.Wakes
+	hasNote := strings.TrimSpace(st.Control.Note) != ""
+	if !wakes {
+		switch {
+		case gone:
+			n.Action = "Resume continues checking; nothing is sent."
+		case cause == "input":
+			n.Action = "Answer it in the session, then resume checking; nothing is sent."
+		case cause == "child_input":
+			n.Action = "Answer it in that conversation, then resume checking; nothing is sent."
+		case hasNote && n.Action == dockHoldAdviceNote:
+			n.Action = "See the note left with the hold and the session. Resume continues checking; nothing is sent."
+		case n.Action == dockHoldAdvice:
+			n.Action = "Look at the session, then resume checking when it is ready; nothing is sent."
+		}
+		return
+	}
+	switch {
+	case gone:
+		n.Action = "Resume continues checking and idle wakes; nothing is sent by resuming."
+	case cause == "input":
+		n.Action = "Answer it in the session, then resume checking; nothing is sent by resuming."
+	case cause == "child_input":
+		n.Action = "Answer it in that conversation, then resume checking; nothing is sent by resuming."
+	case hasNote && n.Action == dockHoldAdviceNote:
+		n.Action = "See the note left with the hold and the session. Resume continues checking and idle wakes; nothing is sent by resuming."
+	case n.Action == dockHoldAdvice:
+		n.Action = "Look at the session, then resume checking when it is ready; resume continues checking and idle wakes, and nothing is sent by resuming."
+	}
 }
 
 func dockChildWork(r runsLoop, known bool) dockChildren {

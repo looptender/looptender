@@ -605,7 +605,11 @@ func panelLoopNow(ctx context.Context, reader *dockReader, dir string, entry reg
 // resume clears comes from clearForResume, the function the resume itself
 // saves with, run on a copy of the record reviewed.
 func panelPreviewOf(action string, l panelLoop, ctl control.File, expires, now time.Time) panelPreview {
-	p := panelPreview{Action: action, Title: panelActions[action] + " " + l.Name + "?", Confirm: panelActions[action] + " " + l.Name, Lines: []dockText{},
+	label := panelActions[action]
+	if l.Observed && (action == "pause" || action == "resume") {
+		label += " checking"
+	}
+	p := panelPreview{Action: action, Title: label + " " + l.Name + "?", Confirm: label + " " + l.Name, Lines: []dockText{},
 		Lost:    "looptender could not confirm whether " + l.Name + " was " + panelDone[action] + ". Check its state before doing anything else.",
 		Refused: "The panel refused this request before doing anything. Nothing was changed."}
 	add := func(a ...any) { p.Lines = append(p.Lines, txt(a...)) }
@@ -613,7 +617,14 @@ func panelPreviewOf(action string, l panelLoop, ctl control.File, expires, now t
 	add("Now: " + l.Phrase + ". Last check: " + strings.ToLower(l.LastCheck.Text[:1]) + l.LastCheck.Text[1:] + ".")
 	switch action {
 	case "pause":
-		add("looptender sends it nothing until it is resumed. A check already running finishes. Its route, note, other holds and ownership do not change.")
+		switch {
+		case l.Observed && !l.ObservedWakes:
+			add("looptender stops checking this session until you resume checking; nothing is ever sent to it. A check already running finishes. Its note and other holds do not change.")
+		case l.Observed && l.ObservedWakes:
+			add("looptender stops checking and idle wakes until you resume checking. A check already running finishes. Its note and other holds do not change.")
+		default:
+			add("looptender sends it nothing until it is resumed. A check already running finishes. Its route, note, other holds and ownership do not change.")
+		}
 	case "stop":
 		add("The loop's next check carries out the stop; this review cannot confirm that the session stopped. Nothing is sent until it is resumed.")
 		add("This stops the conversation only: its lanes, if it has any, keep running.")
@@ -643,7 +654,14 @@ func panelPreviewOf(action string, l panelLoop, ctl control.File, expires, now t
 		if e.NewEpisode {
 			add("The hold was raised because re-prompts or nudges were spent, so resume starts a new error episode: those counts start over. Loop-wide limits are unchanged.")
 		}
-		add("Resume does not turn supervision on or start a turn; the next check decides what to send.")
+		switch {
+		case l.Observed && !l.ObservedWakes:
+			add("Resume continues checking; nothing is ever sent to this session.")
+		case l.Observed && l.ObservedWakes:
+			add("Resume continues checking and idle wakes; nothing is sent by resuming, and the next check decides whether the idle session should be woken.")
+		default:
+			add("Resume does not turn supervision on or start a turn; the next check decides what to send.")
+		}
 		if !ctl.Enabled {
 			add("Supervision is off for this loop, and resume does not turn it on.")
 		}

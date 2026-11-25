@@ -789,6 +789,7 @@
       // The glossary's role: its last verified listing has lanes.
       if (l.lanes && l.lanes.role === "coordinator") name.appendChild(el("span", "work-role", "coordinator"));
       if (l.provider) { var chip = el("span", "work-role", l.provider + (l.model ? " \u00B7 " + l.model : "")); chip.title = "Configured provider and model"; name.appendChild(chip); }
+      if (l.observed) name.appendChild(el("span", "work-role work-observed", observedLabel(l)));
       summary.appendChild(name);
       var status = el("span", "work-status");
       var tone = TONES[l.state] || "unknown";
@@ -815,6 +816,8 @@
       details.appendChild(summary);
       var body = el("div", "work-body");
       body.appendChild(el("p", "detail", l.detail));
+      if (l.observed && l.observedNote) body.appendChild(el("p", "sub observed-note", l.observedNote));
+      if (l.sessionpipeWake && l.sessionpipeWake.text) body.appendChild(el("p", "sub sessionpipe-wake", "Wake: " + l.sessionpipeWake.text));
       var facts = el("dl", "work-facts");
       facts.appendChild(fact("Last decision", l.decision ? say(l.decision.phrase) : "Unknown"));
       facts.appendChild(fact("Next check", nextCheck(l.nextCheck || { availability: "unknown" })));
@@ -988,6 +991,10 @@
   }
 
   // ---- Level 2: one loop, shown through its routes ----
+  function observedLabel(l) {
+    if (!l || !l.observed) return "";
+    return l.observedWakes ? "Observed, woken only when idle" : "Observed, never woken";
+  }
   function renderLoop(d, pane, key) {
     pane.appendChild(back());
     var l = loopByKey(key);
@@ -1003,11 +1010,12 @@
     st.appendChild(icon(STATE_ICON[stState] || "unknown"));
     st.appendChild(document.createTextNode(l.phrase));
     var pills = st;
-    // A failed lane is said beside the supervision state, in words.
-    if (l.lanesFailed) {
+    // A failed lane or observed target is said beside the supervision state, in words.
+    if (l.lanesFailed || l.observed) {
       pills = el("span", "pane-pills");
       pills.appendChild(st);
-      pills.appendChild(tag("needs", l.lanesFailed));
+      if (l.observed) pills.appendChild(el("span", "work-role work-observed", observedLabel(l)));
+      if (l.lanesFailed) pills.appendChild(tag("needs", l.lanesFailed));
     }
     pane.appendChild(paneHead(l.name, pills));
     // The provider and model the loop now targets, from its configuration, so
@@ -1056,6 +1064,7 @@
     }
     // The standing wake policy, when status warns about it. Names no path.
     if (list(l.wakePolicy).length) pane.appendChild(el("p", "detail wake-policy", say(l.wakePolicy)));
+    if (l.sessionpipeWake && l.sessionpipeWake.text) pane.appendChild(el("p", "detail sessionpipe-wake", "Wake: " + l.sessionpipeWake.text));
     var change = changeBox(l);
     if (change) pane.appendChild(change);
     if (l.migrationReview && l.migrationReview.availability === "available" && l.migrationReview.counts && l.migrationReview.counts.unfinished > 0) {
@@ -1071,6 +1080,7 @@
       el("span", c.availability === "none_configured" ? "sub" : "chain-ready" + (c.brief.indexOf(CURRENT_UNAFFECTED) >= 0 ? " is-calm" : c.short ? " is-short" : ""), c.brief);
     var routing = panel("Preferred routes", [brief]);
     routing.appendChild(el("p", "sub chain-how", c.how || "Unknown."));
+    if (l.observed && l.observedNote) routing.appendChild(el("p", "sub observed-note", l.observedNote));
     var ol = el("ol", "route-list is-ordered");
     entries.forEach(function (e) {
       var bound = boundAccount(e.catalogAccount);
@@ -1354,6 +1364,7 @@
   // Every sentence comes from the server. Each change is prepared, shown,
   // and only then confirmed; nothing is retried by itself.
   var ACTION_LABEL = { pause: "Pause", stop: "Stop", resume: "Resume" };
+  var OBSERVED_ACTION_LABEL = { pause: "Pause checking", resume: "Resume checking" };
   function changesOn() { return !!(state.server && state.server.changes === "on" && state.server.form); }
   function post(path, form, body) {
     return fetch(path, {
@@ -1549,7 +1560,8 @@
     actions.setAttribute("role", "group");
     actions.setAttribute("aria-label", all ? "Change every loop" : "Change this loop");
     can.forEach(function (a) {
-      if (ACTION_LABEL[a]) actions.appendChild(button(ACTION_LABEL[a] + (all ? " all…" : "…"), "act-" + a, "", function () { prepareChange(l.key, a); }));
+      var label = !all && l.observed && OBSERVED_ACTION_LABEL[a] ? OBSERVED_ACTION_LABEL[a] : ACTION_LABEL[a];
+      if (label) actions.appendChild(button(label + (all ? " all…" : "…"), "act-" + a, "", function () { prepareChange(l.key, a); }));
     });
     if (allowance) actions.appendChild(button("Change send allowance…", "act-set_send_allowance", "", function () { editAllowance(l.key); }));
     if (bc) actions.appendChild(button(bc.label + "…", "act-" + bc.action, "", function () { prepareChange(l.key, bc.action); }));

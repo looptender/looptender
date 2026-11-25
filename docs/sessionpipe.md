@@ -155,11 +155,16 @@ records why it did not, and the reason ends "observed only: looptender never
 sends to, wakes or stops this session". A gone session holds for a person, as
 any gone target does. `status` prints an `observed:` line and reports `task:
 none`; its JSON marks `targetAgent.observed`. The dock and panel JSON set
-`observed` on the loop, and a loop's `can` never holds `stop` for an observed
-target: it holds `pause` when the loop is not paused and `resume` when a hold
-is set. Pause and resume change only whether looptender checks the session;
-nothing is ever sent. The panel list carries that sentence as `observedNote`
-on the loop's row, as the dock does, for a page or menu to show.
+`observed` (and `observedWakes` when opted in to idle wakes) on the loop, and a
+loop's `can` never holds `stop` for an observed target: it holds `pause` when
+the loop is not paused and `resume` when a hold is set. Pause and resume change
+only whether looptender checks the session; nothing is ever sent. The panel list
+carries `observed`, `observedWakes` and `observedNote` on the loop's row, as the
+dock does. The web panel renders a plain "Observed, never woken" (or "Observed,
+woken only when idle") label on the row and loop page, shows `observedNote`
+beside the routes card, labels the controls "Pause checking…" and "Resume
+checking…" (with no Stop button), and states in hold advice and action previews
+that resuming continues checking without sending directly.
 `looptender stop` is still accepted: it ends the checks and leaves the session
 alone.
 
@@ -226,8 +231,9 @@ loop:
     and no text. A process ID that now names another process does not count.
   - A wake over a day old no longer holds the next one back.
   - `status` prints a `wake:` line while one is outstanding, saying since
-    when; its JSON has `sessionpipeWake`. Doctor's `wake` check warns after an
-    hour.
+    when; its JSON has `sessionpipeWake`. The dock JSON and web panel also
+    project `sessionpipeWake` on the loop while a wake is delivering or held.
+    Doctor's `wake` check warns after an hour.
 - **What the command is given.** An allow-listed environment: `PATH`, `HOME`,
   the user and locale variables, `TMPDIR`, the `XDG_*` directories,
   sessionpipe's own `SESSIONPIPE_CONFIG`, `_STATE`, `_SOCKET` and `_DATA`, and
