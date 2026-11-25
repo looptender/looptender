@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/looptender/looptender/internal/registry"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -511,5 +512,34 @@ func TestDaemonRoutineRecordsSchedulerIdentity(t *testing.T) {
 	}
 	if len(gotInv) != 1 || gotInv[0] != "inv-daemon" {
 		t.Fatalf("daemon routine links: %v (stateDir=%s)", gotInv, stateDir)
+	}
+}
+
+// Registering before start --routine automatically links the pre-existing
+// registry reference once start opens the loop's first run.
+func TestStartLinksPreRegisteredReferenceAndRecordsRoutine(t *testing.T) {
+	fStart := newFixture(t)
+	regDir := filepath.Join(t.TempDir(), "reg")
+	t.Setenv(registryDirEnv, regDir)
+	if code, out, errs := registryRun(t, regDir, "add", "-c", fStart.cfg); code != 0 {
+		t.Fatal(out, errs)
+	}
+	reg, err := registry.Load(regDir)
+	if err != nil || len(reg.Entries) != 1 {
+		t.Fatalf("%+v %v", reg, err)
+	}
+	entry := reg.Entries[0]
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var startErr bytes.Buffer
+	code := startCommand(env{ctx, io.Discard, &startErr}, []string{"--foreground", "-c", entry.ConfigPath, "--routine", "example-scheduler/nightly/inv-pre"}, func(control.File, bool) error {
+		cancel()
+		return nil
+	})
+	if code != exitOK {
+		t.Fatalf("start after pre-register: %d %s", code, startErr.String())
+	}
+	if _, r, raw := runsExec(t, "--registry-id", entry.ID, "--directory", regDir, "--id", entry.ID); r.Loops[0].Registration != recordRecorded || r.Loops[0].Current == nil || r.Loops[0].Current.Invocation != "routine:example-scheduler/nightly/inv-pre" || r.Node.Status != rungraph.Found {
+		t.Fatalf("after start: %s", raw)
 	}
 }

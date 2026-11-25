@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1491,7 +1490,9 @@ func TestRunsDistinguishesRegisteredBeforeFirstRunFromMissingAndUnknown(t *testi
 				t.Fatalf("%s: %d %s", name, code, raw)
 			}
 			var text, errs bytes.Buffer
-			run(context.Background(), append([]string{"runs"}, args...), &text, &errs)
+			if textCode := run(context.Background(), append([]string{"runs"}, args...), &text, &errs); textCode != exitOK {
+				t.Fatalf("%s text exit %d: %s %s", name, textCode, text.String(), errs.String())
+			}
 			if strings.HasPrefix(name, "id") || name == "config id" {
 				if r.Node == nil || r.Node.Status != rungraph.NotRecorded || r.Node.Reason != registrationNoRunYet || !strings.Contains(text.String(), "registered in the registry, no run yet") {
 					t.Fatalf("%s: node=%+v text=%s", name, r.Node, text.String())
@@ -1522,32 +1523,5 @@ func TestRunsDistinguishesRegisteredBeforeFirstRunFromMissingAndUnknown(t *testi
 	runsSync(t, entry.StateDir, false, "enable", 1)
 	if _, r, _ := runsExec(t, "--registry-id", entry.ID, "--directory", regDir, "--id", entry.ID); r.Loops[0].Registration != recordNotRecorded || r.Loops[0].RegistrationReason != registrationNotInGraph || r.Node.Reason != registrationNotInGraph {
 		t.Fatalf("post-run unrecorded ref: loop=%+v node=%+v", r.Loops[0], r.Node)
-	}
-
-	// Registering before start --routine automatically links the pre-existing ID
-	// once start opens the loop's first run.
-	fStart := newFixture(t)
-	regDir2 := filepath.Join(t.TempDir(), "reg2")
-	t.Setenv(registryDirEnv, regDir2)
-	if code, out, errs := registryRun(t, regDir2, "add", "-c", fStart.cfg); code != 0 {
-		t.Fatal(out, errs)
-	}
-	reg2, err := registry.Load(regDir2)
-	if err != nil || len(reg2.Entries) != 1 {
-		t.Fatalf("%+v %v", reg2, err)
-	}
-	entry2 := reg2.Entries[0]
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var startErr bytes.Buffer
-	code := startCommand(env{ctx, io.Discard, &startErr}, []string{"--foreground", "-c", entry2.ConfigPath, "--routine", "example-scheduler/nightly/inv-pre"}, func(control.File, bool) error {
-		cancel()
-		return nil
-	})
-	if code != exitOK {
-		t.Fatalf("start after pre-register: %d %s", code, startErr.String())
-	}
-	if _, r, raw := runsExec(t, "--registry-id", entry2.ID, "--directory", regDir2, "--id", entry2.ID); r.Loops[0].Registration != recordRecorded || r.Loops[0].Current == nil || r.Loops[0].Current.Invocation != "routine:example-scheduler/nightly/inv-pre" || r.Node.Status != rungraph.Found {
-		t.Fatalf("after start: %s", raw)
 	}
 }
