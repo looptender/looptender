@@ -260,6 +260,8 @@ html:not(.has-script) .needs-script { visibility: hidden; }
 .pane-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.5rem 1rem; }
 .pane-pills { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
 .pane-pills .tag { margin-left: 0; }
+.pane-pills .work-role { margin-inline-start: 0; }
+.observed-note { margin: 0.35rem 0 0; font-size: 0.8125rem; max-width: 70ch; }
 .panel { margin-top: 1.1rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.05rem 1.25rem 1.15rem; }
 .panel > h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.75rem; }
 .panel > h2 .sub, .panel > h2 .unknown { font-size: 0.8125rem; font-weight: 400; }

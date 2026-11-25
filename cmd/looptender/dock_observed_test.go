@@ -9,8 +9,11 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/looptender/looptender/internal/config"
+	"github.com/looptender/looptender/internal/control"
+	"github.com/looptender/looptender/internal/state"
 )
 
 // An observed sessionpipe target is marked observed in status, the dock and
@@ -85,5 +88,104 @@ func TestStatusSaysAnObservedTargetIsNeverWoken(t *testing.T) {
 	}
 	if !st.TargetAgent.Observed || st.TargetAgent.Session != "codex:01a10860-a43f-7ce2-b12f-a7911ae8a880" || st.TaskSource != "none" {
 		t.Errorf("status JSON: %+v task %q", st.TargetAgent, st.TaskSource)
+	}
+}
+
+// A wake_only observed loop surfaces observedWakes and sessionpipeWake in the
+// dock and panel list, gives honest hold advice that resume does not send, and
+// titles panel reviews as "Pause checking" / "Resume checking".
+func TestDockObservedWakeHoldAdviceAndReviewWording(t *testing.T) {
+	wakeUntil := dockNow.Add(time.Hour)
+	for _, wakes := range []bool{false, true} {
+		in := dockEvidence{
+			controls: &clientControls{Enabled: true, AwaitingUser: true},
+			status: func(s *statusOut) {
+				send := ""
+				if wakes {
+					send = config.SessionpipeSendWakeOnly
+					s.SessionpipeWake = &sessionpipeWakeStatus{
+						Held: true, Outcome: "refused", Code: "folder", Until: &wakeUntil,
+						Text: "last wake refused: folder, next attempt after 2030-01-01T01:00:00Z or the session's next turn; nothing is sent until then",
+					}
+				}
+				s.TargetAgent = refOf(config.Agent{
+					Adapter: config.SessionpipeAdapter, Provider: config.SessionpipeAdapter,
+					Sessionpipe: &config.Sessionpipe{Session: "claude-code:example", EventsFile: "/example/events.jsonl", Send: send},
+				})
+				s.State.LastCheck = &state.Check{At: dockNow.Add(-time.Minute), Action: "await_user", Reason: "target gone (archived, deleted, or not found)", Outcome: "succeeded"}
+			},
+		}.input()
+		l, need := projectDockLoop(in, dockNow, defaultStaleAfter, false)
+		if !l.Observed || l.ObservedWakes != wakes {
+			t.Fatalf("wakes=%v: observed=%v observedWakes=%v", wakes, l.Observed, l.ObservedWakes)
+		}
+		if wakes && (l.SessionpipeWake == nil || !l.SessionpipeWake.Held || l.SessionpipeWake.Code != "folder") {
+			t.Fatalf("wakes=%v: sessionpipeWake=%+v", wakes, l.SessionpipeWake)
+		}
+		if !wakes && l.SessionpipeWake != nil {
+			t.Fatalf("never-woken loop carried sessionpipeWake: %+v", l.SessionpipeWake)
+		}
+		if need == nil || need.Reason != "The observed session ended or was forgotten." {
+			t.Fatalf("wakes=%v: gone need=%+v", wakes, need)
+		}
+		if !wakes && need.Action != "Resume continues checking; nothing is sent." {
+			t.Fatalf("never-woken gone advice=%q", need.Action)
+		}
+		if wakes && need.Action != "Resume continues checking and idle wakes; nothing is sent by resuming." {
+			t.Fatalf("wake_only gone advice=%q", need.Action)
+		}
+		list := buildPanelList(dockReport{Loops: []dockLoop{l}})
+		if len(list.Loops) != 1 || list.Loops[0].ObservedWakes != wakes {
+			t.Fatalf("wakes=%v: panelListLoop=%+v", wakes, list.Loops)
+		}
+
+		// Panel review wording for pause and resume.
+		pl := panelLoop{dockLoop: l}
+		pausePrev := panelPreviewOf("pause", pl, control.File{Enabled: true}, dockNow.Add(2*time.Minute), dockNow)
+		if pausePrev.Title != "Pause checking "+l.Name+"?" || pausePrev.Confirm != "Pause checking "+l.Name {
+			t.Fatalf("wakes=%v: pause preview=%+v", wakes, pausePrev)
+		}
+		resumePrev := panelPreviewOf("resume", pl, control.File{Enabled: true, AwaitingUser: true}, dockNow.Add(2*time.Minute), dockNow)
+		if resumePrev.Title != "Resume checking "+l.Name+"?" || resumePrev.Confirm != "Resume checking "+l.Name {
+			t.Fatalf("wakes=%v: resume preview=%+v", wakes, resumePrev)
+		}
+		joined := make([]string, len(resumePrev.Lines))
+		for i, ln := range resumePrev.Lines {
+			joined[i] = ln.render(dockNow)
+		}
+		linesText := strings.Join(joined, "\n")
+		if !wakes && !strings.Contains(linesText, "Resume continues checking; nothing is ever sent to this session.") {
+			t.Fatalf("never-woken resume preview missing honest line: %s", linesText)
+		}
+		if wakes && !strings.Contains(linesText, "Resume continues checking and idle wakes; nothing is sent by resuming") {
+			t.Fatalf("wake_only resume preview missing honest line: %s", linesText)
+		}
+	}
+
+	// Table check for other hold causes on an observed loop (input, note, generic).
+	for _, tc := range []struct {
+		name  string
+		wakes bool
+		cause string
+		note  string
+		want  string
+	}{
+		{"never-woken input", false, "input", "", "Answer it in the session, then resume checking; nothing is sent."},
+		{"never-woken generic", false, "", "", "Look at the session, then resume checking when it is ready; nothing is sent."},
+		{"never-woken note", false, "", "Please inspect session", "See the note left with the hold and the session. Resume continues checking; nothing is sent."},
+		{"wake_only input", true, "input", "", "Answer it in the session, then resume checking; nothing is sent by resuming."},
+		{"wake_only note", true, "", "Please inspect session", "See the note left with the hold and the session. Resume continues checking and idle wakes; nothing is sent by resuming."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &statusOut{
+				TargetConfigured: true,
+				TargetAgent:      agentRef{Observed: true, Wakes: tc.wakes},
+				Control:          control.File{Enabled: true, AwaitingUser: true, Note: tc.note},
+			}
+			n := dockHoldNeed(st, &dockHold{Cause: tc.cause}, false)
+			if n.Action != tc.want {
+				t.Fatalf("got %q, want %q", n.Action, tc.want)
+			}
+		})
 	}
 }

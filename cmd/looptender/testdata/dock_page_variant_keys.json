@@ -46,5 +46,17 @@
  "buildFreshness.text",
  "buildFreshness.detail",
  "buildFreshness.command",
- "buildFreshness.action"
+ "buildFreshness.action",
+ "can",
+ "observed",
+ "observedWakes",
+ "observedNote",
+ "sessionpipeWake",
+ "sessionpipeWake.since",
+ "sessionpipeWake.forSeconds",
+ "sessionpipeWake.text",
+ "sessionpipeWake.held",
+ "sessionpipeWake.outcome",
+ "sessionpipeWake.code",
+ "sessionpipeWake.until"
 ]
