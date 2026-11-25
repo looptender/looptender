@@ -290,6 +290,8 @@ func TestRoutineFlagRecordsSchedulerIdentityWithoutChangingSupervision(t *testin
 	before := snapshotTree(t, stateDir)
 	for _, args := range [][]string{
 		{"enable", "--routine", "PRIVATE value"}, {"enable", "--routine", "nightly"}, {"resume", "--routine", "a/b/c/d"}, {"enable", "--routine", ""}, {"resume", "--routine", ""},
+		{"daemon", "--routine", "PRIVATE value"}, {"daemon", "--routine", "nightly"}, {"daemon", "--routine", "a/b/c/d"}, {"daemon", "--routine", ""},
+		{"start", "--routine", "PRIVATE value"}, {"start", "--routine", "nightly"}, {"start", "--routine", "a/b/c/d"}, {"start", "--routine", ""},
 		{"pause", "--routine", "example-scheduler/nightly"}, {"status", "--routine", "example-scheduler/nightly"}, {"pause", "--routine", ""},
 	} {
 		code, out, errs := f.run(args...)
@@ -466,5 +468,48 @@ func TestRunsNamesTheSupervisedConversationALoopIsWaitingOn(t *testing.T) {
 	// No child thread ID was ever written to the parent's graph.
 	if raw, _ := os.ReadFile(filepath.Join(parentState, rungraph.FileName)); strings.Contains(string(raw), "thr_child") {
 		t.Fatal("the child thread ID reached the parent's graph")
+	}
+}
+
+// daemon --routine records its scheduler identity on the loop's open/adopted run
+// and check state, and daemon --dry-run --routine leaves the graph untouched.
+func TestDaemonRoutineRecordsSchedulerIdentity(t *testing.T) {
+	f := newFixture(t)
+	stateDir := filepath.Join(f.dir, "state")
+	if code, _, errs := f.run("enable"); code != exitOK {
+		t.Fatal(errs)
+	}
+	var dryOut, dryErr safeBuffer
+	dryCtx, dryCancel := context.WithCancel(context.Background())
+	go func() {
+		waitFor(t, func() bool { return strings.Contains(dryOut.String(), "\n") }, "dry-run daemon tick")
+		dryCancel()
+	}()
+	run(dryCtx, []string{"daemon", "-c", f.cfg, "--dry-run", "--routine", "example-scheduler/nightly/inv-dry"}, &dryOut, &dryErr)
+	g := graphOf(t, f)
+	for _, l := range g.Links {
+		if l.Kind == rd.InvocationLink {
+			t.Fatalf("dry-run daemon recorded invocation link: %#v", l)
+		}
+	}
+
+	var out safeBuffer
+	d := graphProcess(f, "daemon", "--routine", "example-scheduler/nightly/inv-daemon")
+	d.Stdout = &out
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return strings.Contains(out.String(), "\n") }, "daemon tick")
+	_ = d.Process.Kill()
+	_, _ = d.Process.Wait()
+	g = graphOf(t, f)
+	var gotInv []string
+	for _, l := range g.Links {
+		if l.Kind == rd.InvocationLink {
+			gotInv = append(gotInv, l.Routine.Invocation)
+		}
+	}
+	if len(gotInv) != 1 || gotInv[0] != "inv-daemon" {
+		t.Fatalf("daemon routine links: %v (stateDir=%s)", gotInv, stateDir)
 	}
 }
