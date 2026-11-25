@@ -1266,7 +1266,7 @@ func panelListCommand(e env, args []string) int {
 		e.errf("panel list: registry directory unavailable")
 		return exitUsage
 	}
-	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: dockDefaultRefresh, staleAfter: *staleAfter, query: inspectDaemon, accountsDir: panelAccountsDir}
+	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: dockDefaultRefresh, staleAfter: *staleAfter, query: inspectDaemon, accountsDir: panelAccountsDir, routerOffline: *offline}
 	if *offline {
 		reader.query = func(ctx context.Context, dir, current string, _ bool) daemonStatus {
 			return inspectDaemon(ctx, dir, current, true)
