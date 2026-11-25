@@ -538,6 +538,17 @@ test("startServiceOnHost installs user service + enables on macOS/Linux, and fal
   assert.equal(live.code, 1);
   assert.deepEqual(liveSeen, [["service", "install"], ["status", "--json"]]);
 
+  // 6b. already recorded when status --json fails: fails closed without removing
+  const errSeen: string[][] = [];
+  const statusErr = await startServiceOnHost({ bin: "keepgoing", record, enable: false }, undefined, async (_bin, args) => {
+    errSeen.push([args[0]!, args[1] ?? ""]);
+    if (args[0] === "service" && args[1] === "install") return { code: 1, data: null, stderr: "service: already recorded; use status or remove before reinstalling\n" };
+    if (args[0] === "status") return { code: 1, data: null };
+    return { code: 1, data: null };
+  });
+  assert.equal(statusErr.code, 1);
+  assert.deepEqual(errSeen, [["service", "install"], ["status", "--json"]]);
+
   // 7. enable failure rolls back by calling service remove
   const rbSeen: string[][] = [];
   const rb = await startServiceOnHost({ bin: "keepgoing", record, enable: true }, undefined, async (_bin, args) => {

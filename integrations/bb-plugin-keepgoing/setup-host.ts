@@ -308,7 +308,7 @@ export async function startServiceOnHost(
     if (serviceAlreadyRecordedPattern.test(svc.stderr ?? "")) {
       const st = await run(bin, ["status", "--json", "-c", record.configPath], "", record.threadId, signal);
       const daemonState = typeof st.data === "object" && st.data !== null ? (Reflect.get(st.data, "daemon") as { state?: unknown } | undefined)?.state : undefined;
-      if (st.code === 0 && daemonState === "responsive") {
+      if (st.code !== 0 || daemonState === "responsive") {
         return { code: svc.code, data: svc.data };
       }
       const rm = await run(bin, ["service", "remove", "--json", "-c", record.configPath], "", record.threadId, signal);
