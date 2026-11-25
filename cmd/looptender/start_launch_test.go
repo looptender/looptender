@@ -81,6 +81,10 @@ func TestLaunchedChildTakesItsEnvironmentOnce(t *testing.T) {
 	if rest, ack, err := launchedChildArgs([]string{"-c", "y"}); err != nil || ack != "" || len(rest) != 2 {
 		t.Fatalf("an ordinary child start changed: %v %q %v", rest, ack, err)
 	}
+	rest, _, err = launchedChildArgs([]string{"--launch-label", "dev.looptender.loop.example", "--ack-file", filepath.Join(dir, "ack.json"), "-c", "/example/looptender.yaml", "--routine", "example-scheduler/nightly/inv-launch"})
+	if err != nil || !reflect.DeepEqual(rest, []string{"-c", "/example/looptender.yaml", "--routine", "example-scheduler/nightly/inv-launch"}) {
+		t.Fatalf("child --routine forwarding: %v %v", rest, err)
+	}
 }
 
 // A launched daemon gets only what it needs of the starting command's

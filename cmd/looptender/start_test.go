@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/daemoninfo"
 	"github.com/looptender/looptender/internal/lock"
+	rd "github.com/looptender/looptender/internal/rundiscovery"
 	"github.com/looptender/looptender/internal/state"
 )
 
@@ -144,10 +146,22 @@ func TestStartRefusesBeforeEnabling(t *testing.T) {
 
 func TestStartFlagsAndBackgroundLaunchFailure(t *testing.T) {
 	f := newFixture(t)
-	for _, args := range [][]string{{"--foreground", "--background"}, {"--take-over"}, {"--dry-run"}, {"unexpected"}, {"--now", "2026-01-01T00:00:00Z"}} {
-		code, _, _ := f.run(append([]string{"start"}, args...)...)
-		if code != exitUsage {
-			t.Fatalf("args %v code %d", args, code)
+	for _, args := range [][]string{
+		{"--foreground", "--background"}, {"--take-over"}, {"--dry-run"}, {"unexpected"},
+		{"--now", "2026-01-01T00:00:00Z"}, {"--routine", ""}, {"--routine", "PRIVATE value"}, {"--routine", "a/b/c/d"},
+	} {
+		code, out, errs := f.run(append([]string{"start"}, args...)...)
+		if code != exitUsage || strings.Contains(out+errs, "PRIVATE") || strings.Contains(out+errs, "a/b/c/d") {
+			t.Fatalf("args %v code %d out=%s err=%s", args, code, out, errs)
+		}
+	}
+	var jsonOut, jsonErr bytes.Buffer
+	if code := startCommand(env{context.Background(), &jsonOut, &jsonErr}, []string{"--background", "--json", "-c", f.cfg, "--routine", "PRIVATE bad"}, nil); code != exitUsage {
+		t.Fatalf("json invalid routine code %d", code)
+	} else {
+		var res startJSON
+		if err := json.Unmarshal(jsonOut.Bytes(), &res); err != nil || res.Outcome != "failed" || res.Reason != "invalid_routine" || strings.Contains(jsonOut.String()+jsonErr.String(), "PRIVATE") {
+			t.Fatalf("json invalid routine: %s %s", jsonOut.String(), jsonErr.String())
 		}
 	}
 	var errs bytes.Buffer
@@ -157,5 +171,48 @@ func TestStartFlagsAndBackgroundLaunchFailure(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(f.dir, "state", control.FileName)); !os.IsNotExist(err) {
 		t.Fatalf("launch failure wrote control: %v", err)
+	}
+}
+
+func TestStartForegroundRecordsRoutineOpeningAndChildForwards(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var errs bytes.Buffer
+	code := startCommand(env{ctx, io.Discard, &errs}, []string{"--foreground", "-c", f.cfg, "--routine", "example-scheduler/nightly/inv-start"}, func(control.File, bool) error {
+		cancel()
+		return nil
+	})
+	if code != 0 {
+		t.Fatalf("start --routine: %d %s", code, errs.String())
+	}
+	g := graphOf(t, f)
+	if len(g.Runs) != 1 || g.Runs[0].Origin != rd.Explicit || g.Runs[0].Routine == nil || g.Runs[0].Routine.Source != "example-scheduler" || g.Runs[0].Routine.Invocation != "inv-start" {
+		t.Fatalf("start run routine: %#v", g.Runs)
+	}
+
+	// Background child path forwards --routine through __start-background.
+	f2 := newFixture(t)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	var childOut, childErr bytes.Buffer
+	var ackBytes []byte
+	origRun := func() int {
+		args, _, err := launchedChildArgs([]string{"-c", f2.cfg, "--routine", "example-scheduler/nightly/inv-bg"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return startCommand(env{ctx2, io.Discard, &childErr}, args, func(got control.File, _ bool) error {
+			ackBytes, _ = json.Marshal(startReply{PID: os.Getpid(), Control: got.Summary()})
+			cancel2()
+			return nil
+		})
+	}
+	if got := origRun(); got != 0 || len(ackBytes) == 0 || childOut.Len() != 0 {
+		t.Fatalf("child start: %d %s", got, childErr.String())
+	}
+	g2 := graphOf(t, f2)
+	if len(g2.Runs) != 1 || g2.Runs[0].Routine == nil || g2.Runs[0].Routine.Invocation != "inv-bg" {
+		t.Fatalf("child routine: %#v", g2.Runs)
 	}
 }
