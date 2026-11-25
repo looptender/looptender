@@ -518,6 +518,64 @@ func TestTelegramTopicSendFallbackToDMOnBadRequest(t *testing.T) {
 	}
 }
 
+func TestTelegramTopicSendNoFallbackOnNonBadRequest(t *testing.T) {
+	const tok = "123456789:EXAMPLE_TOPIC_NO_FALLBACK_TOKEN"
+
+	t.Run("HTTP 500 does not retry DM", func(t *testing.T) {
+		var attempts []int64
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var msg tgSentRecord
+			_ = json.NewDecoder(r.Body).Decode(&msg)
+			attempts = append(attempts, msg.MessageThreadID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"ok":false,"error_code":500,"description":"Internal Server Error"}`))
+		}))
+		defer srv.Close()
+
+		client, err := telegram.NewClient(telegram.ClientConfig{Token: tok, BaseURL: srv.URL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = sendTelegramReply(context.Background(), client, telegram.SendMessageRequest{
+			ChatID:          7001,
+			MessageThreadID: 999,
+			Text:            "status reply",
+		})
+		if err == nil {
+			t.Fatal("expected error from HTTP 500")
+		}
+		if len(attempts) != 1 || attempts[0] != 999 {
+			t.Fatalf("expected single topic attempt without DM fallback on HTTP 500, got attempts=%v", attempts)
+		}
+	})
+
+	t.Run("network error does not retry DM", func(t *testing.T) {
+		var attempts int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			attempts++
+		}))
+		url := srv.URL
+		srv.Close() // Force immediate connection-refused network error.
+
+		client, err := telegram.NewClient(telegram.ClientConfig{Token: tok, BaseURL: url})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = sendTelegramReply(context.Background(), client, telegram.SendMessageRequest{
+			ChatID:          7001,
+			MessageThreadID: 999,
+			Text:            "status reply",
+		})
+		if err == nil {
+			t.Fatal("expected network error")
+		}
+		if attempts != 0 {
+			t.Fatalf("expected closed server to handle 0 requests, got %d", attempts)
+		}
+	})
+}
+
 func TestTelegramStatusSurfacesUsageLimitWaitAndOverdue(t *testing.T) {
 	const tok = "123456789:EXAMPLE_LIMIT_WAIT_STATUS_TOKEN"
 	now := time.Now().UTC().Truncate(time.Second)

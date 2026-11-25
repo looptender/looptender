@@ -207,7 +207,7 @@ func SettingsFileUsesPoolPort(path string, port int) (bool, error) {
 	if port < 1 || port > 65535 {
 		return false, nil
 	}
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return false, nil
 	}

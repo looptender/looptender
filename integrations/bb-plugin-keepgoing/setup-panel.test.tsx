@@ -377,6 +377,9 @@ test("slugFromTitle and slugFromPredecessor derive clean slugs and avoid collisi
   assert.equal(slugFromPredecessor({ loop: "example-loop" }, ["example-loop"]), "example-loop-2");
   assert.equal(slugFromPredecessor({ loop: "example-loop-2" }, ["example-loop", "example-loop-2"]), "example-loop-3");
   assert.equal(slugFromPredecessor({ loop: "bb-thr_old", displayName: "Auth Refresh Work" }, []), "auth-refresh-work-2");
+  assert.equal(slugFromPredecessor({ loop: "bb-thr_old", displayName: "BB work" }, []), "bb-work-2");
+  assert.equal(slugFromPredecessor({ loop: "bb-thr_old", displayName: "thr_old" }, []), "bb-thr-old-2");
+  assert.equal(slugFromPredecessor({ loop: "bb-thr_old", displayName: "bb-thr-old" }, []), "bb-thr-old-2");
 });
 
 test("Continue a loop mode selects a predecessor, derives slug, explains auto-archive, and sends succeeds", async () => {
@@ -498,5 +501,70 @@ test("Minimize button works on form, preview, saved, and started states; Supervi
     assert.equal(closes, 4);
     fireEvent.click(ui.getByRole("button", { name: "Done" }));
     assert.equal(closes, 5);
+  } finally { cleanup(); }
+});
+
+test("setup mode tablist supports ArrowLeft/ArrowRight switching, roving tabIndex, and ARIA tabpanel linkage", async () => {
+  const call = async (): Promise<SetupResult> => ({ ok: true, message: "Nothing set up yet" });
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Nothing set up yet");
+    const newTab = ui.getByRole("tab", { name: "New loop" }) as HTMLButtonElement;
+    const continueTab = ui.getByRole("tab", { name: /Continue existing/ }) as HTMLButtonElement;
+    const tabpanel = ui.getByRole("tabpanel");
+
+    assert.equal(newTab.getAttribute("aria-selected"), "true");
+    assert.equal(newTab.tabIndex, 0);
+    assert.equal(continueTab.getAttribute("aria-selected"), "false");
+    assert.equal(continueTab.tabIndex, -1);
+    assert.equal(newTab.getAttribute("aria-controls"), tabpanel.id);
+    assert.equal(continueTab.getAttribute("aria-controls"), tabpanel.id);
+    assert.equal(tabpanel.getAttribute("aria-labelledby"), newTab.id);
+
+    newTab.focus();
+    fireEvent.keyDown(newTab, { key: "ArrowRight" });
+    assert.equal(continueTab.getAttribute("aria-selected"), "true");
+    assert.equal(continueTab.tabIndex, 0);
+    assert.equal(newTab.tabIndex, -1);
+    assert.equal(document.activeElement, continueTab);
+    assert.equal(tabpanel.getAttribute("aria-labelledby"), continueTab.id);
+    assert.ok(ui.getByText("No existing loops found on this host."));
+
+    fireEvent.keyDown(continueTab, { key: "ArrowLeft" });
+    assert.equal(newTab.getAttribute("aria-selected"), "true");
+    assert.equal(newTab.tabIndex, 0);
+    assert.equal(continueTab.tabIndex, -1);
+    assert.equal(document.activeElement, newTab);
+    assert.equal(tabpanel.getAttribute("aria-labelledby"), newTab.id);
+  } finally { cleanup(); }
+});
+
+test("Refresh diagnostics on Supervision started view preserves started state and updates checks", async () => {
+  let inspectCount = 0;
+  const call = async (input: { action: string }): Promise<SetupResult> => {
+    if (input.action === "preview") return { ok: true, message: "Preview only", plan, ticket: "example-ticket" };
+    if (input.action === "create") return { ok: true, message: "Saved disabled", record, canStart: true, checks: [{ id: "c1", status: "ok", message: "Initial" }] };
+    if (input.action === "start") return { ok: true, message: "Background supervision started", record, canStart: false, started: true, checks: [{ id: "c1", status: "ok", message: "Initial" }] };
+    if (input.action === "inspect") {
+      inspectCount++;
+      if (inspectCount === 1) return { ok: true, message: "Nothing set up yet" };
+      return { ok: true, message: "Refreshed", record, checks: [{ id: "c2", status: "ok", message: "Refreshed check" }] };
+    }
+    return { ok: true, message: "Nothing set up yet" };
+  };
+  const ui = render(<SetupPanel threadId="thr_example" call={call} onChanged={() => {}} />);
+  try {
+    await ui.findByText("Nothing set up yet");
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await ui.findByRole("button", { name: "Create setup" });
+    fireEvent.click(ui.getByRole("button", { name: "Create setup" }));
+    await ui.findByRole("button", { name: "Start background supervision" });
+    fireEvent.click(ui.getByRole("button", { name: "Start background supervision" }));
+    await ui.findByText("Supervision started");
+
+    fireEvent.click(ui.getByRole("button", { name: "Refresh diagnostics" }));
+    await ui.findByText("ok: Refreshed check");
+    assert.ok(ui.getByText("Supervision started"));
+    assert.equal(ui.queryByRole("button", { name: "Start background supervision" }), null);
   } finally { cleanup(); }
 });

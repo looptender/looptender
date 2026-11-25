@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { goalLabel } from "./status-details.ts";
 import { fallbackSlug, slugFromPredecessor, slugFromTitle, type ContinuationCandidate, type SetupResult, type ThreadSetupMeta } from "./setup-contract.ts";
 import type { z } from "zod";
@@ -53,6 +53,11 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
   const [created, setCreated] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
   const doneRef = useRef<HTMLHeadingElement>(null);
+  const newTabRef = useRef<HTMLButtonElement>(null);
+  const continueTabRef = useRef<HTMLButtonElement>(null);
+  const newTabId = `kgs-tab-new-${threadId}`;
+  const continueTabId = `kgs-tab-continue-${threadId}`;
+  const panelId = `kgs-tabpanel-${threadId}`;
   useEffect(() => {
     let mounted = true;
     call({ action: "inspect", threadId }).then(r => {
@@ -101,6 +106,14 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
     }
   }
 
+  function handleTabKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const next = intent === "new" ? "continue" : "new";
+    selectIntent(next);
+    (next === "new" ? newTabRef : continueTabRef).current?.focus();
+  }
+
   async function act(action: Action) {
     setBusy(true); setPending(action);
     const began = Date.now();
@@ -131,9 +144,10 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
         ...r,
         ...(!r.ok && action === "create" && !r.record ? { plan: result?.plan } : {}),
         ...(!r.record && (action === "inspect" || action === "start") ? { record: result?.record } : {}),
+        ...(action === "inspect" && result?.started && r.started === undefined ? { started: true } : {}),
       });
       if (r.record) { setTask(""); setNote(""); onChanged(); if (action === "create") setCreated(true); }
-    } catch (e) { setResult({ ok: false, record: result?.record, plan: result?.plan, message: lostMessage(action, e, Math.round((Date.now() - began) / 1000), name) }); }
+    } catch (e) { setResult({ ok: false, record: result?.record, plan: result?.plan, ...(action === "inspect" && result?.started ? { started: true } : {}), message: lostMessage(action, e, Math.round((Date.now() - began) / 1000), name) }); }
     finally { setBusy(false); }
   }
   // Moving the preview or the finished card into view for a keyboard or
@@ -242,10 +256,10 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
       {minimizeButton}
     </div>
     <div className="tabs" role="tablist" aria-label="Setup mode">
-      <button type="button" role="tab" className="tab" aria-selected={intent === "new"} disabled={busy} onClick={() => selectIntent("new")}>
+      <button ref={newTabRef} id={newTabId} type="button" role="tab" className="tab" tabIndex={intent === "new" ? 0 : -1} aria-selected={intent === "new"} aria-controls={panelId} disabled={busy} onKeyDown={handleTabKeyDown} onClick={() => selectIntent("new")}>
         New loop
       </button>
-      <button type="button" role="tab" className="tab" aria-selected={intent === "continue"} disabled={busy} onClick={() => selectIntent("continue")}>
+      <button ref={continueTabRef} id={continueTabId} type="button" role="tab" className="tab" tabIndex={intent === "continue" ? 0 : -1} aria-selected={intent === "continue"} aria-controls={panelId} disabled={busy} onKeyDown={handleTabKeyDown} onClick={() => selectIntent("continue")}>
         Continue existing{candidates.length > 0 ? ` (${candidates.length})` : ""}
       </button>
     </div>
@@ -253,6 +267,7 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
       <p className="help"><strong>New loop:</strong> For a brand-new goal on this thread. (If you&apos;re continuing an existing supervised BB thread directly, it&apos;s already covered.)</p>
       <p className="help"><strong>Continue existing:</strong> You opened a new BB thread to take over an older loop&apos;s goal (e.g. after a model/context switch) — inherits its name and archives the old loop after the first check.</p>
     </div>
+    <div id={panelId} role="tabpanel" aria-labelledby={intent === "new" ? newTabId : continueTabId}>
     {intent === "continue" && <div className="field">
       <label htmlFor={`kgs-succeeds-${threadId}`}>Loop to continue</label>
       {candidates.length > 0 ? <>
@@ -342,5 +357,6 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
     </div>}
     {busy && <p role="status" className="help">{busyText}</p>}
     {message}
+    </div>
   </section>;
 }
