@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/looptender/looptender/internal/config"
@@ -113,8 +114,20 @@ func archiveCmd(e env, cfg *config.Config, note string, now time.Time, asJSON bo
 	if d := inspectDaemon(e.ctx, cfg.Loop.StateDir, version, false); d.State == "responsive" {
 		text += " Its daemon exits at its next check."
 	}
+	if hasInstalledServiceRecord(cfg.Loop.StateDir) {
+		text += fmt.Sprintf(" Its user service remains installed; remove it with `looptender service remove -c %s`.", path)
+	}
 	printArchiveOut(e, archiveOut{Loop: cfg.Loop.Name, Outcome: "archived", Archived: v, Hold: ctl.Summary(), Text: text}, asJSON)
 	return exitOK
+}
+
+func hasInstalledServiceRecord(stateDir string) bool {
+	for _, name := range []string{serviceRecordName, "service-systemd.json"} {
+		if _, err := os.Stat(filepath.Join(stateDir, name)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func unarchiveCmd(e env, cfg *config.Config, asJSON bool) int {

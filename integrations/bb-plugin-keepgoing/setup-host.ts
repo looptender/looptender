@@ -284,3 +284,34 @@ export async function commandOnHost(input: { bin: string; record: SetupRecord; o
   const started = result.code === 0 && (input.json !== true || z.object({ schemaVersion: z.literal(1), outcome: z.literal("started") }).safeParse(result.data).success);
   return operation === "start" && started ? { ...result, registration: await publishReference(bin, record.configPath, record.threadId, record.provider, signal, run) } : result;
 }
+
+const serviceUnsupportedPattern = /user-service management currently supports macOS GUI LaunchAgents and Linux systemd user services|unknown subcommand|expected install, remove, or status/i;
+
+/**
+ * Start supervision using a reboot-persistent user service (`service install` +
+ * optional `enable`) on macOS and Linux, falling back cleanly to
+ * `start --background` on platforms where user services are unsupported.
+ */
+export async function startServiceOnHost(
+  input: { bin: string; record: SetupRecord; enable: boolean; json?: true },
+  signal?: AbortSignal,
+  run: Execute = execute,
+): Promise<{ code: number; data: unknown; registration?: Publication; method?: "service" | "background" }> {
+  const { bin, record, enable, json } = input;
+  const svc = await run(bin, ["service", "install", "--json", "-c", record.configPath], "", record.threadId, signal);
+  if (svc.code !== 0) {
+    if (serviceUnsupportedPattern.test(svc.stderr ?? "")) {
+      const bg = await commandOnHost({ bin, record, operation: "start", ...(json ? { json } : {}) }, signal, run);
+      return { ...bg, method: "background" };
+    }
+    return { code: svc.code, data: svc.data };
+  }
+  if (enable) {
+    const en = await run(bin, ["enable", "-c", record.configPath], "", record.threadId, signal);
+    if (en.code !== 0) {
+      return { code: en.code, data: en.data };
+    }
+  }
+  const registration = await publishReference(bin, record.configPath, record.threadId, record.provider, signal, run);
+  return { code: 0, data: { schemaVersion: 1, outcome: "started" }, registration, method: "service" };
+}

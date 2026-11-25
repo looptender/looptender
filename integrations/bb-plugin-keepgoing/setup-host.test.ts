@@ -454,3 +454,56 @@ test("continuationCandidatesOnHost lists and sorts same-project active loops fir
     assert.equal(res.candidates[2]!.archived, true);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("startServiceOnHost installs user service + enables on macOS/Linux, and falls back to start --background when unsupported", async () => {
+  const { startServiceOnHost } = await import("./setup-host.ts");
+  const record = { id: "record", threadId: "thr_example", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project: "/projects/example", provider: "codex", configPath: "/private/example/looptender.yaml", loop: "example-loop" };
+
+  // 1. Supported platform: service install + enable + registry add
+  const seen: string[][] = [];
+  const res = await startServiceOnHost({ bin: "keepgoing", record, enable: true, json: true }, undefined, async (_bin, args, _in, thread) => {
+    assert.equal(thread, record.threadId);
+    seen.push(args);
+    if (args[0] === "service") return { code: 0, data: { backend: "launchd", registration: "loaded" } };
+    if (args[0] === "enable") return { code: 0, data: null };
+    if (args[0] === "registry") return { code: 0, data: { entries: [{ id: "loop_0123456789abcdef0123456789abcdef" }] } };
+    return { code: 1, data: null };
+  });
+  assert.equal(res.code, 0);
+  assert.equal(res.method, "service");
+  assert.deepEqual(res.data, { schemaVersion: 1, outcome: "started" });
+  assert.deepEqual(seen.map(a => a[0]), ["service", "enable", "registry"]);
+
+  // 2. Unsupported platform (e.g. Windows): falls back cleanly to start --background
+  const fallbackSeen: string[][] = [];
+  const fb = await startServiceOnHost({ bin: "keepgoing", record, enable: true, json: true }, undefined, async (_bin, args) => {
+    fallbackSeen.push(args);
+    if (args[0] === "service") return { code: 1, data: null, stderr: "service: user-service management currently supports macOS GUI LaunchAgents and Linux systemd user services; use start or an external scheduler on this platform\n" };
+    if (args[0] === "start") return { code: 0, data: { schemaVersion: 1, outcome: "started" } };
+    if (args[0] === "registry") return { code: 0, data: { entries: [{ id: "loop_0123456789abcdef0123456789abcdef" }] } };
+    return { code: 1, data: null };
+  });
+  assert.equal(fb.code, 0);
+  assert.equal(fb.method, "background");
+  assert.deepEqual(fallbackSeen.map(a => a[0]), ["service", "start", "registry"]);
+
+  // 3. Ownership / preflight failure on service install: fails closed without enabling or falling back
+  const failSeen: string[][] = [];
+  const failed = await startServiceOnHost({ bin: "keepgoing", record, enable: true, json: true }, undefined, async (_bin, args) => {
+    failSeen.push(args);
+    return { code: 1, data: null, stderr: "service: ownership mismatch" };
+  });
+  assert.equal(failed.code, 1);
+  assert.deepEqual(failSeen.map(a => a[0]), ["service"]);
+
+  // 4. enable: false (Start checks on already-enabled loop) skips enable
+  const checksSeen: string[][] = [];
+  const checks = await startServiceOnHost({ bin: "keepgoing", record, enable: false }, undefined, async (_bin, args) => {
+    checksSeen.push(args);
+    if (args[0] === "service") return { code: 0, data: { backend: "launchd", registration: "loaded" } };
+    if (args[0] === "registry") return { code: 0, data: { entries: [{ id: "loop_0123456789abcdef0123456789abcdef" }] } };
+    return { code: 1, data: null };
+  });
+  assert.equal(checks.code, 0);
+  assert.deepEqual(checksSeen.map(a => a[0]), ["service", "registry"]);
+});

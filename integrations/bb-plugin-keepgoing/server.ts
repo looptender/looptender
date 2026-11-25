@@ -180,6 +180,10 @@ export const rpcContract = defineRpcContract({
     input: z.object({ configPath: z.string().min(1).max(1000), action: actionSchema, managedId: z.string().optional(), expectedThreadId: z.string().min(1).max(200).optional() }),
     output: z.object({ ok: z.boolean(), message: z.string() }),
   },
+  startChecks: {
+    input: z.object({ configPath: z.string().min(1).max(1000), managedId: z.string().optional(), expectedThreadId: z.string().min(1).max(200).optional() }),
+    output: z.object({ ok: z.boolean(), message: z.string() }),
+  },
 });
 
 const CHANGED = "changed";
@@ -244,7 +248,7 @@ export default async function plugin(bb: BbPluginApi) {
   const intents = async () => z.array(moveIntentSchema).max(32).parse(await bb.storage.kv.get("moves.v1") ?? []);
   const host = bb.hosts.experimental_client({ contract: hostContract });
   const records = async () => z.array(recordSchema).max(32).parse(await bb.storage.kv.get("setups.v1") ?? []);
-  const hostCommand = (bin: string, record: z.infer<typeof recordSchema>, operation: "status" | "doctor" | "start" | "pause" | "resume" | "stop", json?: true) =>
+  const hostCommand = (bin: string, record: z.infer<typeof recordSchema>, operation: "status" | "doctor" | "start" | "startChecks" | "pause" | "resume" | "stop", json?: true) =>
     host.call("command", { bin, record, operation, ...(json ? { json } : {}) }, { hostId: record.hostId, signal: AbortSignal.timeout(30_000) });
   const resolveTarget = async (threadId: string) => {
     const signal = AbortSignal.timeout(10_000);
@@ -394,6 +398,57 @@ export default async function plugin(bb: BbPluginApi) {
     return result.code === 0
       ? { ok: true, message: result.stdout.trim() || `${action} done` }
       : { ok: false, message: `looptender ${action} exited ${result.code}` };
+  };
+
+  // Start checks for an enabled, unheld, non-archived loop whose daemon is not
+  // running ("checks have stopped"). Never clears a hold or resumes a held loop.
+  const startChecks = async (configPath: string, managedId?: string, expectedThreadId?: string) => {
+    const { bin, paths } = await configured();
+    const eligible = (s: z.infer<typeof statusSchema>) => {
+      if (expectedThreadId !== undefined && s.primaryAgent.bbThread !== expectedThreadId && s.targetAgent?.bbThread !== expectedThreadId) return NOT_THIS_THREAD;
+      if (s.controlState !== "enabled" || s.archived !== undefined) return "This action is only available for an enabled, unheld, non-archived loop.";
+      if (s.daemon?.state === "responsive") return "A daemon is already running for this loop.";
+      return null;
+    };
+    if (managedId) {
+      const record = (await records()).find(r => r.id === managedId && r.configPath === configPath);
+      if (!record) return { ok: false, message: "That setup is not registered with this plugin." };
+      if (expectedThreadId !== undefined && record.threadId !== expectedThreadId) return { ok: false, message: NOT_THIS_SETUP };
+      if (record.registryId) return { ok: false, message: "Imported loops are started from the host CLI." };
+      try {
+        await verifyImported(bin, record);
+        const st = await hostCommand(bin, record, "status");
+        const parsed = st.code === 0 ? statusSchema.safeParse(st.data) : undefined;
+        if (!parsed?.success) return { ok: false, message: "The loop's status could not be read, so nothing was started." };
+        const err = eligible(parsed.data);
+        if (err) return { ok: false, message: err };
+        const res = await hostCommand(bin, record, "startChecks");
+        bb.realtime.publish(CHANGED, { at: Date.now() });
+        return res.code === 0
+          ? { ok: true, message: res.method === "service" ? "Checks started via user service (survives reboot)." : "Checks started in background." }
+          : { ok: false, message: "Could not start checks; inspect looptender service status on the host." };
+      } catch {
+        return { ok: false, message: "Host unavailable or target changed; nothing was started." };
+      }
+    }
+    if (!paths.includes(configPath)) return { ok: false, message: "That loop is not in the plugin's configured list." };
+    let s: z.infer<typeof statusSchema>;
+    try { s = await status(bin, configPath); } catch { return { ok: false, message: "The loop's status could not be read, so nothing was started." }; }
+    const err = eligible(s);
+    if (err) return { ok: false, message: err };
+    const svc = await run(bin, ["service", "install", "--json", "-c", configPath]);
+    if (svc.code === 0) {
+      bb.realtime.publish(CHANGED, { at: Date.now() });
+      return { ok: true, message: "Checks started via user service (survives reboot)." };
+    }
+    if (/user-service management currently supports macOS GUI LaunchAgents and Linux systemd user services|unknown subcommand|expected install, remove, or status/i.test(svc.stderr)) {
+      const bg = await run(bin, ["start", "--background", "-c", configPath]);
+      bb.realtime.publish(CHANGED, { at: Date.now() });
+      return bg.code === 0
+        ? { ok: true, message: "Checks started in background." }
+        : { ok: false, message: `looptender start exited ${bg.code}` };
+    }
+    return { ok: false, message: "Could not install user service; inspect looptender service status on the host." };
   };
 
   const attachment = createAttachController({
@@ -554,6 +609,7 @@ export default async function plugin(bb: BbPluginApi) {
       async id => (await allLoops(id)).loops[0]?.loop,
     ),
     control: ({ configPath, action, managedId, expectedThreadId }) => action === "resume" ? serialize(() => control(configPath, action, managedId, expectedThreadId)) : control(configPath, action, managedId, expectedThreadId),
+    startChecks: ({ configPath, managedId, expectedThreadId }) => serialize(() => startChecks(configPath, managedId, expectedThreadId)),
   });
 
   bb.cli.register({

@@ -447,3 +447,20 @@ func TestArchivedLoopCarriesNoWaiting(t *testing.T) {
 		}
 	}
 }
+
+func TestArchiveNotesInstalledUserService(t *testing.T) {
+	f := newFixture(t)
+	if code, _, errs := f.run("enable"); code != exitOK {
+		t.Fatal(errs)
+	}
+	if code, _, errs := f.run("pause"); code != exitOK {
+		t.Fatal(errs)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(f.cfg), "state", serviceRecordName), []byte(`{"backend":"launchd"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := f.run("archive")
+	if code != exitOK || !strings.Contains(out, "Its user service remains installed; remove it with `looptender service remove") {
+		t.Fatalf("archive with service: code=%d out=%q err=%q", code, out, errs)
+	}
+}

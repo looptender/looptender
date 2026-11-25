@@ -465,3 +465,18 @@ test("continuationCandidates and threadTitle are surfaced on inspect; succeeds i
   assert.equal(created.ok, true, created.message);
   assert.deepEqual(created.warnings, ["init: warning: example non-fatal notice"]);
 });
+
+test("start reports service persistence when command returns method service", async () => {
+  const f = fixture();
+  const baseCmd = f.d.command;
+  f.d.command = async (bin, record, op, json) => {
+    const res = await baseCmd(bin, record, op, json);
+    return op === "start" ? { ...res, method: "service" as const } : res;
+  };
+  const created = await f.create((await f.preview()).ticket);
+  assert.equal(created.ok, true);
+  const started = await f.controller.call({ action: "start", threadId: "thr_example" });
+  assert.equal(started.ok, true);
+  assert.equal(started.started, true);
+  assert.match(started.message, /user service installed; survives reboot/);
+});
