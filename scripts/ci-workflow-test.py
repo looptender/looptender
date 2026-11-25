@@ -1,4 +1,4 @@
-"""Regressions for native docs scope and the full race runner entry point."""
+"""Regressions for native docs scope, plan-based skipping, and the race runner entry point."""
 from pathlib import Path
 import re
 import unittest
@@ -6,6 +6,14 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / '.github/workflows/checks.yml').read_text()
 SCOPE = "steps.scope.outputs.scope != 'docs'"
+
+JOB_FLAGS = {
+    'bb-plugin': 'run_bb_plugin',
+    'windows-acl': 'run_windows',
+    'windows-processes': 'run_windows',
+    'race': 'run_race',
+    'checks': 'run_checks',
+}
 
 
 def validate(text):
@@ -25,11 +33,14 @@ def validate(text):
         assert len(race) == 1, f'missing or duplicate native race step: {prefix}'
         assert re.search(r'^        run: ' + command + r'$', race[0], re.M), 'native runner failure must propagate'
         assert f"if: {SCOPE} || matrix.os == 'ubuntu-24.04'" in race[0]
+    mac_race = [s for s in steps if s.startswith('name: Run macOS-specific Go packages and OS/service tests under the race detector\n')]
+    assert len(mac_race) == 1, 'missing or duplicate macOS targeted race step'
+    assert re.search(r'^        run: python3 -u scripts/ci-macos-race\.py$', mac_race[0], re.M)
     gate = re.search(r'^  go:\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', text, re.M | re.S)
     assert gate and 'if: ${{ !cancelled() }}' in gate[1], 'the required name must gate on every job'
     assert 'fail-fast: false' in gate[1], 'a failing gate must not cancel the other'
     assert 'Build and test (${{ matrix.os }})' in gate[1], 'branch protection requires this name'
-    assert not re.search(r'run: go test -race ./cmd/looptender -run', text), 'static guards already execute once in the native runner'
+    assert not re.search(r'^        run: go test -race ./cmd/looptender -run', text, re.M), 'unwrapped go test -race -run is not allowed'
     # The gate must wait for every other job: a job it does not wait for cannot
     # block a merge, because only the gate's names are required.
     jobs = set(re.findall(r'^  ([a-z][a-z-]*):\n', text.split('\njobs:\n', 1)[1], re.M)) - {'go'}
@@ -37,12 +48,14 @@ def validate(text):
     assert needs and set(n.strip() for n in needs[1].split(',')) == jobs, f'the gate must need exactly {sorted(jobs)}'
     assert re.search(r'^        run: python3 scripts/ci-gate\.py$', gate[1], re.M), 'the gate must use the tested decision script'
     assert 'NEEDS: ${{ toJSON(needs) }}' in gate[1], 'the gate must read every needed job result'
-    # Every job obeys the plan: it needs it, skips on a duplicate, and the two
-    # jobs with macOS legs take their operating systems from it.
+    # Every job obeys the plan: it needs it, skips on duplicate or explicit plan flag,
+    # and matrix jobs take their operating systems from it.
     body = text.split('\njobs:\n', 1)[1]
     for job in sorted(jobs - {'plan'}):
         part = re.search(r'^  ' + job + r':\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', body, re.M | re.S)[1]
-        assert re.search(r'^    needs: plan$', part, re.M) and "if: needs.plan.outputs.duplicate != 'true'" in part, f'{job} must follow the plan'
+        flag = JOB_FLAGS[job]
+        want_if = f"if: needs.plan.outputs.duplicate != 'true' && needs.plan.outputs.{flag} != 'false'"
+        assert re.search(r'^    needs: plan$', part, re.M) and want_if in part, f'{job} must follow the plan ({want_if})'
     for job, output in (('race', 'os'), ('checks', 'checks_os')):
         part = re.search(r'^  ' + job + r':\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', body, re.M | re.S)[1]
         assert 'fail-fast: false' in part, f'a failing {job} leg must not cancel the others'
@@ -53,7 +66,9 @@ def validate(text):
         for line in step.splitlines():
             if re.search(r'\bgo test\b.* -run ', line) and 'go test' in line:
                 assert re.search(r'python3? scripts/ci-go-test-ran\.py go test', line), f'pinned go test must go through the wrapper: {line.strip()}'
-    for script in ('ci-scope-test.sh', 'check-contributions-test.sh', 'ci-timeout-note-test.sh', 'ci-workflow-test.py', 'ci-go-test-ran-test.py', 'ci-windows-inventory.py', 'ci-plan-test.py'):
+    for script in ('ci-scope-test.sh', 'check-contributions-test.sh', 'ci-timeout-note-test.sh',
+                   'ci-workflow-test.py', 'ci-plan-test.py', 'ci-go-test-ran-test.py',
+                   'ci-windows-inventory.py', 'ci-macos-race.py'):
         assert text.index(script) < text.index('run: go vet ./...'), f'{script} must fail before expensive checks'
 
 
@@ -90,7 +105,7 @@ class WorkflowTests(unittest.TestCase):
                          .replace(', ]', ']'))
 
     def test_a_job_that_ignores_the_plan_or_the_ready_trigger_is_rejected(self):
-        for old, new in (("    needs: plan\n    if: needs.plan.outputs.duplicate != 'true'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10", "    runs-on: ubuntu-24.04\n    timeout-minutes: 10"),
+        for old, new in (("    needs: plan\n    if: needs.plan.outputs.duplicate != 'true' && needs.plan.outputs.run_bb_plugin != 'false'", "    if: always()"),
                          ('os: ${{ fromJSON(needs.plan.outputs.os) }}', 'os: [ubuntu-24.04, macos-15]'),
                          ('os: ${{ fromJSON(needs.plan.outputs.checks_os) }}', 'os: ${{ fromJSON(needs.plan.outputs.os) }}'),
                          ('synchronize, reopened, ready_for_review]', 'synchronize, reopened]')):
@@ -110,7 +125,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_redundant_static_guard_execution_rejected(self):
         with self.assertRaises(AssertionError):
-            validate(WORKFLOW + "\n      - run: go test -race ./cmd/looptender -run '^TestDock'\n")
+            validate(WORKFLOW + "\n        run: go test -race ./cmd/looptender -run '^TestDock'\n")
 
 
 if __name__ == '__main__':
