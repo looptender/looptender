@@ -64,7 +64,7 @@ func (s *stringListFlag) Set(v string) error {
 
 func routerCommand(e env, args []string) int {
 	if len(args) == 0 {
-		e.errf("usage: router status|on|off|run|front [flags]")
+		e.errf("usage: router status|on|off|run|front|service [flags]")
 		return exitUsage
 	}
 	sub, rest := args[0], args[1:]
@@ -79,8 +79,10 @@ func routerCommand(e env, args []string) int {
 		return routerRunCommand(e, rest)
 	case "front":
 		return routerFrontCommand(e, rest)
+	case "service":
+		return routerServiceCommand(e, rest, localRouterServiceHost())
 	default:
-		e.errf("usage: router status|on|off|run|front [flags]")
+		e.errf("usage: router status|on|off|run|front|service [flags]")
 		return exitUsage
 	}
 }
