@@ -1,6 +1,6 @@
 # Roadmap
 
-For current installation and command names, see the [README](../README.md#install). Release **v0.3.0** preparation ([notes](releases/v0.3.0.md), including BB plugin **v0.4.0**) is in progress ahead of tagging; earlier published CLI archives are **v0.2.0**. Earlier milestone and verification records retain their original package labels. Documentation and packaging changes do not close live acceptance gaps.
+For current installation and command names, see the [README](../README.md#install). Release **v0.3.0** and BB plugin **v0.4.0** source are published from the same tag ([notes](releases/v0.3.0.md)), with [published package evidence](release-verification.md#v030-release-and-package-evidence). Tagged plugin installation, live walkthroughs and other unverified acceptance gates remain open. Unreleased source work is tracked separately below. Earlier milestone and verification records retain their original package labels. Documentation and packaging changes do not close live acceptance gaps.
 
 ## HIGH PRIORITY: conserve subscription usage
 
