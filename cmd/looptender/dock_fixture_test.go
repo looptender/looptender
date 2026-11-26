@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -431,5 +432,14 @@ func TestDockScratchForScreenshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	dockUsageScratch(t, f.Entries[0].StateDir, time.Now().UTC())
+	evidence := usageFixture()
+	evidence.Loop = dockLoops[0]
+	raw, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.Entries[0].StateDir, "usage-evidence.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
 	t.Log("registry:", dir)
 }

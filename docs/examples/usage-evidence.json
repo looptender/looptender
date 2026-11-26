@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "loop": "example",
+  "from": "2026-11-20T00:00:00Z",
+  "to": "2026-11-20T02:00:00Z",
+  "method": "controlled-replay",
+  "evidence": "fictional-replay-1",
+  "semantics": "cumulative-inclusive-v1",
+  "samples": [
+    {
+      "stream": "baseline",
+      "provider": "example-provider",
+      "model": "example-model",
+      "seq": 1,
+      "at": "2026-11-20T00:00:00Z",
+      "counters": {
+        "input": 0,
+        "cached": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "stream": "baseline",
+      "provider": "example-provider",
+      "model": "example-model",
+      "seq": 2,
+      "at": "2026-11-20T01:00:00Z",
+      "counters": {
+        "input": 1000,
+        "cached": 500,
+        "output": 20,
+        "reasoning": 5
+      }
+    },
+    {
+      "stream": "treatment",
+      "provider": "example-provider",
+      "model": "example-model",
+      "seq": 1,
+      "at": "2026-11-20T00:00:00Z",
+      "counters": {
+        "input": 0,
+        "cached": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    },
+    {
+      "stream": "treatment",
+      "provider": "example-provider",
+      "model": "example-model",
+      "seq": 2,
+      "at": "2026-11-20T01:00:00Z",
+      "counters": {
+        "input": 800,
+        "cached": 500,
+        "output": 20,
+        "reasoning": 5
+      }
+    }
+  ],
+  "actions": [],
+  "pairs": [
+    {
+      "baseline": "baseline",
+      "treatment": "treatment",
+      "workload": "example-workload-v1",
+      "acceptance": "example-checks-v1",
+      "baselineWork": 2,
+      "treatmentWork": 2,
+      "qualityAccepted": true,
+      "continuityAccepted": true,
+      "coverageComplete": true,
+      "cacheComparable": true,
+      "overheadIncluded": true
+    }
+  ]
+}
