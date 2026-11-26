@@ -18,12 +18,13 @@ import (
 var questionIDPattern = regexp.MustCompile(`^q_[0-9a-f]{32}$`)
 
 // Record describes a tick, a saved control update, a saved manual retarget or
-// the probes of a manual `fallbacks check`.
+// the probes of a manual `fallbacks check`, daemon lifecycle or check admission.
 // Timestamps describe local operations, not provider event time. Unsupported
 // source details are explicitly unavailable.
 type Record struct {
-	Kind            string `json:"kind"`
-	LimitWaitReport string `json:"limitWaitReport"`
+	Kind            string        `json:"kind"`
+	Runtime         *RuntimeEvent `json:"runtime,omitempty"`
+	LimitWaitReport string        `json:"limitWaitReport"`
 	// NewThread says this check recorded a BB thread keepgoing created for a
 	// handoff. The thread ID is in the run graph, not here.
 	NewThread bool `json:"newThread,omitempty"`
@@ -71,6 +72,12 @@ type Record struct {
 	// (loop.prompt_context) this check's sends carried, counting only sends
 	// the adapter did not refuse to start. Zero when there were none.
 	ContextBytes int `json:"contextBytes,omitempty"`
+}
+
+// RuntimeEvent describes local lifecycle or admission evidence, never raw errors.
+type RuntimeEvent struct {
+	Reason string `json:"reason"`
+	Signal string `json:"signal"`
 }
 
 // ControlChange describes a successful save, not report delivery or an agent
@@ -517,7 +524,17 @@ func oneOf(value, fallback string, allowed ...string) string {
 // clean is the storage boundary: no arbitrary strings or provider-supplied maps
 // cross it. Unknown fields are unavailable rather than truncated raw text.
 func clean(r Record) Record {
-	r.Kind = oneOf(r.Kind, "unavailable", "tick", "control", "retarget", "probe", "route_change")
+	r.Kind = oneOf(r.Kind, "unavailable", "tick", "control", "retarget", "probe", "route_change", "daemon_start", "daemon_stop", "check_refused")
+	if r.Kind == "daemon_start" || r.Kind == "daemon_stop" || r.Kind == "check_refused" {
+		event := RuntimeEvent{Reason: "unavailable", Signal: "unavailable"}
+		if r.Runtime != nil {
+			event.Reason = oneOf(r.Runtime.Reason, "unavailable", "started", "clean_exit", "cancelled", "signal", "error_exit", "lock_held", "lock_unavailable", "ownership_unverified", "sources_unverified", "safety_guard")
+			event.Signal = oneOf(r.Runtime.Signal, "unavailable", "SIGINT", "SIGTERM", "SIGHUP")
+		}
+		r = Record{Kind: r.Kind, Runtime: &event, Sequence: r.Sequence, CheckStartedAt: r.CheckStartedAt, Build: r.Build, DryRun: r.DryRun, Action: "none", Cause: "other", Outcome: r.Outcome}
+	} else {
+		r.Runtime = nil
+	}
 	if r.Kind == "route_change" && r.RouteChange != nil {
 		// A route-list change runs no check: only what was changed and by whom.
 		c := *r.RouteChange

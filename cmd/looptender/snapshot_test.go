@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
+	"github.com/looptender/looptender/internal/incident"
 	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/state"
 )
@@ -126,7 +128,9 @@ func TestProviderOperationsRejectSnapshotChangedUnderTickLock(t *testing.T) {
 					if f.read("calls") != "" || f.read("probes") != "" || f.hooks.types() != "" {
 						t.Fatal("rejected operation performed provider work or reported")
 					}
-					if !reflect.DeepEqual(before, snapshotRuntime(t, old.Loop.StateDir)) {
+					if op == "tick" {
+						assertRefusalOnlySnapshotChange(t, old.Loop.StateDir, before)
+					} else if !reflect.DeepEqual(before, snapshotRuntime(t, old.Loop.StateDir)) {
 						t.Fatal("rejected operation changed runtime records")
 					}
 					if remove {
@@ -188,7 +192,8 @@ func TestSnapshotRejectionPreservesHoldsAndDefersStop(t *testing.T) {
 			if tickOnce(e, cfg, time.Now(), false, false) != exitSkipped || pollWake(context.Background(), cfg) {
 				t.Fatal("stale config accepted")
 			}
-			if !reflect.DeepEqual(before, snapshotRuntime(t, cfg.Loop.StateDir)) || f.read("calls") != "" || f.read("probes") != "" {
+			assertRefusalOnlySnapshotChange(t, cfg.Loop.StateDir, before)
+			if f.read("calls") != "" || f.read("probes") != "" {
 				t.Fatal("stale work touched provider or holds")
 			}
 			out.Reset()
@@ -213,5 +218,39 @@ func TestSnapshotRejectionPreservesHoldsAndDefersStop(t *testing.T) {
 				t.Fatal("held loop prompted or probed")
 			}
 		})
+	}
+}
+
+// A refused tick now appends one diagnostic record. Every existing record and
+// all operational state, cursors, holds and budgets must stay unchanged.
+func assertRefusalOnlySnapshotChange(t *testing.T, dir string, before map[string]string) {
+	t.Helper()
+	after := snapshotRuntime(t, dir)
+	var previous incident.Journal
+	if raw := before[incident.FileName]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &previous); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current, err := incident.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(current.Records) != len(previous.Records)+1 {
+		t.Fatal("refusal did not append exactly once")
+	}
+	for i, r := range previous.Records {
+		if !reflect.DeepEqual(r, current.Records[i]) {
+			t.Fatal("refusal changed retained history")
+		}
+	}
+	r := current.Records[len(current.Records)-1]
+	if r.Kind != "check_refused" || r.Runtime.Reason != "sources_unverified" || r.Observation.Availability != "not_observed" || r.CountersAvailable {
+		t.Fatal(r)
+	}
+	delete(before, incident.FileName)
+	delete(after, incident.FileName)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("refusal changed operational records")
 	}
 }

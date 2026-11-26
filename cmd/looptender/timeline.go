@@ -87,7 +87,7 @@ type timelineTier struct {
 
 // Event kinds are a fixed vocabulary derived from typed records. An event can
 // carry several: a handoff check is also a check and usually a probe.
-var timelineKindNames = []string{"check", "dry_run", "wake", "nudge", "reprompt", "handoff", "switch_back", "return", "timing_move", "timing_repair", "retarget", "ownership", "probe", "hold", "stop", "limit_wait", "limit_wait_report", "turn_retry", "child_retry", "route_list", "route_change", "refusal", "collapsed", "control", "notification"}
+var timelineKindNames = []string{"daemon_start", "daemon_stop", "check_refused", "check", "dry_run", "wake", "nudge", "reprompt", "handoff", "switch_back", "return", "timing_move", "timing_repair", "retarget", "ownership", "probe", "hold", "stop", "limit_wait", "limit_wait_report", "turn_retry", "child_retry", "route_list", "route_change", "refusal", "collapsed", "control", "notification"}
 
 // moves selects every recorded change of who has the loop.
 var timelineMoveKinds = []string{"handoff", "switch_back", "return", "timing_move", "retarget", "ownership"}
@@ -352,6 +352,11 @@ func timelineKinds(r incident.Record) []string {
 	var kinds []string
 	entered := !r.DryRun && r.Outcome != "dry_run" && enteredTimelineHold(r.ControlBefore, r.ControlAfter)
 	switch r.Kind {
+	case "daemon_start", "daemon_stop", "check_refused":
+		kinds = append(kinds, r.Kind)
+		if r.DryRun {
+			kinds = append(kinds, "dry_run")
+		}
 	case "tick":
 		kinds = append(kinds, "check")
 		if r.DryRun || r.Outcome == "dry_run" {
@@ -448,7 +453,7 @@ func timelineTarget(key string) string {
 }
 
 func readTimeline(dir string, now time.Time, stale time.Duration, limit int, filter timelineFilter) timelineReport {
-	r := timelineReport{SchemaVersion: 9, ReadAt: now, Filter: filter, StaleAfter: stale.String(), Control: readTimelineControl(dir), Sources: []timelineSource{}, Events: []timelineEntry{}, NextSteps: []string{}}
+	r := timelineReport{SchemaVersion: 10, ReadAt: now, Filter: filter, StaleAfter: stale.String(), Control: readTimelineControl(dir), Sources: []timelineSource{}, Events: []timelineEntry{}, NextSteps: []string{}}
 	j, jerr := incident.Load(dir)
 	deliveries, derr := report.LoadDeliveries(dir)
 	r.Sources = append(r.Sources, timelineSource{Source: incident.FileName, Availability: historyAvailability(jerr, len(j.Records)), SchemaVersion: j.SchemaVersion, Retained: len(j.Records), Dropped: j.Dropped}, timelineSource{Source: report.DeliveryFile, Availability: historyAvailability(derr, len(deliveries.Records)), SchemaVersion: deliveries.SchemaVersion, Retained: len(deliveries.Records), Dropped: deliveries.Dropped})
@@ -458,6 +463,9 @@ func readTimeline(dir string, now time.Time, stale time.Duration, limit int, fil
 		at, basis := rec.CheckStartedAt, "check_started_at"
 		if rec.Kind == "control" && rec.ControlChange != nil {
 			at, basis = rec.ControlChange.SaveObservedAt, "control_save_observed_at"
+		}
+		if rec.Runtime != nil {
+			basis = "runtime_observed_at"
 		}
 		if rec.Kind == "retarget" {
 			basis = "retarget_save_observed_at"
@@ -743,6 +751,9 @@ func describeIncident(r incident.Record) string {
 	}
 	if r.Kind == "probe" {
 		return "manual fallbacks check (recorded build " + r.Build + ")" + describeProbes(r.Probes) + "; health saved; no session was observed and nothing was sent"
+	}
+	if r.Runtime != nil {
+		return r.Kind + ": " + r.Runtime.Reason + " (" + r.Runtime.Signal + ")"
 	}
 	if r.Kind != "tick" {
 		return "incident kind unavailable; no check or control save inferred"
