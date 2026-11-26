@@ -51,6 +51,23 @@ Supervision runs on the same machine as the agents from a single binary (macOS, 
 
 **When the right move is not clear, looptender holds and asks you.**
 
+The panel's [Usage page](docs/dock.md#what-the-page-shows) and
+[status diagnostics](docs/operations.md#savings-figures) distinguish withheld-check
+counts from current context occupancy. These records do not measure subscription
+savings; cache reuse and provider accounting remain unknown. An unreleased
+[explicit compact workflow](integrations/bb-plugin-keepgoing/skills/keepgoing/references/compaction-workflow.md)
+supplies opt-in grants, durable attempts and continuity reconciliation; it is
+never invoked by the supervisor and adds no automatic context policy.
+
+**Usage conservation — Planned, high priority.** Keep useful work moving while
+reducing avoidable subscription usage. The [roadmap](docs/roadmap.md#high-priority-conserve-subscription-usage)
+covers measured usage by loop, lane and provider, cache-aware diagnostics,
+redundant wakes/retries and duplicate work, lane overhead, safe context lifecycle,
+and explicit user-selected model/effort policies. Each improvement must preserve
+useful throughput and quality. Integrated continuous optimization is planned;
+current diagnostics and the unreleased manual helper do not establish subscription
+savings or authorize silent model downgrades.
+
 ## When a usage limit hits: takeover
 
 - **Handoff into a new conversation** (*Released in v0.2.0*): For a BB loop, an opt-in fallback (`bb.new_thread`) can start a new conversation on another configured provider when a usage limit hits and move supervision to that conversation. Creation is opt-in per loop, capped per loop and spaced at least an hour apart, and covered by offline fixtures only.
