@@ -240,7 +240,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			// more than doctor's 64 KiB.
 			return transferInventoryCommand(e, rest, doctorExec, doctorExecLimit(inventoryListLimit))
 		}
-		return transferCommand(e, rest, doctorExec)
+		return transferCommand(e, rest, transferExec)
 	case "assignment":
 		return assignmentCommand(e, rest, doctorExecLimit(inventoryListLimit))
 	case "goal":
