@@ -20,8 +20,7 @@ may still contact a provider.
 
 By default, page refresh reads retained catalog and quota evidence only and
 executes no provider command. Unreleased source can service explicitly enabled
-[automatic usage](#automatic-selected-context-usage-unreleased) during panel/menu
-reads, including a read-only panel; the prior per-selection authorization permits
+[automatic usage](#automatic-selected-context-usage-unreleased) in a running panel/dock process, including a read-only panel; the prior per-selection authorization permits
 only these model-free reads and does not enable any account or loop controls. In a panel started with `--allow-changes`, an explicit reviewed
 **Refresh subscription quota** action contacts the selected Codex CLI without a
 model request. Supported Darwin arm64 panels also offer **Retrieve usage** for the inspected native Claude image, with provider freshness always unknown. Same-selection recovery for either provider is a separate local revision review, never a provider read. The read-only panel offers no such action. The `accounts` commands below do not start
@@ -732,7 +731,8 @@ retrieval only on Darwin arm64, where the inspected native image can run. This
 is a platform prerequisite, not admission of the selected executable: wrappers,
 unreviewed images, preload injection or unavailable isolation still refuse.
 Other platforms can show saved evidence but offer no Claude refresh action.
-There is no automatic refresh, login, account switch or model call. Do not claim
+By default there is no automatic refresh, login, account switch or model call.
+Separately enabled background usage is described below. Do not claim
 installed-panel acceptance from a source-only change.
 
 **Antigravity selected-context reads** run the selected `agy` CLI with
@@ -760,7 +760,7 @@ summary in account submenus, capped at six accounts/eight details per submenu
 with explicit omitted counts; the panel lists the remaining details. Neither
 page polling nor native menu polling contacts providers by default. Unreleased
 source can service separately authorized [automatic usage](#automatic-selected-context-usage-unreleased)
-while collecting a main report. Native output
+in an independent running panel/dock worker. Native output
 (`panel list --json`, key `accountQuotas`) carries, per account, an `id` that
 is the account's handle and not its catalog ID: a keyed digest of the ID under
 the catalog's own salt, the same shape (32 lowercase hex characters), stable
@@ -783,7 +783,7 @@ bounded meter keys and typed quota detail, successful read time and attempt
 failure evidence; it never stores executable/account paths or raw payloads.
 The native additive `panel list` contract is optional for older CLIs, strictly
 bounded and reads saved evidence by default; explicit automatic-usage grants
-permit bounded acquisition before projection. This source change does not establish
+permit bounded background acquisition independently of projection. This source change does not establish
 installed or live provider acceptance.
 
 Reads run outside the catalog writer lock. Checks and quota reads for one
@@ -826,7 +826,7 @@ latest snapshot for each of the two identifier views, for 30 seconds, with a
 1 MiB response cap. Superseded, expired or unknown references return a conflict;
 the page says the saved read failed and offers the existing Read now action.
 The companion adds no polling timer or provider refresh. Explicit automatic-usage
-grants are serviced only during the main panel/menu collection.
+grants are serviced by a separate worker in a running panel/dock process; collection never waits for provider IO.
 
 A new main report invalidates delayed replies for earlier references; changing
 the identifier view also prevents applying a reply for the previous view.
@@ -1003,8 +1003,11 @@ supervisor login or an account identity assertion.
 
 ## Automatic selected-context usage (unreleased)
 
-Existing selections and quota caches remain saved-only until a person explicitly
-authorizes automatic usage for a selection:
+On Accounts in a panel started with `--allow-changes`, choose **Keep usage
+updated…**, review the exact selection and confirm once. Subsequent polls need
+no confirmation. **Pause usage updates…** revokes authorization; an already
+reserved read may finish, but its completion cannot restore the grant. The CLI
+also supports explicit enable, JSON status and revoke:
 
 ```sh
 looptender accounts usage-polling --id ACCOUNT_ID --enable
@@ -1012,62 +1015,75 @@ looptender accounts usage-polling --id ACCOUNT_ID --json
 looptender accounts usage-polling --id ACCOUNT_ID --disable
 ```
 
-Use the same effective environment as the saved selection; `--directory` selects
-an existing private catalog. Panel/menu clients consume their existing default
-per-user catalog; this flag does not redirect those clients to a custom catalog.
-Enabling does not itself contact a provider. It
-records a private, revocable grant for the current revision, authentication
-context fingerprint, executable metadata/file identity and selected directory
-identities. Selection updates, changed environments, replaced directories or an
-updated/replaced executable stop acquisition. Review/update the selection as
-required by its existing binding rules, then explicitly enable automatic usage
-again.
-Disabling works even if the selection changed or was removed. A JSON status read
-shows `on`, `off` or `selection_changed`, plus the next/last attempt timestamps;
-it omits private bindings and grants. No login, credential copy, account pooling,
-route probe, ordinary model turn or transcript scan is added.
+Existing selections stay off until enabled. Enabling itself contacts no provider.
+A private grant binds the current revision, effective authentication context,
+executable metadata/file identity and selected directory identities. Changed
+selections/environments, replaced directories and updated/replaced executables
+invalidate it. Review/update the selection using its existing rules, then enable
+again. Revocation works even after change/removal. Status output omits private
+grants and fingerprints. `--directory` selects an existing private catalog for
+CLI settings; it does not redirect panel/menu clients from their default catalog.
 
-While a panel is visibly reading, or the macOS menu makes its ordinary list
-reads, due grants retrieve usage through the same configured adapters as manual
-quota reads: Codex `account/rateLimits/read`, Antigravity's model-free `/usage`,
-and the inspected isolated Claude usage exchange on supported Darwin arm64.
-Existing executable admission, context revalidation, environment scrubbing,
-output/timeout bounds and timestamp/source semantics still apply. Claude and
-Antigravity retrieval never establishes provider freshness. No account is
-created or switched and no supervision control is changed.
+### Scheduler ownership and lifecycle
 
-Cadence is at least five minutes between automatic attempts, shared across
-processes through private persisted settings. Failures back off to 10, 20, 40
-then at most 60 minutes; success restores five minutes. A durable reservation
-precedes provider work so a crash cannot immediately replay it. One automatic
-batch runs per catalog at a time; existing per-selection guards also exclude
-manual quota/login checks. A UI collection services at most two due selections,
-oldest due first, within a 12-second batch budget and the existing overall read
-budget. Large catalogs, slow providers or fewer UI reads can update later than
-five minutes. An already reserved or started read may finish after revocation;
-its completion cannot restore the revoked grant.
+A **non-offline panel or dock process must remain running**. Its worker starts
+with the process, independently of HTTP reads, menu openings, Accounts navigation
+and tab visibility. It checks due work on startup and every 15 seconds. A
+catalog-wide OS lock elects one owner; other panel/dock processes stand by and
+can take over after exit/crash. The owner checks its lock-file identity and
+refuses a replaced lock. A separate batch lock, durable cadence reservation and
+existing per-selection check guard also fence cross-process automatic/manual
+work. Collection/render paths read saved files only and never await provider IO.
 
-The ordinary panel/menu projection consumes the provider caches written by
-those reads. Failures retain earlier success timestamps and record failed-read
-evidence; absent usage/reset values stay absent. `Read now` can obtain a new
-provider reading when a grant is due, and otherwise reads the retained snapshot.
-The two-second panel report cache may also satisfy a read. It never forces the
-cadence or failure backoff to be bypassed. Manual reviewed retrieval remains
-available independently.
+The native menu's short-lived `panel list` processes **do not own a scheduler**.
+The menu alone cannot maintain acquisition: keep a panel/dock running separately.
+No process is silently installed or started to satisfy this requirement. A
+panel stops at its configured idle timeout (30 minutes by default, maximum
+24 hours); provider polling does not reset idle time. A hidden browser tab may
+stop making HTTP reads while the worker continues until that idle shutdown.
+Closing a tab does not immediately stop the panel. Stopping the owning process
+cancels its worker; a standby can take ownership. Sleep prevents timer execution;
+wake/clock jumps do not invent missing reads or bypass persisted backoff. The
+menu's Low Power Mode read suppression does not stop a separately running
+panel/dock worker. No new
+service, login item, supervisor tick, credential pool or transcript scan is added.
 
-`panel list --offline` and `dock --offline` never acquire usage. Catalog reads,
-client control reviews and supervision ticks do not service these grants. No
-extra daemon, timer, installation or startup registration is added: hidden web
-tabs stop making reads, the menu keeps its existing sleep/Low Power Mode rules,
-and closing the clients stops new acquisition. Re-enabling the same unchanged
-selection preserves its cadence and backoff. Corrupt/private-storage failures,
-unknown identity or selection drift refuse acquisition without provider fallback.
-The private `usage-polling.json` has its own bounded strict schema; older binaries
-ignore it and no catalog schema promotion occurs.
+Accounts and native quota details distinguish off, enabled, failure backoff,
+selection-changed pause, unavailable settings and waiting for a running scheduler.
+A recent owner heartbeat is scheduler evidence only, never a successful fetch.
+Successful fetch time, provider freshness and failed/stale evidence remain in
+the quota section. Unknown Claude/Antigravity provider freshness stays unknown.
+If an owner crashes, its heartbeat ages out within one minute; graceful shutdown
+clears it. Until then scheduler status may briefly show the last known owner.
 
-Offline fixture verification covers actual provider-adapter invocations through
-authorized HTTP panel reads, changed values and timestamps on expiry, the shared
-native-menu projection, cache hits, failures/backoff, revocation, context and
-same-metadata file replacement, batch fairness, provider freshness, corruption
-and platform compilation. Live enabling/provider acceptance and native Windows
-execution are separate and were not performed for this source change.
+### Acquisition and retained evidence
+
+The worker uses the same selected, model-free adapters as manual retrieval:
+Codex `account/rateLimits/read`, Antigravity `/usage`, and the inspected isolated
+native Claude usage exchange on supported Darwin arm64. Existing executable
+admission, authentication context revalidation, environment scrubbing and
+output/timeout bounds apply. There is no login, account switch, ordinary model
+turn, route probe, direct OAuth token extraction or supervision authority.
+
+Automatic attempts are at least five minutes apart, persisted across processes.
+Failures back off through 10, 20, 40 and at most 60 minutes; success restores five
+minutes. Each worker batch services at most two oldest-due selections within
+12 seconds; larger catalogs/slow providers can update later. A reservation is
+written before external work so a crash cannot immediately replay an attempt.
+Re-enabling an unchanged selection preserves cadence and backoff. Corrupt storage
+or unknown identity refuses acquisition without provider fallback.
+
+Failed reads preserve the prior successful observation/retrieval timestamp and
+record separate failed-read evidence. Missing quota/reset values stay absent.
+**Read now** only reads saved evidence; it does not run or force a provider poll.
+The existing two-second report cache may satisfy it. Independently reviewed
+manual retrieval remains available. Offline panels/docks own no worker;
+`panel list`, control reviews, catalog reads and supervision ticks never acquire
+usage. The worker writes the same provider caches consumed by panel and menu.
+The separate strict bounded `usage-polling.json` does not promote catalog schemas.
+
+Fixture checks cover worker acquisition without any view requests, clock-driven
+cadence, blocked-provider/nonblocking collection, real panel idle shutdown,
+cross-process ownership, shared native evidence, failures/backoff, revocation,
+selection/file replacement and strict storage. Live enabling/provider acceptance,
+sleep/reboot and native Windows execution remain separate unrun acceptance.

@@ -686,6 +686,45 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
   w.close();
   for (const e of errs) failures.push("accounts: " + e);
 }
+// Ongoing usage is a reviewed, revocable setting, never a render-time provider call.
+{
+  const errs = [], vc = new VirtualConsole(); vc.on("jsdomError", e => errs.push(String(e.message)));
+  const id = "a".repeat(32); let ref = "b".repeat(32), revision = 1;
+  const dom = new JSDOM(html, {runScripts:"outside-only",pretendToBeVisual:true,url:"http://127.0.0.1:1/s/token/#/accounts/"+id,virtualConsole:vc});
+  const w=dom.window, posts=[];
+  const card={id,label:"Example usage updates",provider:"codex",selection:"inherited",auth:{text:"Login reported",state:"reported_present",freshness:"fresh"},plan:{text:"Plan unknown",state:"unavailable",freshness:"unavailable"},configuredModel:{text:"Not recorded",state:"unavailable",freshness:"unavailable"},observedModel:{text:"Not recorded",state:"unavailable",freshness:"unavailable"},uses:"unavailable",identity:"selected_context_only",needsPerson:false,usageUpdating:{state:"off",text:"Keep usage updated: off"}};
+  const server={...clone(fixture.server),servedBy:"panel",changes:"on",form:"a".repeat(64),accountQuota:true,accountUsageUpdating:true,accountCheck:false};
+  w.fetch=async(url,opts)=>{
+    const path=String(url).split("?")[0];let found;
+    if(opts?.method==="POST"){
+      const action=JSON.parse(opts.body).action, step=path.split("/").pop();posts.push({action,step});
+      if(!path.startsWith("api/v1/account-usage-updates/")) errs.push("unasked provider/control request");
+      found={schemaVersion:1};
+      if(step==="prepare")found.preview={action,key:id,title:"Review usage updates",confirm:action==="enable_usage_updates"?"Keep usage updated":"Pause usage updates",form:"c".repeat(64),expiresAt:"2030-01-01T00:00:00Z",lines:[[{t:"Only this selection. Keep a panel running; no per-poll confirmation."}]],lost:"Read settings again",refused:"Unchanged"};
+      else{ref=(++revision).toString(16).padStart(32,"0");card.usageUpdating=action==="enable_usage_updates"?{state:"enabled",text:"Keep usage updated: enabled",nextAttemptAt:"2030-01-01T01:00:00Z"}:{state:"off",text:"Keep usage updated: off"};found.result={outcome:"done",text:"Usage update setting saved"};}
+    }else if(path==="api/v1/server")found=server;
+    else if(path==="api/v1/saved-accounts")found={schemaVersion:1,reference:ref,readAt:fixture.dock.readAt,accounts:{state:"available",complete:true,cards:[clone(card)]}};
+    else if(path==="api/v1/dock"){found=clone(fixture.dock);found.accountsReference=ref;found.selectedAccounts=1;found.accounts={state:"available",complete:true,cards:[]};}
+    else if(path==="api/v1/usage")found=fixture.usage;
+    return{ok:found!==undefined,status:found===undefined?404:200,json:async()=>clone(found),text:async()=>JSON.stringify(found)};
+  };
+  w.TextEncoder=TextEncoder;w.scrollTo=()=>{};w.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});w.Element.prototype.scrollIntoView=()=>{};
+  w.eval(js);const settle=()=>new Promise(r=>setTimeout(r,150));await settle();
+  const button=text=>[...w.document.querySelectorAll("button")].find(b=>b.textContent===text);
+  const click=async text=>{const b=button(text);if(!b){errs.push("missing button "+text);return;}b.click();await settle();};
+  if(posts.length)errs.push("render started acquisition");
+  await click("Keep usage updated…");
+  if(posts.length!==1||posts[0].step!=="prepare")errs.push("enable skipped review");
+  await click("Cancel");if(posts.length!==1)errs.push("cancel changed setting");
+  await click("Keep usage updated…");await click("Keep usage updated");await click("Close");
+  if(!w.document.querySelector(".account-usage-updating").textContent.includes("enabled"))errs.push("enabled status missing");
+  await click("Pause usage updates…");await click("Pause usage updates");await click("Close");
+  if(card.usageUpdating.state!=="off"||posts.filter(p=>p.step==="confirm").length!==2)errs.push("revocation missing");
+  for(const state of ["waiting","backoff","paused"]){card.usageUpdating={state,text:"Fixture "+state};ref=(++revision).toString(16).padStart(32,"0");w.document.getElementById("refresh").click();await settle();if(!w.document.querySelector(".account-usage-updating").textContent.includes("Fixture "+state))errs.push(state+" not displayed");}
+  server.changes="off";w.document.getElementById("refresh").click();await settle();if(button("Pause usage updates…")||button("Keep usage updated…"))errs.push("read-only setting action offered");
+  if(w.__renderError)errs.push(String(w.__renderError));dom.window.close();for(const e of errs)failures.push("usage updates: "+e);
+}
+
 if (failures.length) {
   console.error(`dock.js failed while rendering ${failures.length} time(s):`);
   for (const f of failures.slice(0, 30)) console.error("  " + f);

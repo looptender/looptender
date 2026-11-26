@@ -7,7 +7,13 @@ public struct AccountQuotaList: Decodable, Equatable {
     public let accounts: [AccountQuota]
     public let omitted: Int
 }
+public struct UsageUpdating: Decodable, Equatable {
+    public let state: String
+    public let text: String
+    public let nextAttemptAt: String?
+}
 public struct AccountQuota: Decodable, Equatable {
+    public var usageUpdating: UsageUpdating? = nil
     public let id: String?
     public let label: String
     public let provider: String
@@ -43,6 +49,9 @@ extension Contract {
               value.omitted >= 0, value.omitted <= 64 else { return false }
         for a in value.accounts {
             let q = a.summary
+            if let u = a.usageUpdating {
+                guard ["off", "unavailable", "paused", "waiting", "enabled", "backoff"].contains(u.state), quotaText(u.text), u.nextAttemptAt == nil || date(u.nextAttemptAt) != nil else { return false }
+            }
             guard a.id == nil || (a.id!.count == 32 && a.id!.allSatisfy { "0123456789abcdef".contains($0) }), quotaText(a.label), ["codex", "claude-code", "antigravity"].contains(a.provider),
                   ["reported", "unavailable"].contains(q.state), quotaText(q.text),
                   ["fresh", "stale", "unavailable", "provider_unknown"].contains(q.freshness), q.rows.count <= 41,
@@ -90,8 +99,12 @@ extension MenuBuilder {
     static func quotaAccountRow(_ a: AccountQuota, peakUsed: Double? = nil) -> MenuRow {
         let q = a.summary
         var children = [quotaStatus(q.text)]
-        if let at = q.retrievedAt { children.append(quotaStatus("Retrieved \(at) · provider freshness unknown; may be cached or seeded")) }
-        if let at = q.observedAt { children.append(quotaStatus("Read \(at) · \(q.freshness == "stale" ? "older reading" : "saved snapshot")")) }
+        if let u = a.usageUpdating {
+            children.append(quotaStatus(u.text))
+            if let next = u.nextAttemptAt { children.append(quotaStatus("Next eligible fetch \(next)")) }
+        }
+        if let at = q.retrievedAt { children.append(quotaStatus("Last successful fetch \(at) · provider freshness unknown; may be cached or seeded")) }
+        if let at = q.observedAt { children.append(quotaStatus("Last successful fetch \(at) · \(q.freshness == "stale" ? "older reading" : "saved snapshot")")) }
         for r in q.rows.prefix(8) {
             var value = "\(r.name): \(r.text)"
             if let reset = r.resetsAt { value += " · \(r.ended == true ? "Ended" : "Resets") \(reset)" }
@@ -103,13 +116,18 @@ extension MenuBuilder {
         if let source = q.source { children.append(quotaStatus("Source: \(source)")) }
         if let failed = q.failedRefreshAt { children.append(quotaStatus("Refresh failed \(failed). \(q.failedRefreshText ?? "Earlier evidence retains its time.")")) }
         children.append(MenuRow(kind: .action, title: "Open Panel", detail: "", symbol: "macwindow", accessibilityLabel: "Open panel for quota details", accessibilityHelp: "Choose Accounts for saved quota details; explicit refresh is reviewed there.", toolTip: "", command: a.id.map { .openAccount(id: $0) } ?? .openPanel))
-        if q.state != "reported", let id = a.id {
+        if q.state != "reported", a.usageUpdating == nil, let id = a.id {
             let connect = a.provider == "claude-code" ? "Connect Claude" : "Connect Codex"
             return MenuRow(kind: .action, title: shortened(a.label, to: maxName), detail: connect, symbol: "person.crop.circle.badge.plus", accessibilityLabel: "\(connect) for \(a.label)", accessibilityHelp: "Opens this account in the panel. Sign-in starts only after your review.", toolTip: q.text, command: .connectAccount(id: id))
         }
         let first = q.rows.first(where: { $0.usedPercent != nil })
         var detail = q.state == "reported" ? (peakUsed.map { "\($0)% used" } ?? first.map { $0.ended == true ? "Window ended" : "\($0.usedPercent!)% used" } ?? "Quota details recorded") : "Quota unavailable"
         if q.freshness == "provider_unknown" { detail += " · freshness unknown" }
+        if let state = a.usageUpdating?.state {
+            if ["waiting", "paused"].contains(state) { detail += " · updates paused" }
+            else if state == "backoff" { detail += " · fetch failed" }
+            else if state == "unavailable" { detail += " · update settings unavailable" }
+        }
         return MenuRow(kind: .action, title: shortened(a.label, to: maxName), detail: detail, symbol: "gauge.with.dots.needle.33percent", accessibilityLabel: "\(a.label), \(a.provider), \(detail). Selected account identity not verified.", accessibilityHelp: "Opens saved quota details; reads no provider.", toolTip: a.label, command: nil, submenu: children)
     }
     private static func quotaStatus(_ full: String) -> MenuRow {

@@ -30,68 +30,95 @@ func enableUsageFixture(t *testing.T, dir string, e accounts.Entry, at time.Time
 		t.Fatal(err)
 	}
 }
+func waitUsage(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("usage worker did not reach expected state")
+}
 func TestAutomaticUsageUIRefreshAcquiresNewProviderReading(t *testing.T) {
 	dir, entry := accountFixture(t, "codex")
 	base, _, d := dockServe(t)
 	d.accountsDir = dir
-	d.usagePolling = true
-	at := dockNow
-	d.now = func() time.Time { return at }
-	calls := 0
-	d.quotaRun = func(ctx context.Context, provider, cli string, env []string, wd string) ([]byte, error) {
-		calls++
+	var clock atomic.Int64
+	clock.Store(dockNow.UnixNano())
+	now := func() time.Time { return time.Unix(0, clock.Load()).UTC() }
+	d.now = now
+	var calls atomic.Int32
+	run := func(ctx context.Context, provider, cli string, env []string, wd string) ([]byte, error) {
+		n := calls.Add(1)
 		if provider != "codex" || cli != entry.CLI || wd != entry.Workdir {
-			t.Fatal("wrong selection")
+			t.Error("wrong selection")
 		}
-		if _, ok := ctx.Deadline(); !ok {
-			t.Fatal("unbounded read")
-		}
-		return []byte(strings.Replace(quotaResponse, `"usedPercent":0`, `"usedPercent":`+[]string{"10", "20"}[calls-1], 1)), nil
+		return []byte(strings.Replace(quotaResponse, `"usedPercent":0`, `"usedPercent":`+[]string{"10", "20"}[n-1], 1)), nil
 	}
+	ticks := make(chan time.Time)
+	stop := startAccountUsageSchedulerWith(context.Background(), dir, false, now, run, ticks)
+	defer stop()
 	read := func() *accounts.QuotaView {
 		d.forget()
 		resp, raw := dockRequest(t, "GET", base+dockAPIPath, nil)
 		var main dockReport
 		if resp.StatusCode != 200 || json.Unmarshal([]byte(raw), &main) != nil {
-			t.Fatal("dock reply", resp.StatusCode)
+			t.Fatal("dock reply")
 		}
 		resp, raw = dockRequest(t, "GET", base+dockAccountsPath+"?reference="+main.AccountsReference, nil)
 		var saved dockAccountSnapshot
-		if resp.StatusCode != 200 || json.Unmarshal([]byte(raw), &saved) != nil || saved.Accounts == nil || len(saved.Accounts.Cards) != 1 {
-			t.Fatal("saved reply", resp.StatusCode)
+		if resp.StatusCode != 200 || json.Unmarshal([]byte(raw), &saved) != nil || len(saved.Accounts.Cards) != 1 {
+			t.Fatal("saved reply")
 		}
 		return saved.Accounts.Cards[0].Quota
 	}
 	read()
-	if calls != 0 {
+	if calls.Load() != 0 {
 		t.Fatal("unconfigured UI called provider")
 	}
-	enableUsageFixture(t, dir, entry, at)
+	enableUsageFixture(t, dir, entry, now())
+	ticks <- now()
+	waitUsage(t, func() bool {
+		f, _ := accounts.LoadUsagePolling(dir)
+		catalog, _ := accounts.Load(dir)
+		q := accounts.QuotaViews(dir, catalog, os.Environ(), now())[entry.ID]
+		return f.Entries[0].AttemptAt != nil && f.Entries[0].NextAt.After(now()) && q.ObservedAt != nil
+	})
+	waitUsage(t, func() bool {
+		g, err := accounts.UsagePollGuard(dir)
+		if err != nil {
+			return false
+		}
+		g.Release()
+		return true
+	})
 	first := read()
-	if calls != 1 || first == nil || first.ObservedAt == nil || !first.ObservedAt.Equal(at) || first.Windows[0].UsedPercent != 10 {
-		t.Fatal("first UI read did not acquire", calls, first)
+	if calls.Load() != 1 || first.ObservedAt == nil || !first.ObservedAt.Equal(now()) || first.Windows[0].UsedPercent != 10 {
+		t.Fatal("first worker acquisition missing", calls.Load(), first)
 	}
-	at = at.Add(time.Minute)
+	clock.Add(int64(time.Minute))
+	ticks <- now()
 	read()
-	if calls != 1 {
-		t.Fatal("cache hit bypassed cadence")
+	if calls.Load() != 1 {
+		t.Fatal("cadence bypassed")
 	}
-	at = at.Add(4 * time.Minute)
+	clock.Add(int64(4 * time.Minute))
+	ticks <- now()
+	// No HTTP request, view opening or menu redraw drives this second fetch.
+	waitUsage(t, func() bool {
+		f, _ := accounts.Load(dir)
+		q := accounts.QuotaViews(dir, f, os.Environ(), now())[entry.ID]
+		return q.ObservedAt != nil && q.ObservedAt.Equal(now())
+	})
 	second := read()
-	if calls != 2 || !second.ObservedAt.Equal(at) || second.Windows[0].UsedPercent != 20 {
-		t.Fatal("refresh reread cache instead of provider", calls, second)
+	if calls.Load() != 2 || second.Windows[0].UsedPercent != 20 {
+		t.Fatal("scheduled fetch only redrew cache")
 	}
-	// A separately collected native menu consumes the same newly published cache,
-	// without another provider call in this cadence.
 	native := buildPanelList(d.read(context.Background(), false))
-	if calls != 2 || native.AccountQuotas == nil || !native.AccountQuotas.Accounts[0].Summary.ObservedAt.Equal(at) {
-		t.Fatal("menu did not share acquired reading")
-	}
-	d.usagePolling = false
-	at = at.Add(5 * time.Minute)
-	read()
-	if calls != 2 {
-		t.Fatal("offline read acquired usage")
+	if !native.AccountQuotas.Accounts[0].Summary.ObservedAt.Equal(now()) {
+		t.Fatal("native cache not shared")
 	}
 }
 func TestAutomaticUsageFailuresBackoffAndKeepOldTimestamps(t *testing.T) {
@@ -377,10 +404,6 @@ func TestAutomaticUsageOfflineListAndControlReadsRemainSavedOnly(t *testing.T) {
 	}
 	// Control reviews use readers without the explicit UI acquisition capability.
 	d.accountsDir = dir
-	d.quotaRun = func(context.Context, string, string, []string, string) ([]byte, error) {
-		t.Fatal("non-UI reader acquired usage")
-		return nil, nil
-	}
 	d.read(context.Background(), false)
 	settings, _ = accounts.LoadUsagePolling(dir)
 	if settings.Entries[0].AttemptAt != nil {

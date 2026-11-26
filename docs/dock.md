@@ -662,7 +662,8 @@ reply may be cached or seeded. It never becomes a fresh observation by being
 retrieved again. Dated route observations stay separate.
 Neither polling surface refreshes a provider by default; unreleased source can
 service explicitly enabled [automatic usage](accounts.md#automatic-selected-context-usage-unreleased)
-during main report collection. Explicit review can refresh Codex
+from a separately owned background worker; report collection never waits for
+provider IO. Explicit review can refresh Codex
 or retrieve Claude usage on Darwin arm64, subject to exact native-image and
 isolation admission. The additive server `accountQuotaProviders` allowlist names
 the enabled providers; when absent, the legacy `accountQuota` capability enables
@@ -693,12 +694,14 @@ and native projections each have a 1 MiB cap. See the
 
 ### Explicit automatic account usage (unreleased)
 
-By default, panel/menu account reads use saved evidence. An existing selection
-can separately authorize bounded model-free acquisition with `accounts
-usage-polling --id ACCOUNT_ID --enable`; see [automatic usage](accounts.md#automatic-selected-context-usage-unreleased).
-Due panel and native-menu list reads then populate the shared provider caches,
-including in a read-only panel. This pre-existing selection grant enables no
-account/control mutation. Without a grant, or with `panel list --offline` or
-`dock --offline`, no usage provider is queried. Companion saved-account requests
-remain snapshot-only. Reads retain old successful timestamps on failure; they
-never infer replenishment from a passed reset. No runtime installation is added.
+Accounts offers **Keep usage updated…** and **Pause usage updates…** in a panel
+with changes allowed. Confirmation authorizes only the reviewed selection;
+subsequent model-free reads need no confirmation. A running non-offline panel or
+dock process owns a separate worker, elected across processes by a catalog lock.
+It polls independently of page reads and tab visibility; collection never waits
+for provider IO. The native menu consumes the shared cache but cannot schedule
+polls by itself. Panel idle shutdown still stops its worker and is not extended
+by usage polling. Status distinguishes enabled, backoff and paused scheduler or
+changed-selection states. Defaults stay off and no runtime process is installed
+or started automatically. See [the complete cadence, lifecycle and evidence
+contract](accounts.md#automatic-selected-context-usage-unreleased).

@@ -102,7 +102,7 @@ func dockCommand(e env, args []string) int {
 		e.errf("dock: no random source for the access token")
 		return exitFailed
 	}
-	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: *refresh, staleAfter: *staleAfter, query: inspectDaemon, versions: true, usagePolling: !*offline, routerOffline: *offline}
+	reader := &dockReader{ctx: e.ctx, directory: *directory, refresh: *refresh, staleAfter: *staleAfter, query: inspectDaemon, versions: true, routerOffline: *offline}
 	if *offline {
 		reader.query = func(ctx context.Context, dir, current string, _ bool) daemonStatus {
 			return inspectDaemon(ctx, dir, current, true)
@@ -110,6 +110,8 @@ func dockCommand(e env, args []string) int {
 	}
 	srv := newDockServer(ln.Addr().(*net.TCPAddr).Port, dockTokenAuth{token: token}, reader)
 	fmt.Fprintf(e.stdout, "The looptender panel is being served, read-only, for this computer only:\n\n  %s\n\nPress Ctrl-C to stop it. Stopping the page leaves supervision running.\n", srv.url(token))
+	stopUsage := startAccountUsageScheduler(e.ctx, reader.accountsDir, *offline)
+	defer stopUsage()
 	return srv.serve(e.ctx, ln, e.stderr)
 }
 
@@ -189,7 +191,8 @@ type dockServer struct {
 // dockServed is what the page is told about the command serving it. It holds
 // nothing about any loop.
 type dockServed struct {
-	SchemaVersion int `json:"schemaVersion"`
+	AccountUsageUpdating bool `json:"accountUsageUpdating,omitempty"`
+	SchemaVersion        int  `json:"schemaVersion"`
 	// ServedBy is dock (in the foreground, until interrupted) or panel (in
 	// the background, until idle or stopped).
 	ServedBy string `json:"servedBy"`
@@ -364,9 +367,6 @@ type dockReader struct {
 	routerDir     string // test/private router override; empty uses default
 	routerOffline bool
 	services      dockServiceFiles
-
-	quotaRun     accountQuotaRun // injected model-free acquisition for opted-in selections
-	usagePolling bool            // only panel/menu reads may service explicit grants
 }
 
 type dockCached struct {
@@ -401,8 +401,8 @@ func (d *dockReader) json(identifiers bool) ([]byte, error) {
 
 // usageJSON returns the Usage page from the newest read of the last two
 // seconds, either view's, or from a new read. It is the same read as the
-// main report's: no probe or model call. Explicit usage-polling grants may
-// authorize model-free acquisition while collecting a new UI report.
+// main report's: saved files only, no provider IO. Background acquisition is
+// owned independently by the elected panel/dock worker.
 func (d *dockReader) usageJSON() ([]byte, error) {
 	d.mu.Lock()
 	for _, identifiers := range []bool{false, true} {
@@ -474,18 +474,9 @@ func (d *dockReader) bodies(identifiers bool) (dockCached, error) {
 	return out, nil
 }
 
-// read uses the same loop-inspection paths as registry/client status. Only
-// explicit usage-polling grants permit bounded model-free account acquisition.
+// read uses saved account evidence and the same loop-inspection paths as
+// registry/client status. It never starts or waits for provider acquisition.
 func (d *dockReader) read(ctx context.Context, identifiers bool) (result dockReport) {
-	if d.usagePolling {
-		if dir, err := accountsDirectory(d.accountsDir); err == nil {
-			run := d.quotaRun
-			if run == nil {
-				run = accountQuotaRead
-			}
-			accountUsagePollDue(ctx, dir, os.Environ(), d.clock, run)
-		}
-	}
 	defer func() {
 		view := accounts.View{State: "unavailable", Complete: false, Cards: []accounts.Card{}}
 		var catalog *accounts.File
@@ -493,6 +484,7 @@ func (d *dockReader) read(ctx context.Context, identifiers bool) (result dockRep
 			if f, err := accounts.Load(dir); err == nil {
 				view, catalog = accounts.Project(f, d.clock()), &f
 				accounts.AttachQuota(&view, accounts.QuotaViews(dir, f, os.Environ(), d.clock()))
+				attachAccountUsageUpdating(&view, dir, os.Environ(), d.clock())
 				if logins, err := accounts.LoadLogins(dir); err == nil {
 					accounts.AttachLogins(&view, logins)
 				}

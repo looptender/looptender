@@ -23,6 +23,7 @@ const UsagePollingName = "usage-polling.json"
 type UsagePolling struct {
 	SchemaVersion int         `json:"schemaVersion"`
 	Entries       []UsagePoll `json:"entries"`
+	SchedulerAt   *time.Time  `json:"schedulerAt,omitempty"`
 }
 type UsagePoll struct {
 	ID         string     `json:"id"`
@@ -36,7 +37,7 @@ type UsagePoll struct {
 }
 
 func validUsagePolling(f UsagePolling) bool {
-	if f.SchemaVersion != 1 || f.Entries == nil || len(f.Entries) > MaxEntries {
+	if (f.SchedulerAt != nil && f.SchedulerAt.IsZero()) || f.SchemaVersion != 1 || f.Entries == nil || len(f.Entries) > MaxEntries {
 		return false
 	}
 	seen := map[string]bool{}
@@ -119,4 +120,19 @@ func UsagePollGuard(dir string) (*lock.Lock, error) {
 		return nil, ErrInvalid
 	}
 	return lock.AcquireNamed(dir, "usage-poll-run")
+}
+
+// UsageSchedulerGuard elects one long-lived panel/dock scheduler per catalog.
+func UsageSchedulerGuard(dir string) (*lock.Lock, error) {
+	if checkDir(dir) != nil || checkFile(filepath.Join(dir, "usage-scheduler.lock")) != nil {
+		return nil, ErrInvalid
+	}
+	return lock.AcquireNamed(dir, "usage-scheduler")
+}
+
+// UsageUpdating is minimized scheduler evidence, separate from quota freshness.
+type UsageUpdating struct {
+	State  string     `json:"state"`
+	Text   string     `json:"text"`
+	NextAt *time.Time `json:"nextAttemptAt,omitempty"`
 }

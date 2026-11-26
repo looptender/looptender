@@ -45,46 +45,12 @@ func accountUsagePollingCommand(e env, dir, id string, enable, disable, asJSON b
 		return exitUsage
 	}
 	if enable || disable {
-		var s accountQuotaSelection
-		var err error
-		if enable {
-			s, err = accountQuotaCapture(dir, id, os.Environ())
-			if err != nil || !panelQuotaProviderSupported(s.Entry.Provider) || accountUsageStamp(s) == "" {
-				e.errf("accounts usage-polling: selection unavailable; nothing enabled")
-				return exitFailed
-			}
-		}
-		grant, err := panelRandom(16)
-		if err != nil {
-			return exitFailed
-		}
-		err = accounts.UpdateUsagePolling(dir, func(f *accounts.UsagePolling) error {
-			// Re-enabling the same selection is idempotent: it must not reset
-			// a durable cadence reservation or failure backoff.
-			if enable {
-				for _, p := range f.Entries {
-					if accountUsageMatches(p, s) {
-						return nil
-					}
-				}
-			}
-			entries := f.Entries[:0]
-			for _, p := range f.Entries {
-				if p.ID != id {
-					entries = append(entries, p)
-				}
-			}
-			f.Entries = entries
-			if enable {
-				f.Entries = append(f.Entries, accounts.UsagePoll{ID: id, Revision: s.Entry.Revision, Binding: s.Bound, Executable: accountUsageStamp(s), Grant: grant, NextAt: time.Now().UTC()})
-			}
-			return nil
-		})
-		if err != nil {
-			e.errf("accounts usage-polling: private settings unavailable; nothing enabled")
+		if err := setAccountUsagePolling(dir, id, enable, nil, os.Environ(), time.Now); err != nil {
+			e.errf("accounts usage-polling: selection or private settings unavailable; nothing enabled")
 			return exitFailed
 		}
 	}
+
 	f, err := accounts.LoadUsagePolling(dir)
 	if err != nil {
 		e.errf("accounts usage-polling: settings unavailable")
@@ -120,13 +86,13 @@ func accountUsagePollingCommand(e env, dir, id string, enable, disable, asJSON b
 	} else {
 		fmt.Fprintf(e.stdout, "Automatic selected-context usage: %s\n", state)
 		if state == "on" {
-			fmt.Fprintln(e.stdout, "Due panel/menu reads may retrieve model-free usage, at most every 5 minutes, with bounded failure backoff. No login or model request is started.")
+			fmt.Fprintln(e.stdout, "Keep a non-offline panel or dock process running to fetch model-free usage at least 5 minutes apart, with bounded failure backoff. The menu alone cannot schedule reads. No login or model request is started.")
 		}
 	}
 	return exitOK
 }
 
-// accountUsagePollDue is called only by panel/menu collection. Ordinary catalog
+// accountUsagePollDue is called only by the elected background worker. Ordinary catalog
 // reads remain saved-only. No grant means no locks, writes or provider calls.
 func accountUsagePollDue(ctx context.Context, dir string, env []string, now func() time.Time, run accountQuotaRun) {
 	f, err := accounts.LoadUsagePolling(dir)
@@ -207,4 +173,42 @@ func accountUsagePollDue(ctx context.Context, dir string, env []string, now func
 			return nil
 		})
 	}
+}
+
+func setAccountUsagePolling(dir, id string, enable bool, expected *accountQuotaSelection, env []string, now func() time.Time) error {
+	var s accountQuotaSelection
+	var err error
+	if enable {
+		s, err = accountQuotaCapture(dir, id, env)
+		if err != nil || !panelQuotaProviderSupported(s.Entry.Provider) || accountUsageStamp(s) == "" {
+			return accounts.ErrChanged
+		}
+		if expected != nil && (!expected.same(s) || accountUsageStamp(*expected) != accountUsageStamp(s)) {
+			return accounts.ErrChanged
+		}
+	}
+	grant, err := panelRandom(16)
+	if err != nil {
+		return err
+	}
+	return accounts.UpdateUsagePolling(dir, func(f *accounts.UsagePolling) error {
+		if enable {
+			for _, p := range f.Entries {
+				if accountUsageMatches(p, s) {
+					return nil
+				}
+			}
+		}
+		entries := f.Entries[:0]
+		for _, p := range f.Entries {
+			if p.ID != id {
+				entries = append(entries, p)
+			}
+		}
+		f.Entries = entries
+		if enable {
+			f.Entries = append(f.Entries, accounts.UsagePoll{ID: id, Revision: s.Entry.Revision, Binding: s.Bound, Executable: accountUsageStamp(s), Grant: grant, NextAt: now().UTC()})
+		}
+		return nil
+	})
 }

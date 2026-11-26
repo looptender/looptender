@@ -15,6 +15,10 @@ with tempfile.TemporaryDirectory(prefix="keepgoing-menu-smoke-") as temporary:
     native = work / "contract-smoke"
     subprocess.run(["swiftc", *map(str, sorted((root / "Sources/KeepgoingMenuCore").glob("*.swift"))),
                     str(root / "scripts/ContractSmoke.swift"), "-o", str(native)], check=True)
+    usage = work / "usage-updating-smoke"
+    subprocess.run(["swiftc", *map(str, sorted((root / "Sources/KeepgoingMenuCore").glob("*.swift"))),
+                    str(root / "scripts/UsageUpdatingSmoke.swift"), "-o", str(usage)], check=True)
+    subprocess.run([str(usage)], check=True, timeout=10)
     trap = work / "provider-trap"
     trap.write_text('#!/bin/sh\n: > "$0.called"\nexit 99\n')
     trap.chmod(0o700)

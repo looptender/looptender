@@ -2125,13 +2125,66 @@
     return box;
   }
 
+  var accountUsageChange = null;
+  function accountUsageRequest(c, enable, confirm) {
+    if (!changesOn() || !state.server.accountUsageUpdating) return;
+    var prior = accountUsageChange, preview = confirm && prior && prior.id === c.id && prior.preview;
+    if (confirm && !preview) return;
+    var action = enable ? "enable_usage_updates" : "disable_usage_updates";
+    var request = { id: c.id, enable: enable, busy: true, preview: preview || null };
+    accountUsageChange = request; render(false, true);
+    var abort = new AbortController(), timer = setTimeout(function () { abort.abort(); }, 15000);
+    fetch("api/v1/account-usage-updates/" + encodeURIComponent(c.id) + "/" + (confirm ? "confirm" : "prepare"), {
+      method: "POST", cache: "no-store", credentials: "same-origin", signal: abort.signal,
+      headers: { "Content-Type": "application/json", Accept: "application/json", "X-Keepgoing-Form": confirm ? preview.form : state.server.form },
+      body: JSON.stringify({ action: action })
+    }).then(function (r) { if (!r.ok) throw new Error("refused"); return r.json(); })
+      .then(function (d) {
+        if (!d || d.schemaVersion !== 1 || (!!d.preview === !!d.result)) throw new Error("reply");
+        if (d.preview && (d.preview.action !== action || d.preview.key !== c.id || !/^[a-f0-9]{64}$/.test(d.preview.form) || !Array.isArray(d.preview.lines))) throw new Error("review");
+        request.preview = d.preview; request.result = d.result;
+      }).catch(function () { request.preview = null; request.result = { text: "Usage update settings could not be confirmed. Read the saved state before trying again." }; })
+      .finally(function () {
+        clearTimeout(timer); request.busy = false;
+        if (accountUsageChange !== request) return;
+        render(false, true); focusOn("usage-update-" + c.id);
+        if (request.result) announce(request.result.text);
+        if (confirm) { clearTimeout(state.timer); load(true); }
+      });
+  }
+  function accountUsageBox(c) {
+    var box = el("div", "account-usage-updating"), u = c.usageUpdating;
+    box.appendChild(el("p", null, u && u.text || "Usage update settings unavailable"));
+    if (u && u.nextAttemptAt) box.appendChild(el("p", "sub", "Next eligible fetch " + when({ at: u.nextAttemptAt })));
+    var current = accountUsageChange && accountUsageChange.id === c.id ? accountUsageChange : null;
+    if (current) {
+      if (current.preview) {
+        box.appendChild(el("h4", null, current.preview.title));
+        list(current.preview.lines).forEach(function (line) { box.appendChild(el("p", "sub", say(line))); });
+        var controls = el("div", "account-quota-actions");
+        controls.appendChild(button("Cancel", "usage-update-cancel-" + c.id, "", function () { accountUsageChange = null; render(false, true); focusOn("usage-update-" + c.id); }, current.busy));
+        controls.appendChild(button(current.busy ? "Saving…" : current.preview.confirm, "usage-update-" + c.id, "", function () { accountUsageRequest(c, current.enable, true); }, current.busy));
+        box.appendChild(controls);
+      } else if (current.result) {
+        var result = el("p", null, current.result.text); result.tabIndex = -1; result.setAttribute("data-focus", "usage-update-" + c.id); box.appendChild(result);
+        box.appendChild(button("Close", "usage-update-close-" + c.id, "", function () { accountUsageChange = null; render(false, true); }));
+      } else box.appendChild(el("p", "sub", "Preparing usage update review…"));
+    } else if (changesOn() && state.server.accountUsageUpdating) {
+      var authorized = u && ["enabled", "waiting", "backoff", "paused"].indexOf(u.state) >= 0;
+      box.appendChild(button(authorized ? "Pause usage updates…" : "Keep usage updated…", "usage-update-" + c.id, "", function () { accountUsageRequest(c, !authorized, false); }));
+      if (u && u.state === "paused") box.appendChild(button("Review and enable again…", "usage-update-review-" + c.id, "", function () { accountUsageRequest(c, true, false); }));
+    }
+    return box;
+  }
+
   function accountQuotaBox(c) {
     var q = c.quota || {}, box = el("div", "account-quota");
     box.appendChild(el("h3", null, "Account quota"));
+    box.appendChild(accountUsageBox(c));
     box.appendChild(el("p", "sub", "Saved for this selection; separate from route readings. Live thread account binding is not verified."));
     var saved = accountQuotaSummary(c) || {};
     if (saved.state === "reported") {
-      box.appendChild(el("p", "quota-stamp", saved.retrievedAt ? "Retrieved " + when({ at: saved.retrievedAt }) + " · Provider freshness unknown" : "Read " + when({ at: saved.observedAt }) + (saved.freshness === "stale" ? " · Older reading" : " · Saved snapshot")));
+      box.appendChild(el("p", "quota-stamp", saved.retrievedAt ? "Last successful fetch " + when({ at: saved.retrievedAt }) + " · Provider freshness unknown" : "Last successful fetch " + when({ at: saved.observedAt }) + (saved.freshness === "stale" ? " · Older reading" : " · Saved snapshot")));
       if (saved.retrievedAt) box.appendChild(el("p", "sub", "Retrieval may return cached or seeded usage. The provider's observation time is unavailable."));
       var rows = el("ul", "quota-windows");
       list(saved.rows).forEach(function (w) {
@@ -2269,7 +2322,7 @@
     pane.appendChild(back());
     pane.appendChild(paneHead("Accounts"));
     pane.appendChild(el("p", "lede", "Your selected accounts, with the evidence available on this device."));
-    pane.appendChild(el("p", "sub", "Reading this page uses saved evidence unless automatic usage is enabled for a selection. Automatic reads are bounded and model-free; manual quota retrieval still has its own review."));
+    pane.appendChild(el("p", "sub", "This page reads saved evidence. Keep usage updated authorizes a running panel or dock process to fetch usage in the background. Manual quota retrieval has its own review."));
     var usage = el("p", "account-usage-link");
     usage.appendChild(link("#/routes", "View recorded usage", "work-inspect"));
     usage.appendChild(el("span", "sub", ". Readings come from configured routes and are not live. Each account shows the readings of the routes that use it."));
@@ -2426,6 +2479,10 @@
         if (c.auth && c.auth.state === "reported_absent") compact.appendChild(el("span", "sub", "Sign-in required"));
       } else if (c.provider === "antigravity") {
         compact.appendChild(el("span", "sub", "Account quota unavailable"));
+      }
+      if (c.usageUpdating) {
+        var updatingLabel = ({ enabled: "Usage updates enabled", backoff: "Usage fetch failed · waiting to retry", waiting: "Updates paused · scheduler not running", paused: "Updates paused · selection changed", unavailable: "Update settings unavailable" })[c.usageUpdating.state];
+        if (updatingLabel) compact.appendChild(el("span", "sub", updatingLabel));
       }
       summary.appendChild(compact);
       details.appendChild(summary);

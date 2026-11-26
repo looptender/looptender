@@ -444,6 +444,7 @@ func (h *panelHandler) served(w http.ResponseWriter) func(session string) {
 			out.AccountQuota = true
 			out.AccountQuotaProviders = panelQuotaProvidersFor(runtime.GOOS, runtime.GOARCH)
 			out.AccountSelectionReview = true
+			out.AccountUsageUpdating = true
 			out.AccountCheck = true
 			out.AccountRemove = true
 			out.SendAllowanceEdit = h.changes.caller == ""
@@ -577,12 +578,15 @@ func panelListenPrivate(path string) (net.Listener, os.FileInfo, error) {
 // ticks exist so a test can run the idle rule on its own clock: ticks, when
 // set, replaces the timer that asks whether the server has been idle too long.
 type panelServerConfig struct {
-	dir        string // the panel's private directory, already resolved
-	registry   string // the --directory value, as given
-	idle       time.Duration
-	refresh    time.Duration
-	staleAfter time.Duration
-	offline    bool
+	usageDirectory string // isolated tests; production default catalog
+	usageRun       accountQuotaRun
+	usageTicks     <-chan time.Time
+	dir            string // the panel's private directory, already resolved
+	registry       string // the --directory value, as given
+	idle           time.Duration
+	refresh        time.Duration
+	staleAfter     time.Duration
+	offline        bool
 	// changes: started with --allow-changes, so the page may make every
 	// change it offers; controls: pause, stop and resume only. Neither
 	// changes while the server runs.
@@ -677,7 +681,11 @@ func runPanelServer(parent context.Context, c panelServerConfig) int {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	reader := &dockReader{ctx: ctx, directory: c.registry, refresh: c.refresh, staleAfter: c.staleAfter, query: inspectDaemon, versions: true, panelDir: c.dir, accountsDir: panelAccountsDir, usagePolling: !c.offline}
+	accountDir := panelAccountsDir
+	if c.usageDirectory != "" {
+		accountDir = c.usageDirectory
+	}
+	reader := &dockReader{ctx: ctx, directory: c.registry, refresh: c.refresh, staleAfter: c.staleAfter, query: inspectDaemon, versions: true, panelDir: c.dir, accountsDir: accountDir}
 	if c.changes {
 		reader.builds = newBuildSession(c.dir, c.registry)
 		defer reader.builds.close()
@@ -744,5 +752,11 @@ func runPanelServer(parent context.Context, c panelServerConfig) int {
 			}
 		}
 	}()
+	runUsage := c.usageRun
+	if runUsage == nil {
+		runUsage = accountQuotaRead
+	}
+	stopUsage := startAccountUsageSchedulerWith(ctx, reader.accountsDir, c.offline, c.now, runUsage, c.usageTicks)
+	defer stopUsage()
 	return dockServeHandler(ctx, ln, handler, io.Discard)
 }
