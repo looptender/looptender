@@ -50,8 +50,10 @@ var adoptSchemaFingerprints = map[int]string{
 	// (successor threads replacing child lanes blocked on another provider)
 	// and childMove's movedIds.
 	6: "caa99878e54f0d0a3dde2da240155cd6b9b23db79beab3d6e5429b342c9ed73b",
-	// 7: incident schema 15 adds typed daemon lifecycle and check admission evidence.
-	7: "937885025fdcb067a2041b1d98a23624397d4abe98651ec5b035f9a1b35852c5",
+	// 7: control.json gained the revision-bound completion declaration.
+	7: "f6695f821d46c75967e144d4215846fc0817c7beac95700af1f546efbbfdad71",
+	// 8: combined goal completion and incident schema 15 lifecycle/admission evidence.
+	8: "dc0fdbf1d2be4518c6c9f86fe07451868b39170ec166b04d7af4077c5824a16d",
 }
 
 // schemaFingerprint lists every JSON field reachable from t, by path, with

@@ -417,6 +417,8 @@ keepgoing complete -c keepgoing.yaml --note "Example task verified"
 
 This sets `control.completed` in `control.json` and records a control event in `runs.jsonl`. Status shows `completed` unless a higher-priority disabled, stop, pause, or awaiting-user hold is also set; JSON always exposes the completion flag. No model output or transcript text is inspected to decide completion. In v0.1.3 or newer, a new completion declaration also attempts a subscribed `complete` webhook event after saving control and appending the control log.
 
+Unreleased source also saves the goal ID/revision for each new declaration and, with assignment completion, the successful review’s assignment ID/revision. Repeated completion retains the original binding; a goal edit never clears its hold. See [completion declarations](goals.md#completion-declarations-unreleased) for legacy records, unavailable goals and status comparison.
+
 The standard-format event is `keepgoing.complete`, with `basis: explicit_declaration` and `verification: not_recorded`. Both standard and text formats say that completion was declared and looptender has not independently verified success. This does not contradict verification performed by the operator or agent; looptender has no independent acceptance evidence in this version. The private control note, task/prompt text and evidence descriptions are omitted from this notification.
 
 Deduplication uses the persisted `completed` flag under the control lock. Only a false-to-true transition submits a report. Repeated `complete` commands, changed notes, enable, other holds, ticks and restarts do not replay it. An explicit `resume` clears completion, permitting a later declaration to submit a new report. Legacy completed records and declarations made without a subscription are not backfilled when reporting is enabled. A report describes the declaration at its recorded time; concurrent resume/stop or network delays may mean it no longer describes current controls.
@@ -1839,7 +1841,10 @@ is unavailable.
 
 Schema 1–14 journals load without rewriting; the next append upgrades to 15.
 Older binaries refuse the newer journal. The executable-adoption state format
-rises to 7 so a daemon cannot adopt an older reader and lose this evidence.
+rises to 8 for the combined goal-completion and incident schema, so a daemon
+cannot adopt an older reader and lose either record. Format 7 remains allocated
+to goal-completion metadata; the earlier incident-only format-7 branch build is
+also refused by the combined format-8 build.
 Before rollback, stop supervision and restore compatible state together with the
 binary as described under upgrading and rolling back. Offline fixtures verify
 these records; no installed daemon, live provider or release rollout is claimed.

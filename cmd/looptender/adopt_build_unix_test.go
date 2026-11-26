@@ -44,7 +44,7 @@ func newAdoptWorld(t *testing.T) *adoptWorld {
 		t.Skip("running image unidentified")
 	}
 	volume(t, 50<<30, 500<<30) // room, whatever this machine's disk has
-	w := &adoptWorld{dir: t.TempDir(), probe: `{"protocol":1,"stateFormat":7,"version":"v9.0.0-dev.fictional2"}`}
+	w := &adoptWorld{dir: t.TempDir(), probe: `{"protocol":1,"stateFormat":8,"version":"v9.0.0-dev.fictional2"}`}
 	w.installed = filepath.Join(w.dir, "builds", "new", "looptender")
 	if err := os.MkdirAll(filepath.Dir(w.installed), 0o700); err != nil {
 		t.Fatal(err)
@@ -185,7 +185,7 @@ func TestAdoptionSwitchesToTheValidatedInstalledBuild(t *testing.T) {
 // start and last pass go with the payload.
 func TestAdoptionNamesTheConfigurationForABuildThatAcceptsIt(t *testing.T) {
 	w := newAdoptWorld(t)
-	w.probe = `{"protocol":1,"stateFormat":7,"version":"v9.0.0-dev.fictional2","configArg":true}`
+	w.probe = `{"protocol":1,"stateFormat":8,"version":"v9.0.0-dev.fictional2","configArg":true}`
 	w.execErr = errors.New("fictional exec failure")
 	monitor, err := daemoninfo.Start(w.dir, version, false)
 	if err != nil {
@@ -235,8 +235,12 @@ func TestAdoptionRefusals(t *testing.T) {
 		runs   int
 	}{
 		"no handover":        {func(_ *testing.T, w *adoptWorld) { w.probe = "" }, "cannot take over a running daemon", 1},
-		"other protocol":     {func(_ *testing.T, w *adoptWorld) { w.probe = `{"protocol":2,"stateFormat":7}` }, "cannot take over a running daemon", 1},
-		"older state format": {func(_ *testing.T, w *adoptWorld) { w.probe = `{"protocol":1,"stateFormat":5}` }, "older than this loop's state format", 1},
+		"other protocol":     {func(_ *testing.T, w *adoptWorld) { w.probe = `{"protocol":2,"stateFormat":8}` }, "cannot take over a running daemon", 1},
+		"older state format": {func(_ *testing.T, w *adoptWorld) { w.probe = `{"protocol":1,"stateFormat":6}` }, "older than this loop's state format", 1},
+		"goal-only format 7": {func(_ *testing.T, w *adoptWorld) { w.probe = `{"protocol":1,"stateFormat":7}` }, "older than this loop's state format", 1},
+		"incident-only format 7": {func(_ *testing.T, w *adoptWorld) {
+			w.probe = `{"protocol":1,"stateFormat":7,"version":"v9.0.0-dev.incident-only"}`
+		}, "older than this loop's state format", 1},
 		"does not validate":  {func(_ *testing.T, w *adoptWorld) { w.validateCode = 2 }, "does not validate", 2},
 		"writable by others": {func(_ *testing.T, w *adoptWorld) { os.Chmod(w.installed, 0o777) }, "changed by other users", 0},
 		"not executable":     {func(_ *testing.T, w *adoptWorld) { os.Chmod(w.installed, 0o600) }, "not executable", 0},

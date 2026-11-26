@@ -682,18 +682,19 @@ type statusOut struct {
 	// IdleSpacing is loop.progress.idle_spacing and its history.
 	IdleSpacing idleSpacingStatus `json:"idleSpacing"`
 	// Refusals is the refusal gauge in words and counts.
-	Refusals          refusalStatus            `json:"refusals"`
-	Lanes             lanesStatus              `json:"laneRecovery"`
-	ChildErrorReport  childReportStatus        `json:"childErrorReport"`
-	NewThreads        newThreadStatus          `json:"newThreads"`
-	ChildMove         *childMoveStatus         `json:"childMove,omitempty"`
-	Successors        *successorStatus         `json:"childSuccessors,omitempty"`
-	SuccessorPlans    []successorPlan          `json:"successorPlans,omitempty"`
-	Goal              *control.GoalSummary     `json:"goal,omitempty"`
-	GoalError         string                   `json:"goalError,omitempty"`
-	Notifications     report.DeliveryStatus    `json:"notifications"`
-	ProgressAllowance *progressAllowanceStatus `json:"progressAllowance,omitempty"`
-	SendAllowance     *sendAllowanceStatus     `json:"sendAllowance,omitempty"`
+	Refusals                 refusalStatus            `json:"refusals"`
+	Lanes                    lanesStatus              `json:"laneRecovery"`
+	ChildErrorReport         childReportStatus        `json:"childErrorReport"`
+	NewThreads               newThreadStatus          `json:"newThreads"`
+	ChildMove                *childMoveStatus         `json:"childMove,omitempty"`
+	Successors               *successorStatus         `json:"childSuccessors,omitempty"`
+	SuccessorPlans           []successorPlan          `json:"successorPlans,omitempty"`
+	Goal                     *control.GoalSummary     `json:"goal,omitempty"`
+	GoalError                string                   `json:"goalError,omitempty"`
+	CompletionGoalComparison string                   `json:"completionGoalComparison,omitempty"`
+	Notifications            report.DeliveryStatus    `json:"notifications"`
+	ProgressAllowance        *progressAllowanceStatus `json:"progressAllowance,omitempty"`
+	SendAllowance            *sendAllowanceStatus     `json:"sendAllowance,omitempty"`
 	// SendRecord is set when sends.json, the record every send is made
 	// through, cannot be read: nothing is sent until it is restored.
 	SendRecord   string       `json:"sendRecord,omitempty"`
@@ -1015,6 +1016,13 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	}
 	if out.Goal != nil {
 		printGoal(e, *out.Goal, false)
+	}
+	if c := out.Control.Completion; c != nil {
+		if c.GoalID != "" {
+			fmt.Fprintf(w, "completion declaration: %s revision %d (%s; not independent verification)\n", c.GoalID, c.GoalRevision, c.CompareGoal(out.Goal))
+		} else {
+			fmt.Fprintln(w, "completion declaration: no goal bound (not independent verification)")
+		}
 	}
 	if out.GoalError != "" {
 		fmt.Fprintf(w, "goal: unavailable (%s)\n", out.GoalError)
@@ -1488,6 +1496,9 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		summary := g.Summary()
 		out.Goal = &summary
 	}
+	if out.Control.Completion != nil {
+		out.CompletionGoalComparison = out.Control.Completion.CompareGoal(out.Goal)
+	}
 	if review, err := control.LoadMigrationReview(l.StateDir); err != nil {
 		out.MigrationReviewError = "unavailable"
 		if errors.Is(err, control.ErrMigrationBinding) {
@@ -1895,7 +1906,7 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 		},
 		"complete": func(f *control.File) {
 			if !f.Completed {
-				completionDeclaredAt = time.Now().UTC()
+				completionDeclaredAt = f.Completion.DeclaredAt
 			}
 			f.Completed = true
 			// The task is done, so the loop is shown as completed and not as
@@ -1973,6 +1984,17 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 			if err := completionReview.check(cfg, *f); err != nil {
 				return err
 			}
+		}
+		if cmd == "complete" && !f.Completed {
+			completion, err := control.RecordCompletion(cfg.Loop.StateDir, cfg.Loop.Name, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			if completionReview != nil {
+				completion.Assignments = completionReview.declaration.Assignments
+				completion.AssignmentRevision = completionReview.declaration.AssignmentRevision
+			}
+			f.Completion = completion
 		}
 		wasAwaiting := f.AwaitingUser
 		if !transfer {
