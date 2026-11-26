@@ -297,7 +297,9 @@ func TestDecodedFieldsAreAnAllowlist(t *testing.T) {
 	// provider/rateLimits/updated in bb.go, kept only when it fits a short
 	// plain vocabulary (decide.CleanLimitWindow), and used only in the words
 	// status and the panel say about the limit. No decision reads it.
-	displayOnly := map[string][]string{"title": {"bb.go", "children.go"}, "label": {"bb.go"}}
+	// Creation naming reads only explicit source display metadata in titles.go.
+	// Those fields are copied into the saved creation title, never decisions.
+	displayOnly := map[string][]string{"title": {"bb.go", "children.go", "titles.go"}, "titleFallback": {"titles.go"}, "label": {"bb.go"}}
 	allowed := strings.Fields(`
 		archivedAt attempt category code complete count createdAt cursor data decision deletedAt delivery
 		diagnostic error errorInfo hashRefs httpStatusCode id initiator interaction item itemId kind lastEventAt lastSeq
@@ -305,7 +307,7 @@ func TestDecodedFieldsAreAnAllowlist(t *testing.T) {
 		rateLimits resetsAt resetsAtMs retries retryOfRequestId retrySchema scannedAt seq status systemMessageKind
 		systemMessageSubject thread threadId turnSeq turnStartedMs type willRetry windows childOutcomeSeq blocked key lanes answeringRequest
 		evidence at class retryKnown activeBackgroundAgentCount turnStartSeq openTools toolsUncertain fallbackSeq turnRequests turnStarts
-		title label providerKey reachedReason window execution model`)
+		title titleFallback label providerKey reachedReason window execution model`)
 	want := map[string]bool{}
 	for _, tag := range allowed {
 		want[tag] = true
@@ -313,7 +315,7 @@ func TestDecodedFieldsAreAnAllowlist(t *testing.T) {
 	got := map[string]bool{}
 	sites := map[string][]string{} // display-only tag -> files that decode it
 	fset := token.NewFileSet()
-	for _, file := range []string{"cursor.go", "lanes.go", "retry_plugin.go", "children.go", "wake.go", "bb.go"} {
+	for _, file := range []string{"cursor.go", "lanes.go", "retry_plugin.go", "children.go", "wake.go", "bb.go", "titles.go"} {
 		f, err := parser.ParseFile(fset, file, nil, 0)
 		if err != nil {
 			t.Fatal(err)

@@ -39,11 +39,13 @@ type fakeThreads struct {
 	// it was renamed, retitled by BB, archived or is not visible yet.
 	unlisted bool
 	// extra, when set, is a second thread reported under every listed title.
-	extra   string
-	titles  map[string][]string
-	spawned []bb.SpawnRequest
-	places  []string
-	lists   int
+	extra     string
+	titles    map[string][]string
+	spawned   []bb.SpawnRequest
+	places    []string
+	nameCalls []string
+	taskTitle string
+	lists     int
 	// children are the direct children of each parent thread. Moves change
 	// them; childLists and moves count the listings and updates asked for.
 	children   map[string][]bb.ListedChild
@@ -56,6 +58,14 @@ type fakeThreads struct {
 	failMoves    map[string]bool
 	// onMove runs before each update, to change the world in between.
 	onMove func(child string)
+}
+
+func (f *fakeThreads) ContinuationTitle(_ context.Context, source, fallback string) string {
+	f.nameCalls = append(f.nameCalls, source)
+	if f.taskTitle != "" {
+		return "From “" + f.taskTitle + "” · " + fallback
+	}
+	return fallback
 }
 
 func (f *fakeThreads) ListChildren(_ context.Context, parent string) ([]bb.ListedChild, error) {
@@ -818,5 +828,41 @@ func TestMissingBBHoldsWithItsOwnMessage(t *testing.T) {
 	res = mustThreadTick(t, w, f, t0.Add(2*time.Hour))
 	if ctl, _ := control.Load(w.dir); res.Action != "await_user" || len(f.spawned) != 1 || !strings.Contains(ctl.Note, "could not start the bb CLI") {
 		t.Fatalf("%+v note=%s", res, ctl.Note)
+	}
+}
+
+// The persisted intent must use the useful title before creation; recovery
+// after a crash must never compute a different title from changed metadata.
+func TestUsefulContinuationTitleSurvivesUncertainCreation(t *testing.T) {
+	w, _, f := newThreadWorld(t)
+	f.taskTitle, f.crash = "Repair the example index", true
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected fixture crash")
+			}
+		}()
+		threadTick(t, w, f, t0, nil)
+	}()
+	st, err := state.Load(w.dir)
+	if err != nil || st.NewThreadIntent == nil {
+		t.Fatalf("intent missing: %v", err)
+	}
+	title := st.NewThreadIntent.Title
+	if !strings.HasPrefix(title, "From “Repair the example index” · keepgoing: example-loop (continued, ") || title != f.spawned[0].Title {
+		t.Fatalf("intent/spawn mismatch %q %+v", title, f.spawned)
+	}
+	f.crash, f.taskTitle = false, "Renamed source"
+	res := mustThreadTick(t, w, f, t0.Add(time.Minute))
+	if res.Handoff == nil || !res.Handoff.Reconciled || len(f.spawned) != 1 || len(f.nameCalls) != 1 {
+		t.Fatalf("recovery %+v naming %v", res, f.nameCalls)
+	}
+	st, _ = state.Load(w.dir)
+	if st.NewThreads["claude-other"].Title != title {
+		t.Fatal("recovery changed the saved title")
+	}
+	mustThreadTick(t, w, f, t0.Add(2*time.Minute))
+	if len(f.nameCalls) != 1 {
+		t.Fatal("ordinary check attempted naming")
 	}
 }

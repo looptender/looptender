@@ -1606,7 +1606,6 @@ The [BB plugin](../integrations/bb-plugin-keepgoing/README.md) does not resume a
 
 **Mixed versions.** Only a supervisor on this build sets `LOOPTENDER_SUPERVISED_LOOP`. A `daemon` or service started from an older build keeps running without it until it is restarted on this build, and the headless turns it starts meanwhile are not refused by the marker. The target-thread refusal does not depend on the supervisor: it applies from the first `resume` run with this build. Restart a running supervisor after upgrading. Turns it already started keep the environment they were started with.
 
-
 ### What a supervised session inherits
 
 Unreleased source; a security fix. A headless Claude Code, Codex, Cursor or ACP turn, and every command of the process adapter, runs with the supervisor's environment minus an exact list of names. The names describe the session the supervisor itself was started from:
@@ -1818,3 +1817,39 @@ recovery protocol needs separate complete authority/evidence review, proven old
 scheduler/writer retirement or compatible enforcement, and explicit preservation
 of unrelated holds. Releasing a future fence must not imply resume. No such
 recovery or installed upgrade acceptance is claimed here.
+
+## BB successor thread titles (unreleased)
+
+When an opted-in `bb.new_thread` handoff creates a coordinator, the BB adapter
+reads only that coordinator's explicitly continued source with `bb thread show
+<source> --json`. Existing blocked-lane replacement uses the same naming step
+for each eligible lane it is already about to replace. No naming pass discovers
+or creates additional conversations.
+
+A useful `thread.title` becomes `From “<source title>” · keepgoing: <loop>
+(continued, <token>)`; lane successors retain `lane` in the loop-based suffix.
+If the title is absent or generic continuation scaffolding, the adapter tries
+`thread.titleFallback`. Empty, malformed, mismatched or unavailable metadata
+keeps the loop-based title. Only these structured display fields are read for
+naming: no messages, transcript text, task files or title-generation service.
+A display title never decides whether to wake, hold, retry or hand off.
+
+The quoted name describes the source, including any model label someone put
+there. The successor's provider, model, effort and permissions still come from
+the configured route, not from its title. Source names are bounded to 120 Unicode
+characters and control characters are rejected. A later handoff carries the
+quoted task name forward without nesting the generated wrapper.
+
+The exact final title and random recovery token are saved in the existing
+creation intent before spawn. Uncertain creation continues to use that saved
+title, without recomputing it. A rename before creation is settled can still
+prevent recovery by title and require a person, as with the original title
+scheme. Naming errors do not retry creation or widen its bounds.
+
+Naming happens only at creation. Custom titles supplied directly to the adapter's
+spawn API remain unchanged. Later checks, retries, model activation, manual
+retarget and transfers of existing threads never rename them. A person can
+rename a settled successor in BB and looptender will not overwrite it. Existing
+threads titled `Continue from ...` are not swept or renamed by this change.
+This is source-only fixture evidence, not a change to an installed supervisor
+or released BB plugin; live BB creation acceptance remains unverified.
