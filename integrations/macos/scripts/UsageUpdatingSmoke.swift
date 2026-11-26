@@ -14,9 +14,10 @@ import Foundation
             root["accountQuotas"] = quotas
             return try JSONSerialization.data(withJSONObject: root)
         }
+        let fixtureNow = Contract.date("2030-03-04T12:00:00Z")!
         for state in ["off", "unavailable", "waiting", "paused", "enabled", "backoff"] {
             let list = try Contract.panelList(payload(["state": state, "text": "Fixture \(state)", "nextAttemptAt": "2030-03-04T14:00:00Z"]), exit: 0)
-            let model = MenuBuilder.build(.read(list, at: Date()), now: Date())
+            let model = MenuBuilder.build(.read(list, at: fixtureNow), now: fixtureNow)
             guard let row = (model.rows + model.rows.flatMap(\.submenu)).first(where: { $0.title == "Example updates" }),
                   row.submenu.contains(where: { $0.accessibilityLabel == "Fixture \(state)" }),
                   row.submenu.contains(where: { $0.accessibilityLabel.contains("Last successful fetch 2030-03-04T12:00:00Z") }),
@@ -37,7 +38,7 @@ import Foundation
             root["accountQuotas"] = ["state": "available", "complete": true, "omitted": 0,
                 "accounts": [["label": "Example retrieval", "provider": provider, "summary": retrieved]]]
             let list = try Contract.panelList(JSONSerialization.data(withJSONObject: root), exit: 0)
-            let model = MenuBuilder.build(.read(list, at: Date()), now: Date())
+            let model = MenuBuilder.build(.read(list, at: fixtureNow), now: fixtureNow)
             guard let row = (model.rows + model.rows.flatMap(\.submenu)).first(where: { $0.title == "Example retrieval" }),
                   row.submenu.contains(where: { $0.accessibilityLabel.contains("Last successful fetch 2030-03-04T12:00:00Z") }),
                   row.submenu.contains(where: { $0.accessibilityLabel.contains("provider freshness unknown") }),
