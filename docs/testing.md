@@ -848,6 +848,19 @@ and directory durability remain unimplemented; its explicit refusal fixture must
 run natively before claiming Windows behavior. README, operations and roadmap
 retain these limitations. No repair/release protocol or control UI changed.
 
+### Working-agent conformance staging
+
+The one-turn stand-in's active stage waits for its exact staging prompt receipt,
+not only a process-start marker. A detached ACP worker can be running while its
+agent is still initializing; sampling prompts after a fixed delay could count a
+late staging prompt as a second send. `TestAntigravityWorkingStageWaitsForPromptReceipt`
+holds delivery behind a fixture gate, proves staging stays pending, then verifies
+one staging receipt and refusal of a second send without another delivery. The
+shared send-while-working contract and its refusal assertions are unchanged.
+This is a fixture synchronization correction, with no provider or runner behavior
+change. Native fixture execution and platform compilation are separate evidence;
+neither establishes installed or live-provider acceptance.
+
 ## Explicit coordinator compaction helper (unreleased source)
 
 `python3 -B -m unittest discover -s tools/context-compaction -v` exercises the

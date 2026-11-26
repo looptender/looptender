@@ -82,10 +82,43 @@ func (r *rig) Stage(ctx context.Context, a adapter.Adapter, s Situation) error {
 	}
 	os.Remove(filepath.Join(r.dir, "quit"))
 	before, _ := r.running()
+	var stagedBefore int
+	if s == Active {
+		sent, err := r.Sent()
+		if err != nil {
+			return err
+		}
+		stagedBefore = len(sent)
+	}
 	if err := a.Send(ctx, "stand-in staging turn", adapter.ModeAuto); err != nil {
 		return err
 	}
-	if s == Active || s == Hanging {
+	if s == Active {
+		// Detached Send confirms the worker, not delivery to its agent. In
+		// particular ACP may still be initializing after the begin marker.
+		// Do not let a delayed staging prompt look like a second send.
+		for deadline := time.Now().Add(20 * time.Second); ; {
+			sent, err := r.Sent()
+			if err != nil {
+				return err
+			}
+			if len(sent) > stagedBefore {
+				if len(sent) != stagedBefore+1 || sent[stagedBefore].Prompt != "stand-in staging turn" {
+					return errors.New("unexpected prompt while staging working agent")
+				}
+				return nil
+			}
+			if time.Now().After(deadline) {
+				return errors.New("working stand-in did not receive staging prompt")
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
+	if s == Hanging {
 		return nil
 	}
 	if s == Crashed {
