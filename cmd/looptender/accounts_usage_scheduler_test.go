@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +16,89 @@ import (
 
 	"github.com/looptender/looptender/internal/accounts"
 )
+
+func TestAutomaticUsageHTTPReportsRemainResponsiveWhileProviderStalled(t *testing.T) {
+	dir, entry := accountFixture(t, "codex")
+	savedAt := dockNow.Add(-5 * time.Minute)
+	if _, err := accountQuotaRefresh(context.Background(), dir, entry.ID, nil,
+		func(context.Context, string, string, []string, string) ([]byte, error) {
+			return []byte(quotaResponse), nil
+		}, os.Environ(), func() time.Time { return savedAt }); err != nil {
+		t.Fatal(err)
+	}
+	enableUsageFixture(t, dir, entry, dockNow)
+	base, _, reader := dockServe(t)
+	reader.accountsDir = dir
+	entered, finished := make(chan struct{}), make(chan struct{})
+	stop := startAccountUsageSchedulerWith(context.Background(), dir, false,
+		func() time.Time { return dockNow },
+		func(ctx context.Context, _, _ string, _ []string, _ string) ([]byte, error) {
+			close(entered)
+			defer close(finished)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}, make(chan time.Time))
+	defer stop()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduler did not enter provider IO")
+	}
+	// Exercise the real report mutex and HTTP handlers concurrently, below the
+	// browser's four-second abort budget. The provider stays blocked throughout.
+	client := &http.Client{Timeout: time.Second}
+	type result struct {
+		path string
+		body []byte
+		err  error
+	}
+	results := make(chan result, 2)
+	for _, path := range []string{dockAPIPath, dockUsagePath} {
+		go func() {
+			r := result{path: path}
+			resp, err := client.Get(base + path)
+			if err == nil {
+				r.body, err = io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					err = fmt.Errorf("HTTP %d", resp.StatusCode)
+				}
+			}
+			r.err = err
+			results <- r
+		}()
+	}
+	var report dockReport
+	for range 2 {
+		r := <-results
+		if r.err != nil || !json.Valid(r.body) {
+			t.Fatalf("%s blocked or failed during provider IO: %v", r.path, r.err)
+		}
+		if r.path == dockAPIPath {
+			if err := json.Unmarshal(r.body, &report); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	resp, err := client.Get(base + dockAccountsPath + "?reference=" + report.AccountsReference)
+	if err != nil {
+		t.Fatal("saved-account HTTP read blocked", err)
+	}
+	defer resp.Body.Close()
+	var snapshot dockAccountSnapshot
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&snapshot) != nil || len(snapshot.Accounts.Cards) != 1 {
+		t.Fatal("saved-account HTTP reply unavailable")
+	}
+	card := snapshot.Accounts.Cards[0]
+	if card.UsageUpdating == nil || card.UsageUpdating.State != "enabled" || card.Quota == nil || card.Quota.ObservedAt == nil || !card.Quota.ObservedAt.Equal(savedAt) || card.Quota.RetrievedAt != nil {
+		t.Fatal("pending acquisition hid saved evidence or rewrote successful timestamps", card)
+	}
+	select {
+	case <-finished:
+		t.Fatal("provider finished before HTTP checks; regression did not exercise stalled IO")
+	default:
+	}
+}
 
 func TestAutomaticUsageSchedulerProcessOwnership(t *testing.T) {
 	if dir := os.Getenv("LOOPTENDER_USAGE_SCHEDULER_FIXTURE"); dir != "" {
