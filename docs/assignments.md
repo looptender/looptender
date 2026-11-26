@@ -158,7 +158,8 @@ Separately opt in with `loop.assignment_completion: true`, requiring
 `assignment_lifecycle` and a BB primary. Default is false; existing loops keep
 their completion behavior and make no additional queries. Old strict readers
 reject this new key. Verify all associated readers before enabling it; it adds
-no record schema, migration, permission or automatic completion.
+no permission or automatic completion. Unreleased completion metadata now retains
+the successful review’s exact goal and assignment IDs/revisions in `control.json`.
 
 For opted-in loops, bare `complete` refuses. Inspect the current private goal and
 assignment record, evaluate the whole objective under existing authority, and
@@ -184,8 +185,10 @@ Use the exact current IDs/revisions, not those example values. The file is bound
 to 4 KiB and rejects unknown, duplicate, null or missing fields and symlink inputs.
 Its explicit true statement is required even for a reviewed zero-child objective;
 zero children and completed assignments are preconditions, never proof of global
-acceptance. No new attestation ledger is saved: success uses existing completion
-control/history/report semantics, while the goal stays descriptive metadata.
+acceptance. Success saves the declaration’s goal/assignment IDs and revisions with the
+existing completion control/history/report semantics. This points to descriptive
+evidence in the reviewed revisions; it is not an independent attestation ledger
+or verifier result. The goal stays descriptive metadata.
 
 The current strict assignment record must match the goal, config/runtime,
 coordinator, owner generation and durable target. The current diagnostic target

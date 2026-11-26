@@ -2,7 +2,7 @@
 
 In v0.1.4, `keepgoing goal create|revise|show` records what a loop is working toward. The record has a generated stable ID, an owning loop name and an ordered revision history. Its only state is `recorded`: this means a specification was saved, not that work is running, accepted or complete. Loop controls remain the authority for supervision.
 
-This is a metadata feature. It does not generate a plan, modify the saved prompt, start a turn, execute a next action, validate a reference or run a reviewer. An explicit `loop.prompt_goal: true` setting can include the latest specification in automatic messages; see below. Completion declarations, verification results and review stages are not yet bound to goal revisions. `complete` and `resume` keep their existing behavior and do not change the goal record. Do not treat an old completion hold as acceptance of a newly revised goal.
+This is a metadata feature. It does not generate a plan, modify the saved prompt, start a turn, execute a next action, validate a reference or run a reviewer. An explicit `loop.prompt_goal: true` setting can include the latest specification in automatic messages; see below. Unreleased source binds each new completion declaration to the active goal ID and revision, including its descriptive evidence references. `complete` and `resume` do not change the goal record. External verification/review stages and acceptance policies remain unfinished; do not treat an old completion hold as acceptance of a newly revised goal.
 
 ## Create and inspect
 
@@ -51,7 +51,43 @@ The result is revision 2 of the same goal. Every accepted edit appends a revisio
 
 Creating and revising acquire the tick lock, verify the loaded config/fallback sources, then acquire the control lock to check BB ownership and write `goal.json`. Another BB owner must first use the existing explicit takeover flow. Identity-free terminal/scheduler calls can use the current claim, as other controls do. This is cooperative local coordination, not authentication. The goal's owning loop name must still match the config; a rename/migration command is not implemented.
 
-All holds, owner claims, counters and active targets are preserved. A new goal never enables a loop or clears an existing completion/awaiting-user hold. Metadata survives process restart; ordinary target changes do not edit it. Full transfer, revision-bound acceptance and stale-result invalidation remain separate roadmap work. Older binaries do not understand goal metadata, and deleting/copying runtime files is outside these guarantees.
+All holds, owner claims, counters and active targets are preserved. A new goal never enables a loop or clears an existing completion/awaiting-user hold. Metadata survives process restart; ordinary target changes do not edit it. Authorized retarget and same-loop transfer retain the goal ID, every revision and all references. Revision-bound acceptance policies and external-result invalidation remain separate roadmap work. Older binaries do not understand goal metadata, and deleting/copying runtime files is outside these guarantees.
+
+
+## Completion declarations (unreleased)
+
+A new `keepgoing complete` declaration saves `control.completion` alongside the
+completion hold: `goal_id`, `goal_revision` and `declared_at`. This identifies the
+exact saved specification, including its `evidenceRefs`, at declaration time.
+The control lock serializes this read/write with goal edits. With assignment
+completion enabled, successful `--review-file` also saves `assignments` and
+`assignment_revision`, pointing to the reviewed record with its declared handoff
+evidence. The review file itself is not copied or fetched again. These remain
+agent/operator declarations, separate from independent verification or any
+policy-required human acceptance. External stage-result storage is not implemented.
+
+Ordinary JSON status includes that record and `completionGoalComparison`:
+`same_revision`, `different_revision`, `different_goal`, `unavailable` or `unbound`.
+Text status names the declared goal/revision and the comparison. Goal titles,
+references and review-file paths are excluded from this metadata. The existing
+control note remains mutable control text, not an immutable evidence ledger.
+
+Revising a goal preserves the declaration and every hold. Repeating `complete`
+while already completed does not rebind the original declaration or backfill a
+legacy hold. An explicit `resume` retains this latest declaration as history;
+a later new completion replaces it with the then-current goal/review revision.
+The `completed` flag remains the authority for the hold. Missing goal metadata
+allows ordinary completion with an unbound record, preserving existing loops;
+invalid or wrong-loop goal metadata refuses a new completion without changing
+controls. Existing completed records without binding remain readable and unbound.
+Stop and pause remain available for repair. Older binaries can ignore or discard
+this optional metadata; mixed-version writers and manual runtime-file changes
+are outside its preservation guarantees.
+
+Offline fixtures cover exact revision binding, reload, revised goals, retained
+holds, repeated and legacy declarations, review binding, corruption, locking,
+retarget round trips and transfer/recovery with unchanged goal bytes. No live
+provider adoption, installed upgrade or external acceptance has been verified.
 
 ## Storage and limits
 
@@ -76,9 +112,9 @@ Keep `wake-policy.md` focused on stable operating instructions. For example: “
 
 The renderer reloads the latest saved revision when composing each message. Cooperative goal edits use the same tick lock as production sends. A custom handoff file replaces the ordinary scaffold but still receives the opted-in current goal context. This transports descriptive metadata, not authority to widen scope, proof of acceptance, a planner or automatic goal revision. No goal text is added to looptender's reports or incident history, but the receiving agent/provider may retain messages. Headless runner request artifacts may also contain the sent prompt under their existing private storage behavior.
 
-Missing, corrupt or wrong-loop goal records refuse the send before reserving its send allowance; no stale cached goal is substituted. Normal status observations or probes may already have occurred. A dry-run previews decisions without validating/composing the goal message. Stop, pause, disabled, awaiting-user and completed controls keep their existing precedence. This does not update already-running turns or queued messages, fence external writers that ignore locks, detect semantic drift in a roadmap, or bind completion to the goal revision.
+Missing, corrupt or wrong-loop goal records refuse the send before reserving its send allowance; no stale cached goal is substituted. Normal status observations or probes may already have occurred. A dry-run previews decisions without validating/composing the goal message. Stop, pause, disabled, awaiting-user and completed controls keep their existing precedence. This does not update already-running turns or queued messages, fence external writers that ignore locks, detect semantic drift in a roadmap, or establish acceptance of that goal revision.
 
-Offline fixtures cover revised goals across ticks, opt-in privacy, legacy behavior, unavailable records, handoff variants, holds, and logs/reports without private goal text. Live provider adoption remains unverified. In v0.1.5, `init --with-goal` and the wizard choice can create revision 1 and enable this transport during disabled setup; see [goal setup](setup.md#optional-goal-during-setup). The rebuilt BB setup UI exposes this choice and displays only recorded identity/revision in ordinary diagnostics. Live setup verification and revision-bound results remain unfinished.
+Offline fixtures cover revised goals across ticks, opt-in privacy, legacy behavior, unavailable records, handoff variants, holds, and logs/reports without private goal text. Live provider adoption remains unverified. In v0.1.5, `init --with-goal` and the wizard choice can create revision 1 and enable this transport during disabled setup; see [goal setup](setup.md#optional-goal-during-setup). The rebuilt BB setup UI exposes this choice and displays only recorded identity/revision in ordinary diagnostics. Live setup verification and external revision-bound results remain unfinished.
 
 
 ### Sending an unchanged goal once
@@ -132,7 +168,6 @@ The bounded latest-call record lives in `state.json`, saved after the tick's act
 Offline fixtures cover goal changes across fresh ticks, failed and unsupported sends, queued revision history, handoff/switch-back composition, transfer reset, legacy/malformed state, status comparison and privacy. This does not add source-file revision tracking, durable pre-send intents, a full attempt ledger, confirmed delivery, incident-timeline or registered-client projection, or live provider verification. These remain separate F2 acceptance work.
 
 Unreleased source adds a separate opt-in [whole-objective completion review](assignments.md#whole-objective-completion-review-unreleased)
-for BB loops using assignment lifecycle. Only that opt-in binds explicit completion
-to the current goal and assignment revisions plus a whole-objective declaration.
+for BB loops using assignment lifecycle. That opt-in additionally checks the current assignment revision and requires a whole-objective declaration.
 The goal record remains descriptive and its references are not fetched or treated
-as independently verified acceptance. Other loops retain prior completion behavior.
+as independently verified acceptance. Other loops retain ordinary declaration behavior and make no additional BB queries.
