@@ -22,7 +22,7 @@ import (
 // `bb thread spawn` with the coordinator as parent, in the child's project
 // and environment, with an explicit model and permission mode, a title a
 // person can recognise, and a fixed first prompt ending "Continue from
-// @thread:<old child>." looptender reads nothing of the child's content, and
+// @thread:<old child>." looptender reads only the child's structured display and lifecycle metadata, and
 // the old child is not messaged, stopped, archived or re-parented.
 //
 // After a handoff to a created thread it runs by default, once, for the
@@ -98,7 +98,7 @@ type ReplaceResult struct {
 	// it as complete: nothing more may be created for it.
 	Complete bool `json:"complete,omitempty"`
 	// Title names an unsettled creation so a person can look for it. It is
-	// the title looptender generated, with no child content.
+	// the generated title, optionally carrying source display metadata.
 	Title string `json:"title,omitempty"`
 	// Listed is false when the coordinator's children could not be listed.
 	Listed bool `json:"listed"`
@@ -314,13 +314,20 @@ func ReplaceChildren(ctx context.Context, maker ChildSuccessorMaker, rec **state
 	env.Save()
 	complete := res.Unknown == 0
 	for _, c := range eligible[:res.WouldCreate] {
-		if env.Left() < successorSpawnTime+successorFindTime || env.Held() {
+		if env.Left() < newThreadPlaceTime+successorSpawnTime+successorFindTime || env.Held() {
 			complete = false
 			break
 		}
 		title, err := successorTitle(p.Loop)
 		if err != nil {
 			return res, errors.New("could not generate a title")
+		}
+		nameCtx, nameCancel := context.WithTimeout(ctx, newThreadPlaceTime)
+		title = continuationTitle(nameCtx, maker, c.id, title)
+		nameCancel()
+		if env.Held() || env.Left() < successorSpawnTime+successorFindTime {
+			complete = false
+			break
 		}
 		r.Intent = &state.ChildSuccessorIntent{Child: c.id, Title: title, Project: c.place.Project, Environment: c.place.Environment, RequestedAt: now}
 		r.Created++

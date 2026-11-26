@@ -51,9 +51,37 @@ Supervision runs on the same machine as the agents from a single binary (macOS, 
 
 **When the right move is not clear, looptender holds and asks you.**
 
+The panel's [Usage page](docs/dock.md#what-the-page-shows) and
+[status diagnostics](docs/operations.md#savings-figures) distinguish withheld-check
+counts from current context occupancy. These records do not measure subscription
+savings; cache reuse and provider accounting remain unknown. An unreleased
+[explicit compact workflow](integrations/bb-plugin-keepgoing/skills/keepgoing/references/compaction-workflow.md)
+supplies opt-in grants, durable attempts and continuity reconciliation; it is
+never invoked by the supervisor and adds no automatic context policy.
+
+**Usage conservation — Planned, high priority.** Keep useful work moving while
+reducing avoidable subscription usage. The [roadmap](docs/roadmap.md#high-priority-conserve-subscription-usage)
+covers measured usage by loop, lane and provider, cache-aware diagnostics,
+redundant wakes/retries and duplicate work, lane overhead, safe context lifecycle,
+and explicit user-selected model/effort policies. Each improvement must preserve
+useful throughput and quality. Integrated continuous optimization is planned;
+current diagnostics and the unreleased manual helper do not establish subscription
+savings or authorize silent model downgrades.
+
+**Usage evidence — In source, not yet released.** The Panel can read a bounded
+local [measurement export](docs/design/usage-measurement.md) to show provider token
+trends, observed duplicate actions suppressed, and controlled-pair estimates per
+accepted work unit. Missing data stays unavailable. Opt-in `loop.usage_collection: true` adds bounded
+BB Codex metadata collection after existing primary-thread checks, with durable
+cursors and Panel freshness/coverage. It requires the matching BB plugin source;
+no new service or model request is added. Installed acceptance and
+subscription-quota savings remain unverified; estimates disclose their baseline,
+coverage and author-attested quality/cache conditions. The file reader currently
+supports macOS/Linux; other platforms show evidence unavailable.
+
 ## When a usage limit hits: takeover
 
-- **Handoff into a new conversation** (*Released in v0.2.0*): For a BB loop, an opt-in fallback (`bb.new_thread`) can start a new conversation on another configured provider when a usage limit hits and move supervision to that conversation. Creation is opt-in per loop, capped per loop and spaced at least an hour apart, and covered by offline fixtures only.
+- **Handoff into a new conversation** (*Released in v0.2.0*): For a BB loop, an opt-in fallback (`bb.new_thread`) can start a new conversation on another configured provider when a usage limit hits and move supervision to that conversation. Creation is opt-in per loop, capped per loop and spaced at least an hour apart, and covered by offline fixtures only. Unreleased source also carries a useful source thread title into the successor at creation; see [naming scope and limits](docs/operations.md#bb-successor-thread-titles-unreleased).
 - **Ownership, child lanes and setup default** (*Released in v0.3.0*): The new conversation also takes over loop ownership, takes the old conversation's direct child lanes, and starts successor lanes for lanes blocked by the limit. The setup panel offers opt-in takeover when BB reports another usable provider, and quota `switch_at` thresholds can trigger fallback checks before exhaustion.
 
 Takeover moves supervision to a new conversation; it does not mean work is never lost or duplicated. The previous conversation is left untouched and may still be retried by BB after its limit resets.
@@ -62,7 +90,7 @@ Takeover moves supervision to a new conversation; it does not mean work is never
 
 - **The panel** (*Released in v0.3.0*): One local page for every registered loop, served on `127.0.0.1` only with a per-run token and session cookie. Reviewed **Pause**, **Stop**, and **Resume** are enabled by default (`--read-only` disables all controls; `--allow-changes` adds routes, accounts, quotas, send-allowance editing, and binary adoption). Tested with offline fixtures and `jsdom`. [Panel](docs/dock.md).
 - **Plugin card** (*Plugin v0.4.0 released in v0.3.0*): BB plugin v0.4.0 ships from the v0.3.0 tag as a separate installation, adding the compact **Add to Looptender** modal, **Continue existing**, reboot-persistent service startup, single-line composer chips, weekly-limit status, build freshness lines, and sessionpipe visibility.
-- **macOS menu** (*In source, not yet released as a separate app archive*): Developer build only; not included in CLI release archives. Grouped loop list, **Archive**, sessionpipe & quota summaries, panel opener, notifications, and build self-update checks.
+- **macOS menu** (*In source, not yet released as a separate app archive*): Developer build only; not included in CLI release archives. Grouped loop list, **Archive**, sessionpipe & quota summaries, panel opener, notifications, and build self-update checks. Unreleased automatic BB display names follow the latest saved title for the current target; [custom names remain pinned](docs/operations.md#one-name-per-line-of-work).
 - **Accounts, Routes and Account Router** (*Released in v0.3.0*): Lists explicitly named accounts, local file login hints (plus bounded `--allow-changes` status checks and selection recovery), subscription quotas, guided route configuration, and a read-only **Account Router** overview card for `looptender router`. [Accounts](docs/accounts.md).
 
 ## Keeps running while you update

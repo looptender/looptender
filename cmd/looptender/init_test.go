@@ -403,7 +403,7 @@ func TestInitSucceedsRecordsTheSuccession(t *testing.T) {
 		if err != nil || s == nil || s.From.Loop != "example-loop" {
 			t.Fatalf("%v: record %+v %v", asJSON, s, err)
 		}
-		if n := namingOf(next.Loop, ""); n.DisplayName != "example-loop" || n.NameSource != "inherited" {
+		if n := namingOf(next.Loop, ""); n.DisplayName != "example-loop" || n.NameSource != "inherited_title" {
 			t.Fatalf("%v: name %+v", asJSON, n)
 		}
 	}

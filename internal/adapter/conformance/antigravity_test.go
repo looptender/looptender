@@ -78,6 +78,18 @@ func standInAntigravity(dir string, situation Situation, args []string, generati
 			if len(p.Prompt) > 0 {
 				text = p.Prompt[0].Text
 			}
+			if situation == Active {
+				// Let the fixture hold ACP initialization after process start.
+				// A running process is not yet proof of prompt delivery.
+				for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+					if _, err := os.Stat(filepath.Join(dir, "prompt-gate")); os.IsNotExist(err) {
+						break
+					}
+					if err := os.WriteFile(filepath.Join(dir, "prompt-blocked"), nil, 0600); err != nil || time.Now().After(deadline) {
+						return 93
+					}
+				}
+			}
 			record(dir, Sent{Prompt: text, Argv: args, Session: resumedSession})
 			switch situation {
 			case Idle:

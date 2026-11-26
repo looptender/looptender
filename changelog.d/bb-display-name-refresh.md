@@ -1,0 +1,1 @@
+- Automatic BB loop display names now follow the latest saved title for the current target, including model suffixes, across status, panel and menu snapshots. Custom names and ambiguous legacy inherited names stay pinned; new automatic successor inheritance follows its own observed title. Held/offline views use the last verified cache without querying BB.

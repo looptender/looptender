@@ -1374,6 +1374,19 @@
       h.appendChild(link("#/loop/" + x.key, x.name));
       p.appendChild(h);
       p.appendChild(sentences(x.did));
+      var m = x.measurement || {};
+      p.appendChild(el("h3", "usage-sub", "Measured usage trend"));
+      p.appendChild(el("p", "detail", list(m.details)[0] || "Usage evidence unavailable from this producer."));
+      if (list(m.details).length > 1) {
+        var evidence = howBox("usage-evidence-" + x.key, "Method, coverage and limitations", false);
+        evidence.appendChild(sentences(m.details.slice(1)));
+        p.appendChild(evidence);
+      }
+      p.appendChild(sentences(m.trend));
+      p.appendChild(el("h3", "usage-sub", "Observed avoided actions"));
+      p.appendChild(el("p", "detail", m.avoided || "Unavailable; no identity-based evidence."));
+      p.appendChild(el("h3", "usage-sub", "Estimated savings against a baseline"));
+      p.appendChild(sentences(list(m.estimate).length ? m.estimate : ["Unavailable; no accepted comparable baseline. Subscription quota savings are unknown."]));
       p.appendChild(el("h3", "usage-sub", "Context window"));
       p.appendChild(sentences(x.window));
       if (list(x.days).length) p.appendChild(daysTable(x));

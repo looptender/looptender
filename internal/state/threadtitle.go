@@ -42,25 +42,18 @@ type ThreadTitle struct {
 // NoteThreadTitle records the title read for thread at now, unless the file
 // already holds the same title for it. An empty title or an unexpected thread
 // ID records nothing.
-// labels are the loop's own route labels (providers, models, groups,
-// accounts), which a display name made from the title leaves out.
+// labels is retained for caller compatibility. Current title-derived names
+// preserve the title's provider/model suffixes as observed display metadata.
 func NoteThreadTitle(dir, thread, title string, labels []string, now time.Time) error {
 	title = CleanLaneTitle(title)
 	if title == "" || !threadIDPattern.MatchString(thread) {
 		return nil
 	}
-	// The first title read becomes the display name when none is recorded,
-	// without the words of a provider, model or generation; a later title
-	// never replaces it. A title that is nothing but such a qualifier is kept
-	// as it is.
+	// Initialize automatic provenance once. Later views derive their name
+	// from the matching title cache, without rewriting display-name.json.
+	// A person setting a custom name cannot race a recurring automatic write.
 	if dn, err := LoadDisplayName(dir); err == nil && dn == nil {
-		if name, trimmed := DisplayNameFromTitle(title, labels); name != "" {
-			source := DisplayNameThreadTitle
-			if trimmed {
-				source = DisplayNameTitleTrimmed
-			}
-			_ = SaveDisplayName(dir, name, source, now)
-		}
+		_ = SaveDisplayName(dir, title, DisplayNameThreadTitle, now)
 	}
 	if old, err := LoadThreadTitle(dir); err == nil && old != nil && old.Thread == thread && old.Title == title {
 		return nil
@@ -96,10 +89,10 @@ func LoadThreadTitle(dir string) (*ThreadTitle, error) {
 // DisplayNameName is the private file holding the loop's display name: the
 // one name every surface shows, kept by the line of work rather than by a
 // thread or the loop's slug. A person sets it (display-name); when none is
-// set, the first check that reads the loop's BB thread title records that
-// title as it, once, so the name stays the same when the title later
-// changes. A successor loop takes its predecessor's. Like thread-title.json
-// it is a file of its own, which builds from before it neither read nor
+// set, the first title records automatic provenance. Views use the latest
+// matching thread-title.json for automatic names; explicit names and legacy
+// inherited names remain pinned. Successors record automatic inheritance.
+// Like thread-title.json it is a file of its own, which earlier builds neither read nor
 // rewrite, and no decision reads it.
 const DisplayNameName = "display-name.json"
 
@@ -109,12 +102,20 @@ const MaxDisplayName = 80
 // Display name sources.
 const (
 	DisplayNameSet         = "set"          // a person set it
-	DisplayNameThreadTitle = "thread_title" // the BB thread's title at the first check that read it, as it was
+	DisplayNameThreadTitle = "thread_title" // automatic BB title provenance
 	// DisplayNameTitleTrimmed: that title without its provider, model,
 	// effort or generation words (DisplayNameFromTitle).
 	DisplayNameTitleTrimmed = "thread_title_trimmed"
 	DisplayNameInherited    = "inherited" // taken from the loop this one succeeds
+	// InheritedTitle is explicitly auto-derived inheritance; older inherited
+	// records may carry human names, so their provenance is not guessed.
+	DisplayNameInheritedTitle = "inherited_title"
 )
+
+// AutoDisplayNameSource reports provenance that may follow a BB title.
+func AutoDisplayNameSource(source string) bool {
+	return source == DisplayNameThreadTitle || source == DisplayNameTitleTrimmed || source == DisplayNameInheritedTitle
+}
 
 type DisplayName struct {
 	Version int       `json:"version"`
@@ -136,7 +137,7 @@ func CleanDisplayName(s string) string {
 // SaveDisplayName replaces the display name.
 func SaveDisplayName(dir, name, source string, now time.Time) error {
 	name = CleanDisplayName(name)
-	if name == "" || (source != DisplayNameSet && source != DisplayNameThreadTitle && source != DisplayNameTitleTrimmed && source != DisplayNameInherited) {
+	if name == "" || (source != DisplayNameSet && source != DisplayNameInherited && !AutoDisplayNameSource(source)) {
 		return ErrThreadTitle
 	}
 	b, err := json.Marshal(DisplayName{Version: 1, Name: name, Source: source, At: now.UTC()})

@@ -833,6 +833,7 @@ func printBBCandidate(w io.Writer, p *fallbackAddPlan) {
 	if d.relation == "new_thread" {
 		fmt.Fprintf(tw, "  Permissions:\t%s (set on the new thread; never a project default)\n", c.BB.NewThreadPermission())
 		fmt.Fprintf(tw, "  At handoff:\tcreates a BB thread titled \"keepgoing: %s (continued, ...)\"\n", p.cfg.Loop.Name)
+		fmt.Fprintf(tw, "  \tprefixed by the continued thread’s useful title when available,\n")
 		fmt.Fprintf(tw, "  \t(bb thread spawn) with the handoff message as its first prompt,\n")
 		fmt.Fprintf(tw, "  \tand supervises it. Nothing is created now.\n")
 	} else if what := bbChanges(c); what != "" {

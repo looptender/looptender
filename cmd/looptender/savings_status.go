@@ -145,11 +145,10 @@ type savingsReset struct {
 	After  *state.ContextReading `json:"after,omitempty"`
 }
 
-// savingsEstimate is tokens not spent because wakes were withheld, as a
-// range: withheld wakes times the lowest and the highest context reading
-// recorded in the period. It is absent (unavailable: no_readings) when the
-// period has no reading, never zero for want of one. Estimated says BB
-// marked at least one of those readings as its own estimate.
+// savingsEstimate retains the version-1 shape, but token savings are unavailable.
+// Context occupancy and withheld-check counts cannot establish consumption or
+// allowance savings. LowTokens and HighTokens are deprecated and never emitted.
+// LowestReading and HighestReading remain context diagnostics for the Usage page.
 type savingsEstimate struct {
 	Label          string `json:"label"` // always "estimate"
 	Availability   string `json:"availability"`
@@ -516,10 +515,9 @@ func savingsReading(r *state.ContextReading) string {
 	return groupDigits(r.UsedTokens) + " tokens"
 }
 
-// savingsEstimateOf multiplies the withheld wakes by the lowest and highest
-// reading of the period: the day summaries of its UTC days. It never
-// borrows a reading from outside the period.
-func savingsEstimateOf(w savingsCounts, partial bool, rec *state.ContextRecord, from, now time.Time) savingsEstimate {
+// savingsEstimateOf keeps the period's context range separate from consumption.
+// It never multiplies occupancy by checks or borrows readings from another period.
+func savingsEstimateOf(w savingsCounts, _ bool, rec *state.ContextRecord, from, now time.Time) savingsEstimate {
 	out := savingsEstimate{Label: "estimate", Availability: "unavailable", Baseline: savingsBaseline}
 	if w.Total == nil {
 		out.Reason, out.Text = "record_unreadable", "estimate unavailable; incidents.json could not be read"
@@ -549,15 +547,14 @@ func savingsEstimateOf(w savingsCounts, partial bool, rec *state.ContextRecord, 
 		return out
 	}
 	n := *w.Total
-	lo, hi := int64(n)*low, int64(n)*high
-	out.Availability, out.WithheldWakes, out.LowestReading, out.HighestReading, out.LowTokens, out.HighTokens = "recorded", &n, &low, &high, &lo, &hi
-	out.Text = fmt.Sprintf("estimate: %s to %s tokens not spent on %s%s, %s (withheld wakes times the lowest and highest context window reading of the period, %s; not tokens billed)",
-		groupDigits(lo), groupDigits(hi), savingsAtLeast(savingsHistory{Partial: partial}), dockPlural(n, "withheld wake", "withheld wakes"), savingsBaseline, contextSource(out.Estimated))
+	out.WithheldWakes, out.LowestReading, out.HighestReading = &n, &low, &high
+	out.Reason = "consumption_not_measured"
+	out.Text = "token savings unavailable; context size and withheld checks do not measure token consumption or subscription allowance; cache reuse and provider accounting are unknown"
 	return out
 }
 
-// savingsLines words the figures for status, one per line. The estimate is
-// on its own line, labelled, with its baseline.
+// savingsLines words independent counts and context figures, one per line.
+// Consumption and subscription savings remain explicitly unavailable.
 func savingsLines(s savingsStatus) []string {
 	period := fmt.Sprintf("last %d UTC days", s.Period.Days)
 	lines := []string{

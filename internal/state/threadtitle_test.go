@@ -43,3 +43,37 @@ func TestThreadTitleIsCleanedAndWrittenOnlyWhenItChanges(t *testing.T) {
 		t.Fatalf("uncleaned title accepted: %v", err)
 	}
 }
+
+func TestObservedRenameDoesNotRewriteDisplayNameProvenance(t *testing.T) {
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	for _, source := range []string{DisplayNameThreadTitle, DisplayNameTitleTrimmed, DisplayNameInheritedTitle, DisplayNameSet, DisplayNameInherited} {
+		t.Run(source, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := SaveDisplayName(dir, "Old task (Claude)", source, now); err != nil {
+				t.Fatal(err)
+			}
+			if err := NoteThreadTitle(dir, "thr_example1", "New task (Codex)", []string{"Codex"}, now.Add(time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			dn, err := LoadDisplayName(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dn.Name != "Old task (Claude)" || dn.Source != source {
+				t.Fatalf("display provenance changed %+v", dn)
+			}
+			title, _ := LoadThreadTitle(dir)
+			if title == nil || title.Title != "New task (Codex)" {
+				t.Fatalf("cache %+v", title)
+			}
+
+			if err := NoteThreadTitle(dir, "thr_example1", "New task (Codex)", nil, now.Add(2*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			again, _ := LoadDisplayName(dir)
+			if !again.At.Equal(dn.At) {
+				t.Fatal("unchanged name was rewritten")
+			}
+		})
+	}
+}
