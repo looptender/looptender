@@ -1,4 +1,4 @@
-# Context efficiency: safe boundaries and an explicit lifecycle contract
+# Usage conservation: evidence, useful work and safe context lifecycle
 
 Status: proposed automatic lifecycle contract for review. An explicit
 [source-only coordinator helper](../../integrations/bb-plugin-keepgoing/skills/keepgoing/references/compaction-workflow.md)
@@ -7,6 +7,45 @@ implements the bounded manual slice; nothing invokes it automatically. The
 keeps implementation, fixture evidence and live acceptance separate. This design
 does not change the current engineering prohibition on automatic context
 lifecycle or the fallback-only conversation creation rule.
+
+## Planned continuous optimization capability
+
+Keep useful work moving while reducing avoidable subscription usage. This is a
+product objective, not a claim of achieved subscription savings. Context lifecycle
+is one intervention within a broader measurement and improvement process.
+
+For each declared measurement period, aggregate structured usage by loop, lane
+and provider with explicit coverage and counter semantics. Separate total input,
+cached input, uncached input, output and reasoning where exposed. Derive uncached
+input only when total and cached counters cover the same provider session and
+interval; missing fields remain unknown. Never add reasoning or cached components
+to totals that already contain them, or convert raw counts into subscription charge.
+
+Rank avoidable work using structured evidence: duplicate wake/retry identities,
+repeated status requests, task/revision ownership collisions, and lane startup,
+handoff and review overhead. A long context or an expensive lane alone does not
+prove waste. Do not inspect transcript text to classify work. When structured
+ownership or acceptance evidence cannot distinguish duplication from useful
+parallel work, leave that classification unresolved for the coordinator.
+
+Choose one bounded intervention, compare equivalent work before and after, and
+record useful completions, acceptance results, latency and rework alongside usage.
+Include the audit and intervention's own overhead. Reassess on new evidence at
+useful work boundaries; no extra recurring model/status loop is implied. Quality
+and throughput must remain acceptable to the person's declared criteria. Retain
+missing coverage, changed workload and cache effects as limits on attribution.
+
+Model and effort policies remain explicitly user-selected, scoped and revisioned.
+Neither a conservation target nor a raw-token ranking authorizes a downgrade.
+Any future policy comparison requires authorization and the same useful-work
+acceptance evidence. Successor startup and compaction need their own continuity
+and cache/overhead accounting below; neither promises cheaper subscription use.
+
+**Implemented in this source change:** corrected usage diagnostics and the explicit
+journaled compact helper with fictional tests. **Planned:** integrated per-loop/lane/
+provider measurement, duplicate-work attribution, continuous intervention evaluation
+and automatic lifecycle policy. Existing suppression and retry bounds remain
+available; this design does not claim new batching, live savings or automatic tuning.
 
 ## Evidence and the decision to act
 

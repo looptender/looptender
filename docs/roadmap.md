@@ -5,19 +5,35 @@ For current installation and command names, see the [README](../README.md#instal
 ## HIGH PRIORITY: conserve subscription usage
 
 Track this independently of account freshness or route availability. The
-[context efficiency policy and proposed contract](design/context-efficiency.md)
-separates recorded token consumption, cache reuse and context occupancy. Remain
-open until each acceptance case has evidence; a smaller context alone is not
-subscription savings.
+[usage conservation design and proposed lifecycle contract](design/context-efficiency.md)
+plans a continuous optimization capability: keep useful work moving while reducing
+avoidable subscription usage. It covers measurement, redundant supervision, lane
+overhead, context lifecycle and explicit user-selected model/effort policies.
+This is planned product value, not a measured savings claim. Remain open until
+each acceptance case has evidence; a smaller context alone is not subscription
+savings.
 
 - [ ] Rank recent consumers from bounded structured usage metadata across projects,
-  with exact measurement periods, provider/retention gaps, input, cached input,
-  output and reasoning separated; show current context occupancy separately.
+  by loop, lane and provider, with exact measurement periods and provider/retention
+  gaps. Separate total, cached and uncached input, output and reasoning where
+  exposed; derive uncached input only from compatible counters. Show current
+  context occupancy separately.
   Keep real conversation identities and runtime evidence in private artifacts.
 - [ ] Suppress or batch redundant wake/status/completion work deterministically,
   without losing useful progress, owner messages, pending interactions or lane
   obligations. Prove avoided sends with fictional before/after regressions and
   live exact-target evidence; withheld checks alone are not avoided model turns.
+- [ ] Attribute redundant retries, duplicate assignments and lane startup/review
+  overhead using structured attempt, task/revision and ownership evidence.
+  Compare equivalent workloads with useful completions, acceptance quality,
+  latency and rework recorded; fewer tokens with lost work is not improvement.
+- [ ] Make model/effort policy explicit and user-selected, with recorded scope and
+  revisions. Never silently downgrade to meet a usage target. Evaluate any
+  authorized policy against the same quality/throughput criteria.
+- [ ] Repeat bounded measurements over declared comparable periods, rank
+  actionable avoidable work and verify each intervention before expanding it.
+  Include measurement overhead; expose missing coverage and unknown subscription
+  charges rather than inventing savings or promising a percentage reduction.
 - [ ] Verify owner-authorized safe-boundary compact trials on three coordinators:
   fresh exact-target baseline, durable continuity, structured completion,
   post-context evidence and continuity reconciliation. An accepted request is
