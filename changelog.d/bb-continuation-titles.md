@@ -1,0 +1,1 @@
+- BB adapter: coordinator handoffs and existing blocked-lane successor creation carry useful source titles from structured BB metadata, with the original unique recovery token. Missing metadata retains the loop-based name. Names are set only at creation; custom spawn titles and later manual renames are preserved. No existing-thread naming sweep or new creation path is added.

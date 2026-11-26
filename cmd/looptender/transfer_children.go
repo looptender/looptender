@@ -28,6 +28,17 @@ import (
 // transferChildBudget bounds the time apply or recover spends moving children.
 const transferChildBudget = 3 * time.Minute
 
+// transferExec retains doctor's ordinary stdout bound for metadata and parent
+// updates. Only the exact read-only direct-child listing gets inventory's
+// larger bound: titles and other unused BB metadata can exceed 64 KiB even
+// when the number of children fits the existing move cap.
+func transferExec(ctx context.Context, cli string, args []string, overrides map[string]string, workdir string) ([]byte, error) {
+	if len(args) == 6 && args[0] == "thread" && args[1] == "list" && args[2] == "--parent-thread" && args[4] == "--include-hidden" && args[5] == "--json" {
+		return doctorExecLimit(inventoryListLimit)(ctx, cli, args, overrides, workdir)
+	}
+	return doctorExec(ctx, cli, args, overrides, workdir)
+}
+
 // transferChildren runs bb through the transfer's runner, with the loop's
 // bb CLI.
 func transferChildren(cli string, run doctorRun) bb.Children {

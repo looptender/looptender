@@ -385,11 +385,11 @@ Unreleased source. `status` adds what looptender's restraint amounted to for the
 - **Sends.** By kind: `wake`, `nudge`, `reprompt`, `turn_retry` (BB retried the failed turn), `handoff` and `switch_back`. A held-back nudge is not a send. A dry run and a check that failed count in none of these. With [`loop.prompt_context`](#supervision-context-in-sends), `contextBlocks` and `contextBytes` count the checks whose sends carried the supervision context and its length in bytes; a check that failed counts here too, since its sends were made.
 - **Context window now.** The latest context window reading, with BB's estimated flag and its age, as in `context window`.
 - **Session resets.** Each `session reset` in the period, who ran it (`thread` or `terminal`), and the nearest of the last 8 context readings before and after it, or "not recorded".
-- **Estimate.** Labelled as an estimate on its own line, with its baseline: tokens not spent because wakes were withheld, as a range, the withheld wakes times the lowest and the highest context window reading of the period's UTC days. With no reading in the period it is absent, not zero. It is worded "estimated by BB" when any of those readings was, and is never tokens billed.
+- **Token savings unavailable.** Context window occupancy and withheld-check counts do not measure consumption or subscription allowance. Prompt-cache reuse, output/thinking work and provider accounting are not established by these records. The former multiplication of checks by context size is no longer emitted, even for zero checks. The period's lowest/highest context readings remain independent diagnostics.
 
 When retention removed records from inside the period, or a summary of folded checks began before it, the counts are a floor: the text says "at least" and the history line names why.
 
-`status --json` has the object `savings`, `version` 1: `period` (`from`, the start of the first UTC day, and `days`; it ends at status's `readAt`); `history` (`availability`, `reason` `record_unreadable`, `partial`, `partialReasons` from `history_pruned`, `history_dropped` and `collapsed_span`); `withheldWakes`, `spacedWakes` and `checksSentNothing`, each with `availability`, `reason`, `total`, `byReason` (`reason`, `count`, `text`) and `text`; `sends` (`availability`, `total`, `byKind` of `kind` and `count`, `text`, `contextBlocks`, `contextBytes`); `contextNow` (`availability`, `reason`, `usedTokens`, `windowTokens`, `estimated`, `readAt`, `ageSeconds`, `text`); `resets` (`availability`, `items` of `at`, `by`, `before` and `after` readings, `text`); `estimate` (`label` always `estimate`, `availability`, `reason` `no_readings` or `record_unreadable`, `baseline`, `withheldWakes`, `lowestReading`, `highestReading`, `lowTokens`, `highTokens`, `estimated`, `text`); and `lines`, the text status prints. A total that could not be counted is absent, not zero. The panel's Usage page words it in counted sentences ([Usage](dock.md#what-the-page-shows)) and computes nothing of its own.
+`status --json` has the object `savings`, `version` 1: `period` (`from`, the start of the first UTC day, and `days`; it ends at status's `readAt`); `history` (`availability`, `reason` `record_unreadable`, `partial`, `partialReasons` from `history_pruned`, `history_dropped` and `collapsed_span`); `withheldWakes`, `spacedWakes` and `checksSentNothing`, each with `availability`, `reason`, `total`, `byReason` (`reason`, `count`, `text`) and `text`; `sends` (`availability`, `total`, `byKind` of `kind` and `count`, `text`, `contextBlocks`, `contextBytes`); `contextNow` (`availability`, `reason`, `usedTokens`, `windowTokens`, `estimated`, `readAt`, `ageSeconds`, `text`); `resets` (`availability`, `items` of `at`, `by`, `before` and `after` readings, `text`); `estimate` (`label` always `estimate`, `availability`, `reason` `consumption_not_measured`, `no_readings` or `record_unreadable`, `baseline`, `withheldWakes`, `lowestReading`, `highestReading`, `estimated`, `text`); and `lines`, the text status prints. The version-1 `estimate` object remains compatible but its availability is always `unavailable`; deprecated optional `lowTokens` and `highTokens` are omitted. Context ranges and withheld counts in that object remain occupancy/count metadata, not a savings estimate. A total that could not be counted is absent, not zero. The panel's Usage page words it in counted sentences ([Usage](dock.md#what-the-page-shows)) and computes nothing of its own.
 
 ### When a record cannot be read
 
@@ -1589,7 +1589,6 @@ The [BB plugin](../integrations/bb-plugin-keepgoing/README.md) does not resume a
 
 **Mixed versions.** Only a supervisor on this build sets `LOOPTENDER_SUPERVISED_LOOP`. A `daemon` or service started from an older build keeps running without it until it is restarted on this build, and the headless turns it starts meanwhile are not refused by the marker. The target-thread refusal does not depend on the supervisor: it applies from the first `resume` run with this build. Restart a running supervisor after upgrading. Turns it already started keep the environment they were started with.
 
-
 ### What a supervised session inherits
 
 Unreleased source; a security fix. A headless Claude Code, Codex, Cursor or ACP turn, and every command of the process adapter, runs with the supervisor's environment minus an exact list of names. The names describe the session the supervisor itself was started from:
@@ -1801,3 +1800,39 @@ recovery protocol needs separate complete authority/evidence review, proven old
 scheduler/writer retirement or compatible enforcement, and explicit preservation
 of unrelated holds. Releasing a future fence must not imply resume. No such
 recovery or installed upgrade acceptance is claimed here.
+
+## BB successor thread titles (unreleased)
+
+When an opted-in `bb.new_thread` handoff creates a coordinator, the BB adapter
+reads only that coordinator's explicitly continued source with `bb thread show
+<source> --json`. Existing blocked-lane replacement uses the same naming step
+for each eligible lane it is already about to replace. No naming pass discovers
+or creates additional conversations.
+
+A useful `thread.title` becomes `From “<source title>” · keepgoing: <loop>
+(continued, <token>)`; lane successors retain `lane` in the loop-based suffix.
+If the title is absent or generic continuation scaffolding, the adapter tries
+`thread.titleFallback`. Empty, malformed, mismatched or unavailable metadata
+keeps the loop-based title. Only these structured display fields are read for
+naming: no messages, transcript text, task files or title-generation service.
+A display title never decides whether to wake, hold, retry or hand off.
+
+The quoted name describes the source, including any model label someone put
+there. The successor's provider, model, effort and permissions still come from
+the configured route, not from its title. Source names are bounded to 120 Unicode
+characters and control characters are rejected. A later handoff carries the
+quoted task name forward without nesting the generated wrapper.
+
+The exact final title and random recovery token are saved in the existing
+creation intent before spawn. Uncertain creation continues to use that saved
+title, without recomputing it. A rename before creation is settled can still
+prevent recovery by title and require a person, as with the original title
+scheme. Naming errors do not retry creation or widen its bounds.
+
+Naming happens only at creation. Custom titles supplied directly to the adapter's
+spawn API remain unchanged. Later checks, retries, model activation, manual
+retarget and transfers of existing threads never rename them. A person can
+rename a settled successor in BB and looptender will not overwrite it. Existing
+threads titled `Continue from ...` are not swept or renamed by this change.
+This is source-only fixture evidence, not a change to an installed supervisor
+or released BB plugin; live BB creation acceptance remains unverified.
