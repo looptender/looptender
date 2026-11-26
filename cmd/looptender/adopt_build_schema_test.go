@@ -50,6 +50,8 @@ var adoptSchemaFingerprints = map[int]string{
 	// (successor threads replacing child lanes blocked on another provider)
 	// and childMove's movedIds.
 	6: "caa99878e54f0d0a3dde2da240155cd6b9b23db79beab3d6e5429b342c9ed73b",
+	// 7: control.json gained the revision-bound completion declaration.
+	7: "f6695f821d46c75967e144d4215846fc0817c7beac95700af1f546efbbfdad71",
 }
 
 // schemaFingerprint lists every JSON field reachable from t, by path, with
