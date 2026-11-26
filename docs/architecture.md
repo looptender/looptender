@@ -460,3 +460,14 @@ claims credential rollback; failed/uncertain directories remain private and are
 not automatically adopted. See [explicit connection limits](accounts.md#explicit-provider-sign-in-unreleased-source).
 
 The unreleased `daemon-shutdown` command keeps lifecycle authority in the command layer: daemoninfo authenticates the invocation-bound request, then the command validator rechecks sources, controls, owner lease and caller under tick/control locks. Acceptance retains tick.lock through loop return and only cancels that supervisor. Busy checks refuse. It never calls target Stop or updates controls; legacy processes need their original owned lifecycle manager. See [shutdown limits](operations.md#shut-down-only-the-supervisor-unreleased-source).
+
+
+### Automatic BB display naming (unreleased)
+
+The command layer's shared naming contract derives automatic display names from
+`thread-title.json` only when it matches the current target thread. Observations
+already made by the supervisor update that private display cache; no decision
+reads it. Menu, panel and offline client views share the same result without
+querying BB. `display-name.json` retains custom/automatic/inherited provenance;
+custom and ambiguous legacy inheritance remain pinned. No control, archive,
+creation or lifecycle policy changes with display naming.

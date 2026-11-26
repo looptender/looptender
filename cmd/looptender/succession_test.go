@@ -281,3 +281,30 @@ func TestSuccessionRefusesACycleAndASecondSuccessor(t *testing.T) {
 		t.Fatalf("re-archive for another successor: %v", err)
 	}
 }
+
+func TestAutoInheritedNameFollowsSuccessorTitle(t *testing.T) {
+	f, old, oldCfg, newCfg := successionWorld(t)
+	now := time.Now().UTC()
+	if err := state.SaveDisplayName(oldCfg.Loop.StateDir, "Example task (Claude)", state.DisplayNameThreadTitle, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.NoteThreadTitle(oldCfg.Loop.StateDir, bbThreadOf(oldCfg), "Example task (Claude)", nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errs := runWith("archive", "-c", old, "--succeeded-by", f.cfg); code != exitOK {
+		t.Fatal(errs)
+	}
+	if n := namingOf(newCfg.Loop, "thr_primary"); n.DisplayName != "Example task" || n.NameSource != state.DisplayNameInheritedTitle {
+		t.Fatalf("inherited %+v", n)
+	}
+	if err := state.NoteThreadTitle(newCfg.Loop.StateDir, "thr_primary", "Successor task (Codex)", nil, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if n := namingOf(newCfg.Loop, "thr_primary"); n.DisplayName != "Successor task (Codex)" || n.NameSource != state.DisplayNameThreadTitle {
+		t.Fatalf("successor %+v", n)
+	}
+	// The previous thread's model label must not be presented on a new target.
+	if n := namingOf(newCfg.Loop, "thr_another"); n.DisplayName != "Example task" || n.NameSource != state.DisplayNameInheritedTitle || n.ThreadTitle != "" {
+		t.Fatalf("wrong target %+v", n)
+	}
+}

@@ -182,7 +182,7 @@ func displayNameCmd(e env, cfg *config.Config, name string, set bool, now time.T
 		fmt.Fprintf(e.stdout, "Loop %s is shown as %q everywhere from its next read. Its slug, its BB thread and their titles are unchanged.\n", cfg.Loop.Name, clean)
 		return exitOK
 	}
-	n := namingOf(cfg.Loop, "")
+	n := namingForConfig(cfg)
 	fmt.Fprintf(e.stdout, "%s (%s)\n", n.DisplayName, n.NameSource)
 	return exitOK
 }

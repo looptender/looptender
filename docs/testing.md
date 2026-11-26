@@ -847,3 +847,30 @@ unsupported filesystem errors cannot report success. Windows publication/marker
 and directory durability remain unimplemented; its explicit refusal fixture must
 run natively before claiming Windows behavior. README, operations and roadmap
 retain these limitations. No repair/release protocol or control UI changed.
+
+## Automatic BB display-name refresh (unreleased)
+
+The shared naming contract follows the latest saved title only for the current
+BB target and known automatic provenance, preserving title suffixes such as
+`(Codex)`. `TestDisplayNameRuleAndStoredName` replaces the old first-title freeze
+assertion with a rename and target-identity regression. State fixtures verify
+observations update the title cache without rewriting custom or automatic
+provenance. `TestAutoInheritedNameFollowsSuccessorTitle` distinguishes a temporary
+auto-inherited task name from the successor's own title; existing succession
+fixtures continue to pin explicit and ambiguous legacy inherited names.
+
+`TestOfflineHeldSnapshotsUseLatestCachedBBTitle` checks paused, off, awaiting,
+stopped and completed controls plus custom/legacy names through client, Dock,
+panel-list and display-name command contracts. It requires offline diagnostics,
+uses a nonexistent provider CLI, and compares control/naming/cache bytes before
+and after reads. Disabling the matching-cache preference makes the rename and
+held/offline fixtures fail; restoring it passes.
+
+Capability/documentation review covers README, setup, operations' shared naming
+contract, architecture, changelog fragment and the macOS/BB consumers of the
+shared displayName/shortName fields. Source-only: Go fixtures, race checks and
+native compilation do not establish installed-menu or live-provider acceptance.
+No frontend markup, archive policy, control, creation, package boundary or
+installer mechanism changes. Legacy inherited provenance remains pinned because
+its original human/automatic source cannot be established safely. Held loops do
+not observe BB; a rename made during a hold waits for a permitted observation.
