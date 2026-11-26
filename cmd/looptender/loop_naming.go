@@ -16,13 +16,12 @@ import (
 // no surface composes its own. It belongs to the line of work, not to a
 // thread or a slug:
 //
-//   - The stored display name (display-name.json) when there is one: set by
-//     a person (looptender display-name), or recorded once from the BB
-//     thread's title by the first check that read it, or taken from the
-//     loop this one succeeds. A later title or a new thread does not change
-//     it. Provider, model and generation are never part of it; they are the
-//     secondary fields shown beside it.
-//   - Otherwise the loop's registered name (its slug).
+//   - Explicit custom names and ambiguous legacy inherited names stay pinned.
+//   - Automatically derived names follow the last recorded BB title only
+//     when it belongs to the current target thread. Provider/model suffixes
+//     are preserved as title metadata, not asserted as live execution state.
+//   - New auto-inherited task names are temporary until the successor's
+//     title is observed. Otherwise the registered slug is the fallback.
 //
 // Identifier-shaped tokens in it (paths, IDs, URLs, addresses) are shown as
 // "[hidden]", as hold notes are on the page. Slug is always the registered
@@ -31,8 +30,8 @@ import (
 // truncation rule (shortName). Nothing renames a loop or a thread.
 type loopNaming struct {
 	DisplayName string `json:"displayName"`
-	// NameSource is set, thread_title or inherited (a stored name, by how
-	// it was stored), or slug when none is stored.
+	// NameSource identifies pinned, title-derived or inherited provenance,
+	// or slug when no applicable display name is available.
 	NameSource string `json:"nameSource"`
 	// ShortName is absent when it is the display name itself.
 	ShortName string `json:"shortName,omitempty"`
@@ -84,7 +83,9 @@ func namingOf(l config.Loop, thread string) loopNaming {
 			n.Project = state.CleanLaneTitle(p)
 		}
 	}
-	if dn, err := state.LoadDisplayName(l.StateDir); err == nil && dn != nil {
+	dn, nameErr := state.LoadDisplayName(l.StateDir)
+	auto := nameErr == nil && (dn == nil || state.AutoDisplayNameSource(dn.Source))
+	if nameErr == nil && dn != nil && (!auto || dn.Source == state.DisplayNameInheritedTitle) {
 		if masked, _ := dockMaskNote(dn.Name); strings.TrimSpace(masked) != "" {
 			n.DisplayName, n.NameSource = masked, dn.Source
 		}
@@ -93,6 +94,11 @@ func namingOf(l config.Loop, thread string) loopNaming {
 		if t, err := state.LoadThreadTitle(l.StateDir); err == nil && t != nil && t.Thread == thread {
 			at := t.ReadAt
 			n.ThreadTitle, n.ThreadTitleReadAt = t.Title, &at
+			if auto {
+				if masked, _ := dockMaskNote(state.CleanDisplayName(t.Title)); strings.TrimSpace(masked) != "" {
+					n.DisplayName, n.NameSource = masked, state.DisplayNameThreadTitle
+				}
+			}
 			masked, _ := dockMaskNote(t.Title)
 			n.TitleDiffers = masked != n.DisplayName
 		}
@@ -163,4 +169,25 @@ func listNameLine(name string, n *loopNaming) string {
 		return name
 	}
 	return n.withSlug(name).nameLine()
+}
+
+// namingForConfig resolves the current configured target from saved state,
+// without observing BB. The display-name command and succession use the same
+// identity binding as status and client snapshots.
+func namingForConfig(cfg *config.Config) loopNaming {
+	thread := ""
+	st, err := state.Load(cfg.Loop.StateDir)
+	if err == nil {
+		a := cfg.Loop.Agent
+		known := st.Target() == state.Primary
+		if !known {
+			if c, ok := effectiveRoutes(cfg, st).Find(st.Target()); ok && !c.Disabled {
+				a, known = st.CandidateAgent(c)
+			}
+		}
+		if known && a.Adapter == "bb" && a.BB != nil {
+			thread = a.BB.Thread
+		}
+	}
+	return namingOf(cfg.Loop, thread)
 }

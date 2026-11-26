@@ -206,3 +206,13 @@ that uncertainty rather than claiming rollback. Python 3/Unix locking and privat
 local state are prerequisites. Offline behavioral execution remains separate from
 actual agent continuation and installed acceptance. Those acceptance criteria,
 including broader automatic delegation, remain open.
+
+## Conserve context at a safe boundary
+
+Use the [context efficiency policy](design/context-efficiency.md) when a person
+requests compaction or a successor. Preserve dated goal/tasks/ownership, approvals,
+holds and pending lane obligations before an exact-target structured compact.
+Verify matching completion and subsequent continuity; request acceptance and a
+smaller context alone do not prove completion or subscription savings. Prefer
+one result pointer after verification to repeated status relays. Automatic compact
+policy and expanded successor creation still need dedicated contract review.

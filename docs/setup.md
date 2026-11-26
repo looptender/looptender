@@ -216,3 +216,23 @@ looptender telegram disconnect
 
 Pairing writes the bot token to a private `0600` `token.env` file and locks `pairing.json` strictly to the paired `allowed_user_id` and `allowed_chat_id` via a one-time `?start=pair_<nonce>` deep link. Default `alerts` mode sends redacted event summaries only (`loop.report.format: telegram`); `--mode chat` requires explicit `--accept-non-e2e` because Telegram Bot API traffic is not end-to-end encrypted. Current coverage uses offline HTTP stand-ins and terminal QR decoding only; phone scanning, delivery/poller diagnostics, background service wiring, `TG5` and live Telegram verification remain open. Add `--qr` to setup for a local terminal QR of the same link; the plain link is always printed. QR needs ANSI black/white colors and Unicode half-block characters without wrapping. Encoding failure or an unsuitable terminal leaves the text link as the fallback. `doctor --telegram --offline` supplies local pairing/token-file-presence diagnostics only. See [Telegram remote channel](telegram.md).
 
+
+### Successor naming in unreleased source
+
+No naming option or BB cloud title service is needed. An existing opt-in
+new-thread handoff carries the continued coordinator's useful structured title
+into the new thread, retaining the loop name and recovery token. Existing
+blocked-lane replacement also carries its source lane's task name. Missing title
+metadata keeps the loop-based name. See [scope, custom names and failure
+behavior](operations.md#bb-successor-thread-titles-unreleased). Setup creates
+nothing for naming, and existing-thread routes retain their custom names.
+
+### Automatic BB display names (unreleased)
+
+Without `--display-name`, the panel, menu and status views use the latest saved
+BB title for the loop's current target, including model suffixes someone put in
+the title. A later verified BB rename updates these automatic names. A custom
+name set with `looptender display-name` stays pinned. New automatic successor
+inheritance follows its own title once observed; ambiguous legacy inheritance
+stays pinned. Held/offline views retain the last verified title and never poll
+BB. See [naming provenance and freshness](operations.md#one-name-per-line-of-work).

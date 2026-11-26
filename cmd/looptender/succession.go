@@ -118,16 +118,29 @@ func bbThreadOf(c *config.Config) string {
 // inheritedName is the name a successor takes: the predecessor's stored
 // display name, else a name from its last recorded thread title, else its
 // slug, so the line of work keeps one name.
-func inheritedName(pred *config.Config) string {
+func inheritedName(pred *config.Config) (string, string) {
 	if dn, err := state.LoadDisplayName(pred.Loop.StateDir); err == nil && dn != nil {
-		return dn.Name
-	}
-	if t, err := state.LoadThreadTitle(pred.Loop.StateDir); err == nil && t != nil {
-		if n, _ := state.DisplayNameFromTitle(t.Title, pred.RouteLabels()); n != "" {
-			return n
+		if state.AutoDisplayNameSource(dn.Source) {
+			return inheritedAutomaticName(namingForConfig(pred), pred.RouteLabels()), state.DisplayNameInheritedTitle
 		}
+		return dn.Name, state.DisplayNameInherited
 	}
-	return pred.Loop.Name
+	if n := namingForConfig(pred); n.NameSource == state.DisplayNameThreadTitle {
+		return inheritedAutomaticName(n, pred.RouteLabels()), state.DisplayNameInheritedTitle
+	}
+	return pred.Loop.Name, state.DisplayNameInheritedTitle
+}
+
+func inheritedAutomaticName(n loopNaming, labels []string) string {
+	title := n.DisplayName
+	// namingForConfig exposes the complete cached title only for the exact
+	// current target. Strip its qualifiers before the display bound can cut
+	// off a closing bracket or a model word. Current-title display is unchanged.
+	if n.NameSource == state.DisplayNameThreadTitle && n.ThreadTitle != "" {
+		title = n.ThreadTitle
+	}
+	name, _ := state.DisplayNameFromTitle(title, labels)
+	return state.CleanDisplayName(name)
 }
 
 // declareSuccession records on succ that it continues pred. The caller must
@@ -181,7 +194,8 @@ func declareSuccession(pred, succ *config.Config, source string, now time.Time) 
 	// Written now, before any check, so the successor's first title read
 	// cannot name it first; a name a person set stays.
 	if dn, err := state.LoadDisplayName(succ.Loop.StateDir); err == nil && (dn == nil || dn.Source != state.DisplayNameSet) {
-		_ = state.SaveDisplayName(succ.Loop.StateDir, inheritedName(pred), state.DisplayNameInherited, now)
+		name, source := inheritedName(pred)
+		_ = state.SaveDisplayName(succ.Loop.StateDir, name, source, now)
 	}
 	return s, nil
 }

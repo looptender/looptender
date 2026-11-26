@@ -145,6 +145,16 @@ async function render(name, data, checks = [], server = fixture.server) {
 
 for (const [name, fn] of scenarios) await render(name, scenario(fn));
 
+// Measurement labels and source text remain readable without becoming HTML.
+const originalMeasurement = fixture.usage.loops[0].measurement;
+fixture.usage.loops[0].measurement = { details: ["Measured export <img src=x onerror=alert(1)>"], trend: ["example-model: input 100; cached input 60; uncached input 40"], avoided: "Observed avoided redundant actions: 1", estimate: ["Estimated mean 10 tokens per accepted unit; n=2; subscription quota unknown"] };
+await render("usage measurement evidence", fixture.dock, [{hash:"#/usage", fn(w) {
+  const p = w.document.querySelector("#pane");
+  if (!p.textContent.includes("uncached input 40") || !p.textContent.includes("Observed avoided redundant actions: 1") || !p.textContent.includes("subscription quota unknown")) return "measurement evidence missing";
+  if (p.querySelector("img[src=x]")) return "measurement source interpreted as markup";
+}}]);
+fixture.usage.loops[0].measurement = originalMeasurement;
+
 // What the page shows, not only that it renders.
 const text = (w, sel) => [...w.document.querySelectorAll(sel)].map((n) => n.textContent).join(" | ");
 const outsideDetails = (w, re) => [...w.document.querySelectorAll("#pane p, #pane div")].some((n) => re.test(n.textContent) && !n.closest("details"));
