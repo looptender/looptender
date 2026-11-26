@@ -72,9 +72,9 @@
 
   // Time. Every sentence comes from the report as parts: literal text, or a
   // time shown here in this browser's own time zone. Ages and countdowns are
-  // already text, computed against the report's read time, so the page reads
+  // generally text, computed against the report's read time, so the page reads
   // the same wherever it is opened. A time that does not parse is said to be
-  // unknown; it never throws.
+  // unknown; it never throws. Accounts clocks separately advance below.
   function readTime() { var t = state.data ? Date.parse(state.data.readAt) : NaN; return isNaN(t) ? Date.now() : t; }
   function span(seconds) {
     var s = Math.abs(seconds), m = Math.round(s / 60);
@@ -1733,11 +1733,11 @@
     var wrap = el("div", "account-evidence");
     wrap.appendChild(el("span", null, e.text || "Unavailable"));
     if (sameCheck) return wrap;
-    if (e.ageSeconds != null) {
-      var age = el("span", "sub account-age", "Checked " + span(e.ageSeconds) + " ago" + (e.checkAgain ? " · check again to confirm" : ""));
-      if (e.observedAt) age.title = fmt(dayTimeFmt, e.observedAt);
+    if (e.observedAt) {
+      var age = accountClock("span", "sub account-age", "checked", e.observedAt);
+      age.dataset.checkAgain = e.checkAgain ? "true" : "false";
       wrap.appendChild(age);
-    } else if (e.observedAt) wrap.appendChild(el("span", "sub", "Checked at " + fmt(dayTimeFmt, e.observedAt)));
+    } else if (e.ageSeconds != null) wrap.appendChild(el("span", "sub account-age", "Checked " + span(e.ageSeconds) + " ago · time unavailable"));
     if (e.source) wrap.appendChild(el("span", "sub", e.source));
     return wrap;
   }
@@ -1908,6 +1908,63 @@
     if (c.provider === "claude-code" && s.source === "claude:get_usage" && date(s.retrievedAt) && !s.observedAt && s.freshness === "provider_unknown") return s;
     if (c.provider === "antigravity" && s.source === "agy:/usage" && date(s.retrievedAt) && !s.observedAt && s.freshness === "provider_unknown") return s;
     return null;
+  }
+  // Clock labels update independently of saved reads, without replacing a
+  // focused disclosure/input or making a provider request. Wall time, rather
+  // than timer ticks, also handles background throttling and device sleep.
+  function accountSignInNeeded(c) {
+    var auth = c.auth || {};
+    return auth.state === "reported_absent" || (auth.state === "unchecked" && (c.localAuth === "file_expired" || c.localAuth === "file_missing"));
+  }
+  function accountClock(kind, cls, mode, at) {
+    var label = el(kind, cls);
+    label.dataset.accountClock = mode;
+    label.dataset.at = at;
+    return label;
+  }
+  function accountClockText(mode, at, now, stale, checkAgain) {
+    var time = Date.parse(at), seconds = Math.floor((now - time) / 1000);
+    if (!isFinite(time)) return "Time unavailable";
+    if (mode === "reset") return seconds >= 0 ? "Reset time passed · refresh to confirm" : "Resets in " + span(Math.max(1, -seconds));
+    if (seconds < 0) return "Time unavailable · device clock is before the reading";
+    var age = span(seconds) + " ago";
+    if (mode === "checked") return "Last checked " + age + (seconds >= 300 ? " · Older check" : "") + (checkAgain || seconds > 86400 ? " · check again to confirm" : "");
+    if (mode === "retrieved") return "Retrieved " + age + " · Provider freshness unknown";
+    return "Read " + age + (stale || seconds > 1800 ? " · Older reading" : " · Saved snapshot");
+  }
+  function accountWindowEnded(at, ended, now) {
+    return ended || (isFinite(Date.parse(at)) && Date.parse(at) <= now);
+  }
+  function updateAccountClocks() {
+    if (document.hidden || route().view !== "accounts") return;
+    var now = Date.now();
+    document.querySelectorAll("[data-account-clock]").forEach(function (label) {
+      label.textContent = accountClockText(label.dataset.accountClock, label.dataset.at, now, label.dataset.stale === "true", label.dataset.checkAgain === "true");
+      label.title = label.dataset.at + " · " + when({ at: label.dataset.at }) + " (local time)";
+    });
+    document.querySelectorAll("[data-account-window]").forEach(function (row) {
+      var ended = accountWindowEnded(row.dataset.reset, row.dataset.ended === "true", now);
+      row.classList.toggle("is-ended", ended);
+      row.querySelector("[data-window-value]").textContent = ended ? "Window ended · Last reading: " + row.dataset.value : row.dataset.value;
+      var meter = row.querySelector("meter");
+      if (meter) meter.hidden = ended;
+    });
+  }
+  function accountWindowValue(row, w, compact) {
+    var value = compact ? w.usedPercent + "% used" + (typeof w.remainingPercent === "number" ? " · " + w.remainingPercent + "% remaining" : "") : w.text;
+    row.dataset.accountWindow = "true";
+    row.dataset.reset = w.resetsAt || "";
+    row.dataset.ended = w.ended ? "true" : "false";
+    row.dataset.value = value.replace(/^Window ended; refresh needed\. Last reading: /, "");
+    if (typeof w.usedPercent === "number" && w.usedPercent >= 100) row.dataset.value += " · Quota exhausted in saved reading";
+    var label = el(compact ? "strong" : "p", compact ? null : "quota-value", value);
+    label.dataset.windowValue = "true";
+    row.appendChild(label);
+  }
+  function accountQuotaStamp(saved, compact) {
+    var stamp = accountClock(compact ? "span" : "p", "quota-stamp", saved.retrievedAt ? "retrieved" : "quota", saved.retrievedAt || saved.observedAt);
+    stamp.dataset.stale = saved.freshness === "stale" ? "true" : "false";
+    return stamp;
   }
   function accountQuotaRequest(c, confirm, recovery) {
     if (!changesOn() || !(recovery ? state.server.accountSelectionReview : accountQuotaSupported(c))) return;
@@ -2131,18 +2188,21 @@
     box.appendChild(el("p", "sub", "Saved for this selection; separate from route readings. Live thread account binding is not verified."));
     var saved = accountQuotaSummary(c) || {};
     if (saved.state === "reported") {
-      box.appendChild(el("p", "quota-stamp", saved.retrievedAt ? "Retrieved " + when({ at: saved.retrievedAt }) + " · Provider freshness unknown" : "Read " + when({ at: saved.observedAt }) + (saved.freshness === "stale" ? " · Older reading" : " · Saved snapshot")));
+      box.appendChild(accountQuotaStamp(saved));
       if (saved.retrievedAt) box.appendChild(el("p", "sub", "Retrieval may return cached or seeded usage. The provider's observation time is unavailable."));
       var rows = el("ul", "quota-windows");
       list(saved.rows).forEach(function (w) {
         var row = el("li", "quota-window" + (w.ended ? " is-ended" : ""));
         row.appendChild(el("h4", null, w.name));
-        row.appendChild(el("p", "quota-value", w.text));
+        accountWindowValue(row, w, false);
         if (typeof w.usedPercent === "number" && !w.ended) {
           var meter = el("meter", "quota-meter"); meter.min = 0; meter.max = 100; meter.value = w.usedPercent;
           meter.setAttribute("aria-label", w.name + ": " + w.text); meter.textContent = w.text; row.appendChild(meter);
         }
-        if (w.resetsAt) row.appendChild(el("p", "sub", (w.ended ? "Ended " : "Resets ") + when({ at: w.resetsAt })));
+        if (w.resetsAt) {
+          row.appendChild(accountClock("p", "sub quota-countdown", "reset", w.resetsAt));
+          row.appendChild(el("p", "sub", "Reset: " + when({ at: w.resetsAt }) + " (local time)"));
+        }
         else if (typeof w.usedPercent === "number" || typeof w.remainingPercent === "number") row.appendChild(el("p", "sub", "Reset time unavailable."));
         rows.appendChild(row);
       });
@@ -2269,7 +2329,7 @@
     pane.appendChild(back());
     pane.appendChild(paneHead("Accounts"));
     pane.appendChild(el("p", "lede", "Your selected accounts, with the evidence available on this device."));
-    pane.appendChild(el("p", "sub", "Reading this page uses saved evidence. Subscription quota refresh is an explicit, reviewed read; it calls no model."));
+    pane.appendChild(el("p", "sub", "Read now reloads saved evidence. Check login now checks login and plan; quota retrieval has its own review and calls no model. Countdown labels update every 15 seconds; a passed reset needs a new reading to confirm availability."));
     var usage = el("p", "account-usage-link");
     usage.appendChild(link("#/routes", "View recorded usage", "work-inspect"));
     usage.appendChild(el("span", "sub", ". Readings come from configured routes and are not live. Each account shows the readings of the routes that use it."));
@@ -2414,18 +2474,24 @@
       } else if (qs && qs.state === "reported") {
         list(qs.rows).filter(function (w) { return typeof w.usedPercent === "number"; }).slice(0, 2).forEach(function (w) {
           var item = el("span", "quota-chip"); item.appendChild(el("span", "sub", w.name));
-          item.appendChild(el("strong", null, w.ended ? "Window ended" : w.usedPercent + "% used")); compact.appendChild(item);
+          accountWindowValue(item, w, true);
+          if (w.resetsAt) item.appendChild(accountClock("span", "sub quota-countdown", "reset", w.resetsAt));
+          else item.appendChild(el("span", "sub", "Reset time unavailable"));
+          compact.appendChild(item);
         });
         if (!compact.childNodes.length) compact.appendChild(el("span", "sub", qs.partial ? "Partial quota evidence" : "Quota details recorded"));
-        compact.appendChild(el("span", "sub", qs.freshness === "provider_unknown" ? "Provider freshness unknown" : qs.freshness === "stale" ? "Older quota reading" : "Saved quota reading"));
+        compact.appendChild(accountQuotaStamp(qs, true));
         compact.title = "Saved account quota; expand for all recorded detail";
-      } else if (c.provider === "codex" || c.provider === "claude-code") {
+      } else if ((c.provider === "codex" || c.provider === "claude-code") && accountSignInNeeded(c)) {
+        compact.appendChild(el("span", "sub", "Account quota unavailable"));
         var connect = button("Connect " + connectProvider(c), "account-connect-" + c.id, "", function (event) { event.preventDefault(); event.stopPropagation(); accountConnectOpen(c); });
         connect.setAttribute("aria-label", "Connect " + connectProvider(c) + " for " + c.label);
         compact.appendChild(connect);
         if (c.auth && c.auth.state === "reported_absent") compact.appendChild(el("span", "sub", "Sign-in required"));
-      } else if (c.provider === "antigravity") {
-        compact.appendChild(el("span", "sub", "Account quota unavailable"));
+      } else {
+        compact.appendChild(el("strong", null, "Account quota unavailable"));
+        compact.appendChild(el("span", "sub", (c.quota && c.quota.summary && c.quota.summary.text) || accountQuotaReason(c.quota && c.quota.reason || "not_checked")));
+        compact.appendChild(el("span", "sub", "Expand for quota details and available actions"));
       }
       summary.appendChild(compact);
       details.appendChild(summary);
@@ -2504,6 +2570,7 @@
     note.appendChild(accountCheckCommand(cards.length === 1 ? cards[0] : null));
     note.appendChild(document.createTextNode(cards.length === 1 && state.identifiers ? "." : state.identifiers ? " with the card's connection ID." : " with the card's connection ID (Show identifiers to see it)."));
     pane.appendChild(note);
+    updateAccountClocks();
     maybeAutoCheckAccounts(cards);
   }
 
@@ -3270,7 +3337,9 @@
     document.addEventListener("selectionchange", function () {
       if (state.pending && !selecting()) render(false);
     });
+    setInterval(updateAccountClocks, 15000);
     document.addEventListener("visibilitychange", function () {
+      updateAccountClocks();
       if (!document.hidden && !state.paused && (state.missed || (state.lastOk && Date.now() - state.lastOk > 5000))) { clearTimeout(state.timer); load(true); }
     });
     loadServer();

@@ -12,6 +12,11 @@ class H(BaseHTTPRequestHandler):
   path=self.path.split('?')[0]
   if path.endswith('/api/v1/dock') or path.endswith('/api/v1/saved-accounts'):
    data=json.loads(json.dumps(report))
+   if '/freshness/' in path:
+    first,claude=data['accounts']['cards'][:2]
+    first['auth']={'state':'reported_present','text':'Selected CLI reports login','source':'codex status','observedAt':data['readAt'],'ageSeconds':0}
+    claude['auth']={'state':'reported_present','text':'Selected CLI reports login','source':'claude-code status','observedAt':data['readAt'],'ageSeconds':0}
+    claude['quota']={'summary':{'state':'reported','source':'claude:get_usage','retrievedAt':data['readAt'],'freshness':'provider_unknown','rows':[{'name':'5-hour','text':'100% used · 0% remaining','usedPercent':100,'remainingPercent':0,'resetsAt':'2030-03-04T13:00:00Z'}]}}
    if '/empty/' in path:data['accounts']['cards']=[]
    if '/unavailable/' in path:data['accounts']={'state':'unavailable','complete':False,'cards':[]}
    reference='fictional-saved-'+path.split('/')[1]

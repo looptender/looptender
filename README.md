@@ -64,6 +64,7 @@ Takeover moves supervision to a new conversation; it does not mean work is never
 - **Plugin card** (*Plugin v0.4.0 released in v0.3.0*): BB plugin v0.4.0 ships from the v0.3.0 tag as a separate installation, adding the compact **Add to Looptender** modal, **Continue existing**, reboot-persistent service startup, single-line composer chips, weekly-limit status, build freshness lines, and sessionpipe visibility.
 - **macOS menu** (*In source, not yet released as a separate app archive*): Developer build only; not included in CLI release archives. Grouped loop list, **Archive**, sessionpipe & quota summaries, panel opener, notifications, and build self-update checks.
 - **Accounts, Routes and Account Router** (*Released in v0.3.0*): Lists explicitly named accounts, local file login hints (plus bounded `--allow-changes` status checks and selection recovery), subscription quotas, guided route configuration, and a read-only **Account Router** overview card for `looptender router`. [Accounts](docs/accounts.md).
+  Unreleased Accounts refinements add advancing reading ages and reset countdowns, remaining quota, and explicit ended/unavailable states; a passed reset requires a new reading to confirm capacity.
 
 ## Keeps running while you update
 
