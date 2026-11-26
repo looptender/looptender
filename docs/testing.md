@@ -60,6 +60,25 @@ the corrected cases pass under race detection.
 
 These are native fixture checks on macOS, not live BB/provider stop acceptance. The daemon command fixtures are Unix-only; cross-compilation does not establish Windows execution. No installed service restart, reboot, external scheduler or Linux/Windows native acceptance was run for this change. The existing process-identity contract and legacy/stale runner cases are unchanged. No UI action changes. Configuration-unavailable reporting and diagnostics have additional fixtures below. See the [operations limits](operations.md#when-the-configuration-file-is-unavailable). Record exact commands, source head, regression/mutation evidence and platform results in the review handoff.
 
+### Recovery smoke and combined adoption schemas
+
+The recovery smoke waits for completed held tick records, including collapsed
+checks, rather than any incident sequence allocation. Daemon lifecycle and
+refused-check records do not satisfy that wait. The synthetic Python regression
+holds check publication behind lifecycle records for both awaiting-user and
+completed holds, for one check and an additional ordinary interval, and requires
+both crash and orderly restart paths to reach their intended checks. CI runs it
+before the existing native recovery smoke; timeline, ownership, allowance,
+notification, privacy and no-provider assertions remain unchanged.
+
+Combined unreleased goal-completion and incident schema changes use adoption
+format 8. Format 7 and its goal-only fingerprint remain immutable. The combined
+fingerprint covers both roots; adoption refuses both goal-only and earlier
+incident-only format-7 candidates before validation/exec. Successful and invalid
+configuration adoption fixtures advertise format 8, so the format guard cannot
+hide a later validation regression. These are native local fixture checks and
+platform compilation, not installed build adoption or live-provider acceptance.
+
 ### Configuration-unavailable reports and diagnostics
 
 Unreleased source records one attempted error report before delivery. Fixtures cover repeated passes with no in-memory timestamp (restart replay), a simulated crash between persistence and delivery, a failed state save that sends nothing, dry runs, a verified reload followed by a new outage, and a changed readable source that must not clear the episode. A delayed local HTTP receiver checks the persisted flag before accepting a request and verifies the two-second bound. Transport tests distinguish the one-attempt configuration cause from ordinary error retries. A saved-stop fixture verifies the stop reaches the stand-in before error delivery; pause fixtures show no ordinary provider access.
@@ -856,23 +875,3 @@ unsupported filesystem errors cannot report success. Windows publication/marker
 and directory durability remain unimplemented; its explicit refusal fixture must
 run natively before claiming Windows behavior. README, operations and roadmap
 retain these limitations. No repair/release protocol or control UI changed.
-
-
-### Recovery smoke and combined adoption schemas
-
-The recovery smoke waits for completed held tick records, including collapsed
-checks, rather than any incident sequence allocation. Daemon lifecycle and
-refused-check records do not satisfy that wait. The synthetic Python regression
-holds check publication behind lifecycle records for both awaiting-user and
-completed holds, for one check and an additional ordinary interval, and requires
-both crash and orderly restart paths to reach their intended checks. CI runs it
-before the existing native recovery smoke; timeline, ownership, allowance,
-notification, privacy and no-provider assertions remain unchanged.
-
-Combined unreleased goal-completion and incident schema changes use adoption
-format 8. Format 7 and its goal-only fingerprint remain immutable. The combined
-fingerprint covers both roots; adoption refuses both goal-only and earlier
-incident-only format-7 candidates before validation/exec. Successful and invalid
-configuration adoption fixtures advertise format 8, so the format guard cannot
-hide a later validation regression. These are native local fixture checks and
-platform compilation, not installed build adoption or live-provider acceptance.
