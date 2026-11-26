@@ -85,6 +85,87 @@ class Journey(unittest.TestCase):
         a = self.state()['attempts'][-1]
         return {'attempt': a['id'], 'priorContinuity': digest(a['continuity']), 'currentContinuity': digest(self.g['continuity']), 'accepted': True}
 
+    def test_compact_during_final_admission_cannot_reconcile(self):
+        save = self.journal.save
+        def changed(state):
+            save(state)
+            self.commands.completion()
+        with patch.object(self.journal, 'save', changed):
+            with self.assertRaises(Refused): self.run_step()
+        self.assertFalse(self.commands.sends())
+        with self.assertRaisesRegex(Refused, 'dispatch_unconfirmed'):
+            self.run_step(receipt=self.receipt())
+        count = len(self.commands.calls)
+        self.assertEqual(self.run_step()['action'], 'hold_pending_attempt')
+        self.assertEqual(len(self.commands.calls), count)
+
+    def test_completed_checkpoint_integrity_required_for_next_attempt(self):
+        self.run_step(); self.commands.completion(); self.run_step(receipt=self.receipt())
+        old = Path(self.g['continuity']['goal']['path'])
+        replacement = self.root / 'goal-v2.md'; replacement.write_text('fictional updated checkpoint')
+        self.g['continuity']['goal'] = {'path': str(replacement), 'sha256': c.file_hash(str(replacement))[0]}
+        old.write_text('original checkpoint overwritten')
+        self.g['request'] = 'next'; self.commands.rows = []
+        count = len(self.commands.calls)
+        with self.assertRaisesRegex(Refused, 'continuity_changed'): self.run_step(now=20000)
+        self.assertEqual(len(self.commands.calls), count)
+        self.assertEqual(len(self.commands.sends()), 1)
+
+    def test_final_admission_time_does_not_shorten_spacing(self):
+        clock = [10000]
+        save = self.journal.save
+        def slow(state):
+            save(state)
+            if state['attempts'][-1]['dispatchedAt'] is None: clock[0] += 30
+        with patch.object(c.time, 'time', side_effect=lambda: clock[0]):
+            with patch.object(self.journal, 'save', slow): self.run_step(now=None)
+            self.commands.completion(); self.run_step(receipt=self.receipt(), now=None)
+            self.g['request'] = 'next'; self.commands.rows = []; clock[0] = 13600
+            with self.assertRaisesRegex(Refused, 'cooldown'): self.run_step(now=None)
+        self.assertEqual(len(self.commands.sends()), 1)
+
+    def test_preintent_compact_refuses_without_send(self):
+        context = self.commands.context
+        def changed():
+            self.commands.completion()
+            return context()
+        self.commands.context = changed
+        with self.assertRaises(Refused): self.run_step()
+        self.assertFalse(self.commands.sends())
+
+    def test_child_activates_during_context(self):
+        context = self.commands.context
+        def changed():
+            self.commands.inventory['lanes'] = [{'thread': 'thr_example_child', 'archived': False, 'execution': 'active'}]
+            return context()
+        self.commands.context = changed
+        with self.assertRaises(Refused): self.run_step()
+        self.assertFalse(self.commands.sends())
+        self.assertEqual(self.state()['attempts'][-1]['state'], 'unknown')
+
+    def test_original_checkpoint_required_after_replacement(self):
+        self.run_step()
+        old = Path(self.g['continuity']['goal']['path'])
+        replacement = self.root / 'goal-v2.md'; replacement.write_text('fictional updated checkpoint')
+        self.g['continuity']['goal'] = {'path': str(replacement), 'sha256': c.file_hash(str(replacement))[0]}
+        old.unlink(); self.commands.completion()
+        with self.assertRaises((Refused, OSError)): self.run_step(receipt=self.receipt())
+        self.assertEqual(self.state()['attempts'][-1]['state'], 'accepted')
+
+    def test_preparation_does_not_shorten_spacing(self):
+        clock = [10000]
+        context = self.commands.context
+        def slow():
+            clock[0] += 30
+            return context()
+        self.commands.context = slow
+        with patch.object(c.time, 'time', side_effect=lambda: clock[0]):
+            self.run_step(now=None)
+            self.commands.completion(); self.run_step(receipt=self.receipt(), now=None)
+            self.g['request'] = 'next'; self.commands.rows = []; clock[0] = 13600
+            with self.assertRaisesRegex(Refused, 'cooldown'): self.run_step(now=None)
+        self.assertEqual(len(self.commands.sends()), 1)
+
     def test_acceptance_completion_receipt_and_restart_no_replay(self):
         self.assertEqual(self.run_step(False)['action'], 'eligible_manual_request')
         self.assertFalse(self.journal.path.exists()); self.assertFalse(self.commands.sends())

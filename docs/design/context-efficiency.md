@@ -202,3 +202,18 @@ A diagnostics correction does not implement automatic compact policy. Manual
 trials do not establish restart-safe automation, platform acceptance, cache/quota
 savings, correct successor transfer or optimal thresholds. Record each trial's
 exact identities and evidence privately; publish only fictional regression data.
+
+### Admission and retained checkpoint verification
+
+Preparation and final admission both check for intervening structured compaction
+items. Final admission repeats the complete lane inventory and child eligibility
+checks. A separate durable dispatch timestamp excludes preparation/admission time
+from cooldown and prevents a known pre-dispatch refusal from reconciling an
+unrelated completion. Pending repeats remain query-free. Original checkpoint
+versions must remain readable and hash-matching during reconciliation and before
+later attempts, even when current continuity references newer versions.
+
+These gates do not provide atomic host request identity or fencing: independent
+work can arrive after the final read. Competing requests still require person
+review. The source-only journal now requires the dispatch field; older experimental
+journals fail closed and must not be deleted or reset to bypass an unknown attempt.

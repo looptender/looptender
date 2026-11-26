@@ -80,9 +80,11 @@ def validate(s):
     require(isinstance(s["context"], dict) and isinstance(s["attempts"], list) and len(s["attempts"]) <= 8, "journal_schema")
     ids, requests = set(), set()
     for a in s["attempts"]:
-        require(isinstance(a, dict) and set(a) == {"id", "request", "at", "seq", "before", "continuity", "state", "completion", "after", "receipt"}, "attempt_schema")
+        require(isinstance(a, dict) and set(a) == {"id", "request", "at", "dispatchedAt", "seq", "before", "continuity", "state", "completion", "after", "receipt"}, "attempt_schema")
         require(string(a["id"]) and a["id"] not in ids and string(a["request"]) and a["request"] not in requests, "attempt_identity")
         require(integer(a["at"], 1, 2**53) and integer(a["seq"], 0, 2**53) and reading(a["before"]) and continuity_shape(a["continuity"]), "attempt_schema")
+        require(a["dispatchedAt"] is None or integer(a["dispatchedAt"], a["at"], 2**53), "attempt_timing")
+        require(a["state"] == "unknown" or a["dispatchedAt"] is not None, "dispatch_required")
         require(a["state"] in {"unknown", "accepted", "completed"}, "attempt_state")
         require((a["state"] == "completed") == all(isinstance(a[k], dict) for k in ("completion", "after", "receipt")), "attempt_history")
         if a["state"] == "completed":
@@ -112,6 +114,7 @@ class CompactJournal(Journal):
             require(old["context"] == s["context"] and len(old["attempts"]) <= len(s["attempts"]) <= len(old["attempts"]) + 1, "journal_transition")
             for a, b in zip(old["attempts"], s["attempts"]):
                 require(all(a[k] == b[k] for k in ("id", "request", "at", "seq", "before", "continuity")), "journal_transition")
+                require(a["dispatchedAt"] == b["dispatchedAt"] or a["state"] == "unknown" and b["state"] in {"unknown", "accepted"} and b["dispatchedAt"] is not None and (a["dispatchedAt"] is None or b["dispatchedAt"] >= a["dispatchedAt"]), "journal_transition")
                 require(b["state"] in {"unknown": {"unknown", "accepted", "completed"}, "accepted": {"accepted", "completed"}, "completed": {"completed"}}[a["state"]], "journal_transition")
                 require(a["state"] != "completed" or a == b, "journal_transition")
         raw = json.dumps(s, sort_keys=True).encode()
@@ -204,13 +207,16 @@ class CompactCommands(Commands):
 
 def advance(g, journal, commands, execute=False, receipt=None, now=None):
     require(Path(g["binding"]["runtime"]) not in journal.path.parents, "journal_outside_runtime_required")
-    now = int(time.time()) if now is None else now
+    clock = (lambda: int(time.time())) if now is None else (lambda: now)
+    now = clock()
     s = journal.load(g)
     pending = next((a for a in s["attempts"] if a["state"] != "completed"), None)
     if pending:
         if receipt is None:
             return {"action": "hold_pending_attempt", "state": pending["state"]}
         require(execute, "reconcile_requires_execute")
+        require(pending["dispatchedAt"] is not None, "dispatch_unconfirmed")
+        for attempt in s["attempts"]: sources(attempt["continuity"])
         check_sources(g); commands.status(safe=False); commands.thread(g["binding"]["thread"], safe=False)
         _, events = commands.events(pending["seq"])
         starts = [e for e in events if e["type"] == "item/started"]
@@ -218,13 +224,15 @@ def advance(g, journal, commands, execute=False, receipt=None, now=None):
         require(len(starts) == len(done) == 1 and starts[0]["seq"] < done[0]["seq"] and all(starts[0][k] == done[0][k] for k in ("item", "turn")), "completion_unconfirmed")
         require(isinstance(receipt, dict) and set(receipt) == {"attempt", "priorContinuity", "currentContinuity", "accepted"} and receipt["accepted"] is True and receipt["attempt"] == pending["id"] and receipt["priorContinuity"] == digest(pending["continuity"]) and receipt["currentContinuity"] == digest(g["continuity"]), "continuity_receipt_required")
         after = commands.context(); check_sources(g)
+        for attempt in s["attempts"]: sources(attempt["continuity"])
         pending.update(state="completed", completion=done[0], after=after, receipt=receipt)
         journal.save(s)
         return {"action": "completion_and_receipt_recorded", "savings": "unknown"}
     require(receipt is None, "no_pending_attempt")
     require(not any(a["request"] == g["request"] for a in s["attempts"]), "request_already_attempted")
     require(len(s["attempts"]) < g["maxAttempts"], "attempt_cap")
-    require(not s["attempts"] or now >= s["attempts"][-1]["at"] + g["cooldownSeconds"], "cooldown")
+    require(not s["attempts"] or now >= (s["attempts"][-1]["dispatchedAt"] or s["attempts"][-1]["at"]) + g["cooldownSeconds"], "cooldown")
+    for attempt in s["attempts"]: sources(attempt["continuity"])
     check_sources(g)
     before_children = commands.snapshot()
     seq, events = commands.events(commands.cursor())
@@ -235,17 +243,28 @@ def advance(g, journal, commands, execute=False, receipt=None, now=None):
     require(not changed, "recent_compaction_reconcile_first")
     before = commands.context()
     check_sources(g)
+    seq, changed = commands.events(seq)
+    require(not changed, "recent_compaction_reconcile_first")
     if not execute: return {"action": "eligible_manual_request", "dryRun": True, "measurementFreshness": "provider_timestamp_unavailable"}
-    a = {"id": uuid.uuid4().hex, "request": g["request"], "at": now, "seq": seq, "before": before, "continuity": g["continuity"], "state": "unknown", "completion": None, "after": None, "receipt": None}
+    a = {"id": uuid.uuid4().hex, "request": g["request"], "at": clock(), "dispatchedAt": None, "seq": seq, "before": before, "continuity": g["continuity"], "state": "unknown", "completion": None, "after": None, "receipt": None}
     s["attempts"].append(a); journal.save(s)
     # Narrow the local race after durable reservation. This still is not an
     # atomic transaction with BB, controls or another host request.
-    check_sources(g); commands.status(); commands.thread(g["binding"]["thread"])
+    check_sources(g)
+    require(commands.snapshot() == before_children, "child_roster_changed")
+    _, changed = commands.events(seq)
+    require(not changed, "recent_compaction_reconcile_first")
+    # Durable dispatch fence excludes reservations refused before submission.
+    # Its timestamp also excludes preparation and admission from cooldown.
+    a["dispatchedAt"] = clock(); journal.save(s)
     try:
         reply = commands.call("bb", ["thread", "compact", g["binding"]["thread"], "--json"], timeout=20, limit=64 * 1024)
         require(isinstance(reply, dict) and reply.get("ok") is True and reply.get("threadId") == g["binding"]["thread"], "compact_unconfirmed")
+        a["dispatchedAt"] = max(a["dispatchedAt"], clock())
         a["state"] = "accepted"; journal.save(s)
     except (Refused, OSError):
+        # Include elapsed command time even when its result is uncertain.
+        a["dispatchedAt"] = max(a["dispatchedAt"], clock()); journal.save(s)
         return {"action": "hold_pending_attempt", "state": "unknown"}
     return {"action": "request_accepted_not_completed", "state": "accepted"}
 

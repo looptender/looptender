@@ -113,3 +113,18 @@ must still respect the lifetime cap/cooldown. Target/goal migration and corrupt
 journal repair are separate manual reviews. No Linux/Windows native or installed
 acceptance follows from local fixtures; Windows locking is unsupported. The
 helper is not an automatic compact policy or a successor implementation.
+
+### Admission and retained checkpoint verification
+
+Preparation and final admission both check for intervening structured compaction
+items. Final admission repeats the complete lane inventory and child eligibility
+checks. A separate durable dispatch timestamp excludes preparation/admission time
+from cooldown and prevents a known pre-dispatch refusal from reconciling an
+unrelated completion. Pending repeats remain query-free. Original checkpoint
+versions must remain readable and hash-matching during reconciliation and before
+later attempts, even when current continuity references newer versions.
+
+These gates do not provide atomic host request identity or fencing: independent
+work can arrive after the final read. Competing requests still require person
+review. The source-only journal now requires the dispatch field; older experimental
+journals fail closed and must not be deleted or reset to bypass an unknown attempt.
