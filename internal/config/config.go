@@ -82,9 +82,11 @@ type Loop struct {
 	PromptContext bool   `yaml:"prompt_context,omitempty"`
 	HandoffFile   string `yaml:"handoff_file,omitempty"`
 
-	Progress Progress   `yaml:"progress"`
-	Window   *Window    `yaml:"window,omitempty"`
-	Errors   ErrorRules `yaml:"errors"`
+	// UsageCollection reads bounded BB token metadata after existing checks; off by default.
+	UsageCollection bool       `yaml:"usage_collection,omitempty"`
+	Progress        Progress   `yaml:"progress"`
+	Window          *Window    `yaml:"window,omitempty"`
+	Errors          ErrorRules `yaml:"errors"`
 	// Refusal sets when a streak of refused turns asks a person instead of
 	// continuing.
 	Refusal   RefusalRules `yaml:"refusal,omitempty"`
