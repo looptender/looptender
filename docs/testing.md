@@ -957,3 +957,53 @@ metadata to existing creation paths, not a new supervision capability. Native
 macOS offline fixtures are separate from live BB creation, installed acceptance
 and Linux/Windows execution, which remain unverified. Existing-thread continuation
 and manual retarget do not rename threads; no broad repair sweep is provided.
+
+## Automatic BB display-name refresh (unreleased)
+
+The shared naming contract follows the latest saved title only for the current
+BB target and known automatic provenance, preserving title suffixes such as
+`(Codex)`. `TestDisplayNameRuleAndStoredName` replaces the old first-title freeze
+assertion with a rename and target-identity regression. State fixtures verify
+observations update the title cache without rewriting custom or automatic
+provenance. `TestAutoInheritedNameFollowsSuccessorTitle` distinguishes a temporary
+auto-inherited task name from the successor's own title; existing succession
+fixtures continue to pin explicit and ambiguous legacy inherited names.
+
+`TestOfflineHeldSnapshotsUseLatestCachedBBTitle` checks paused, off, awaiting,
+stopped and completed controls plus custom/legacy names through client, Dock,
+panel-list and display-name command contracts. It requires offline diagnostics,
+uses a nonexistent provider CLI, and compares control/naming/cache bytes before
+and after reads. Disabling the matching-cache preference makes the rename and
+held/offline fixtures fail; restoring it passes.
+
+Capability/documentation review covers README, setup, operations' shared naming
+contract, architecture, changelog fragment and the macOS/BB consumers of the
+shared displayName/shortName fields. Source-only: Go fixtures, race checks and
+native compilation do not establish installed-menu or live-provider acceptance.
+No frontend markup, archive policy, control, creation, package boundary or
+installer mechanism changes. Legacy inherited provenance remains pinned because
+its original human/automatic source cannot be established safely. Held loops do
+not observe BB; a rename made during a hold waits for a permitted observation.
+
+
+The inheritance-order review adds
+`TestAutoInheritanceStripsQualifiersBeforeDisplayBound`: complete bracketed and
+separated route qualifiers crossing the 80-character display bound are stripped
+before bounding automatic successor names. It covers absent display metadata,
+all automatic sources, explicit/custom and legacy pinned sources, and a task
+that itself requires bounding. Current observed-title display remains bounded
+as written. The bracketed/separated fixtures fail on the pre-fix implementation
+with a clipped predecessor model label; the corrected exact-target cache path
+passes. This does not expand the existing 120-character title-cache bound.
+
+The panel lock-loss fixture owns and waits for its first server process before
+checking the replacement's socket, record and page. Process-list disappearance
+followed by `signal(0)` is not an exit receipt: an exited detached process can
+remain a zombie, for which that signal still succeeds. A controlled native
+fixture reproduced that false positive while the replacement answered and the
+first process subsequently returned a successful exit. The lock-loss assertion
+still requires the first server to exit within 15 seconds; disabling production
+lock-loss detection makes it fail. The ordinary panel-start/reuse fixture retains
+coverage of detached startup. This changes fixture ownership only, not panel
+shutdown or lock semantics. Native fixture evidence, CI and installed acceptance
+remain separate; no installed panel or provider was controlled for this repair.

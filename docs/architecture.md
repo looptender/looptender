@@ -475,3 +475,13 @@ metadata page under the same tick/ownership fence when `loop.usage_collection`
 is enabled. It does not enter the pure decision engine or the Accounts acquisition
 loop. Cursor and rolling evidence share one atomic private record. Status and Panel
 only read that record. See [collection contract](design/usage-measurement.md#automatic-collection-unreleased-opt-in).
+
+### Automatic BB display naming (unreleased)
+
+The command layer's shared naming contract derives automatic display names from
+`thread-title.json` only when it matches the current target thread. Observations
+already made by the supervisor update that private display cache; no decision
+reads it. Menu, panel and offline client views share the same result without
+querying BB. `display-name.json` retains custom/automatic/inherited provenance;
+custom and ambiguous legacy inheritance remain pinned. No control, archive,
+creation or lifecycle policy changes with display naming.

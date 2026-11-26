@@ -1170,8 +1170,8 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 		case state.DisplayNameSet:
 			line += " (set by a person)"
 		case state.DisplayNameThreadTitle:
-			line += " (the BB thread's title when it was first read)"
-		case state.DisplayNameInherited:
+			line += " (the last recorded BB thread title)"
+		case state.DisplayNameInherited, state.DisplayNameInheritedTitle:
 			line += " (from the loop this one continues)"
 		}
 		if n.Project != "" {
