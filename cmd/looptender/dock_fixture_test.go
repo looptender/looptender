@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -431,5 +432,37 @@ func TestDockScratchForScreenshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	dockUsageScratch(t, f.Entries[0].StateDir, time.Now().UTC())
+	evidence := usageFixture()
+	evidence.Loop = dockLoops[0]
+	raw, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.Entries[0].StateDir, "usage-evidence.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("KEEPGOING_DOCK_AUTOMATIC_USAGE") == "1" {
+		entry := f.Entries[0]
+		raw, err := os.ReadFile(entry.ConfigPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = bytes.Replace(raw, []byte("loop:\n"), []byte("loop:\n  usage_collection: true\n"), 1)
+		if err := os.WriteFile(entry.ConfigPath, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := config.Load(entry.ConfigPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC()
+		earlier := now.Add(-5 * time.Minute)
+		if err := collectUsage(context.Background(), cfg, earlier, pageFetch(collectionSample(10, 10000, earlier))); err != nil {
+			t.Fatal(err)
+		}
+		if err := collectUsage(context.Background(), cfg, now, pageFetch(collectionSample(20, 12000, now))); err != nil {
+			t.Fatal(err)
+		}
+	}
 	t.Log("registry:", dir)
 }

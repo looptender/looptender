@@ -215,3 +215,12 @@ bb looptender stop <loop>
 ## License
 
 This plugin is part of looptender and is source-available under the [Sustainable Use License 1.0](../../LICENSE); see the [licensing guide](../../LICENSING.md). The plugin at the `v0.1.5` tag, like every release through v0.1.5, remains under Apache-2.0.
+
+### Structured usage bridge (unreleased)
+
+`bb looptender usage-events <thread> <latest|after-seq>` is the bounded metadata
+bridge used by opt-in existing checks. It reads only the exact thread's structured
+Codex token events (at most 32), with no log/timeline fallback, model request or
+subscription-cost conversion. It returns pseudonymous cumulative samples, never
+transcripts. Unsupported providers fail closed. The supervisor owns persistence,
+spacing and configured target scope; the bridge starts no background work.
