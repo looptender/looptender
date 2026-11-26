@@ -137,14 +137,14 @@ func TestSavingsPhrasesFromTheirRecords(t *testing.T) {
 		"  sends: 2 sends: 1 wake, 1 nudge",
 		"  context window now: 10,000 of 200,000 tokens (5%), estimated by BB, read 1 h 1 min ago",
 		"  session resets: 2026-11-16T10:30:00Z by terminal, before 60,000 tokens, after 10,000 tokens",
-		"  estimate: 20,000 to 120,000 tokens not spent on 2 withheld wakes, compared with a timer that sends at every check (withheld wakes times the lowest and highest context window reading of the period, estimated by BB; not tokens billed)",
+		"  token savings unavailable; context size and withheld checks do not measure token consumption or subscription allowance; cache reuse and provider accounting are unknown",
 	}
 	if !reflect.DeepEqual(got.Lines, want) {
 		t.Fatalf("lines:\n%s\nwant:\n%s", strings.Join(got.Lines, "\n"), strings.Join(want, "\n"))
 	}
 	e := got.Estimate
-	if e.Label != "estimate" || e.Availability != "recorded" || *e.WithheldWakes != 2 || *e.LowestReading != 10_000 || *e.HighestReading != 60_000 ||
-		*e.LowTokens != 20_000 || *e.HighTokens != 120_000 || !e.Estimated || e.Baseline != savingsBaseline {
+	if e.Label != "estimate" || e.Availability != "unavailable" || e.Reason != "consumption_not_measured" || *e.WithheldWakes != 2 || *e.LowestReading != 10_000 || *e.HighestReading != 60_000 ||
+		e.LowTokens != nil || e.HighTokens != nil || !e.Estimated || e.Baseline != savingsBaseline {
 		t.Fatalf("estimate: %+v", e)
 	}
 	if got.Period.From != time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC) || got.Period.Days != 7 || got.Version != 1 {
@@ -202,7 +202,7 @@ func TestSavingsAbsentWhenNotRecorded(t *testing.T) {
 }
 
 // The figures never carry money, a headline, or a chat comparison, and the
-// estimate always says it is one, with its baseline in the same line.
+// context figures never become a consumption or allowance claim.
 func TestSavingsWordsStayHonest(t *testing.T) {
 	var f state.File
 	f.NoteContext("primary", state.ContextReading{UsedTokens: 40_000, WindowTokens: 200_000, At: savingsNow.Add(-time.Hour)})
@@ -210,13 +210,13 @@ func TestSavingsWordsStayHonest(t *testing.T) {
 	s := describeSavings(j, savingsSpaced{}, f.Context, describeContext(f.Context, "primary", true, savingsNow), savingsNow)
 	b, _ := json.Marshal(s)
 	all := strings.ToLower(string(b))
-	for _, banned := range []string{"$", "usd", "cost", "money", "dollar", "chat", "saved", "headline"} {
+	for _, banned := range []string{"$", "usd", "cost", "money", "dollar", "chat", "saved", "headline", "tokens not spent", "tokens not re-read", "lowtokens", "hightokens"} {
 		if strings.Contains(all, banned) {
 			t.Errorf("savings mentions %q: %s", banned, all)
 		}
 	}
 	last := s.Lines[len(s.Lines)-1]
-	if !strings.HasPrefix(last, "  estimate: ") || !strings.Contains(last, savingsBaseline) || !strings.Contains(last, "reported by BB") || !strings.Contains(last, "not tokens billed") {
+	if !strings.HasPrefix(last, "  token savings unavailable;") || !strings.Contains(last, "cache reuse") || !strings.Contains(last, "subscription allowance") {
 		t.Fatalf("estimate line: %q", last)
 	}
 }
@@ -258,5 +258,28 @@ func TestSavingsSpacedWakesFromTheirRecord(t *testing.T) {
 	}
 	if s := loadSavingsSpaced(t.TempDir()); s.Availability != "not_recorded" {
 		t.Fatalf("no state.json: %+v", s)
+	}
+}
+
+// A current context snapshot cannot price a withheld check, even with complete
+// history, zero withheld checks or a reported (rather than estimated) reading.
+func TestSavingsNeverInfersConsumptionFromContext(t *testing.T) {
+	for _, withheld := range []int{0, 1, 1000} {
+		for _, estimated := range []bool{false, true} {
+			var f state.File
+			f.NoteContext("primary", state.ContextReading{UsedTokens: 900_000, WindowTokens: 1_000_000, Estimated: estimated, At: savingsNow.Add(-time.Hour)})
+			counts := savingsCounts{Availability: "recorded", Total: &withheld}
+			got := savingsEstimateOf(counts, false, f.Context, savingsNow.Add(-24*time.Hour), savingsNow)
+			b, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Availability != "unavailable" || got.Reason != "consumption_not_measured" || got.LowTokens != nil || got.HighTokens != nil || strings.Contains(string(b), `"lowTokens"`) || strings.Contains(string(b), `"highTokens"`) {
+				t.Fatalf("occupancy became consumption: %s", b)
+			}
+			if got.LowestReading == nil || *got.LowestReading != 900_000 || *got.WithheldWakes != withheld {
+				t.Fatalf("lost independent diagnostics: %+v", got)
+			}
+		}
 	}
 }
