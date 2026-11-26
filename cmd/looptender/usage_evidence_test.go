@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -130,6 +131,12 @@ func TestUsageEvidenceReadIsBoundedAndPanelUsesIt(t *testing.T) {
 		t.Fatal(e)
 	}
 	g := loadUsageEvidence(dir, "example", x.To)
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		if g.Availability != "unavailable" {
+			t.Fatal(g)
+		}
+		return
+	}
 	p := dockUsageLoopOf(dockUsageInput{Key: "example", Status: &statusOut{UsageMeasurement: g}})
 	if p.Measurement.Availability != "recorded" || len(p.Measurement.Trend) != 2 {
 		t.Fatal(p.Measurement)

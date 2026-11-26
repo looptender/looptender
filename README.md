@@ -73,7 +73,8 @@ local [measurement export](docs/design/usage-measurement.md) to show provider to
 trends, observed duplicate actions suppressed, and controlled-pair estimates per
 accepted work unit. Missing data stays unavailable. Automatic collection and
 subscription-quota savings are unverified; estimates disclose their baseline,
-coverage and author-attested quality/cache conditions.
+coverage and author-attested quality/cache conditions. The file reader currently
+supports macOS/Linux; other platforms show evidence unavailable.
 
 ## When a usage limit hits: takeover
 

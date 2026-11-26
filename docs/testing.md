@@ -889,3 +889,13 @@ Not verified: independent review, real export ingestion, automatic collector cov
 controlled live savings, independent quality/continuity acceptance, subscription-quota
 attribution or native Linux/Windows execution. Fictional captures do not close these
 acceptance cases. No runtime installation, Accounts acquisition change or rollout.
+
+
+Usage ingestion review regressions additionally cover a deterministic file-to-FIFO
+replacement in an owned subprocess with a two-second deadline, regular-file identity
+replacement, symlinks, oversized opened files, conflicting/escaped duplicate JSON
+keys, case aliases and path/URL-shaped display labels. The FIFO, duplicate-attestation
+and path-disclosure regressions failed before the fixes. macOS/Linux use a native
+no-follow/nonblocking open plus descriptor validation; other platforms return
+unavailable until a native reader is implemented. Linux/amd64 and Windows/amd64 test binaries cross-compiled after the fixes.
+Cross-compilation is not native fixture execution or live acceptance.

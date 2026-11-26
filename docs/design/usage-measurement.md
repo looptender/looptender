@@ -91,3 +91,21 @@ semantics; automatic identity-based avoided-action instrumentation; provider and
 lane coverage; collection cost accounting; independently reviewed matched trials;
 subscription-specific attribution; installed/native acceptance. No conservation
 roadmap item is closed by fictional fixtures or author declarations.
+
+### Strict ingestion boundary
+
+On macOS/Linux the actual open uses no-follow and nonblocking flags. Before any
+read, descriptor metadata must identify the same regular file seen in the initial
+path check and remain within the byte limit. A FIFO, symlink, different replacement
+or oversized descriptor is refused. An ordinary concurrent atomic publication may
+therefore produce an unavailable reading until the next existing refresh; it never
+starts a retry loop. Byte limits do not promise a deadline for arbitrary stalled
+filesystem I/O. Other platforms currently fail closed with unavailable evidence;
+a native safe-reader implementation and acceptance remain open.
+
+A bounded token pass checks exact JSON field names and rejects duplicate keys,
+including escaped duplicates, unknown fields and case aliases at every nesting
+level before typed decoding or estimate qualification. Labels are 1–80 ASCII
+characters: start with a letter/digit, followed only by letters/digits, spaces,
+periods, underscores or hyphens. Path separators, colons and URL forms are refused;
+exporters must supply safe aliases for private source references.

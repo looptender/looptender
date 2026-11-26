@@ -17,7 +17,7 @@ import (
 
 const usageEvidenceLimit = 128 << 10
 
-var usageEvidenceLabel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:/ -]{0,79}$`)
+var usageEvidenceLabel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_. -]{0,79}$`)
 
 type usageCounters struct {
 	Input     *int64 `json:"input"`
@@ -77,6 +77,11 @@ func unavailableUsage(reason string) usageMeasurement {
 	return usageMeasurement{Availability: "unavailable", Details: []string{reason}, Trend: []string{}, Avoided: "Observed avoided redundant actions: unavailable; no identity-based evidence.", Estimate: []string{"Estimated token savings: unavailable; no accepted comparable baseline. Subscription quota savings: unknown."}}
 }
 func loadUsageEvidence(dir, loop string, now time.Time) usageMeasurement {
+	return loadUsageEvidenceWithOpen(dir, loop, now, openUsageEvidence)
+}
+
+// The opener seam permits deterministic replacement-race fixtures.
+func loadUsageEvidenceWithOpen(dir, loop string, now time.Time, open func(string) (*os.File, error)) usageMeasurement {
 	p := filepath.Join(dir, "usage-evidence.json")
 	info, err := os.Lstat(p)
 	if err != nil {
@@ -85,11 +90,15 @@ func loadUsageEvidence(dir, loop string, now time.Time) usageMeasurement {
 	if !info.Mode().IsRegular() || info.Size() > usageEvidenceLimit {
 		return unavailableUsage("Usage evidence unavailable; export exceeds bounds or is not a regular file.")
 	}
-	f, err := os.Open(p)
+	f, err := open(p)
 	if err != nil {
 		return unavailableUsage("Usage evidence unavailable; export could not be read.")
 	}
 	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || opened.Size() > usageEvidenceLimit || !os.SameFile(info, opened) {
+		return unavailableUsage("Usage evidence unavailable; export changed or opened file is unsafe.")
+	}
 	b, err := io.ReadAll(io.LimitReader(f, usageEvidenceLimit+1))
 	if err != nil || len(b) > usageEvidenceLimit {
 		return unavailableUsage("Usage evidence unavailable; export exceeds bounds.")
@@ -119,7 +128,7 @@ var usageMetricNames = []string{"input", "cached input", "output", "reasoning ou
 
 func parseUsageEvidence(raw []byte, loop string, now time.Time) usageMeasurement {
 	bad := unavailableUsage("Usage evidence unavailable; invalid, conflicting or unsupported export.")
-	if len(raw) > usageEvidenceLimit {
+	if len(raw) > usageEvidenceLimit || !usageEvidenceFields(raw) {
 		return bad
 	}
 	var x usageExport
