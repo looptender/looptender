@@ -57,7 +57,7 @@ final class QuotaTests: XCTestCase {
         let row = try XCTUnwrap(MenuBuilder.build(.read(list, at: Date()), now: Date()).accountRow("Example Claude"))
         XCTAssertTrue(row.detail.contains("0.0% used")) // Explicit zero only.
         XCTAssertTrue(row.detail.contains("freshness unknown"))
-        XCTAssertTrue(row.submenu.contains { $0.accessibilityLabel.contains("Retrieved 2030-03-04T12:00:00Z") && $0.accessibilityLabel.contains("cached or seeded") })
+        XCTAssertTrue(row.submenu.contains { $0.accessibilityLabel.contains("Last successful fetch 2030-03-04T12:00:00Z") && $0.accessibilityLabel.contains("cached or seeded") })
         XCTAssertFalse(row.submenu.contains { $0.accessibilityLabel.contains("saved snapshot") || $0.accessibilityLabel.hasPrefix("Read ") })
         XCTAssertEqual(row.submenu.compactMap(\.command), [.openPanel])
         for bad in [q.replacingOccurrences(of: "provider_unknown", with: "fresh"),
@@ -94,7 +94,7 @@ final class QuotaTests: XCTestCase {
         let row = try XCTUnwrap(MenuBuilder.build(.read(list, at: Date()), now: Date()).accountRow("Example Antigravity"))
         XCTAssertTrue(row.detail.contains("0.0% used"))
         XCTAssertTrue(row.detail.contains("freshness unknown"))
-        XCTAssertTrue(row.submenu.contains { $0.accessibilityLabel.contains("Retrieved 2030-03-04T12:00:00Z") && $0.accessibilityLabel.contains("cached or seeded") })
+        XCTAssertTrue(row.submenu.contains { $0.accessibilityLabel.contains("Last successful fetch 2030-03-04T12:00:00Z") && $0.accessibilityLabel.contains("cached or seeded") })
         XCTAssertFalse(row.submenu.contains { $0.accessibilityLabel.contains("saved snapshot") || $0.accessibilityLabel.hasPrefix("Read ") })
         XCTAssertEqual(row.submenu.compactMap(\.command), [.openPanel])
         for bad in [q.replacingOccurrences(of: "provider_unknown", with: "fresh"),

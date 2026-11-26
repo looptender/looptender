@@ -25,6 +25,25 @@ import Foundation
                   (!["waiting", "paused"].contains(state) || row.detail.contains("updates paused")),
                   (state != "backoff" || row.detail.contains("fetch failed")) else { fatalError("Scheduler evidence hid saved time or introduced authority") }
         }
+        // Provider retrieval is a successful fetch, never evidence of a fresh
+        // provider observation. Match the same user-visible contract as XCTest.
+        for (provider, source) in [("claude-code", "claude:get_usage"), ("antigravity", "agy:/usage")] {
+            var root = base
+            var retrieved = summary
+            retrieved.removeValue(forKey: "observedAt")
+            retrieved["retrievedAt"] = "2030-03-04T12:00:00Z"
+            retrieved["freshness"] = "provider_unknown"
+            retrieved["source"] = source
+            root["accountQuotas"] = ["state": "available", "complete": true, "omitted": 0,
+                "accounts": [["label": "Example retrieval", "provider": provider, "summary": retrieved]]]
+            let list = try Contract.panelList(JSONSerialization.data(withJSONObject: root), exit: 0)
+            let model = MenuBuilder.build(.read(list, at: Date()), now: Date())
+            guard let row = (model.rows + model.rows.flatMap(\.submenu)).first(where: { $0.title == "Example retrieval" }),
+                  row.submenu.contains(where: { $0.accessibilityLabel.contains("Last successful fetch 2030-03-04T12:00:00Z") }),
+                  row.submenu.contains(where: { $0.accessibilityLabel.contains("provider freshness unknown") }),
+                  row.submenu.contains(where: { $0.accessibilityLabel.contains("cached or seeded") }),
+                  !row.submenu.contains(where: { $0.accessibilityLabel.contains("saved snapshot") || $0.accessibilityLabel.hasPrefix("Read ") }) else { fatalError("Retrieval timestamp lost its successful-fetch/unknown-freshness contract") }
+        }
         for bad: [String: Any] in [["state": "invented", "text": "invalid"], ["state": "enabled", "text": "valid", "nextAttemptAt": "invalid"]] {
             do { _ = try Contract.panelList(payload(bad), exit: 0); fatalError("Invalid scheduler evidence accepted") } catch {}
         }
