@@ -81,7 +81,7 @@ extension MenuBuilder {
         var result = [quotaStatus("Account quota · saved selections, not live thread identity")]
         func rank(_ account: AccountQuota) -> Int {
             if account.summary.state != "reported" { return 2 }
-            return account.summary.rows.contains { $0.usedPercent != nil && !quotaEnded($0, now: now) } ? 0 : 1
+            return account.summary.rows.contains { quotaWindow($0) && !quotaEnded($0, now: now) } ? 0 : 1
         }
         let ordered = list.accounts.enumerated().sorted {
             let lhs = rank($0.element), rhs = rank($1.element)
@@ -94,6 +94,9 @@ extension MenuBuilder {
         if more > 0 { result.append(quotaStatus("\(more) more selected accounts in the panel.")) }
         if !list.complete { result.append(quotaStatus("Account selection evidence is incomplete.")) }
         return result
+    }
+    static func quotaWindow(_ row: AccountQuotaRow) -> Bool {
+        row.usedPercent != nil || row.remainingPercent != nil || row.resetsAt != nil
     }
     static func quotaEnded(_ row: AccountQuotaRow, now: Date) -> Bool {
         row.ended == true || Contract.date(row.resetsAt).map { $0 <= now } == true
@@ -124,8 +127,10 @@ extension MenuBuilder {
         if q.state == "reported" { children.append(quotaStatus(quotaAge(q, now: now))) }
         else { children.append(quotaStatus("Quota unavailable · \(q.text)")) }
         // Active windows precede expired history, retaining provider order within each group.
-        let ordered = q.rows.filter { !quotaEnded($0, now: now) } + q.rows.filter { quotaEnded($0, now: now) }
-        for r in ordered.prefix(8) {
+        let indexed = Array(q.rows.enumerated())
+        let ordered = indexed.filter { !quotaEnded($0.element, now: now) } + indexed.filter { quotaEnded($0.element, now: now) }
+        for item in ordered.prefix(8) {
+            let r = item.element
             let ended = quotaEnded(r, now: now)
             let value = r.text.replacingOccurrences(of: "Window ended; refresh needed. Last reading: ", with: "")
             let label = "\(r.name): " + (ended ? "Last reading: " : "") + value
@@ -139,7 +144,7 @@ extension MenuBuilder {
                 details.append(quotaStatus("Reset: \(local) (local time) · \(reset)"))
             }
             if r.usedPercent == 100 { details.append(quotaStatus("Exhausted in the saved reading; new evidence is needed.")) }
-            children.append(MenuRow(kind: .action, title: shortened(r.name, to: 40), detail: ended ? "Reset passed · last reading" : r.remainingPercent.map { "\($0)% left" } ?? shortened(r.text, to: 45), symbol: "", accessibilityLabel: label + (hasWindow ? ". " + quotaReset(r, now: now) : ""), accessibilityHelp: "Shows the saved reading and reset detail; never assumes replenishment.", toolTip: label, command: nil, submenu: details))
+            children.append(MenuRow(kind: .action, title: shortened(r.name, to: 40), detail: ended ? "Reset passed · last reading" : r.remainingPercent.map { "\($0)% left" } ?? shortened(r.text, to: 45), symbol: "", accessibilityLabel: label + (hasWindow ? ". " + quotaReset(r, now: now) : ""), accessibilityHelp: "Shows the saved reading and reset detail; never assumes replenishment.", toolTip: label, command: nil, submenu: details, semanticID: "quota-window:\(item.offset):\(r.name)"))
         }
         if q.rows.count > 8 { children.append(quotaStatus("\(q.rows.count - 8) more quota details in the panel.")) }
         if q.partial == true || (q.omitted ?? 0) > 0 { children.append(quotaStatus("Partial quota evidence; missing values are not zero.")) }
@@ -149,15 +154,21 @@ extension MenuBuilder {
         if let failed = q.failedRefreshAt { children.append(quotaStatus("Refresh failed \(failed). \(q.failedRefreshText ?? "Earlier evidence retains its time.")")) }
         if q.state == "reported" { children.append(quotaStatus(q.text)) }
         children.append(quotaStatus("Refresh usage: open this account in Accounts and review retrieval. No automatic provider refresh."))
-        let windows = q.rows.filter { $0.usedPercent != nil }
+        let windows = q.rows.filter { quotaWindow($0) }
         let active = windows.filter { !quotaEnded($0, now: now) }
-        let limiting = active.max { ($0.usedPercent ?? 0) < ($1.usedPercent ?? 0) }
+        // Compare only the supplied percentages. Complementing used here is
+        // a ranking key, never a new reported value or replenishment estimate.
+        func remainingRank(_ row: AccountQuotaRow) -> Double {
+            row.remainingPercent ?? row.usedPercent.map { 100 - $0 } ?? 101
+        }
+        let limiting = active.min { remainingRank($0) < remainingRank($1) }
         let detail: String
         if q.state != "reported" { detail = "Quota unavailable" }
         else if let limiting {
-            detail = (limiting.remainingPercent.map { "\($0)% left" } ?? "\(limiting.usedPercent!)% used") + " · " + quotaReset(limiting, now: now)
+            let value = limiting.remainingPercent.map { "\($0)% left" } ?? limiting.usedPercent.map { "\($0)% used" } ?? "Quota details recorded"
+            detail = value + " · " + quotaReset(limiting, now: now)
         } else { detail = windows.isEmpty ? (q.partial == true ? "Partial quota evidence" : "Quota details recorded") : "Reset passed · refresh needed" }
-        return MenuRow(kind: .action, title: shortened(a.label, to: maxName), detail: detail, symbol: "gauge.with.dots.needle.33percent", accessibilityLabel: "\(a.label), \(a.provider), \(detail). Selected account identity not verified.", accessibilityHelp: "Opens saved quota details; reads no provider.", toolTip: a.label, command: nil, submenu: children)
+        return MenuRow(kind: .action, title: shortened(a.label, to: maxName), detail: detail, symbol: "gauge.with.dots.needle.33percent", accessibilityLabel: "\(a.label), \(a.provider), \(detail). Selected account identity not verified.", accessibilityHelp: "Opens saved quota details; reads no provider.", toolTip: a.label, command: nil, submenu: children, semanticID: "quota-account:\(a.provider):\(a.id ?? a.label)")
     }
     private static func quotaStatus(_ full: String) -> MenuRow {
         MenuRow(kind: .status, title: shortened(full, to: 110), detail: "", symbol: "", accessibilityLabel: full, accessibilityHelp: "", toolTip: full, command: nil)

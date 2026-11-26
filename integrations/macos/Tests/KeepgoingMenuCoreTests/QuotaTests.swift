@@ -38,6 +38,42 @@ final class QuotaTests: XCTestCase {
         XCTAssertTrue(MenuBuilder.accountsThatMatter(list.accountQuotas!, now: quotaNow.addingTimeInterval(5 * 3600)).isEmpty)
     }
 
+    func testRemainingOnlyActiveWindowSummaryAndAccountOrder() throws {
+        let past = AccountQuotaRow(name: "5-hour", text: "100% used", usedPercent: 100, remainingPercent: nil, resetsAt: "2030-03-04T11:00:00Z", ended: nil)
+        let active = AccountQuotaRow(name: "Individual limit", text: "87.5% remaining · provider units", usedPercent: nil, remainingPercent: 87.5, resetsAt: "2030-03-04T14:00:00Z", ended: nil)
+        let sample = try XCTUnwrap(Contract.panelList(payload(summary), exit: 0).accountQuotas?.accounts.first)
+        func account(_ rows: [AccountQuotaRow], label: String) -> AccountQuota {
+            AccountQuota(id: nil, label: label, provider: sample.provider, summary: AccountQuotaSummary(state: "reported", text: sample.summary.text, source: sample.summary.source, observedAt: sample.summary.observedAt, retrievedAt: nil, freshness: "fresh", rows: rows, partial: false, omitted: 0, failedRefreshAt: nil, failedRefreshText: nil))
+        }
+        let mixed = MenuBuilder.quotaAccountRow(account([past, active], label: "Example mixed"), now: quotaNow)
+        XCTAssertTrue(mixed.detail.contains("87.5% left"))
+        XCTAssertFalse(mixed.detail.contains("Reset passed"))
+        XCTAssertEqual(mixed.submenu[2].title, "Individual limit")
+        let list = AccountQuotaList(state: "available", complete: true, accounts: [account([past], label: "Example history"), account([active], label: "Example active")], omitted: 0)
+        XCTAssertTrue(Contract.validQuotas(list))
+        XCTAssertEqual(MenuBuilder.quotaRows(list, now: quotaNow)[1].title, "Example active")
+        XCTAssertNil(active.usedPercent)
+    }
+
+    func testResetReorderDefersWhileTrackingAndKeepsWindowTargets() throws {
+        let sample = try XCTUnwrap(Contract.panelList(payload(summary), exit: 0).accountQuotas?.accounts.first)
+        let first = AccountQuotaRow(name: "5-hour", text: "40% used · 60% remaining", usedPercent: 40, remainingPercent: 60, resetsAt: "2030-03-04T13:00:00Z", ended: nil)
+        let second = AccountQuotaRow(name: "7-day", text: "80% used · 20% remaining", usedPercent: 80, remainingPercent: 20, resetsAt: "2030-03-04T14:00:00Z", ended: nil)
+        let account = AccountQuota(id: nil, label: sample.label, provider: sample.provider, summary: AccountQuotaSummary(state: "reported", text: sample.summary.text, source: sample.summary.source, observedAt: sample.summary.observedAt, retrievedAt: nil, freshness: "fresh", rows: [first, second], partial: false, omitted: 0, failedRefreshAt: nil, failedRefreshText: nil))
+        let before = MenuBuilder.quotaAccountRow(account, now: quotaNow)
+        let ticking = MenuBuilder.quotaAccountRow(account, now: quotaNow.addingTimeInterval(60))
+        let after = MenuBuilder.quotaAccountRow(account, now: quotaNow.addingTimeInterval(3600))
+        XCTAssertEqual(before.submenu[2].title, "5-hour")
+        XCTAssertEqual(after.submenu[2].title, "7-day")
+        XCTAssertFalse(MenuBuilder.sameShape([before], [after]))
+        XCTAssertEqual(before.submenu[2].semanticID, after.submenu[3].semanticID)
+        XCTAssertEqual(before.submenu[3].semanticID, after.submenu[2].semanticID)
+        XCTAssertEqual(MenuBuilder.updateMode(shown: [before], next: [after], itemCount: 1, menuOpen: true, hasHighlight: true), .deferred)
+        XCTAssertEqual(MenuBuilder.updateMode(shown: [before], next: [ticking], itemCount: 1, menuOpen: true, hasHighlight: true), .inPlace)
+        XCTAssertEqual(MenuBuilder.updateMode(shown: [before], next: [after], itemCount: 1, menuOpen: false, hasHighlight: false), .rebuild)
+        XCTAssertEqual(before.submenu.first?.command, after.submenu.first?.command)
+    }
+
     func testQuotaDecoderRejectsMalformedEvidence() {
         for bad in [summary.replacingOccurrences(of: "\"usedPercent\":37", with: "\"usedPercent\":101"),
                     summary.replacingOccurrences(of: "\"remainingPercent\":63", with: "\"remainingPercent\":0"),

@@ -298,11 +298,12 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.setAccessibilityLabel(model.iconAccessibilityLabel + (mark.isEmpty ? "" : ", menu update available"))
         }
         let column = stateColumn(model.rows)
-        if MenuBuilder.sameShape(model.rows, shown), menu.items.count == model.rows.count {
+        switch MenuBuilder.updateMode(shown: shown, next: model.rows, itemCount: menu.items.count, menuOpen: menuOpen, hasHighlight: menu.highlightedItem != nil) {
+        case .inPlace:
             for (entry, row) in zip(menu.items, model.rows) where row.kind != .separator { fill(entry, row, column: column) }
-        } else if menuOpen, menu.highlightedItem != nil {
-            return // menuDidClose renders again
-        } else {
+        case .deferred:
+            return // menuDidClose renders again; preserve the highlighted target
+        case .rebuild:
             build(menu, model.rows, column: column)
         }
         shown = model.rows

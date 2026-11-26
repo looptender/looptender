@@ -202,7 +202,12 @@ readings, unknown provider freshness, source and refresh failures stay visible
 in account details. Provider freshness remains unknown for Claude/Antigravity.
 Ages and countdowns recompute on menu opening and ordinary saved-evidence
 reads; they do not add provider polling. Existing menu tracking rules can defer
-structural changes until a highlighted menu closes. Review usage retrieval in
+structural changes until a highlighted menu closes. Window identities include
+the full window name and its original source ordinal, so active/history
+reordering cannot replace a highlighted window in place; countdown changes for
+the same window still update in place. Active remaining-only individual limits
+participate in summaries and active-before-history account ordering without
+inventing a used percentage. Review usage retrieval in
 the account page using a panel with changes allowed; opening it from the menu
 does not refresh quota or begin sign-in.
 Long menu text is shortened visibly, with complete accessible labels/tooltips.

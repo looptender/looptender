@@ -44,6 +44,29 @@ import Foundation
         precondition(menu[1].detail.contains("90.0% left"))
         precondition(menu[2].detail.contains("Reset passed"))
         precondition(menu[3].detail == "Quota unavailable")
+        // Supported individual limits can report remaining without usedPercent.
+        let remainingOnly = AccountQuotaRow(name: "Individual limit", text: "87.5% remaining · provider units", usedPercent: nil, remainingPercent: 87.5, resetsAt: "2030-03-04T14:00:00Z", ended: nil)
+        let mixedRemaining = MenuBuilder.quotaAccountRow(account([live, remainingOnly]), now: later)
+        precondition(mixedRemaining.detail.contains("87.5% left") && !mixedRemaining.detail.contains("Reset passed"))
+        precondition(mixedRemaining.submenu[2].title == "Individual limit")
+        let remainingOrder = MenuBuilder.quotaRows(AccountQuotaList(state: "available", complete: true, accounts: [account([live]), account([remainingOnly])], omitted: 0), now: later)
+        precondition(remainingOrder[1].detail.contains("87.5% left") && remainingOrder[2].detail.contains("Reset passed"))
+        precondition(remainingOnly.usedPercent == nil)
+        // Equal-shaped windows swap as the first reset passes. A tracked menu
+        // must defer that structural change, while ordinary countdowns update.
+        let first = AccountQuotaRow(name: "5-hour", text: "40% used · 60% remaining", usedPercent: 40, remainingPercent: 60, resetsAt: reset, ended: nil)
+        let second = AccountQuotaRow(name: "7-day", text: "80% used · 20% remaining", usedPercent: 80, remainingPercent: 20, resetsAt: "2030-03-04T14:00:00Z", ended: nil)
+        let beforeSwap = MenuBuilder.quotaAccountRow(account([first, second]), now: now)
+        let ticking = MenuBuilder.quotaAccountRow(account([first, second]), now: now.addingTimeInterval(60))
+        let afterSwap = MenuBuilder.quotaAccountRow(account([first, second]), now: later)
+        precondition(MenuBuilder.sameShape([beforeSwap], [ticking]))
+        precondition(!MenuBuilder.sameShape([beforeSwap], [afterSwap]))
+        precondition(beforeSwap.submenu[2].semanticID == afterSwap.submenu[3].semanticID)
+        precondition(beforeSwap.submenu[3].semanticID == afterSwap.submenu[2].semanticID)
+        precondition(MenuBuilder.updateMode(shown: [beforeSwap], next: [afterSwap], itemCount: 1, menuOpen: true, hasHighlight: true) == .deferred)
+        precondition(MenuBuilder.updateMode(shown: [beforeSwap], next: [ticking], itemCount: 1, menuOpen: true, hasHighlight: true) == .inPlace)
+        precondition(MenuBuilder.updateMode(shown: [beforeSwap], next: [afterSwap], itemCount: 1, menuOpen: false, hasHighlight: false) == .rebuild)
+        precondition(beforeSwap.submenu.first?.command == afterSwap.submenu.first?.command)
         if CommandLine.arguments.contains("--describe") {
             func show(_ row: MenuRow, _ depth: Int = 0) {
                 print(String(repeating: "  ", count: depth) + row.title + (row.detail.isEmpty ? "" : " · " + row.detail))
@@ -51,6 +74,6 @@ import Foundation
             }
             [row, ended, unavailable].forEach { show($0) }
         }
-        print("Native quota clocks PASS: remaining/exhausted, exact reset, passed/mixed windows, stale/future time, unknown provider freshness, unavailable navigation and promotion boundary")
+        print("Native quota clocks PASS: remaining/exhausted, exact reset, passed/mixed windows, stale/future time, unknown provider freshness, unavailable navigation, remaining-only activity, tracked reorder and promotion boundary")
     }
 }
