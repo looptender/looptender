@@ -1,0 +1,1 @@
+- Make the panel lock-loss test wait for its owned server process to exit, avoiding false failures when an exited detached process remains a zombie. Panel behavior is unchanged.

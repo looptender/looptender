@@ -109,8 +109,39 @@ func TestPanelSocketIsPrivateAtBind(t *testing.T) {
 // it when it goes.
 func TestPanelServerWhoseLockFileIsDeletedExitsAndLeavesTheNewOneWorking(t *testing.T) {
 	w := newPanelProcessWorld(t)
-	if code, out, errs := w.open("--no-open"); code != exitOK {
-		t.Fatalf("open: %d %s %s", code, out, errs)
+	// Own the first process so Wait proves it exited and reaps it. A
+	// detached process can remain a zombie after its command line disappears;
+	// signal(0) still succeeds then and does not prove a server is running.
+	cmd, firstOut, firstErrs := w.command("__panel-server", "--panel-directory", w.dir, "--directory", w.registry, "--offline")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	firstDone := make(chan struct{})
+	var firstErr error
+	go func() {
+		firstErr = cmd.Wait()
+		close(firstDone)
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-firstDone:
+		default:
+			_ = cmd.Process.Kill()
+			<-firstDone
+		}
+	})
+	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if _, ok := panelLive(context.Background(), w.dir); ok {
+			break
+		}
+		select {
+		case <-firstDone:
+			t.Fatalf("first server exited while starting: %v %s %s", firstErr, firstOut, firstErrs)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first server did not start")
+		}
 	}
 	first := w.record()
 	if err := os.Remove(filepath.Join(w.dir, panelServerLock+".lock")); err != nil {
@@ -126,15 +157,16 @@ func TestPanelServerWhoseLockFileIsDeletedExitsAndLeavesTheNewOneWorking(t *test
 	}
 	// The first notices within its next check that its lock is not the file
 	// at that path any more, and exits without touching the second's files.
-	deadline := time.Now().Add(15 * time.Second)
-	for w.serverProcesses() != 1 {
-		if time.Now().After(deadline) {
-			t.Fatalf("%d servers persist", w.serverProcesses())
+	select {
+	case <-firstDone:
+		if firstErr != nil {
+			t.Fatalf("first server exit: %v %s %s", firstErr, firstOut, firstErrs)
 		}
-		time.Sleep(200 * time.Millisecond)
+	case <-time.After(15 * time.Second):
+		t.Fatal("the first server did not exit after losing its lock")
 	}
-	if process, err := os.FindProcess(first.PID); err == nil && process.Signal(syscall.Signal(0)) == nil {
-		t.Fatal("the first server is still running")
+	if n := w.serverProcesses(); n != 1 {
+		t.Fatalf("%d servers after the first exited", n)
 	}
 	time.Sleep(300 * time.Millisecond)
 	if again, ok := panelLive(context.Background(), w.dir); !ok || again != second {

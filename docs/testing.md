@@ -885,3 +885,15 @@ that itself requires bounding. Current observed-title display remains bounded
 as written. The bracketed/separated fixtures fail on the pre-fix implementation
 with a clipped predecessor model label; the corrected exact-target cache path
 passes. This does not expand the existing 120-character title-cache bound.
+
+The panel lock-loss fixture owns and waits for its first server process before
+checking the replacement's socket, record and page. Process-list disappearance
+followed by `signal(0)` is not an exit receipt: an exited detached process can
+remain a zombie, for which that signal still succeeds. A controlled native
+fixture reproduced that false positive while the replacement answered and the
+first process subsequently returned a successful exit. The lock-loss assertion
+still requires the first server to exit within 15 seconds; disabling production
+lock-loss detection makes it fail. The ordinary panel-start/reuse fixture retains
+coverage of detached startup. This changes fixture ownership only, not panel
+shutdown or lock semantics. Native fixture evidence, CI and installed acceptance
+remain separate; no installed panel or provider was controlled for this repair.
