@@ -286,19 +286,22 @@ func TestDisplayNameRuleAndStoredName(t *testing.T) {
 		t.Fatalf("%+v", n)
 	}
 	now := time.Now()
-	// The first title read becomes the name; a later one does not change it.
+	// Auto-derived names follow the current observed title, including model labels.
 	if err := state.NoteThreadTitle(dir, "thr_example1", "Example work · Sonnet medium", []string{"claude-code"}, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.NoteThreadTitle(dir, "thr_example1", "Renamed in BB", nil, now); err != nil {
+	if err := state.NoteThreadTitle(dir, "thr_example1", "Renamed in BB (Codex)", nil, now); err != nil {
 		t.Fatal(err)
 	}
 	n := namingOf(l, "thr_example1")
-	if n.DisplayName != "Example work" || n.NameSource != state.DisplayNameTitleTrimmed || !n.TitleDiffers || n.ThreadTitle != "Renamed in BB" || n.Slug != "example-loop" {
+	if n.DisplayName != "Renamed in BB (Codex)" || n.NameSource != state.DisplayNameThreadTitle || n.TitleDiffers || n.ThreadTitle != "Renamed in BB (Codex)" || n.Slug != "example-loop" {
 		t.Fatalf("%+v", n)
 	}
-	if w := n.withoutPrivate(); w.ThreadTitle != "" || w.DisplayName != "Example work" {
+	if w := n.withoutPrivate(); w.ThreadTitle != "" || w.DisplayName != "Renamed in BB (Codex)" {
 		t.Fatalf("%+v", w)
+	}
+	if other := namingOf(l, "thr_another"); other.DisplayName != l.Name || other.ThreadTitle != "" {
+		t.Fatalf("old target label %+v", other)
 	}
 	// A person sets it; paths are hidden.
 	if err := state.SaveDisplayName(dir, "Coordinator for /Users/example/x", state.DisplayNameSet, now); err != nil {
@@ -364,7 +367,7 @@ func TestDisplayNameKeepsAPersonsNameAndAnAllRouteTitle(t *testing.T) {
 	if err := state.NoteThreadTitle(dir, "thr_example1", "(Claude 4)", nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if n := namingOf(l, ""); n.NameSource != state.DisplayNameThreadTitle || n.DisplayName != "(Claude 4)" {
+	if n := namingOf(l, "thr_example1"); n.NameSource != state.DisplayNameThreadTitle || n.DisplayName != "(Claude 4)" {
 		t.Fatalf("all-route title: %+v", n)
 	}
 	if err := state.SaveDisplayName(dir, "Coordinator (Claude 4)", state.DisplayNameSet, time.Now()); err != nil {

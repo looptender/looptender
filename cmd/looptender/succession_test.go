@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -279,5 +280,87 @@ func TestSuccessionRefusesACycleAndASecondSuccessor(t *testing.T) {
 	// And the archive itself refuses another successor.
 	if _, _, err := control.ArchiveLoopFor(oldCfg.Loop.StateDir, "", time.Now(), nil, &control.LoopRef{Loop: "example-third", StateDir: "/fictional/other"}); err != control.ErrContinuedElsewhere {
 		t.Fatalf("re-archive for another successor: %v", err)
+	}
+}
+
+func TestAutoInheritedNameFollowsSuccessorTitle(t *testing.T) {
+	f, old, oldCfg, newCfg := successionWorld(t)
+	now := time.Now().UTC()
+	if err := state.SaveDisplayName(oldCfg.Loop.StateDir, "Example task (Claude)", state.DisplayNameThreadTitle, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.NoteThreadTitle(oldCfg.Loop.StateDir, bbThreadOf(oldCfg), "Example task (Claude)", nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errs := runWith("archive", "-c", old, "--succeeded-by", f.cfg); code != exitOK {
+		t.Fatal(errs)
+	}
+	if n := namingOf(newCfg.Loop, "thr_primary"); n.DisplayName != "Example task" || n.NameSource != state.DisplayNameInheritedTitle {
+		t.Fatalf("inherited %+v", n)
+	}
+	if err := state.NoteThreadTitle(newCfg.Loop.StateDir, "thr_primary", "Successor task (Codex)", nil, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if n := namingOf(newCfg.Loop, "thr_primary"); n.DisplayName != "Successor task (Codex)" || n.NameSource != state.DisplayNameThreadTitle {
+		t.Fatalf("successor %+v", n)
+	}
+	// The previous thread's model label must not be presented on a new target.
+	if n := namingOf(newCfg.Loop, "thr_another"); n.DisplayName != "Example task" || n.NameSource != state.DisplayNameInheritedTitle || n.ThreadTitle != "" {
+		t.Fatalf("wrong target %+v", n)
+	}
+}
+
+// Automatic inheritance must parse complete source qualifiers before the
+// 80-rune display bound. Pinned names are already display names, not titles
+// whose suffixes may be removed.
+func TestAutoInheritanceStripsQualifiersBeforeDisplayBound(t *testing.T) {
+	task := "Validate fictional parser boundaries and verify recovery behavior"
+	for _, tc := range []struct{ name, task, suffix string }{
+		{"bracket crosses display bound", task, " (Claude Sonnet high)"},
+		{"separated qualifier crosses display bound", task, " · Claude Sonnet high"},
+		{"task itself needs bounding", strings.Repeat("x", 85), " (Codex high)"},
+	} {
+		for _, source := range []string{"", state.DisplayNameThreadTitle, state.DisplayNameTitleTrimmed, state.DisplayNameInheritedTitle, state.DisplayNameSet, state.DisplayNameInherited} {
+			t.Run(tc.name+"/"+source, func(t *testing.T) {
+				f := newFixture(t)
+				cfg, err := config.Load(f.cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				title := tc.task + tc.suffix
+				if len([]rune(title)) <= state.MaxDisplayName || len([]rune(title)) > state.MaxLaneTitle {
+					t.Fatal("fixture must cross display bound within title-cache bound")
+				}
+				if clean, trimmed := state.DisplayNameFromTitle(title, cfg.RouteLabels()); clean != tc.task || !trimmed {
+					t.Fatalf("qualifier fixture %q %t", clean, trimmed)
+				}
+				if err := state.NoteThreadTitle(cfg.Loop.StateDir, "thr_primary", title, nil, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				// Cover both an absent display record and every supported provenance.
+				if source == "" {
+					if err := os.Remove(filepath.Join(cfg.Loop.StateDir, state.DisplayNameName)); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := state.SaveDisplayName(cfg.Loop.StateDir, title, source, time.Now()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				want, wantSource := state.CleanDisplayName(tc.task), state.DisplayNameInheritedTitle
+				if source == state.DisplayNameSet || source == state.DisplayNameInherited {
+					want, wantSource = state.CleanDisplayName(title), state.DisplayNameInherited
+				}
+				got, gotSource := inheritedName(cfg)
+				if got != want || gotSource != wantSource {
+					t.Fatalf("inherited %q (%s), want %q (%s)", got, gotSource, want, wantSource)
+				}
+				// Current-title presentation stays bounded as written; inheritance is
+				// the only path that strips predecessor route qualifiers.
+				if current := namingForConfig(cfg); current.DisplayName != state.CleanDisplayName(title) {
+					t.Fatalf("current title changed: %+v", current)
+				}
+			})
+		}
 	}
 }

@@ -226,3 +226,13 @@ blocked-lane replacement also carries its source lane's task name. Missing title
 metadata keeps the loop-based name. See [scope, custom names and failure
 behavior](operations.md#bb-successor-thread-titles-unreleased). Setup creates
 nothing for naming, and existing-thread routes retain their custom names.
+
+### Automatic BB display names (unreleased)
+
+Without `--display-name`, the panel, menu and status views use the latest saved
+BB title for the loop's current target, including model suffixes someone put in
+the title. A later verified BB rename updates these automatic names. A custom
+name set with `looptender display-name` stays pinned. New automatic successor
+inheritance follows its own title once observed; ambiguous legacy inheritance
+stays pinned. Held/offline views retain the last verified title and never poll
+BB. See [naming provenance and freshness](operations.md#one-name-per-line-of-work).

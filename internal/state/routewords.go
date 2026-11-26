@@ -34,8 +34,9 @@ var (
 	qualifierSeps = []string{" · ", " - ", " – ", " — ", " | "}
 )
 
-// DisplayNameFromTitle is the default display name made from a BB thread's
-// title. Only whole trailing qualifiers are dropped, one after another: a
+// DisplayNameFromTitle makes a task-only inheritance fallback from a BB
+// title, before the successor has a title of its own. Current observed titles
+// are shown as written. Only whole trailing qualifiers are dropped: a
 // bracketed group at the end, or the part after the last " · ", " - ",
 // " – ", " — " or " | ", when it consists entirely of route words and names
 // a provider, model or plan (or is a generation count such as "4th
