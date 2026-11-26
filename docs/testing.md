@@ -860,6 +860,17 @@ A pinned local fake executable runs through the actual bounded command wrapper:
 unknown response, fresh process invocation and receipt reconciliation produce
 exactly one compact command. No installed BB/provider is invoked.
 
+The command-wrapper fixture first runs its newly written stand-in through a
+read-only status call outside the production command deadline. This follows the
+first-execution guidance above: macOS can assess a new executable for longer than
+the adapter's two-second bound. A synthetic one-time 2.2-second startup cost makes
+the journey fail with `command_timeout` if that preparation is removed. The
+preparation must return the exact fictional status and record only that read;
+the journey still requires one compact, no replay and explicit reconciliation.
+Subprocess exit assertions include the helper's structured stdout refusal when
+stderr is empty. Runtime deadlines and installed-command behavior are unchanged;
+this fixture preparation does not authorize warming or retrying real commands.
+
 Negative fixtures on disposable source copies fail the journey when either the
 pre-send reservation or cooldown guard is removed. The helper reuses the existing
 coordinator command adapter and Unix file-lock implementation; it adds no process
