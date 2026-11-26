@@ -34,7 +34,11 @@ All keys are required; duplicate and unknown keys refuse:
 | `continuity` | Exactly seven roles: `authorization`, `goal`, `tasks`, `obligations`, `ownership`, `approvals`, `holds`, each `{path,sha256}` for a bounded absolute regular file. Include the config itself as one source. Multiple roles can refer to one reviewed manifest. Files retain the actual content; the journal stores references/hashes only. |
 
 The manifest must preserve actual goal/tasks, lane ownership and unfinished work,
-approvals with their sources, holds and pending obligations. Hash equality proves
+approvals with their sources, holds and pending obligations. Save these as durable, versioned checkpoint files before execution and retain
+them afterward, including older versions referenced by an attempt. The helper
+records references and hashes; it neither backs up files nor verifies their
+semantic contents. Do not point task/obligation roles only at mutable files whose
+previous versions will disappear. Hash equality proves
 file integrity, not semantic completeness. Keep real identities and task content
 private. A grant/journal is cooperative local evidence, not protection against a
 person deleting every record and inventing new authority.
