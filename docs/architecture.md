@@ -467,3 +467,11 @@ claims credential rollback; failed/uncertain directories remain private and are
 not automatically adopted. See [explicit connection limits](accounts.md#explicit-provider-sign-in-unreleased-source).
 
 The unreleased `daemon-shutdown` command keeps lifecycle authority in the command layer: daemoninfo authenticates the invocation-bound request, then the command validator rechecks sources, controls, owner lease and caller under tick/control locks. Acceptance retains tick.lock through loop return and only cancels that supervisor. Busy checks refuse. It never calls target Stop or updates controls; legacy processes need their original owned lifecycle manager. See [shutdown limits](operations.md#shut-down-only-the-supervisor-unreleased-source).
+
+### Opt-in usage diagnostics (unreleased)
+
+After a recorded check, `cmd/looptender` may collect one bounded filtered BB Codex
+metadata page under the same tick/ownership fence when `loop.usage_collection`
+is enabled. It does not enter the pure decision engine or the Accounts acquisition
+loop. Cursor and rolling evidence share one atomic private record. Status and Panel
+only read that record. See [collection contract](design/usage-measurement.md#automatic-collection-unreleased-opt-in).

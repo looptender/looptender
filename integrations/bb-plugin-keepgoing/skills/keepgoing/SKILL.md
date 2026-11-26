@@ -72,3 +72,9 @@ Request acceptance is not completion. Reconciliation needs matching structured
 lifecycle plus an explicit continuity receipt; it never clears a hold. Keep the
 private journal outside the checkout/runtime and do not install or schedule the
 helper. Automatic lifecycle and successor creation remain separate contract work.
+
+
+The unreleased `bb looptender usage-events <thread> <latest|after-seq>` bridge is
+for configured opt-in usage collectors. It reads one bounded, filtered Codex
+metadata page, not transcripts. It does not measure subscription savings. Ordinary
+status reads never invoke it; see the repository usage measurement contract.

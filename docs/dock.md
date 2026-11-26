@@ -695,3 +695,8 @@ avoided actions and estimated differences against controlled baselines. See the
 [measurement contract](design/usage-measurement.md) for the bounded private export
 format, comparison requirements and unavailable states. Reading the Panel never
 collects new provider usage. Subscription-quota savings remain unknown.
+
+With `loop.usage_collection: true`, this page instead reads the private automatic
+BB Codex record and labels source, configured primary-thread scope, freshness,
+last read outcome and bounded coverage. Imported exports stay intact. Empty or
+unsupported sources do not become zero usage, and no baseline estimate is created.

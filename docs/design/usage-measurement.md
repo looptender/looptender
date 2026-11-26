@@ -1,7 +1,7 @@
 # Usage measurement and comparable savings
 
-Status: source-only diagnostic slice, stacked on the usage/compact draft. No
-collector, scheduler, provider call, runtime installation or control change.
+Status: source-only diagnostic slice, stacked on the usage/compact draft. An opt-in collector is
+implemented below; no runtime installation or live control change is implied.
 The Panel reads a bounded explicit `usage-evidence.json` export from each loop's
 state directory during its existing status read. Missing evidence is unavailable.
 The producer must publish an entire export atomically with private permissions.
@@ -35,7 +35,7 @@ The Panel shows observed intervals by ending UTC day, stream, provider and model
 with field-specific coverage. This is a trend of recorded intervals, not exact
 midnight allocation or a complete accounting of all activity. Retention gaps,
 missing snapshots outside the export and freshness beyond its displayed end time
-remain unknown. There is no automatic BB or runner export in this slice. Existing
+remain unknown. The opt-in BB collector is described below. Existing
 runner turn records remain separate because their semantics/coverage are different.
 
 `actions` is optional. Omitted means unavailable; an explicit empty list means
@@ -82,12 +82,11 @@ One read is capped at 128 KiB, 512 snapshots, 16 streams, 32 daily stream rows,
 128 action records and 8 comparison pairs, with at most 6 KiB of projected
 details per loop (narrow the export period if exceeded). Invalid/oversized exports fail closed;
 no raw input or filesystem path appears in the diagnostic. Rendering uses text
-nodes and the existing responsive list layout. No extra polling, model requests,
-account refreshes or runtime writes are added. Accounts acquisition remains a
+nodes and the existing responsive list layout. Report reads add no polling, model requests, account refreshes or runtime writes. Accounts acquisition remains a
 separate implementation owned by its lane.
 
-Open: supported model-free BB export with persisted cursors and verified counter
-semantics; automatic identity-based avoided-action instrumentation; provider and
+Open: installed acceptance of the bounded BB Codex collector; broader provider
+normalization; automatic identity-based avoided-action instrumentation; provider and
 lane coverage; collection cost accounting; independently reviewed matched trials;
 subscription-specific attribution; installed/native acceptance. No conservation
 roadmap item is closed by fictional fixtures or author declarations.
@@ -109,3 +108,60 @@ level before typed decoding or estimate qualification. Labels are 1–80 ASCII
 characters: start with a letter/digit, followed only by letters/digits, spaces,
 periods, underscores or hyphens. Path separators, colons and URL forms are refused;
 exporters must supply safe aliases for private source references.
+
+## Automatic collection (unreleased, opt-in)
+
+Set `loop.usage_collection: true` only after installing matching reviewed CLI and
+BB plugin builds. No installation is performed by this feature. The existing check
+owns collection under its tick lock and BB ownership/configuration guards; no new
+service, scheduler, Accounts polling or provider/model request is started. Stop,
+pause, holds, dry runs, transfers and handoffs skip collection. Only the configured
+primary BB thread is supported; lanes, fallbacks and other adapters are unavailable.
+The configured BB CLI and its existing endpoint/environment select the device;
+no accounts, credentials or other devices are discovered.
+
+The plugin command `bb looptender usage-events <thread> <latest|after-seq>` reads
+exact-thread metadata, requires the Codex provider (whose total input includes
+cached input), and calls SDK `threads.events.list` with only
+`thread/tokenUsage/updated`, a sequence cursor, and fixed limits. No CLI log or
+timeline fallback is allowed. Other providers fail closed until their normalization
+has been reviewed. Current thread metadata does not establish historical model or
+account attribution; the export labels those unavailable. The source is BB's
+normalized cumulative `total` fields, never `last`, context occupancy or API cost.
+Provider session IDs become opaque hashes; paths, titles and raw errors are not
+published. No accepted work, avoided actions or savings pairs are invented.
+
+The first read takes only the latest snapshot as a baseline and skips history.
+Subsequent reads take at most 32 events ascending from the durable cursor, once
+per five minutes at most (the existing loop interval may be longer). One attempt
+has a two-second command deadline plus at most 100 ms pipe cleanup, 32 KiB stdout,
+one metadata read and one filtered page. No immediate retry/backlog draining occurs.
+This optional work follows the recorded check and can add that bounded command
+latency to it; stop is not cancelled or delayed by a separate background collector.
+Arbitrary stalled filesystem I/O is not covered by the command deadline.
+
+A single private 0600 atomic `usage-collection.json` stores cursor and rolling
+export together. The attempt is flushed before querying, so failed queries and
+restarts retain spacing. Failed commits replay only from the previous durable
+cursor; counters are recomputed, never added to an independent accumulator. Damage
+holds collection rather than rescanning. Exact configured thread, CLI, provider,
+account or BB endpoint changes reset the baseline after spacing; source changes
+cannot join old and new totals. An unseen replacement behind the same endpoint or
+an event-sequence rewind cannot be identified automatically: coverage remains
+unknown and the old cursor is never reset on a guessed empty result.
+
+Retain at most 128 snapshots, 16 sessions and 24 hours. First snapshots, counter
+resets, unknown fields and removed history are not counted as zero. Sequence gaps
+are normal in a filtered event stream and cannot prove retention completeness.
+Full pages are marked potentially backlogged; no extra query is made to prove an
+empty tail. No exact midnight allocation is claimed. The Panel displays last
+successful read, stale after ten minutes, latest outcome, request attempts, latest
+read duration and returned bytes. Those are collection overhead measurements, not
+saved tokens. A successful empty page confirms the query, not provider coverage.
+
+When enabled, the Panel reads this automatic record; otherwise it reads the
+imported export. Imported evidence is never overwritten. Both remain bounded,
+nonblocking regular-file reads on macOS/Linux; other platforms are unavailable.
+The Panel never invokes collection and remains readable while a writer holds the
+tick lock. No verified subscription savings or automatic optimization policy is
+claimed. Native Linux, installed BB integration and wider attribution remain open.
