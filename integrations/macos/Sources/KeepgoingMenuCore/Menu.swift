@@ -521,8 +521,8 @@ public enum MenuBuilder {
             }
             // Accounts: only those at or near a limit on top; the rest in one submenu.
             if let quota = list.accountQuotas {
-                let all = quotaRows(quota)
-                let matter = accountsThatMatter(quota)
+                let all = quotaRows(quota, now: now)
+                let matter = accountsThatMatter(quota, now: now)
                 if !matter.isEmpty || !all.isEmpty {
                     rows.append(separator)
                     rows.append(contentsOf: matter)

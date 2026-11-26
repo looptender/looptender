@@ -1,0 +1,1 @@
+- The macOS Accounts menu now puts remaining quota and reset countdowns beside account names, orders active windows before history, and opens exact reset/read details plus a safe account-page action. Passed resets never assume replenishment, unavailable quota no longer implies a required sign-in, and provider freshness remains unknown where reported.

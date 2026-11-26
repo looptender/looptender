@@ -259,6 +259,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     func menuWillOpen(_ menu: NSMenu) {
         menuOpen = true
+        render() // Recompute saved ages even if the next CLI read fails.
         refresh()
     }
     func menuDidClose(_ menu: NSMenu) {
