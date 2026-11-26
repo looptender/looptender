@@ -5,3 +5,5 @@ path. Offline timeline filters expose the new events and retain dry-run
 markers without claiming sends or completed checks. Incident schema 15, timeline JSON schema 10 and
 executable-adoption state format 7 prevent older readers losing the evidence.
 Unreleased; offline fixtures only, with installed/live acceptance still open.
+
+- Keep recovery smoke checks distinct from lifecycle events, and protect combined goal-completion and incident records with executable-adoption format 8. Older format-7 candidates are refused.

@@ -856,3 +856,23 @@ unsupported filesystem errors cannot report success. Windows publication/marker
 and directory durability remain unimplemented; its explicit refusal fixture must
 run natively before claiming Windows behavior. README, operations and roadmap
 retain these limitations. No repair/release protocol or control UI changed.
+
+
+### Recovery smoke and combined adoption schemas
+
+The recovery smoke waits for completed held tick records, including collapsed
+checks, rather than any incident sequence allocation. Daemon lifecycle and
+refused-check records do not satisfy that wait. The synthetic Python regression
+holds check publication behind lifecycle records for both awaiting-user and
+completed holds, for one check and an additional ordinary interval, and requires
+both crash and orderly restart paths to reach their intended checks. CI runs it
+before the existing native recovery smoke; timeline, ownership, allowance,
+notification, privacy and no-provider assertions remain unchanged.
+
+Combined unreleased goal-completion and incident schema changes use adoption
+format 8. Format 7 and its goal-only fingerprint remain immutable. The combined
+fingerprint covers both roots; adoption refuses both goal-only and earlier
+incident-only format-7 candidates before validation/exec. Successful and invalid
+configuration adoption fixtures advertise format 8, so the format guard cannot
+hide a later validation regression. These are native local fixture checks and
+platform compilation, not installed build adoption or live-provider acceptance.

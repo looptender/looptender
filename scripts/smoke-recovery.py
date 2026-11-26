@@ -39,6 +39,15 @@ def load(path):
     return json.loads(path.read_text())
 
 
+def held_checks(journal, flag):
+    """Count retained real checks that began on this hold, including folds."""
+    return sum(1 + (record.get("collapsed") or {}).get("count", 0)
+               for record in journal["records"]
+               if record.get("kind") == "tick" and
+               (record.get("controlBefore") or {}).get(flag) is True and
+               not record.get("dryRun", False) and record.get("outcome") != "dry_run")
+
+
 def fixture(kind, args):
     """Only these stand-ins are reachable; never discover a real provider."""
     root = Path(os.environ["RECOVERY_FIXTURE"])
@@ -274,13 +283,14 @@ class Loop:
         endpoint = self.state / "daemon-endpoint.json"
         crashed_endpoint = None
         for exit_signal in (signal.SIGKILL, signal.SIGTERM):
-            sequence = load(self.state / "incidents.json")["nextSequence"]
-            wanted = sequence + (2 if ordinary_intervals else 1)
+            # Lifecycle/admission records allocate sequences without completing
+            # a check. Count the held tick evidence, including collapsed checks.
+            wanted = held_checks(load(self.state / "incidents.json"), flag) + (2 if ordinary_intervals else 1)
             with self.daemon(exit_signal) as child:
                 until = time.monotonic() + 25
                 while time.monotonic() < until:
                     require(child.poll() is None, "Daemon exited before recording held checks.")
-                    if load(self.state / "incidents.json")["nextSequence"] >= wanted:
+                    if held_checks(load(self.state / "incidents.json"), flag) >= wanted:
                         break
                     time.sleep(0.05)
                 else:

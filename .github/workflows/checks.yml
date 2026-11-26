@@ -525,6 +525,7 @@ jobs:
       - name: Smoke check setup and recovery with local fixtures
         if: steps.scope.outputs.scope != 'docs' && needs.plan.outputs.scope != 'docs' && needs.plan.outputs.scope != 'dockui' && needs.plan.outputs.run_smoke != 'false'
         run: |
+          python3 scripts/smoke-recovery-test.py
           go build -trimpath -ldflags "-X main.version=smoke-${GITHUB_SHA}" -o "$RUNNER_TEMP/keepgoing-smoke" ./cmd/looptender
           python3 scripts/smoke-release.py "$RUNNER_TEMP/keepgoing-smoke"
           python3 -u scripts/smoke-recovery.py "$RUNNER_TEMP/keepgoing-smoke" --include-cursor
