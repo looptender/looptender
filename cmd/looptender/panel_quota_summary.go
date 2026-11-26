@@ -3,10 +3,11 @@ package main
 import "github.com/looptender/looptender/internal/accounts"
 
 type panelQuotaList struct {
-	State    string              `json:"state"`
-	Complete bool                `json:"complete"`
-	Accounts []panelQuotaAccount `json:"accounts"`
-	Omitted  int                 `json:"omitted"`
+	WorkerEligible bool                `json:"workerEligible,omitempty"`
+	State          string              `json:"state"`
+	Complete       bool                `json:"complete"`
+	Accounts       []panelQuotaAccount `json:"accounts"`
+	Omitted        int                 `json:"omitted"`
 }
 type panelQuotaAccount struct {
 	UsageUpdating *accounts.UsageUpdating `json:"usageUpdating,omitempty"`
@@ -29,6 +30,12 @@ func panelQuotaSummary(r dockReport) *panelQuotaList {
 	for _, c := range r.Accounts.Cards {
 		if c.Provider != "codex" && c.Provider != "claude-code" && c.Provider != "antigravity" {
 			continue
+		}
+		if c.UsageUpdating != nil {
+			switch c.UsageUpdating.State {
+			case "enabled", "waiting", "backoff":
+				out.WorkerEligible = true
+			}
 		}
 		if len(out.Accounts) >= 16 {
 			out.Omitted++

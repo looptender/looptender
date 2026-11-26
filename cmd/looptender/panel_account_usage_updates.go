@@ -60,7 +60,7 @@ func (c *panelChanges) prepareAccountUsageUpdates(session, id, action string) pa
 	}
 	c.keep(value, form)
 	title, confirm := "Keep usage updated for "+s.Entry.Label+"?", "Keep usage updated"
-	lines := []dockText{txt("Authorizes ongoing model-free usage reads for this exact selection, at least five minutes apart, with bounded failure backoff. No confirmation is needed for each read. No login or ordinary model turn is started."), txt("A non-offline panel or dock process must stay running. It polls even when Accounts is closed or the tab is hidden. The menu consumes the shared cache; the menu alone does not run the scheduler. Panel idle shutdown stops its worker."), txt("Provider freshness may remain unknown. Selection, environment, executable or directory changes invalidate this authorization. Pause usage updates to revoke it; an already reserved read may finish.")}
+	lines := []dockText{txt("Authorizes ongoing model-free usage reads for this exact selection, at least five minutes apart, with bounded failure backoff. No confirmation is needed for each read. No login or ordinary model turn is started."), txt("Keep the macOS menu running, or a non-offline panel/dock process. The menu owns a bounded child while open or closed; it stops on menu exit, sleep or Low Power Mode. Panel polling continues with a hidden tab until process or idle shutdown. No persistent service is installed."), txt("Provider freshness may remain unknown. Selection, environment, executable or directory changes invalidate this authorization. Pause usage updates to revoke it; an already reserved read may finish.")}
 	if action == panelAccountUsageDisable {
 		title, confirm = "Pause automatic usage updates?", "Pause usage updates"
 		lines = []dockText{txt("Revokes automatic usage reads for this selection. Saved evidence retains its original timestamps. An already reserved read may finish; it cannot restore authorization.")}
@@ -80,7 +80,7 @@ func (c *panelChanges) confirmAccountUsageUpdates(session, id, action, value str
 		return panelChangeReply{Result: &panelResult{Outcome: "refused", Text: "The selection changed or private settings are unavailable. Nothing was enabled."}}
 	}
 	c.reader.forget()
-	text := "Keep usage updated is enabled for this selection. A running panel/dock scheduler checks due work without further confirmation."
+	text := "Keep usage updated is enabled for this selection. A running menu/panel/dock scheduler checks due work without further confirmation."
 	if action == panelAccountUsageDisable {
 		text = "Automatic usage updates paused. Saved evidence retains its time."
 	}

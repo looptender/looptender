@@ -826,7 +826,7 @@ latest snapshot for each of the two identifier views, for 30 seconds, with a
 1 MiB response cap. Superseded, expired or unknown references return a conflict;
 the page says the saved read failed and offers the existing Read now action.
 The companion adds no polling timer or provider refresh. Explicit automatic-usage
-grants are serviced by a separate worker in a running panel/dock process; collection never waits for provider IO.
+grants are serviced by a separate worker owned by a running menu/panel/dock process; collection never waits for provider IO.
 
 A new main report invalidates delayed replies for earlier references; changing
 the identifier view also prevents applying a reply for the previous view.
@@ -1026,27 +1026,41 @@ CLI settings; it does not redirect panel/menu clients from their default catalog
 
 ### Scheduler ownership and lifecycle
 
-A **non-offline panel or dock process must remain running**. Its worker starts
-with the process, independently of HTTP reads, menu openings, Accounts navigation
-and tab visibility. It checks due work on startup and every 15 seconds. A
-catalog-wide OS lock elects one owner; other panel/dock processes stand by and
-can take over after exit/crash. The owner checks its lock-file identity and
-refuses a replaced lock. A separate batch lock, durable cadence reservation and
-existing per-selection check guard also fence cross-process automatic/manual
-work. Collection/render paths read saved files only and never await provider IO.
+An **updated macOS menu, or a non-offline panel/dock process, must remain
+running**. Each uses the same scheduler and caches. The menu reads saved state
+at startup and on its existing schedule even while closed. An additive
+`accountQuotas.workerEligible` flag says only that unchanged supported selections
+have explicit grants, including selections beyond the native display cap. It
+contains no account identity or new authority. Only a successful eligible read
+can start the menu's one child; old CLIs without the flag start none. The child
+revalidates all grants before startup and on every tick, and exits when none
+remain valid. Collection/rendering never starts or waits for provider IO.
 
-The native menu's short-lived `panel list` processes **do not own a scheduler**.
-The menu alone cannot maintain acquisition: keep a panel/dock running separately.
-No process is silently installed or started to satisfy this requirement. A
-panel stops at its configured idle timeout (30 minutes by default, maximum
-24 hours); provider polling does not reset idle time. A hidden browser tab may
-stop making HTTP reads while the worker continues until that idle shutdown.
-Closing a tab does not immediately stop the panel. Stopping the owning process
-cancels its worker; a standby can take ownership. Sleep prevents timer execution;
-wake/clock jumps do not invent missing reads or bypass persisted backoff. The
-menu's Low Power Mode read suppression does not stop a separately running
-panel/dock worker. No new
-service, login item, supervisor tick, credential pool or transcript scan is added.
+The menu's child runs foreground `accounts usage-worker --owner-stdin` with the
+existing scrubbed native-client environment. A fixed bounded handshake and
+private stdin pipe bind it to the app's lifetime: closing the pipe, extra input
+or EOF after abrupt app death cancels its context and provider work. Normal
+exit, sleep and Low Power Mode stop the child; revocation stops the selected
+reads and ends the child once no valid grants remain. The native owner can
+escalate termination only for that owned Process after three/five seconds. A
+worker has a 24-hour maximum lifetime and may be renewed on a subsequent ordinary
+saved read. Refused/crashed launches are attempted at most once per five minutes.
+No daemon, service, login item, detached process or panel is installed/started.
+Dock-only acquisition therefore continues with the menu closed **and the panel
+process stopped**, subject to the existing sleep/Low Power Mode rules.
+
+Workers check due work on startup and every 15 seconds, independently of HTTP
+reads, menu openings, Accounts navigation and tab visibility. A catalog-wide OS
+lock elects one owner; other menu/panel/dock workers stand by and can take over
+after exit/crash without resetting persisted cadence/backoff. The owner checks
+its lock-file identity and refuses replacement. A separate batch lock, durable
+reservation and existing per-selection check guard also fence cross-process
+automatic/manual work. Hidden tabs still stop HTTP reads; a panel worker
+continues until its existing idle timeout (30 minutes by default, maximum 24
+hours) or process shutdown. Polling does not reset idle. A live menu child can
+take over after panel shutdown, and vice versa. Sleep prevents timer execution;
+wake never invents missing reads or replays a catch-up burst. Menu Low Power
+Mode pauses its child; a separately running panel/dock worker is independent.
 
 Accounts and native quota details distinguish off, enabled, failure backoff,
 selection-changed pause, unavailable settings and waiting for a running scheduler.
@@ -1084,6 +1098,6 @@ The separate strict bounded `usage-polling.json` does not promote catalog schema
 
 Fixture checks cover worker acquisition without any view requests, clock-driven
 cadence, blocked-provider/nonblocking collection, real panel idle shutdown,
-cross-process ownership, shared native evidence, failures/backoff, revocation,
+cross-process ownership, shared native evidence, menu-owned EOF/crash cancellation, failures/backoff, revocation,
 selection/file replacement and strict storage. Live enabling/provider acceptance,
 sleep/reboot and native Windows execution remain separate unrun acceptance.

@@ -86,7 +86,7 @@ func accountUsagePollingCommand(e env, dir, id string, enable, disable, asJSON b
 	} else {
 		fmt.Fprintf(e.stdout, "Automatic selected-context usage: %s\n", state)
 		if state == "on" {
-			fmt.Fprintln(e.stdout, "Keep a non-offline panel or dock process running to fetch model-free usage at least 5 minutes apart, with bounded failure backoff. The menu alone cannot schedule reads. No login or model request is started.")
+			fmt.Fprintln(e.stdout, "Keep the updated macOS menu or a non-offline panel/dock running to fetch model-free usage at least 5 minutes apart, with bounded failure backoff. No login or model request is started.")
 		}
 	}
 	return exitOK

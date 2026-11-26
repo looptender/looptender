@@ -12,12 +12,15 @@ import (
 
 const accountUsageSchedulerInterval = 15 * time.Second
 
-// Only long-lived, non-offline panel/dock processes start this worker. Report
+// Long-lived menu-owned children and non-offline panel/dock processes run this worker. Report
 // collection (including native panel list) never executes provider IO. Each
 // process is a standby; one catalog-wide OS lock elects the scheduler owner.
 // The existing batch/per-selection guards and durable reservation remain a
 // second fence across process shutdown, crash and manual reads.
 func accountUsageScheduler(ctx context.Context, dir string, env []string, now func() time.Time, run accountQuotaRun, ticks <-chan time.Time) {
+	accountUsageSchedulerMode(ctx, dir, env, now, run, ticks, false)
+}
+func accountUsageSchedulerMode(ctx context.Context, dir string, env []string, now func() time.Time, run accountQuotaRun, ticks <-chan time.Time, exitWhenUnused bool) {
 	if ticks == nil {
 		timer := time.NewTicker(accountUsageSchedulerInterval)
 		defer timer.Stop()
@@ -37,6 +40,10 @@ func accountUsageScheduler(ctx context.Context, dir string, env []string, now fu
 	}()
 	for {
 		if ctx.Err() != nil {
+			return
+		}
+
+		if exitWhenUnused && !accountUsageHasGrant(dir, env) {
 			return
 		}
 		f, err := accounts.LoadUsagePolling(dir)
@@ -110,12 +117,12 @@ func attachAccountUsageUpdating(view *accounts.View, dir string, env []string, a
 			status.State = "paused"
 			status.Text = "Usage updates paused: selection changed; review and enable again"
 			selection, err := accountQuotaCapture(dir, p.ID, env)
-			if err != nil || !accountUsageMatches(p, selection) {
+			if err != nil || !panelQuotaProviderSupported(selection.Entry.Provider) || !accountUsageMatches(p, selection) {
 				break
 			}
 			status.NextAt = &p.NextAt
 			status.State = "waiting"
-			status.Text = "Usage updates paused: keep a non-offline panel or dock process running"
+			status.Text = "Usage updates paused: keep the menu or a non-offline panel/dock running"
 			if settings.SchedulerAt != nil && !settings.SchedulerAt.After(at) && at.Sub(*settings.SchedulerAt) <= time.Minute {
 				status.State = "enabled"
 				status.Text = "Keep usage updated: enabled · checks at least 5 minutes apart"

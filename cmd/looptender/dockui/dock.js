@@ -2322,7 +2322,7 @@
     pane.appendChild(back());
     pane.appendChild(paneHead("Accounts"));
     pane.appendChild(el("p", "lede", "Your selected accounts, with the evidence available on this device."));
-    pane.appendChild(el("p", "sub", "This page reads saved evidence. Keep usage updated authorizes a running panel or dock process to fetch usage in the background. Manual quota retrieval has its own review."));
+    pane.appendChild(el("p", "sub", "This page reads saved evidence. Keep usage updated authorizes a running menu, panel or dock process to fetch usage in the background. Manual quota retrieval has its own review."));
     var usage = el("p", "account-usage-link");
     usage.appendChild(link("#/routes", "View recorded usage", "work-inspect"));
     usage.appendChild(el("span", "sub", ". Readings come from configured routes and are not live. Each account shows the readings of the routes that use it."));

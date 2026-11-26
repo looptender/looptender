@@ -5,11 +5,13 @@ import Foundation
     static func main() throws {
         let base: [String: Any] = ["schemaVersion": 1, "registry": "available", "complete": true, "allClear": true, "needsYou": 0, "unread": 0, "omitted": 0, "loops": []]
         let summary: [String: Any] = ["state": "reported", "text": "Saved selected-context reading", "source": "codex account/rateLimits/read", "observedAt": "2030-03-04T12:00:00Z", "freshness": "stale", "rows": [["name": "5-hour", "text": "40% remaining", "usedPercent": 60, "remainingPercent": 40]], "failedRefreshAt": "2030-03-04T13:00:00Z", "failedRefreshText": "Earlier evidence retains its time."]
-        func payload(_ status: [String: Any]?) throws -> Data {
+        func payload(_ status: [String: Any]?, eligible: Any? = nil) throws -> Data {
             var account: [String: Any] = ["label": "Example updates", "provider": "codex", "summary": summary]
             if let status { account["usageUpdating"] = status }
             var root = base
-            root["accountQuotas"] = ["state": "available", "complete": true, "omitted": 0, "accounts": [account]]
+            var quotas: [String: Any] = ["state": "available", "complete": true, "omitted": 0, "accounts": [account]]
+            if let eligible { quotas["workerEligible"] = eligible }
+            root["accountQuotas"] = quotas
             return try JSONSerialization.data(withJSONObject: root)
         }
         for state in ["off", "unavailable", "waiting", "paused", "enabled", "backoff"] {
@@ -27,6 +29,9 @@ import Foundation
             do { _ = try Contract.panelList(payload(bad), exit: 0); fatalError("Invalid scheduler evidence accepted") } catch {}
         }
         guard try Contract.panelList(payload(nil), exit: 0).accountQuotas?.accounts.first?.usageUpdating == nil else { fatalError("Old CLI fallback lost") }
+        guard try Contract.panelList(payload(nil, eligible: true), exit: 0).accountQuotas?.workerEligible == true,
+              try Contract.panelList(payload(nil), exit: 0).accountQuotas?.workerEligible == nil else { fatalError("Worker eligibility/old CLI fallback lost") }
+        do { _ = try Contract.panelList(payload(nil, eligible: "true"), exit: 0); fatalError("Malformed worker eligibility accepted") } catch {}
         print("Native usage updating fixture passed: six states, original successful/failed times, strict optional evidence, no polling authority")
     }
 }

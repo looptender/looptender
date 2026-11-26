@@ -374,7 +374,7 @@ The internal/accounts package stores one bounded private device-local catalog wi
 
 Explicit per-selection `usage-polling` grants live in a separate strict private
 record owned by `internal/accounts`; storage never invokes providers. Only the
-long-lived panel/dock command-layer worker services them, reusing the existing quota
+long-lived menu-owned or panel/dock command-layer worker services them, reusing the existing quota
 adapters, binding validation and cache publication. Grants bind revision,
 effective authentication context and executable/directory identities. A
 catalog-wide owner lock elects one worker; a nonwaiting batch guard and durable next-attempt reservation bound
@@ -383,6 +383,12 @@ off. No grant means no automatic provider work or polling-record writes.
 Offline reads, control review and supervision never service grants. No daemon,
 provider pooling, transcript reading or routing authority is introduced. See
 [automatic usage](accounts.md#automatic-selected-context-usage-unreleased).
+The native menu starts at most one foreground CLI child only after a successful
+saved list advertises explicit valid grants. The child revalidates before every
+tick and shares the same owner election. Its private stdin lease ends on app
+exit/crash; revocation, sleep and Low Power Mode stop it. No service registration
+or detached worker is added, and report collection remains provider-free.
+
 
 ## Explicit migration review (unreleased)
 

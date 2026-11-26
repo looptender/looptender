@@ -2,6 +2,7 @@ import Foundation
 
 /// Saved selected-context evidence only. Menu polling never refreshes providers.
 public struct AccountQuotaList: Decodable, Equatable {
+    public var workerEligible: Bool? = nil
     public let state: String
     public let complete: Bool
     public let accounts: [AccountQuota]

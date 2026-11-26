@@ -37,6 +37,9 @@ func accountsCommand(e env, args []string, run accountRun) int {
 		return exitUsage
 	}
 	op := args[0]
+	if op == "usage-worker" {
+		return accountsUsageWorkerCommand(e, args[1:], os.Stdin)
+	}
 	fs := flag.NewFlagSet("accounts "+op, flag.ContinueOnError)
 	fs.SetOutput(e.stderr)
 	dir := fs.String("directory", "", "private catalog directory")

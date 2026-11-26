@@ -696,12 +696,13 @@ and native projections each have a 1 MiB cap. See the
 
 Accounts offers **Keep usage updated…** and **Pause usage updates…** in a panel
 with changes allowed. Confirmation authorizes only the reviewed selection;
-subsequent model-free reads need no confirmation. A running non-offline panel or
+subsequent model-free reads need no confirmation. A running macOS menu or non-offline panel/
 dock process owns a separate worker, elected across processes by a catalog lock.
 It polls independently of page reads and tab visibility; collection never waits
-for provider IO. The native menu consumes the shared cache but cannot schedule
-polls by itself. Panel idle shutdown still stops its worker and is not extended
+for provider IO. The native menu owns one stdin-leased foreground child after an eligible
+saved read, so Dock-only usage continues with the panel stopped. App exit/crash,
+sleep and Low Power Mode cancel that child; revocation stops selected reads. Panel idle shutdown still stops its worker and is not extended
 by usage polling. Status distinguishes enabled, backoff and paused scheduler or
-changed-selection states. Defaults stay off and no runtime process is installed
-or started automatically. See [the complete cadence, lifecycle and evidence
+changed-selection states. Defaults stay off and no persistent service is installed
+or started. The already-running menu owns only its authorized foreground child. See [the complete cadence, lifecycle and evidence
 contract](accounts.md#automatic-selected-context-usage-unreleased).
