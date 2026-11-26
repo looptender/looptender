@@ -1814,6 +1814,9 @@ return handler and may leave a start without a stop.
 
 `tick` records `check_refused` when its check lock is held or unavailable,
 its ownership cannot be verified, or its loaded configuration sources changed.
+The daemon's stop-only path from its last configuration uses the same refusal
+records for these admission checks, including transfer/target validation and a
+restored or changed readable source; an unreachable BB stop is `safety_guard`.
 The supervisor's last-configuration safety guard also records a refusal if
 asked to perform anything except a stop. The reason codes are fixed; raw errors,
 owner/thread identities, configuration paths and signal text are excluded.

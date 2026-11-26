@@ -129,7 +129,7 @@ func TestProviderOperationsRejectSnapshotChangedUnderTickLock(t *testing.T) {
 						t.Fatal("rejected operation performed provider work or reported")
 					}
 					if op == "tick" {
-						assertRefusalOnlySnapshotChange(t, old.Loop.StateDir, before)
+						assertRefusalOnlySnapshotChange(t, old.Loop.StateDir, before, "sources_unverified")
 					} else if !reflect.DeepEqual(before, snapshotRuntime(t, old.Loop.StateDir)) {
 						t.Fatal("rejected operation changed runtime records")
 					}
@@ -192,7 +192,7 @@ func TestSnapshotRejectionPreservesHoldsAndDefersStop(t *testing.T) {
 			if tickOnce(e, cfg, time.Now(), false, false) != exitSkipped || pollWake(context.Background(), cfg) {
 				t.Fatal("stale config accepted")
 			}
-			assertRefusalOnlySnapshotChange(t, cfg.Loop.StateDir, before)
+			assertRefusalOnlySnapshotChange(t, cfg.Loop.StateDir, before, "sources_unverified")
 			if f.read("calls") != "" || f.read("probes") != "" {
 				t.Fatal("stale work touched provider or holds")
 			}
@@ -223,7 +223,7 @@ func TestSnapshotRejectionPreservesHoldsAndDefersStop(t *testing.T) {
 
 // A refused tick now appends one diagnostic record. Every existing record and
 // all operational state, cursors, holds and budgets must stay unchanged.
-func assertRefusalOnlySnapshotChange(t *testing.T, dir string, before map[string]string) {
+func assertRefusalOnlySnapshotChange(t *testing.T, dir string, before map[string]string, reason string) {
 	t.Helper()
 	after := snapshotRuntime(t, dir)
 	var previous incident.Journal
@@ -245,7 +245,7 @@ func assertRefusalOnlySnapshotChange(t *testing.T, dir string, before map[string
 		}
 	}
 	r := current.Records[len(current.Records)-1]
-	if r.Kind != "check_refused" || r.Runtime.Reason != "sources_unverified" || r.Observation.Availability != "not_observed" || r.CountersAvailable {
+	if r.Kind != "check_refused" || r.Runtime.Reason != reason || r.Observation.Availability != "not_observed" || r.CountersAvailable {
 		t.Fatal(r)
 	}
 	delete(before, incident.FileName)
