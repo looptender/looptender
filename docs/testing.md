@@ -874,3 +874,14 @@ No frontend markup, archive policy, control, creation, package boundary or
 installer mechanism changes. Legacy inherited provenance remains pinned because
 its original human/automatic source cannot be established safely. Held loops do
 not observe BB; a rename made during a hold waits for a permitted observation.
+
+
+The inheritance-order review adds
+`TestAutoInheritanceStripsQualifiersBeforeDisplayBound`: complete bracketed and
+separated route qualifiers crossing the 80-character display bound are stripped
+before bounding automatic successor names. It covers absent display metadata,
+all automatic sources, explicit/custom and legacy pinned sources, and a task
+that itself requires bounding. Current observed-title display remains bounded
+as written. The bracketed/separated fixtures fail on the pre-fix implementation
+with a clipped predecessor model label; the corrected exact-target cache path
+passes. This does not expand the existing 120-character title-cache bound.

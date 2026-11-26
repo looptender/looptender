@@ -121,16 +121,26 @@ func bbThreadOf(c *config.Config) string {
 func inheritedName(pred *config.Config) (string, string) {
 	if dn, err := state.LoadDisplayName(pred.Loop.StateDir); err == nil && dn != nil {
 		if state.AutoDisplayNameSource(dn.Source) {
-			name, _ := state.DisplayNameFromTitle(namingForConfig(pred).DisplayName, pred.RouteLabels())
-			return name, state.DisplayNameInheritedTitle
+			return inheritedAutomaticName(namingForConfig(pred), pred.RouteLabels()), state.DisplayNameInheritedTitle
 		}
 		return dn.Name, state.DisplayNameInherited
 	}
 	if n := namingForConfig(pred); n.NameSource == state.DisplayNameThreadTitle {
-		name, _ := state.DisplayNameFromTitle(n.DisplayName, pred.RouteLabels())
-		return name, state.DisplayNameInheritedTitle
+		return inheritedAutomaticName(n, pred.RouteLabels()), state.DisplayNameInheritedTitle
 	}
 	return pred.Loop.Name, state.DisplayNameInheritedTitle
+}
+
+func inheritedAutomaticName(n loopNaming, labels []string) string {
+	title := n.DisplayName
+	// namingForConfig exposes the complete cached title only for the exact
+	// current target. Strip its qualifiers before the display bound can cut
+	// off a closing bracket or a model word. Current-title display is unchanged.
+	if n.NameSource == state.DisplayNameThreadTitle && n.ThreadTitle != "" {
+		title = n.ThreadTitle
+	}
+	name, _ := state.DisplayNameFromTitle(title, labels)
+	return state.CleanDisplayName(name)
 }
 
 // declareSuccession records on succ that it continues pred. The caller must

@@ -472,7 +472,8 @@ so an automatic refresh cannot overwrite a later custom-name write.
 New succession records distinguish automatic inheritance (`inherited_title`) from
 explicit or ambiguous legacy inheritance (`inherited`). An auto-inherited task name
 is shown until the successor's title is observed; trailing route/model qualifiers
-are removed only from that temporary predecessor-derived fallback, avoiding an old
+are removed from the complete matching cached title before applying the display
+length bound, and only for that temporary predecessor-derived fallback, avoiding an old
 model label on a successor whose route has changed. The successor's own title then
 wins. Explicit custom names, legacy inherited names and unknown provenance remain
 pinned. A title cached for another target thread is never used as the current
