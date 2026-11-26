@@ -8,6 +8,7 @@ import (
 	"github.com/looptender/looptender/internal/control"
 	"github.com/looptender/looptender/internal/decide"
 	"github.com/looptender/looptender/internal/incident"
+	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/registry"
 	"github.com/looptender/looptender/internal/rungraph"
 	"github.com/looptender/looptender/internal/state"
@@ -67,8 +68,10 @@ type runsBlocker struct {
 	// Owner is the conversation whose claim refuses control commands from
 	// other conversations. It is independent of the child listing.
 	Owner runsOwner `json:"owner"`
-	// Lock says that who holds the tick or daemon lock is not identified.
-	Lock runsUnavailable `json:"lock"`
+	// Lock retains the holder-reference availability; Locks adds independent
+	// ephemeral tick/daemon diagnostics without inventing graph relationships.
+	Lock  runsUnavailable   `json:"lock"`
+	Locks []lock.Inspection `json:"locks"`
 }
 
 type runsChild struct {
@@ -186,7 +189,8 @@ func (c *runsContext) supervised(thread, key string) runsSupervised {
 // answer, so a listing that is not shown here is not followable by ID either.
 func (c *runsContext) blocker(st state.File, stateKnown bool, ctl control.File, controlKnown bool) runsBlocker {
 	b := runsBlocker{Availability: blockerUnknown, Children: []runsChild{}, Owner: c.owner(ctl, controlKnown),
-		Lock: runsUnavailable{Availability: recordUnavailable, Reason: "lock_holder_not_identified"}}
+		Lock:  runsUnavailable{Availability: recordUnavailable, Reason: "lock_holder_not_identified"},
+		Locks: rungraph.InspectLocks(c.dir)}
 	w := c.g.Waiting
 	switch {
 	case c.available == rungraph.Unsupported || c.available == rungraph.Corrupt:

@@ -364,6 +364,13 @@ The panel owns `build-replacements/<key>/build-update.json` and its `upgrade-bac
 
 ## Context window reset preview (unreleased)
 
+The [context efficiency proposal](design/context-efficiency.md) defines a manual
+compact-trial protocol and review requirements for any later opt-in lifecycle.
+Its source-only coordinator-invoked compact helper is outside the supervisor;
+private intent/receipt files are separate from loop runtime. It reuses the
+existing bounded command adapter and Unix private-file lock, adds no package
+boundary or automatic action, and changes no conversation-creation authority.
+
 `internal/contextwindow.Decide` is a pure function of the latest context window reading, its age, `loop.context_window.reset_at`, the controls, the last check's observation, the run graph's lane listing from that check, and the last reset (none yet). It returns would-reset or not with a stable rule and reason code. It is its own package rather than part of timing, which moves a loop between routes on one usage allowance, and `internal/decide` never reads a reading. Only `status` calls it; no check does, so decisions, sends and saved state are the same with the key set or unset. See [context window reset preview](operations.md#context-window-reset-preview).
 
 Configuration validates optional ordered same-allowance steps after loading the loop's own fallbacks. For an externally followed standard list, unresolved or ineligible references retain a warning and withhold the preview while leaving the loop loadable. The standard resolver's primary-group exclusion is unchanged; multi-step timing needs the loop's own file. Explicit timing syntax, ceilings, thresholds and durations remain validation errors. Unreadable controls or state also withhold `timingWould`; absence is no decision. No route, control, process or account changes are made by a preview.
@@ -460,3 +467,11 @@ claims credential rollback; failed/uncertain directories remain private and are
 not automatically adopted. See [explicit connection limits](accounts.md#explicit-provider-sign-in-unreleased-source).
 
 The unreleased `daemon-shutdown` command keeps lifecycle authority in the command layer: daemoninfo authenticates the invocation-bound request, then the command validator rechecks sources, controls, owner lease and caller under tick/control locks. Acceptance retains tick.lock through loop return and only cancels that supervisor. Busy checks refuse. It never calls target Stop or updates controls; legacy processes need their original owned lifecycle manager. See [shutdown limits](operations.md#shut-down-only-the-supervisor-unreleased-source).
+
+### Opt-in usage diagnostics (unreleased)
+
+After a recorded check, `cmd/looptender` may collect one bounded filtered BB Codex
+metadata page under the same tick/ownership fence when `loop.usage_collection`
+is enabled. It does not enter the pure decision engine or the Accounts acquisition
+loop. Cursor and rolling evidence share one atomic private record. Status and Panel
+only read that record. See [collection contract](design/usage-measurement.md#automatic-collection-unreleased-opt-in).

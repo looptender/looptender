@@ -1,0 +1,30 @@
+name: Context compaction workflow
+on:
+  pull_request:
+    paths:
+      - 'integrations/bb-plugin-keepgoing/skills/keepgoing/scripts/compact.py'
+      - 'integrations/bb-plugin-keepgoing/skills/keepgoing/scripts/coordinator*.py'
+      - 'tools/context-compaction/**'
+      - '.github/workflows/context-compaction.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'integrations/bb-plugin-keepgoing/skills/keepgoing/scripts/compact.py'
+      - 'integrations/bb-plugin-keepgoing/skills/keepgoing/scripts/coordinator*.py'
+      - 'tools/context-compaction/**'
+      - '.github/workflows/context-compaction.yml'
+permissions:
+  contents: read
+jobs:
+  fictional-compact-journey:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python3 -B -m unittest discover -s tools/context-compaction -v

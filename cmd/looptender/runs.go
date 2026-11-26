@@ -26,8 +26,8 @@ import (
 
 // runs is an offline projection of graph.json. It reads private records
 // without any lock, never creates a file or directory, runs no adapter or
-// provider command, and changes no control. Everything it prints was recorded
-// earlier: nothing is a live observation.
+// provider command, and changes no control. Graph evidence is historical;
+// lock states are read-only point-in-time OS diagnostics.
 
 const (
 	runsSchemaVersion = 2
@@ -240,9 +240,9 @@ type runsEdge struct {
 }
 
 var runsLimitations = []string{
-	"Everything here was recorded by an earlier check or control command; nothing is a live observation, and a session reference does not show that the conversation exists or can be resumed.",
+	"Graph references were recorded by an earlier check or control command; a session reference does not show that the conversation exists or can be resumed. Lock states are point-in-time inspections, not authority to control a holder.",
 	"A session link is unavailable: no provider link format is validated yet.",
-	"A blocker is what the last check that observed child threads verified, and who owns the loop. It is not a live view of the other conversation, and showing it grants no control over it. Who holds the tick or daemon lock is not identified.",
+	"A blocker is what the last check that observed child threads verified, and who owns the loop. It is not a live view of the other conversation, and showing it grants no control over it. Tick and daemon lock states are inspected where a read-only OS query is supported; their files contain no verified holder/run binding.",
 	"The saved active target is what the last check recorded. Target moves are in looptender timeline, not here.",
 }
 
@@ -792,7 +792,7 @@ func runsSafe(s string) string {
 }
 
 func printRuns(w io.Writer, r runsReport) {
-	fmt.Fprintf(w, "Recorded run references (read %s). Nothing here is a live observation.\n", r.ReadAt.Format(time.RFC3339))
+	fmt.Fprintf(w, "Recorded run references (read %s). Graph records are historical; lock states are point-in-time inspections.\n", r.ReadAt.Format(time.RFC3339))
 	for _, l := range r.Loops {
 		fmt.Fprintln(w)
 		if l.RegistrationID != "" {
@@ -854,6 +854,9 @@ func printRuns(w io.Writer, r runsReport) {
 			}
 		}
 		printBlocker(w, l.Blocker)
+		for _, observation := range l.Blocker.Locks {
+			fmt.Fprintf(w, "lock %s: %s (%s); holder metadata: %s\n", observation.Name, observation.Availability, observation.Reason, observation.Metadata)
+		}
 	}
 	if r.Omitted > 0 {
 		fmt.Fprintf(w, "\n%d registered loops not shown; raise --limit\n", r.Omitted)

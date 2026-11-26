@@ -35,7 +35,7 @@ func TestSavingsThroughStatus(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &v); err != nil || v.Savings.Version != 1 || *v.Savings.Sends.Total != 1 ||
 		v.Savings.ChecksSentNothing.ByReason[0].Reason != "paused" || *v.Savings.WithheldWakes.Total != 0 ||
 		v.Savings.ContextNow.Availability != "recorded" || *v.Savings.ContextNow.UsedTokens != 48000 ||
-		v.Savings.Estimate.Availability != "recorded" || *v.Savings.Estimate.HighTokens != 0 {
+		v.Savings.Estimate.Availability != "unavailable" || v.Savings.Estimate.Reason != "consumption_not_measured" || v.Savings.Estimate.HighTokens != nil {
 		t.Fatalf("status --json savings: %+v %v", v.Savings, err)
 	}
 }

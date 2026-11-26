@@ -1,0 +1,1 @@
+- Opt-in bounded primary BB Codex usage collection after existing checks, with durable cursors, private atomic evidence, restart spacing, and Panel source/freshness/coverage diagnostics. Imported evidence is preserved. No new service, model request, route change or subscription savings claim.
