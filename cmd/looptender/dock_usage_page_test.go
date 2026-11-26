@@ -84,7 +84,7 @@ func TestDockUsageLoopSentences(t *testing.T) {
 			"No wakes were withheld this week.",
 			"No messages were sent this week, so looptender added no turns.",
 			"Spaced wakes: unavailable; this loop's records hold no count of spaced wakes.",
-			"Estimate: no tokens, since no wakes were withheld.",
+			"Token savings unavailable: context size and withheld checks do not measure token consumption or subscription allowance. Cache reuse and provider accounting are unknown.",
 			"No session resets this week.",
 			"The latest context reading: 48,000 of 200,000 tokens (24%), reported by BB, read 1 h ago.",
 			"This week's lowest reading was 8,000 tokens and the highest 150,000 tokens.",
@@ -94,7 +94,7 @@ func TestDockUsageLoopSentences(t *testing.T) {
 			"150 wakes withheld: 120 because the session was idle, 30 because lanes are working.",
 			"6 messages sent: 3 wakes, 2 nudges, 1 retry. Each is a turn looptender added to the conversation.",
 			"4 checks' messages carried the supervision context, 1,840 bytes in all.",
-			"Estimate: 1,200,000 to 22,500,000 tokens not re-read, from 150 withheld wakes times the lowest (8,000 tokens) and the highest (150,000 tokens) context reading this week (some estimated by BB), against a plain timer that wakes the session at every check. It is not tokens billed.",
+			"Token savings unavailable: context size and withheld checks do not measure token consumption or subscription allowance. Cache reuse and provider accounting are unknown.",
 			"1 session reset: Thu 12 Nov 14:03 UTC, run in the thread, 150,000 tokens before and 12,000 after.",
 			"The last 2 readings, oldest first: 150,000, 12,000 tokens.",
 		}, nil, 4},
@@ -106,7 +106,7 @@ func TestDockUsageLoopSentences(t *testing.T) {
 			"At least 173 checks sent nothing",
 			"At least 150 wakes withheld",
 			"At least 6 messages sent",
-			"Estimate: at least 1,200,000 to 22,500,000 tokens not re-read, from at least 150 withheld wakes",
+			"Token savings unavailable: context size and withheld checks do not measure token consumption or subscription allowance. Cache reuse and provider accounting are unknown.",
 			"Some of this week's history is missing (older records were pruned; a run of repeated checks began before the week), so these counts are at least the figures shown.",
 		}, nil, 4},
 		{"pruned and nothing found", func() *statusOut {
@@ -134,7 +134,7 @@ func TestDockUsageLoopSentences(t *testing.T) {
 			"1 message sent: 1 re-prompt. It is a turn looptender added to the conversation.",
 			"1 check's messages carried the supervision context, 1 bytes in all.",
 			"1 wake spaced: at that check the session was idle and nothing had changed",
-			"from 1 withheld wake times",
+			"Token savings unavailable: context size and withheld checks do not measure token consumption or subscription allowance. Cache reuse and provider accounting are unknown.",
 		}, []string{"1 checks", "1 wakes", "1 messages"}, 4},
 		{"spaced recorded", func() *statusOut {
 			st := usageStatus()
@@ -158,7 +158,7 @@ func TestDockUsageLoopSentences(t *testing.T) {
 			st.Savings.Estimate = savingsEstimate{Label: "estimate", Availability: "unavailable", Reason: "no_readings", Baseline: savingsBaseline}
 			return st
 		}, []string{
-			"No estimate: this loop's agent reports no context window size.",
+			"Token savings unavailable: context size and withheld checks do not measure token consumption or subscription allowance. Cache reuse and provider accounting are unknown.",
 			"This loop's agent reports no context window size, so there is no context reading for it.",
 			"1 session reset",
 		}, []string{"latest context reading", "lowest reading"}, 4},
@@ -169,7 +169,7 @@ func TestDockUsageLoopSentences(t *testing.T) {
 			st.Savings.Estimate = savingsEstimate{Label: "estimate", Availability: "unavailable", Reason: "no_readings", Baseline: savingsBaseline}
 			return st
 		}, []string{
-			"No estimate: no context window reading was recorded this week.",
+			"Token savings unavailable: context size and withheld checks do not measure token consumption or subscription allowance. Cache reuse and provider accounting are unknown.",
 			"No context window reading has been recorded for this thread yet.",
 		}, nil, 4},
 		{"history unreadable", func() *statusOut {
@@ -200,7 +200,7 @@ func TestDockUsageLoopSentences(t *testing.T) {
 			if len(l.Brief) != c.brief {
 				t.Errorf("brief has %d sentences: %q", len(l.Brief), l.Brief)
 			}
-			for _, banned := range []string{"$", "saved you", "% saved", "savings"} {
+			for _, banned := range []string{"$", "saved you", "% saved"} {
 				if strings.Contains(all, banned) {
 					t.Errorf("wording %q in\n%s", banned, all)
 				}
@@ -256,7 +256,7 @@ func TestDockUsageEstimateSingleValue(t *testing.T) {
 	e := &st.Savings.Estimate
 	e.LowestReading, e.HighestReading, e.LowTokens, e.HighTokens, e.Estimated = usageI64(10000), usageI64(10000), usageI64(1500000), usageI64(1500000), false
 	got := dockUsageEstimate(st.Savings)
-	if !strings.HasPrefix(got, "Estimate: 1,500,000 tokens not re-read, from 150 withheld wakes") || !strings.Contains(got, "(reported by BB)") {
+	if !strings.HasPrefix(got, "Token savings unavailable:") || strings.Contains(got, "1,500,000") {
 		t.Error(got)
 	}
 }
@@ -360,6 +360,7 @@ func TestDockUsagePageStaysUnderItsBound(t *testing.T) {
 		}
 		st.ContextWindow.Recent = recent
 		in.Status.Savings, in.Status.ContextWindow = st.Savings, st.ContextWindow
+		in.Status.UsageMeasurement = usageMeasurement{Availability: "recorded", Details: []string{strings.Repeat("x", 6000)}}
 		inputs[i] = in
 	}
 	r := buildDockReport(inputs, dockNow, time.Minute, defaultStaleAfter, true, true, 0, true)
@@ -587,5 +588,15 @@ func TestDockUsageRedrawsOnlyOnChange(t *testing.T) {
 	}
 	if strings.Count(load, "render(") != 1 {
 		t.Error("loadUsage draws the page other than once, on a change")
+	}
+}
+
+// Old status producers may still supply a numeric savings estimate. The page
+// must not revive that inference from their otherwise compatible schema.
+func TestDockUsageRejectsLegacyTokenSavings(t *testing.T) {
+	s := usageBusy()
+	got := dockUsageEstimate(s.Savings)
+	if !strings.Contains(got, "Token savings unavailable") || strings.Contains(got, "1,200,000") || strings.Contains(got, "not re-read") {
+		t.Fatalf("legacy status revived token savings: %s", got)
 	}
 }
