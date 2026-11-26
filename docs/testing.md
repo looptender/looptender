@@ -847,3 +847,87 @@ unsupported filesystem errors cannot report success. Windows publication/marker
 and directory durability remain unimplemented; its explicit refusal fixture must
 run natively before claiming Windows behavior. README, operations and roadmap
 retain these limitations. No repair/release protocol or control UI changed.
+
+### Working-agent conformance staging
+
+The one-turn stand-in's active stage waits for its exact staging prompt receipt,
+not only a process-start marker. A detached ACP worker can be running while its
+agent is still initializing; sampling prompts after a fixed delay could count a
+late staging prompt as a second send. `TestAntigravityWorkingStageWaitsForPromptReceipt`
+holds delivery behind a fixture gate, proves staging stays pending, then verifies
+one staging receipt and refusal of a second send without another delivery. The
+shared send-while-working contract and its refusal assertions are unchanged.
+This is a fixture synchronization correction, with no provider or runner behavior
+change. Native fixture execution and platform compilation are separate evidence;
+neither establishes installed or live-provider acceptance.
+
+## Explicit coordinator compaction helper (unreleased source)
+
+`python3 -B -m unittest discover -s tools/context-compaction -v` exercises the
+source-only agent-operated helper, not a tick/daemon policy. Fictional journeys
+cover dry run, durable pre-send reservation, accepted versus completed, lost and
+wrong-target replies, no replay/query on pending repeats, cap/cooldown, exact
+current item/turn pairing, changed roster/owner/goal/host/source, pending input,
+stop after reservation, failed publication, malformed records and lock contention.
+A pinned local fake executable runs through the actual bounded command wrapper:
+unknown response, fresh process invocation and receipt reconciliation produce
+exactly one compact command. No installed BB/provider is invoked.
+
+Negative fixtures on disposable source copies fail the journey when either the
+pre-send reservation or cooldown guard is removed. The helper reuses the existing
+coordinator command adapter and Unix file-lock implementation; it adds no process
+shutdown, scheduler, installer or OS integration. Record native execution and
+hosted results separately. Local macOS fixtures are not native Linux/Windows or
+installed/live helper acceptance; Windows locking is unsupported. The earlier
+manual exact-target compact trials do not certify the new helper. Automatic
+context policy, provider freshness/trigger discovery, quota savings and successor
+creation remain separate open acceptance. See the
+[contract and limits](design/context-efficiency.md).
+
+### Usage measurement export slice (unreleased)
+
+The [measurement contract](design/usage-measurement.md) is a diagnostic-only local
+export boundary; it does not collect BB/runner usage or instrument action suppression.
+`TestUsageEvidence*` verifies cumulative identity deduplication, missing fields,
+resets, component arithmetic, comparable-work gates, negative differences, malformed
+scope/time/action records, size bounds and the documented fictional example.
+`TestDockUsagePageStaysUnderItsBound` includes measurement payloads at the largest
+registry size. The required jsdom rendering test checks measured/estimated labels,
+observed actions and text-only rendering of untrusted source labels. Focused native
+macOS race tests and vet passed; offline Chrome desktop/390px captures showed no
+horizontal overflow. Modern Web Guidance `html` and `responsive-table` were reviewed;
+the UI reuses existing lists/disclosures rather than introducing a new web feature.
+
+Not verified: independent review, real export ingestion, automatic collector coverage,
+controlled live savings, independent quality/continuity acceptance, subscription-quota
+attribution or native Linux/Windows execution. Fictional captures do not close these
+acceptance cases. No runtime installation, Accounts acquisition change or rollout.
+
+
+Usage ingestion review regressions additionally cover a deterministic file-to-FIFO
+replacement in an owned subprocess with a two-second deadline, regular-file identity
+replacement, symlinks, oversized opened files, conflicting/escaped duplicate JSON
+keys, case aliases and path/URL-shaped display labels. The FIFO, duplicate-attestation
+and path-disclosure regressions failed before the fixes. macOS/Linux use a native
+no-follow/nonblocking open plus descriptor validation; other platforms return
+unavailable until a native reader is implemented. Linux/amd64 and Windows/amd64 test binaries cross-compiled after the fixes.
+Cross-compilation is not native fixture execution or live acceptance.
+
+### Automatic usage collection (unreleased)
+
+The collector fixtures exercise durable restart/cursor replay, failed writes before
+query, failed sources, source changes, cooldown, retention gaps, counter resets,
+future/reordered pages and bounded state. Native disposable CLI fixtures verify
+fixed exact-target argv, stdout limits, deadlines, stderr privacy, admission gates
+and zero-query report reads. The SDK bridge fixtures require server-side usage
+filtering and cursor bounds, null unknown counters, opaque session aliases, and
+refusal of other providers/malformed/wrong-target/oversized responses. No provider
+model call, production configuration, installed service or live compaction is part
+of these checks. The optional screenshot fixture accepts
+`KEEPGOING_DOCK_AUTOMATIC_USAGE=1` to render fictional automatic evidence.
+
+Negative controls remove cooldown and durable cursor advancement independently;
+the restart/replay test must fail for each. macOS native fixtures and browser
+captures are separate from Linux/Windows cross-compilation. Native Linux, installed
+BB bridge integration, wider provider attribution and actual subscription savings
+remain unverified. No roadmap acceptance is closed by these fixtures.

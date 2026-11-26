@@ -139,6 +139,11 @@
             }
           }
         },
+        "usage_collection": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt in to bounded structured BB Codex usage collection after existing primary-thread checks. Requires the matching BB plugin. No model calls or subscription savings claim."
+        },
         "prompt_context": {
           "type": "boolean",
           "description": "Append the loop's supervision context, as the context command shows it, to wakes, nudges, re-prompts and handoff briefs: on the first send after it is turned on, a control change (enable, resume, a change of owner), a handoff or switch-back, or a new conversation, and again when the context changes. Default false."

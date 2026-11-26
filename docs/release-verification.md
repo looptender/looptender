@@ -10,9 +10,30 @@ Every release archive is checked for three things:
 - **Third-party notices.** `THIRD_PARTY_NOTICES` reproduces the terms of the Go runtime and standard library and of every module linked into the executable. `scripts/build-release.sh` runs `scripts/third-party-notices.sh --check` first and stops when the file does not match the modules of the six release targets, so a module added without its notice cannot be released. Pull-request CI runs the same check. After adding or updating a module, run `scripts/third-party-notices.sh`, read the result and commit it.
 - **Homebrew formula.** The tap is a separate repository. Its license field names the Sustainable Use License, and its install check confirms these files are present ([v0.2.0 evidence](#v020-release-and-package-evidence)).
 
+## v0.3.0 release and package evidence
+
+[v0.3.0](https://github.com/looptender/looptender/releases/tag/v0.3.0) tags `0e76932e4cbc2f39a7e226894f42c0f12dc1700c`, the merge of #562, and includes BB plugin v0.4.0 source. The [Build and publish job](https://github.com/looptender/looptender/actions/runs/45677197987) passed on that commit: Go tests, six archive builds, archive verification, the native Linux amd64 package smoke check, and publication.
+
+**Downloaded assets.** All six published archives matched `checksums.txt`; each held exactly the six required files, both Windows ZIPs passed `unzip -tq`, and the unpacked licence names looptender under Sustainable Use License 1.0. Published archive SHA-256 values:
+
+| Archive | SHA-256 |
+| --- | --- |
+| `keepgoing_0.3.0_darwin_amd64.tar.gz` | `867b15d2a7628984b2faafbb8850e6f284ab2d6bebf2e5cbc462ad0ad5691d53` |
+| `keepgoing_0.3.0_darwin_arm64.tar.gz` | `9755e8a66db19e87b14fa1c4eaed2ae33960cf62da93be888d9fa20bd0574cf4` |
+| `keepgoing_0.3.0_linux_amd64.tar.gz` | `8787e5d32431f82679d51e090e5ac9e6b4597e5f61f44a5a0d760e03926eb7da` |
+| `keepgoing_0.3.0_linux_arm64.tar.gz` | `5c04f84edf767e8e9cddbc6fd1a26d169df8745d18682ea1fe9570f1286b658b` |
+| `keepgoing_0.3.0_windows_amd64.zip` | `a643e689b865b43b040f07707b4eac627f39858e222a0f8f3794c9ee4250827d` |
+| `keepgoing_0.3.0_windows_arm64.zip` | `e6ebe9701c791ca886a6bdac8cf49525f84ee8f4cac122db16d6263a5b5e266b` |
+
+The downloaded macOS arm64 executable reported `v0.3.0` (SHA-256 `8ff1d79d4636dbc5d96c3886268d37840d91c9b149f85ba82329059e07f9f2ca`). Against that executable, `scripts/smoke-release.py` passed all six setup variants with zero provider invocations, and `scripts/smoke-recovery.py --include-cursor` passed all five stand-in journeys. These published digests differ from the local candidate digests below.
+
+**Homebrew.** [Tap PR #8](https://github.com/looptender/homebrew-tap/pull/8) merged as `792f0990399d4c7b911bcba84a2560d5c4c98dd8`, updating the formula, package receipt checks and README for v0.3.0. The [macOS package jobs](https://github.com/looptender/homebrew-tap/actions/runs/45679296235) all passed on head `118bb19741d6a0c7058b0c563be9e95a8d70ca91`: fresh, upgrade, alias and legacy-upgrade. The fresh scenario includes `brew test` and `brew audit --strict --online`.
+
+**Remaining verification.** Native Windows, Linux arm64 and Intel macOS archive execution, Linux and Intel macOS Homebrew installation, Git installation and activation of the tagged BB plugin, and live provider/first-loop walkthroughs remain unverified. Native Linux amd64 package smoke execution in the release job and local macOS arm64 stand-in journeys do not close those gates. Publication alone does not update installed supervisors or plugins.
+
 ## v0.3.0 release preparation
 
-**v0.3.0** collects everything merged since v0.2.0 (folding the unpublished v0.2.1 preparation into [v0.3.0 release notes](releases/v0.3.0.md) and [CHANGELOG.md](../CHANGELOG.md)) and prepares **BB plugin v0.4.0** from the same tag. This is the pre-release candidate record prior to tagging or publication.
+**v0.3.0** collects everything merged since v0.2.0 (folding the unpublished v0.2.1 preparation into [v0.3.0 release notes](releases/v0.3.0.md) and [CHANGELOG.md](../CHANGELOG.md)) and prepares **BB plugin v0.4.0** from the same tag. This is the historical pre-release candidate record; published evidence is recorded above.
 
 **Scope.** Branched from `origin/main` (`562c98d6`, after #499), preparing documentation, changelog consolidation, BB plugin version `0.4.0`, and candidate packaging checks without modifying `LICENSE` or `LICENSING.md` or checking off unverified roadmap items.
 

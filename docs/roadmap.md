@@ -1,6 +1,70 @@
 # Roadmap
 
-For current installation and command names, see the [README](../README.md#install). Release **v0.3.0** preparation ([notes](releases/v0.3.0.md), including BB plugin **v0.4.0**) is in progress ahead of tagging; earlier published CLI archives are **v0.2.0**. Earlier milestone and verification records retain their original package labels. Documentation and packaging changes do not close live acceptance gaps.
+For current installation and command names, see the [README](../README.md#install). Release **v0.3.0** and BB plugin **v0.4.0** source are published from the same tag ([notes](releases/v0.3.0.md)), with [published package evidence](release-verification.md#v030-release-and-package-evidence). Tagged plugin installation, live walkthroughs and other unverified acceptance gates remain open. Unreleased source work is tracked separately below. Earlier milestone and verification records retain their original package labels. Documentation and packaging changes do not close live acceptance gaps.
+
+## HIGH PRIORITY: conserve subscription usage
+
+Track this independently of account freshness or route availability. The
+[usage conservation design and proposed lifecycle contract](design/context-efficiency.md)
+plans a continuous optimization capability: keep useful work moving while reducing
+avoidable subscription usage. It covers measurement, redundant supervision, lane
+overhead, context lifecycle and explicit user-selected model/effort policies.
+This is planned product value, not a measured savings claim. Remain open until
+each acceptance case has evidence; a smaller context alone is not subscription
+savings.
+
+- [ ] Deliver Panel measurement with actual usage trends, identity-based avoided
+  actions and baseline-supported estimates, each with period, method, coverage,
+  sample size and uncertainty; normalize by useful accepted work. The source-only
+  [measurement contract](design/usage-measurement.md) implements a bounded local
+  export reader and controlled-pair calculator. An opt-in, bounded BB Codex
+  collector now exists in source: primary thread only, durable cursor, restart
+  spacing, Panel source/freshness/coverage and observed read overhead. Installed
+  acceptance, wider provider/lane coverage and live measured savings remain open.
+- [ ] Rank recent consumers from bounded structured usage metadata across projects,
+  by loop, lane and provider, with exact measurement periods and provider/retention
+  gaps. Separate total, cached and uncached input, output and reasoning where
+  exposed; derive uncached input only from compatible counters. Show current
+  context occupancy separately.
+  Keep real conversation identities and runtime evidence in private artifacts.
+- [ ] Suppress or batch redundant wake/status/completion work deterministically,
+  without losing useful progress, owner messages, pending interactions or lane
+  obligations. Prove avoided sends with fictional before/after regressions and
+  live exact-target evidence; withheld checks alone are not avoided model turns.
+- [ ] Attribute redundant retries, duplicate assignments and lane startup/review
+  overhead using structured attempt, task/revision and ownership evidence.
+  Compare equivalent workloads with useful completions, acceptance quality,
+  latency and rework recorded; fewer tokens with lost work is not improvement.
+- [ ] Make model/effort policy explicit and user-selected, with recorded scope and
+  revisions. Never silently downgrade to meet a usage target. Evaluate any
+  authorized policy against the same quality/throughput criteria.
+- [ ] Repeat bounded measurements over declared comparable periods, rank
+  actionable avoidable work and verify each intervention before expanding it.
+  Include measurement overhead; expose missing coverage and unknown subscription
+  charges rather than inventing savings or promising a percentage reduction.
+- [ ] Verify owner-authorized safe-boundary compact trials on three coordinators:
+  fresh exact-target baseline, durable continuity, structured completion,
+  post-context evidence and continuity reconciliation. An accepted request is
+  not completed compaction; retain blocked and unknown outcomes explicitly.
+- [ ] Measure compact frequency and available overhead/cache effects before
+  selecting a proactive policy. No fixed-time cadence or assumed quota savings;
+  provider automatic thresholds stay unknown unless supported metadata/config
+  exposes them. Preserve the person's model and effort choices.
+- [ ] Review an explicit opt-in compact lifecycle contract with cooldown,
+  durable pre-attempt identity, caps, stop/pause precedence, idle revalidation
+  and hold-on-unknown semantics before adding any automatic action. Today's
+  context threshold remains preview-only. The source-only
+  [explicit coordinator helper](../integrations/bb-plugin-keepgoing/skills/keepgoing/references/compaction-workflow.md)
+  implements bounded manual attempts and continuity receipts with fictional
+  tests; independent contract review and installed/live acceptance remain open.
+- [ ] Review successor creation separately: explicit opt-in, one owner, preserved
+  goal/tasks/approvals/holds/pending obligations, bounded creation, no retry of
+  an unknown outcome and verified continuity. Retain the existing fallback-only
+  creation contract until that dedicated change is reviewed; no blanket archive.
+- [ ] Remove unsupported consumption/savings claims from status and Usage,
+  preserving independent counts/context diagnostics. Source regressions are
+  separate from installed-client and live-provider acceptance.
+
 
 ## Done
 
@@ -137,20 +201,22 @@ These priorities are planning decisions, not new verification claims. Maintain s
 
 ### Current release and verification status
 
+- [x] Publish CLI v0.3.0 and BB plugin v0.4.0 source from one tag, and verify CLI package parity. All six published archives passed checksum and exact-inventory checks; the downloaded macOS arm64 executable passed both stand-in smoke scripts. Homebrew fresh, upgrade, alias and legacy-upgrade checks passed. See [v0.3.0 evidence](release-verification.md#v030-release-and-package-evidence). Tagged plugin installation and live walkthroughs remain open.
+
 - [x] Publish CLI v0.2.0 and BB plugin v0.3.0 from one tag, and verify CLI package parity. All six downloaded archives passed checksum and exact-inventory checks, and the downloaded macOS arm64 executable passed both smoke scripts with stand-ins. The Homebrew formula, with its licence field changed, passed a fresh macOS arm64 install. See [v0.2.0 evidence](release-verification.md#v020-release-and-package-evidence).
 - [x] Publish CLI v0.1.5 and BB plugin v0.2.0 source from the checked tag, and verify CLI package parity. All six downloaded archives passed checksum/content checks; native macOS/Linux package smoke checks use stand-ins. Homebrew passed a fresh macOS arm64 installation and goal-setup/help assertions. See [published evidence](release-verification.md#v015-release-and-package-evidence).
 - [ ] Verify the tagged Git plugin installation, activation and installed goal-aware setup UI, then the timed live first-loop journey. The plugin source/collection is published and clean production-dependency builds pass; those checks do not establish installed behavior or full F1/pilot readiness.
 
-Use the [tagged release and package evidence](release-verification.md#v020-release-and-package-evidence) when interpreting the implementation checkboxes below.
+Use the [tagged release and package evidence](release-verification.md#v030-release-and-package-evidence) when interpreting the implementation checkboxes below.
 
 | Surface | Availability | Verification boundary |
 | --- | --- | --- |
 | Goal records/context, BB transfer CLI, registry and client controls | Released in v0.1.4 CLI archives and Homebrew | Offline fixtures; package installation does not verify live provider adoption or transfer |
 | Goal-aware setup, send provenance and goal-help correction | Released in CLI v0.1.5 and matching Homebrew | Offline fixtures and package checks; live onboarding remains open |
 | Recovery and reliability changes, the panel, run discovery, defined agents, Cursor | Released in CLI v0.2.0 and matching Homebrew | Offline fixtures and package checks; network-aware recovery observed once in a real outage ([record](testing.md#observed-once-a-real-outage-2026-11-14)), lanes and the full procedure not; see the [v0.2.0 notes](releases/v0.2.0.md#what-is-fixture-tested-and-what-is-live) |
-| BB plugin goal setup/transfer/status additions, Continue-existing, and service startup | v0.4.0 prepared for v0.3.0 tag (v0.3.0 in v0.2.0; v0.2.0 in v0.1.5); separate Git installation | SDK/DOM fixtures and bundle checks; live deployment remains unverified |
+| BB plugin goal setup/transfer/status additions, Continue-existing, and service startup | v0.4.0 source published in v0.3.0 tag (v0.3.0 in v0.2.0; v0.2.0 in v0.1.5); separate Git installation | SDK/DOM fixtures and bundle checks; live deployment remains unverified |
 | Native macOS menu preview | Developer build; pauses, stops and resumes a loop after a native confirmation showing the panel's review; no packaged installer | Native build, unit and real-CLI fixture checks; no confirmation answered by a person; accessibility and live adoption remain incomplete |
-| Telegram remote channel | Included in v0.3.0 candidate (`TG1`–`TG4`): `looptender telegram setup\|status\|test\|poll\|topics\|service\|disconnect` and outbound `loop.report.format: telegram`; `TG5` planned ([design](telegram.md)) | Offline HTTP stand-ins and independent terminal QR decoding only; phone scanning, background service wiring and live Telegram Bot API verification remain open; opt-in local `doctor --telegram` pairing diagnostics are implemented |
+| Telegram remote channel | Released in CLI v0.3.0 (`TG1`–`TG4`): `looptender telegram setup\|status\|test\|poll\|topics\|service\|disconnect` and outbound `loop.report.format: telegram`; `TG5` planned ([design](telegram.md)) | Offline HTTP stand-ins and independent terminal QR decoding only; phone scanning, background service wiring and live Telegram Bot API verification remain open; opt-in local `doctor --telegram` pairing diagnostics are implemented |
 | Full BB pilot and headless recovery journey | Acceptance unfinished | Existing partial live observations do not close the walkthrough gates |
 
 Existing user authorization and repository merge policy remain in effect. Review workflows may require stronger gates for explicitly designated sensitive work, but a model recommendation or a timeout never grants new authority. This reassessment does not add a blanket human-approval requirement to already authorized routine work.
