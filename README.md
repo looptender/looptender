@@ -53,7 +53,7 @@ Supervision runs on the same machine as the agents from a single binary (macOS, 
 
 ## When a usage limit hits: takeover
 
-- **Handoff into a new conversation** (*Released in v0.2.0*): For a BB loop, an opt-in fallback (`bb.new_thread`) can start a new conversation on another configured provider when a usage limit hits and move supervision to that conversation. Creation is opt-in per loop, capped per loop and spaced at least an hour apart, and covered by offline fixtures only.
+- **Handoff into a new conversation** (*Released in v0.2.0*): For a BB loop, an opt-in fallback (`bb.new_thread`) can start a new conversation on another configured provider when a usage limit hits and move supervision to that conversation. Creation is opt-in per loop, capped per loop and spaced at least an hour apart, and covered by offline fixtures only. Unreleased source also carries a useful source thread title into the successor at creation; see [naming scope and limits](docs/operations.md#bb-successor-thread-titles-unreleased).
 - **Ownership, child lanes and setup default** (*Released in v0.3.0*): The new conversation also takes over loop ownership, takes the old conversation's direct child lanes, and starts successor lanes for lanes blocked by the limit. The setup panel offers opt-in takeover when BB reports another usable provider, and quota `switch_at` thresholds can trigger fallback checks before exhaustion.
 
 Takeover moves supervision to a new conversation; it does not mean work is never lost or duplicated. The previous conversation is left untouched and may still be retried by BB after its limit resets.

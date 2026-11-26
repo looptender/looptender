@@ -847,3 +847,29 @@ unsupported filesystem errors cannot report success. Windows publication/marker
 and directory durability remain unimplemented; its explicit refusal fixture must
 run natively before claiming Windows behavior. README, operations and roadmap
 retain these limitations. No repair/release protocol or control UI changed.
+
+## BB successor title fixtures (unreleased)
+
+`TestContinuationTitleMetadata` and `TestContinuationTitleBoundsAndInvalidSource`
+exercise only fictional structured `thread show` metadata: explicit and fallback
+names, continuation scaffolding, inherited titles, missing fields, wrong identity,
+malformed JSON, typed errors, command failures, source model labels and Unicode
+bounds. `TestSpawnPreservesExplicitCustomTitle` requires one unchanged spawn and
+no naming mutation. The decoded-field allowlist pins `title` and `titleFallback`
+to their creation-time display use as well as the existing panel display sites.
+
+`TestUsefulContinuationTitleSurvivesUncertainCreation` verifies the title is saved
+before spawn and recovery uses that exact title even after source metadata changes.
+`TestLaneSuccessorCarriesSourceTitleOnce` verifies existing blocked-lane replacement
+names its explicitly selected source once. Disabling the two naming call sites
+makes both fixtures fail on their title assertions; restoring them passes.
+
+Capability/documentation review covers README, setup, operations, adapter reference,
+fallbacks, architecture and changelog. Naming is source-only, uses supported BB
+`thread show` display fields and `thread spawn --title`, and adds no configuration,
+package boundary, installer, model call or supervision decision. The generated
+adapter capability matrix and roadmap claims remain unchanged: this adds display
+metadata to existing creation paths, not a new supervision capability. Native
+macOS offline fixtures are separate from live BB creation, installed acceptance
+and Linux/Windows execution, which remain unverified. Existing-thread continuation
+and manual retarget do not rename threads; no broad repair sweep is provided.

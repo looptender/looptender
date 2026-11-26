@@ -576,3 +576,25 @@ func TestUninspectableLaneIsSkippedAfterThreeChecks(t *testing.T) {
 		t.Fatalf("%d %+v", len(s.successors), st.ChildSuccessors)
 	}
 }
+
+func TestLaneSuccessorCarriesSourceTitleOnce(t *testing.T) {
+	w, f, s := successorWorld(t, 1, 1)
+	successorTick(t, w, f, s, t0)
+	f.taskTitle = "Check the example parser"
+	w.adapters["claude-other"] = &fakeAdapter{obs: decide.Observation{State: decide.Idle}}
+	successorTick(t, w, f, s, t0.Add(time.Minute))
+	if len(s.successors) != 1 || !strings.HasPrefix(s.successors[0].Title, "From “Check the example parser” · keepgoing: example-loop lane (continued, ") {
+		t.Fatalf("successors %+v", s.successors)
+	}
+	if len(f.nameCalls) != 2 || f.nameCalls[1] != "thr_child_00" {
+		t.Fatalf("naming sources %v", f.nameCalls)
+	}
+	st, _ := state.Load(w.dir)
+	if st.ChildSuccessors.Replaced["thr_child_00"].Title != s.successors[0].Title {
+		t.Fatal("saved title differs")
+	}
+	successorTick(t, w, f, s, t0.Add(2*time.Minute))
+	if len(f.nameCalls) != 2 || len(s.successors) != 1 {
+		t.Fatal("repeated naming or creation")
+	}
+}
