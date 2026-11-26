@@ -2,8 +2,6 @@
 
 ## Unreleased
 
-- Accounts in the panel now show remaining quota, reset countdowns and advancing last-checked/read ages. Passed windows require a new reading, missing quota stays unavailable, and refresh guidance distinguishes saved-page reads, login checks and reviewed usage retrieval.
-
 ## 0.3.0 (2026-11-26)
 
 - Panel and macOS menu bar: added reviewed Archive and Unarchive controls on loops without deleting files on disk.
