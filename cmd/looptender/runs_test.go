@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -527,7 +528,7 @@ func TestRunsLookupInAnUnreadableGraphIsUnavailableNotUnrecorded(t *testing.T) {
 		}
 		var text, errs bytes.Buffer
 		run(context.Background(), []string{"runs", "--state-dir", dir, "--id", runsID("run_", 2)}, &text, &errs)
-		if !strings.Contains(text.String(), "reference "+runsID("run_", 2)+": unavailable") || strings.Contains(text.String(), ": not_recorded") {
+		if !strings.Contains(text.String(), "reference "+runsID("run_", 2)+": unavailable") || strings.Contains(text.String(), "reference "+runsID("run_", 2)+": not_recorded") {
 			t.Fatalf("%s: %s", name, text.String())
 		}
 	}
@@ -1523,5 +1524,72 @@ func TestRunsDistinguishesRegisteredBeforeFirstRunFromMissingAndUnknown(t *testi
 	runsSync(t, entry.StateDir, false, "enable", 1)
 	if _, r, _ := runsExec(t, "--registry-id", entry.ID, "--directory", regDir, "--id", entry.ID); r.Loops[0].Registration != recordNotRecorded || r.Loops[0].RegistrationReason != registrationNotInGraph || r.Node.Reason != registrationNotInGraph {
 		t.Fatalf("post-run unrecorded ref: loop=%+v node=%+v", r.Loops[0], r.Node)
+	}
+}
+
+func TestRunsLockInspectionIsRedactedAndReadOnly(t *testing.T) {
+	dir := runsFixture(t)
+	// Old or arbitrary bytes cannot establish a holder identity or a run link.
+	if err := os.WriteFile(filepath.Join(dir, "tick.lock"), []byte("PRIVATE-LOCK /private/example https://example.com/secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "daemon.lock"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, dir)
+	code, r, raw := runsExec(t, "--state-dir", dir)
+	if code != exitOK || len(r.Loops) != 1 || len(r.Loops[0].Blocker.Locks) != 2 {
+		t.Fatalf("%d %s", code, raw)
+	}
+	observations := r.Loops[0].Blocker.Locks
+	if observations[0].Name != "tick" || observations[1].Name != "daemon" || observations[1].Reason != "lock_not_regular" {
+		t.Fatalf("%+v", observations)
+	}
+	var out, errs bytes.Buffer
+	if code := run(context.Background(), []string{"runs", "--state-dir", dir}, &out, &errs); code != exitOK {
+		t.Fatalf("%d %s", code, errs.String())
+	}
+	raw += out.String() + errs.String()
+	for _, want := range []string{"lock tick:", "lock daemon: unavailable (lock_not_regular)", "holder metadata:"} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("missing %s: %s", want, raw)
+		}
+	}
+	for _, private := range []string{"PRIVATE-LOCK", "/private/example", "https://example.com/secret", dir} {
+		if strings.Contains(raw, private) {
+			t.Fatalf("leaked %s", private)
+		}
+	}
+	if after := snapshotTree(t, dir); after != before {
+		t.Fatal("runs mutated runtime files")
+	}
+}
+
+func TestRunsLockInspectionDoesNotDisturbHeldLocks(t *testing.T) {
+	dir := runsFixture(t)
+	held, err := lock.Acquire(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	before := snapshotTree(t, dir)
+	code, r, raw := runsExec(t, "--state-dir", dir)
+	if code != exitOK || len(r.Loops[0].Blocker.Locks) != 2 {
+		t.Fatalf("%d %s", code, raw)
+	}
+	if after := snapshotTree(t, dir); after != before {
+		t.Fatal("runs mutated held lock")
+	}
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		if got := r.Loops[0].Blocker.Locks[0]; got.Availability != "held" || got.Reason != "holder_reference_unavailable" {
+			t.Fatalf("%+v", got)
+		}
+	}
+	contender, err := lock.Acquire(dir)
+	if err != lock.ErrHeld {
+		if contender != nil {
+			contender.Release()
+		}
+		t.Fatalf("runs released holder: %v", err)
 	}
 }
