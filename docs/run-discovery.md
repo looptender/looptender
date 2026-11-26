@@ -2,7 +2,7 @@
 
 looptender should answer “what is running, where is its conversation, and which run is blocking it?” through durable local references. Users should be able to follow those references immediately in CLI/JSON output, without reconstructing a scheduled run from timestamps, Git history or directory searches. The optional menu and BB plugin should consume the same contract.
 
-This is a data and navigation model in progress. Three parts exist in source and are in v0.2.0: the [identity and run-boundary contract](#identity-and-run-boundary-contract-d1-internal), the [persisted reference graph](#persisted-reference-graph-d2) that records it in each loop's state directory, and the read-only [`keepgoing runs` command](#cli-navigation-d3) that shows it. It also shows [what a loop is waiting on](#what-a-loop-is-waiting-on-d4-partial): lanes and the owning conversation. There is no provider-link resolver, lock-holder lookup or GUI navigation. The [D1–D6 roadmap criteria](roadmap.md#priority-run-and-conversation-discoverability-planned) track delivery; D1, D2 and D3 are checked (fixture-verified; D3 also has one [live check](#live-check) on a BB target), D4 is partial, and D5–D6 are planned. The rest of the evidence is from fixtures. The plan creates no scheduler, agent orchestrator, new dashboard, graph database or server.
+This is a data and navigation model in progress. Three parts exist in source and are in v0.2.0: the [identity and run-boundary contract](#identity-and-run-boundary-contract-d1-internal), the [persisted reference graph](#persisted-reference-graph-d2) that records it in each loop's state directory, and the read-only [`keepgoing runs` command](#cli-navigation-d3) that shows it. It also shows [what a loop is waiting on](#what-a-loop-is-waiting-on-d4-partial): lanes and the owning conversation. Unreleased source adds read-only tick/daemon lock-state inspection, with holder/run bindings still unavailable. There is no provider-link resolver or GUI navigation. The [D1–D6 roadmap criteria](roadmap.md#priority-run-and-conversation-discoverability-planned) track delivery; D1, D2 and D3 are checked (fixture-verified; D3 also has one [live check](#live-check) on a BB target), D4 is partial, and D5–D6 are planned. The rest of the evidence is from fixtures. The plan creates no scheduler, agent orchestrator, new dashboard, graph database or server.
 
 ## Routine, run and chat are different nodes
 
@@ -162,14 +162,14 @@ Older builds ignore the file. Copying or deleting runtime files is outside these
 
 ## CLI navigation (D3)
 
-`keepgoing runs` shows what the graph recorded: the current run, earlier runs, their sends and the chat/session references they used. It is available in source builds only. It reads private files and nothing else:
+`keepgoing runs` shows what the graph recorded: the current run, earlier runs, their sends and the chat/session references they used. D3 is available in v0.2.0; the lock diagnostics described below are unreleased. It reads local records and read-only OS lock evidence:
 
 - It runs no adapter, provider command or `bb` command, and needs no provider installed.
 - It takes no lock, including the tick lock, so it works while a check, a daemon or another command is running.
 - It creates no file or directory and changes no control. It works the same for a paused, stopped, disabled, awaiting-user or completed loop.
 - Each file is read as its own snapshot. A check that finishes during a read can make the graph, control and saved target differ by one step.
 
-Everything it prints was recorded earlier. Nothing is a live observation, and a session reference does not show that the conversation exists or can be resumed.
+Graph references were recorded earlier; a session reference does not show that the conversation exists or can be resumed. Unreleased lock diagnostics are point-in-time read-only OS inspections, described under D4.
 
 ### Selecting a loop
 
@@ -239,7 +239,7 @@ A lookup answers `found`, `not_recorded`, `not_recorded_or_expired` when retenti
 | run fields | `id`, `state` (`open` or `completion_declared`), `origin`, `recordedAt`, `source`, `closedAt`, `reopens`, `invocation` (the one that opened it), `triggers[]` and `omittedTriggers` (later invocations while open), `sessionEvidence`, `sessions[]`, `omittedSessions`, `goalRevisions[]`, `omittedGoalRevisions`, `attempts`, `unrecorded[]` |
 | `sessions[]` | `ref`, `provider`, `id`, `target`, `evidence`, `source`, `recordedAt`, `link` |
 | `attempts` | `total`, `unconfirmed`, and the newest three in `latest[]` with `outcome` (`intent`, `adapter_returned`, `adapter_error`) and `session` |
-| `loops[].blocker` | `availability` (`blocked`, `held`, `listed`, `none`, `unknown`), `reason`, `checkedAt`, `ageSeconds`, `stale`, `target`, `lastCheckCause`, `children[]` with `ref`, `status`, `holds` and `supervised` (`registrationId`, `loop`, `run`), `omittedChildren`, `owner`, and `lock` (always `unavailable`); see [what a loop is waiting on](#what-a-loop-is-waiting-on-d4-partial) |
+| `loops[].blocker` | `availability` (`blocked`, `held`, `listed`, `none`, `unknown`), `reason`, `checkedAt`, `ageSeconds`, `stale`, `target`, `lastCheckCause`, `children[]` with `ref`, `status`, `holds` and `supervised` (`registrationId`, `loop`, `run`), `omittedChildren`, `owner`, `lock` (verified holder reference, currently `unavailable`), and unreleased `locks[]` (`name`, `availability`, `reason`, `metadata`); see [what a loop is waiting on](#what-a-loop-is-waiting-on-d4-partial) |
 | `node` | With `--id`: `ref`, `status`, `reason` (e.g. `registered_no_run_yet` / `not_recorded_in_graph` for unlinked registered references), `type`, `recordedAt`, `source`, `edges[]`, `omittedEdges`, and the run or send detail; for a chat/session, its `attempts[]`, `omittedAttempts` and `ambiguousAttempts` |
 | `omitted`, `limitations[]` | Registered loops not shown, and fixed statements of what the report cannot establish |
 
@@ -251,7 +251,7 @@ Exit codes: 0 for an answer, including a missing graph, a hold or a reference th
 
 ### What a loop is waiting on (D4, partial)
 
-`keepgoing runs` answers "which conversation is this loop waiting on, and is it working, stuck or failed" from structured records: the lane listing a check verified, the reason that same check recorded, and the ownership claim. It reads no PID and matches no names. Showing a blocker contacts nobody and grants no control: following it only reads more records.
+`keepgoing runs` answers "which conversation is this loop waiting on, and is it working, stuck or failed" from structured records: the lane listing a check verified, the reason that same check recorded, and the ownership claim. It infers no run or conversation from a PID and matches no process names. Showing a blocker contacts nobody and grants no control: following it only reads more records.
 
 **Lanes.** Each check that observes a BB target lists the target's direct lanes and verifies each one, as it always has. The graph now keeps that picture for the open run:
 
@@ -312,7 +312,23 @@ A loop that merely shares a name is never a match, and a loop is never its own b
 
 So the owner line shown to a non-owner is consistent with withholding lanes: the caller already receives that thread ID from the command that refused it, while nothing gives it a lane's.
 
-**Not covered.** Who holds `tick.lock` or `daemon.lock` when a check is skipped is not identified: `lock` is always `unavailable`. That needs a holder record that does not exist yet. A lane's own lanes are not followed from here; follow them from the lane's own loop.
+**Lock inspection (unreleased).** Text and JSON views inspect the exact `tick.lock` and `daemon.lock` files in the selected loop's runtime directory. JSON adds `blocker.locks`, one entry per lock, with `name`, `availability`, `reason` and `metadata`. The existing `blocker.lock` remains the availability of a verified holder reference. Inspection never acquires a lock, creates a directory or runtime file, writes bytes, removes a lock, or repairs permissions. It never uses the existing `lock.Held` probe, which briefly acquires the lock.
+
+| Lock answer | Evidence |
+| --- | --- |
+| `held` / `holder_reference_unavailable` | A read-only OS query observed a lock. This is a point-in-time diagnostic; it does not prove a conversation, run identity, or blocked check. |
+| `none` / `lock_file_absent` | The named file was absent at inspection. No directory or file is created. |
+| `none` / `no_lock_held` | macOS `F_GETLK` observed no conflicting lock on the opened file. |
+| `unavailable` / `no_visible_lock` | Linux's structured `/proc/locks` table contains no matching lock. PID namespace filtering and remote filesystems prevent claiming no lock is held. |
+| `unavailable` | Unreadable, non-regular or changed file, failed/incomplete kernel query, or unsupported read-only query. Windows and other unsupported platforms report `read_only_lock_query_unsupported` for existing regular lock files. |
+
+macOS uses [`F_GETLK`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fcntl.2.html); Linux reads a bounded [kernel lock table](https://man7.org/linux/man-pages/man5/proc_locks.5.html) and matches the opened file's device and inode. It never matches process names or treats a PID as a run identity. Symlinks and non-regular lock files are refused; Unix opens also refuse symlink replacement and avoid blocking on a replacement FIFO. The opened identity is checked against the named file before and after the query. Missing files and observations can change immediately afterwards.
+
+The lock package stores no holder metadata: normal lock files are empty. `metadata: not_recorded` reflects that format, `unreadable` means the file could not safely be inspected, and nonempty legacy or arbitrary bytes are `unavailable` (or `stale` when macOS observes no held lock). No bytes, PIDs, paths, URLs or candidate conversation IDs from such files are printed. Even a `held` answer keeps the holder reference unavailable: a structured, fresh run/conversation owner binding remains unimplemented. The graph neither persists these observations nor creates a blocker edge from them.
+
+Native macOS fixtures exercise held and released locks across processes, missing/unreadable-shape files, arbitrary bytes, directories, symlinks and FIFOs; command fixtures verify redacted text/JSON and unchanged runtime trees. Linux parser fixtures cover shared/exclusive locks, waiting requests, wrong device/inode, malformed/partial/oversized tables and read failures; native Linux execution is separate evidence from cross-compilation. Windows compilation alone does not establish native execution. No installed-loop upgrade or live D4 lock-holder acceptance is claimed.
+
+**Not covered.** Verified holder/run bindings and a lane's own lanes. Follow lanes from the lane's own loop.
 
 ### Live check: waiting on
 
