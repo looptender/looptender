@@ -13,6 +13,10 @@ import (
 // accepts duplicate keys and case-insensitive field aliases with last wins.
 // Exact tags are taken from this format's types, including nested records.
 func usageEvidenceFields(raw []byte) bool {
+	return usageTypedFields(raw, reflect.TypeOf(usageExport{}))
+}
+
+func usageTypedFields(raw []byte, root reflect.Type) bool {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.UseNumber()
 	var value func(reflect.Type, int) bool
@@ -82,7 +86,7 @@ func usageEvidenceFields(raw []byte) bool {
 		}
 		return false
 	}
-	if !value(reflect.TypeOf(usageExport{}), 0) {
+	if !value(root, 0) {
 		return false
 	}
 	_, err := d.Token()

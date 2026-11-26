@@ -71,8 +71,11 @@ savings or authorize silent model downgrades.
 **Usage evidence — In source, not yet released.** The Panel can read a bounded
 local [measurement export](docs/design/usage-measurement.md) to show provider token
 trends, observed duplicate actions suppressed, and controlled-pair estimates per
-accepted work unit. Missing data stays unavailable. Automatic collection and
-subscription-quota savings are unverified; estimates disclose their baseline,
+accepted work unit. Missing data stays unavailable. Opt-in `loop.usage_collection: true` adds bounded
+BB Codex metadata collection after existing primary-thread checks, with durable
+cursors and Panel freshness/coverage. It requires the matching BB plugin source;
+no new service or model request is added. Installed acceptance and
+subscription-quota savings remain unverified; estimates disclose their baseline,
 coverage and author-attested quality/cache conditions. The file reader currently
 supports macOS/Linux; other platforms show evidence unavailable.
 

@@ -899,3 +899,22 @@ and path-disclosure regressions failed before the fixes. macOS/Linux use a nativ
 no-follow/nonblocking open plus descriptor validation; other platforms return
 unavailable until a native reader is implemented. Linux/amd64 and Windows/amd64 test binaries cross-compiled after the fixes.
 Cross-compilation is not native fixture execution or live acceptance.
+
+### Automatic usage collection (unreleased)
+
+The collector fixtures exercise durable restart/cursor replay, failed writes before
+query, failed sources, source changes, cooldown, retention gaps, counter resets,
+future/reordered pages and bounded state. Native disposable CLI fixtures verify
+fixed exact-target argv, stdout limits, deadlines, stderr privacy, admission gates
+and zero-query report reads. The SDK bridge fixtures require server-side usage
+filtering and cursor bounds, null unknown counters, opaque session aliases, and
+refusal of other providers/malformed/wrong-target/oversized responses. No provider
+model call, production configuration, installed service or live compaction is part
+of these checks. The optional screenshot fixture accepts
+`KEEPGOING_DOCK_AUTOMATIC_USAGE=1` to render fictional automatic evidence.
+
+Negative controls remove cooldown and durable cursor advancement independently;
+the restart/replay test must fail for each. macOS native fixtures and browser
+captures are separate from Linux/Windows cross-compilation. Native Linux, installed
+BB bridge integration, wider provider attribution and actual subscription savings
+remain unverified. No roadmap acceptance is closed by these fixtures.

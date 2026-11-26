@@ -17,8 +17,10 @@ savings.
   actions and baseline-supported estimates, each with period, method, coverage,
   sample size and uncertainty; normalize by useful accepted work. The source-only
   [measurement contract](design/usage-measurement.md) implements a bounded local
-  export reader and controlled-pair calculator; automatic collection and live
-  measured savings remain open.
+  export reader and controlled-pair calculator. An opt-in, bounded BB Codex
+  collector now exists in source: primary thread only, durable cursor, restart
+  spacing, Panel source/freshness/coverage and observed read overhead. Installed
+  acceptance, wider provider/lane coverage and live measured savings remain open.
 - [ ] Rank recent consumers from bounded structured usage metadata across projects,
   by loop, lane and provider, with exact measurement periods and provider/retention
   gaps. Separate total, cached and uncached input, output and reasoning where

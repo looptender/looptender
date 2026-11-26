@@ -1,3 +1,4 @@
+import { usageEvents } from "./usage-events.ts";
 // bb-plugin-keepgoing: shows keepgoing's state beside the threads it
 // supervises, and offers pause, resume, and stop. It only calls the keepgoing
 // CLI; every decision stays in keepgoing.
@@ -685,6 +686,7 @@ export default async function plugin(bb: BbPluginApi) {
     name: "looptender",
     summary: "Show and control the looptender loops this plugin is configured for",
     commands: [
+      { name: "usage-events", summary: "Bounded exact-thread structured usage metadata for configured collectors", usage: "bb looptender usage-events <thread> <latest|after-seq>" },
       { name: "status", summary: "List configured loops with their control state and target", usage: "bb looptender status" },
       { name: "pause", summary: "Pause a loop by name", usage: "bb looptender pause <loop>" },
       { name: "resume", summary: "Refused: says where a person resumes the loop", usage: "bb looptender resume <loop>" },
@@ -692,6 +694,7 @@ export default async function plugin(bb: BbPluginApi) {
     ],
     async run(argv) {
       const [command, name, ...rest] = argv;
+      if (command === "usage-events") return usageEvents(bb.sdk, argv.slice(1));
       if (command === "status" && name === undefined) {
         const { loops, errors } = await allLoops(null);
         const lines = loops.map((l) => `${l.loop}\t${recordsUnreadable(l.details) ? "records unreadable" : l.controlState}\treference=${l.referenceSource ?? "unavailable"}\ttarget=${l.target}\tlast=${lastLabel(l.lastState, l.details)}${l.details?.schedule?.overdue ? "\tschedule=overdue" : ""}${l.details?.disk ? `\tdisk=${l.details.disk.level}` : ""}${limitWaitListingTag(l.details)}${l.note ? `\t(${shortNote(l.note)})` : ""}`);
