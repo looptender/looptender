@@ -429,7 +429,7 @@ func (h *panelHandler) served(w http.ResponseWriter) func(session string) {
 		now := h.state.now().UTC()
 		if h.changes == nil {
 			out.Changes = "off"
-			out.ChangesText = txt("Read-only: this page cannot pause, resume, stop or start anything.")
+			out.ChangesText = txt("Read-only: this page cannot change loops or accounts. Separately authorized automatic usage reads may still run.")
 		} else if h.changes.controlsOnly {
 			since := h.changes.since
 			out.Changes, out.ChangesSince, out.Form = "on", &since, h.changes.prepareValue(session)
@@ -677,7 +677,7 @@ func runPanelServer(parent context.Context, c panelServerConfig) int {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	reader := &dockReader{ctx: ctx, directory: c.registry, refresh: c.refresh, staleAfter: c.staleAfter, query: inspectDaemon, versions: true, panelDir: c.dir, accountsDir: panelAccountsDir}
+	reader := &dockReader{ctx: ctx, directory: c.registry, refresh: c.refresh, staleAfter: c.staleAfter, query: inspectDaemon, versions: true, panelDir: c.dir, accountsDir: panelAccountsDir, usagePolling: !c.offline}
 	if c.changes {
 		reader.builds = newBuildSession(c.dir, c.registry)
 		defer reader.builds.close()

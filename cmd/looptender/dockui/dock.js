@@ -2269,7 +2269,7 @@
     pane.appendChild(back());
     pane.appendChild(paneHead("Accounts"));
     pane.appendChild(el("p", "lede", "Your selected accounts, with the evidence available on this device."));
-    pane.appendChild(el("p", "sub", "Reading this page uses saved evidence. Subscription quota refresh is an explicit, reviewed read; it calls no model."));
+    pane.appendChild(el("p", "sub", "Reading this page uses saved evidence unless automatic usage is enabled for a selection. Automatic reads are bounded and model-free; manual quota retrieval still has its own review."));
     var usage = el("p", "account-usage-link");
     usage.appendChild(link("#/routes", "View recorded usage", "work-inspect"));
     usage.appendChild(el("span", "sub", ". Readings come from configured routes and are not live. Each account shows the readings of the routes that use it."));

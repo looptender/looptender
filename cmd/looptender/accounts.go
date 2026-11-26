@@ -33,7 +33,7 @@ func accountsDirectory(path string) (string, error) {
 }
 func accountsCommand(e env, args []string, run accountRun) int {
 	if len(args) == 0 {
-		e.errf("usage: accounts list|add|update|remove|check|usage|connect|disconnect [flags]")
+		e.errf("usage: accounts list|add|update|remove|check|usage|usage-polling|connect|disconnect [flags]")
 		return exitUsage
 	}
 	op := args[0]
@@ -50,6 +50,8 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	expect := fs.String("expect", "", "required current revision for update")
 	expectRevision := fs.String("revision", "", "expected current revision for remove")
 	asJSON := fs.Bool("json", false, "print minimized structured result")
+	enablePolling := fs.Bool("enable", false, "usage-polling: authorize bounded automatic model-free usage reads")
+	disablePolling := fs.Bool("disable", false, "usage-polling: revoke automatic usage reads")
 	like := fs.String("like", "", "connect: take the executable and working directory from this entry")
 	force := fs.Bool("force", false, "disconnect: even when a loop names the account")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -61,9 +63,10 @@ func accountsCommand(e env, args []string, run accountRun) int {
 	supplied := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { supplied[f.Name] = true })
 	for k := range supplied {
-		allowed := k == "directory" || k == "json" || ((op == "check" || op == "update" || op == "usage" || op == "remove") && k == "id") ||
+		allowed := k == "directory" || k == "json" || ((op == "check" || op == "update" || op == "usage" || op == "usage-polling" || op == "remove") && k == "id") ||
 			((op == "add" || op == "update") && (k == "label" || k == "provider" || k == "selection" || k == "cli" || k == "account-dir" || k == "workdir" || (op == "update" && k == "expect"))) ||
 			(op == "remove" && k == "revision") ||
+			(op == "usage-polling" && (k == "enable" || k == "disable")) ||
 			(op == "connect" && (k == "label" || k == "provider" || k == "cli" || k == "workdir" || k == "like")) ||
 			(op == "disconnect" && (k == "label" || k == "id" || k == "force"))
 		if !allowed {
@@ -71,13 +74,16 @@ func accountsCommand(e env, args []string, run accountRun) int {
 			return exitUsage
 		}
 	}
-	if op != "list" && op != "add" && op != "update" && op != "remove" && op != "check" && op != "usage" && op != "connect" && op != "disconnect" {
+	if op != "list" && op != "add" && op != "update" && op != "remove" && op != "check" && op != "usage" && op != "usage-polling" && op != "connect" && op != "disconnect" {
 		return exitUsage
 	}
 	path, err := accountsDirectory(*dir)
 	if err != nil {
 		e.errf("accounts: private catalog directory unavailable")
 		return exitFailed
+	}
+	if op == "usage-polling" {
+		return accountUsagePollingCommand(e, path, *id, *enablePolling, *disablePolling, *asJSON)
 	}
 	if op == "usage" {
 		return accountsUsage(e, path, *id, *asJSON)

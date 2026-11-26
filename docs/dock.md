@@ -660,7 +660,9 @@ partial, ended and failed-refresh states remain visible. Claude saved usage
 shows retrieval time and provider freshness unknown: the inspected experimental
 reply may be cached or seeded. It never becomes a fresh observation by being
 retrieved again. Dated route observations stay separate.
-Neither polling surface refreshes a provider. Explicit review can refresh Codex
+Neither polling surface refreshes a provider by default; unreleased source can
+service explicitly enabled [automatic usage](accounts.md#automatic-selected-context-usage-unreleased)
+during main report collection. Explicit review can refresh Codex
 or retrieve Claude usage on Darwin arm64, subject to exact native-image and
 isolation admission. The additive server `accountQuotaProviders` allowlist names
 the enabled providers; when absent, the legacy `accountQuota` capability enables
@@ -687,3 +689,16 @@ and native projections each have a 1 MiB cap. See the
 - Every loop page, and the loop's row in the Overview, says how the loop is checked, whatever its holds, as information and never a need: by its looptender daemon, by its daemon run as a service, by ticks from a scheduler not on record, by nothing on record ("Not checked yet" while no check is recorded and the unsupervised alarm has not fired), or unknown (the loop could not be read, its scheduler was not asked, or it did not answer). "Ticks" is decided by the rule `status` uses (`schedule.checkedBy`): no daemon answers, a cadence is known (three or more recorded gaps) and the last check is within the longer of 15 minutes and three times the usual interval; one tick by hand, or a scheduler that stopped, reads "nothing". Each tick runs the build at the path that scheduler calls, and a hold does not stop them; they only observe.
 - Additive keys on each loop in `api/v1/dock`: `checkedBy` (`kind`, `text`: how it is checked), `wakePolicy` (a warning about the standing wake policy, absent when there is none), `limitWait.afterDeadline` and `limitWait.note` (the reset falls after the deadline; a held loop's wait predates the hold), and `alsoWaiting` (why a paused loop still waits for a person). An older page ignores them, and the page shows nothing for a server that sends none.
 - A paused loop that is still waiting for a person reads as one that needs a person wherever the page and the menu draw state: the picker dot and the loop page's pill use the attention tone, the menu row uses the needs-you symbol, and a failed lane on it is not listed again under "Worth knowing" (it is under "Needs you" already).
+
+
+### Explicit automatic account usage (unreleased)
+
+By default, panel/menu account reads use saved evidence. An existing selection
+can separately authorize bounded model-free acquisition with `accounts
+usage-polling --id ACCOUNT_ID --enable`; see [automatic usage](accounts.md#automatic-selected-context-usage-unreleased).
+Due panel and native-menu list reads then populate the shared provider caches,
+including in a read-only panel. This pre-existing selection grant enables no
+account/control mutation. Without a grant, or with `panel list --offline` or
+`dock --offline`, no usage provider is queried. Companion saved-account requests
+remain snapshot-only. Reads retain old successful timestamps on failure; they
+never infer replenishment from a passed reset. No runtime installation is added.
