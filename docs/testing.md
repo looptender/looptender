@@ -847,3 +847,26 @@ unsupported filesystem errors cannot report success. Windows publication/marker
 and directory durability remain unimplemented; its explicit refusal fixture must
 run natively before claiming Windows behavior. README, operations and roadmap
 retain these limitations. No repair/release protocol or control UI changed.
+
+## Explicit coordinator compaction helper (unreleased source)
+
+`python3 -B -m unittest discover -s tools/context-compaction -v` exercises the
+source-only agent-operated helper, not a tick/daemon policy. Fictional journeys
+cover dry run, durable pre-send reservation, accepted versus completed, lost and
+wrong-target replies, no replay/query on pending repeats, cap/cooldown, exact
+current item/turn pairing, changed roster/owner/goal/host/source, pending input,
+stop after reservation, failed publication, malformed records and lock contention.
+A pinned local fake executable runs through the actual bounded command wrapper:
+unknown response, fresh process invocation and receipt reconciliation produce
+exactly one compact command. No installed BB/provider is invoked.
+
+Negative fixtures on disposable source copies fail the journey when either the
+pre-send reservation or cooldown guard is removed. The helper reuses the existing
+coordinator command adapter and Unix file-lock implementation; it adds no process
+shutdown, scheduler, installer or OS integration. Record native execution and
+hosted results separately. Local macOS fixtures are not native Linux/Windows or
+installed/live helper acceptance; Windows locking is unsupported. The earlier
+manual exact-target compact trials do not certify the new helper. Automatic
+context policy, provider freshness/trigger discovery, quota savings and successor
+creation remain separate open acceptance. See the
+[contract and limits](design/context-efficiency.md).

@@ -366,7 +366,10 @@ The panel owns `build-replacements/<key>/build-update.json` and its `upgrade-bac
 
 The [context efficiency proposal](design/context-efficiency.md) defines a manual
 compact-trial protocol and review requirements for any later opt-in lifecycle.
-It adds no automatic action, conversation creation or changed loop authority.
+Its source-only coordinator-invoked compact helper is outside the supervisor;
+private intent/receipt files are separate from loop runtime. It reuses the
+existing bounded command adapter and Unix private-file lock, adds no package
+boundary or automatic action, and changes no conversation-creation authority.
 
 `internal/contextwindow.Decide` is a pure function of the latest context window reading, its age, `loop.context_window.reset_at`, the controls, the last check's observation, the run graph's lane listing from that check, and the last reset (none yet). It returns would-reset or not with a stable rule and reason code. It is its own package rather than part of timing, which moves a loop between routes on one usage allowance, and `internal/decide` never reads a reading. Only `status` calls it; no check does, so decisions, sends and saved state are the same with the key set or unset. See [context window reset preview](operations.md#context-window-reset-preview).
 

@@ -1,6 +1,8 @@
 # Context efficiency: safe boundaries and an explicit lifecycle contract
 
-Status: proposed contract for review, not automatic runtime behavior. The
+Status: proposed automatic lifecycle contract for review. An explicit
+[source-only coordinator helper](../../integrations/bb-plugin-keepgoing/skills/keepgoing/references/compaction-workflow.md)
+implements the bounded manual slice; nothing invokes it automatically. The
 [high-priority roadmap](../roadmap.md#high-priority-conserve-subscription-usage)
 keeps implementation, fixture evidence and live acceptance separate. This design
 does not change the current engineering prohibition on automatic context
@@ -80,6 +82,28 @@ idle, record its exact blocking status and queued work. If a request was accepte
 but no matching completion is visible, retain the intent and hold the lifecycle
 attempt for a person. Do not replay it or infer failure from a stale context
 snapshot. The loop's independent progress/control behavior is unchanged.
+
+## Source-only explicit compact helper
+
+The packaged keepgoing skill supplies `scripts/compact.py`: dry-run by default,
+explicit grant and `--execute`, one durable reservation per request before the
+structured BB compact operation, nonwaiting private journal lock, fixed grant
+bindings, explicit attempt/cooldown bounds, and no request replay after uncertainty.
+Repeated pending/capped/cooldown invocations do no status/provider work. A
+separate invocation reconciles a unique matching item lifecycle, post-context
+and a declared continuity receipt. This declaration is not semantic verification.
+It performs no supervision control writes and no creation/archival action.
+
+The first slice requires complete assignment inventory, at most 32 direct lanes,
+all idle with no queued/background work or pending input. Only a primary target
+with a recorded owner/goal and existing BB cursor is supported. Reads catch up
+at most 2,000 new events; transcript text is never inspected or retained. Missing
+coverage or an oversized page refuses. BB readings without provider measurement
+time remain freshness-unknown. Cooldown covers helper attempts, not all natural
+compacts; the coordinator must review those before authorizing a request.
+
+The workflow remains under review. Fictional native fixtures do not establish
+installed/live acceptance or an automatic policy.
 
 ## Proposed opt-in compact lifecycle
 

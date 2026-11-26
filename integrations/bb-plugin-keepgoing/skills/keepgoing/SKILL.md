@@ -59,3 +59,16 @@ automatic hold clearing, provider probes, host changes or general supervisor
 creation is supplied. A submitted host request can race a later hold; final reread
 is not atomic fencing. Offline dispatcher tests are not actual agent continuation
 or installed automatic-delegation acceptance, which remains incomplete.
+
+## Explicit coordinator compact workflow (unreleased source)
+
+For an existing person instruction authorizing exact-target compaction, read
+[the compact workflow](references/compaction-workflow.md) before invoking
+`scripts/compact.py`. Use a separate authorized lane/terminal and preserve caller
+identity. This is an explicit bounded helper, never a tick/daemon action: dry run
+by default, idle-only target/child coverage, pinned owner/goal/sources, durable
+pre-attempt reservation, cap/cooldown and no replay of an uncertain result.
+Request acceptance is not completion. Reconciliation needs matching structured
+lifecycle plus an explicit continuity receipt; it never clears a hold. Keep the
+private journal outside the checkout/runtime and do not install or schedule the
+helper. Automatic lifecycle and successor creation remain separate contract work.

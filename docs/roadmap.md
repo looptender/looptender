@@ -29,7 +29,10 @@ subscription savings.
 - [ ] Review an explicit opt-in compact lifecycle contract with cooldown,
   durable pre-attempt identity, caps, stop/pause precedence, idle revalidation
   and hold-on-unknown semantics before adding any automatic action. Today's
-  context threshold remains preview-only.
+  context threshold remains preview-only. The source-only
+  [explicit coordinator helper](../integrations/bb-plugin-keepgoing/skills/keepgoing/references/compaction-workflow.md)
+  implements bounded manual attempts and continuity receipts with fictional
+  tests; independent contract review and installed/live acceptance remain open.
 - [ ] Review successor creation separately: explicit opt-in, one owner, preserved
   goal/tasks/approvals/holds/pending obligations, bounded creation, no retry of
   an unknown outcome and verified continuity. Retain the existing fallback-only

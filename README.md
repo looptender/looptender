@@ -54,7 +54,10 @@ Supervision runs on the same machine as the agents from a single binary (macOS, 
 The panel's [Usage page](docs/dock.md#what-the-page-shows) and
 [status diagnostics](docs/operations.md#savings-figures) distinguish withheld-check
 counts from current context occupancy. These records do not measure subscription
-savings; cache reuse and provider accounting remain unknown.
+savings; cache reuse and provider accounting remain unknown. An unreleased
+[explicit compact workflow](integrations/bb-plugin-keepgoing/skills/keepgoing/references/compaction-workflow.md)
+supplies opt-in grants, durable attempts and continuity reconciliation; it is
+never invoked by the supervisor and adds no automatic context policy.
 
 ## When a usage limit hits: takeover
 
