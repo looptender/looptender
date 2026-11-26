@@ -56,12 +56,13 @@ type dockUsagePage struct {
 // sentences its loop page shows; Did the full counted list; Window the
 // context window sentences and Days its table, oldest first.
 type dockUsageLoop struct {
-	Key    string         `json:"key"`
-	Name   string         `json:"name"`
-	Brief  []string       `json:"brief"`
-	Did    []string       `json:"did"`
-	Window []string       `json:"window"`
-	Days   []dockUsageDay `json:"days"`
+	Measurement usageMeasurement `json:"measurement"`
+	Key         string           `json:"key"`
+	Name        string           `json:"name"`
+	Brief       []string         `json:"brief"`
+	Did         []string         `json:"did"`
+	Window      []string         `json:"window"`
+	Days        []dockUsageDay   `json:"days"`
 }
 
 // dockUsageDay is one UTC day of context readings, already worded.
@@ -113,11 +114,11 @@ func dockUsagePeriod(loops []dockUsageInput, now time.Time) string {
 	for _, in := range loops {
 		if in.Status != nil && in.Status.Savings.Version != 0 {
 			s := in.Status.Savings
-			return fmt.Sprintf("This week means the last %d UTC days, from %s, today included. Wake and message counts come from looptender's records; context readings describe occupancy. Token consumption and subscription savings are not measured.",
+			return fmt.Sprintf("This week means the last %d UTC days, from %s, today included. Wake and message counts come from looptender's records; context readings describe occupancy. Check/context records alone do not measure consumption or subscription savings; any supplied usage export has its own period below.",
 				s.Period.Days, s.Period.From.UTC().Format("Mon 2 Jan"))
 		}
 	}
-	return "This week means the last 7 UTC days, today included. Wake and message counts come from looptender's records; context readings describe occupancy. Token consumption and subscription savings are not measured."
+	return "This week means the last 7 UTC days, today included. Wake and message counts come from looptender's records; context readings describe occupancy. Check/context records alone do not measure consumption or subscription savings; any supplied usage export has its own period below."
 }
 
 // dockUsageReadable is a loop whose history could be counted.
@@ -201,6 +202,10 @@ func dockUsageIsAre(n int) string {
 func dockUsageLoopOf(in dockUsageInput) dockUsageLoop {
 	out := dockUsageLoop{Key: in.Key, Name: in.Name, Brief: []string{}, Did: []string{}, Window: []string{}, Days: []dockUsageDay{}}
 	st := in.Status
+	out.Measurement = unavailableUsage("Usage trend unavailable; no bounded local evidence export.")
+	if st != nil && st.UsageMeasurement.Availability != "" {
+		out.Measurement = st.UsageMeasurement
+	}
 	if st == nil || st.Savings.Version == 0 {
 		line := "Nothing is recorded for this loop that this page can read, so there is nothing to count."
 		out.Brief, out.Did = []string{line}, []string{line}

@@ -870,3 +870,32 @@ manual exact-target compact trials do not certify the new helper. Automatic
 context policy, provider freshness/trigger discovery, quota savings and successor
 creation remain separate open acceptance. See the
 [contract and limits](design/context-efficiency.md).
+
+### Usage measurement export slice (unreleased)
+
+The [measurement contract](design/usage-measurement.md) is a diagnostic-only local
+export boundary; it does not collect BB/runner usage or instrument action suppression.
+`TestUsageEvidence*` verifies cumulative identity deduplication, missing fields,
+resets, component arithmetic, comparable-work gates, negative differences, malformed
+scope/time/action records, size bounds and the documented fictional example.
+`TestDockUsagePageStaysUnderItsBound` includes measurement payloads at the largest
+registry size. The required jsdom rendering test checks measured/estimated labels,
+observed actions and text-only rendering of untrusted source labels. Focused native
+macOS race tests and vet passed; offline Chrome desktop/390px captures showed no
+horizontal overflow. Modern Web Guidance `html` and `responsive-table` were reviewed;
+the UI reuses existing lists/disclosures rather than introducing a new web feature.
+
+Not verified: independent review, real export ingestion, automatic collector coverage,
+controlled live savings, independent quality/continuity acceptance, subscription-quota
+attribution or native Linux/Windows execution. Fictional captures do not close these
+acceptance cases. No runtime installation, Accounts acquisition change or rollout.
+
+
+Usage ingestion review regressions additionally cover a deterministic file-to-FIFO
+replacement in an owned subprocess with a two-second deadline, regular-file identity
+replacement, symlinks, oversized opened files, conflicting/escaped duplicate JSON
+keys, case aliases and path/URL-shaped display labels. The FIFO, duplicate-attestation
+and path-disclosure regressions failed before the fixes. macOS/Linux use a native
+no-follow/nonblocking open plus descriptor validation; other platforms return
+unavailable until a native reader is implemented. Linux/amd64 and Windows/amd64 test binaries cross-compiled after the fixes.
+Cross-compilation is not native fixture execution or live acceptance.

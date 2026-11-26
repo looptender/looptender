@@ -659,7 +659,8 @@ type statusOut struct {
 	ContextWindowReset contextWindowWould `json:"contextWindowReset"`
 	// TurnUsage is the token counts the active target's agent reported for
 	// its finished turns.
-	TurnUsage turnUsageStatus `json:"turnUsage"`
+	TurnUsage        turnUsageStatus  `json:"turnUsage"`
+	UsageMeasurement usageMeasurement `json:"usageMeasurement"`
 	// Savings is the loop's measured savings figures over the last seven UTC
 	// days, and one labelled estimate.
 	Savings savingsStatus `json:"savings"`
@@ -1501,6 +1502,7 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.ContextWindow = describeContext(st.Context, st.Target(), activeBB(cfg, st.Target()) != nil, now)
 	out.ContextWindowReset = contextWindowWouldOf(cfg, st, ctl, out.controlUnreadable, graph, now)
 	out.TurnUsage = describeTurnUsage(st.TurnUsage, st.Target(), targetReportsTurnUsage(cfg, st), now)
+	out.UsageMeasurement = loadUsageEvidence(l.StateDir, l.Name, now)
 	out.Savings = describeSavings(journal, loadSavingsSpaced(l.StateDir), st.Context, out.ContextWindow, now)
 	out.Refusals = describeRefusals(st.Refusals, ctl.Question, now)
 	out.Lanes = describeLanes(st.Lanes, activeBB(cfg, st.Target()))

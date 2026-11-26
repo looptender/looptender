@@ -13,6 +13,12 @@ This is planned product value, not a measured savings claim. Remain open until
 each acceptance case has evidence; a smaller context alone is not subscription
 savings.
 
+- [ ] Deliver Panel measurement with actual usage trends, identity-based avoided
+  actions and baseline-supported estimates, each with period, method, coverage,
+  sample size and uncertainty; normalize by useful accepted work. The source-only
+  [measurement contract](design/usage-measurement.md) implements a bounded local
+  export reader and controlled-pair calculator; automatic collection and live
+  measured savings remain open.
 - [ ] Rank recent consumers from bounded structured usage metadata across projects,
   by loop, lane and provider, with exact measurement periods and provider/retention
   gaps. Separate total, cached and uncached input, output and reasoning where

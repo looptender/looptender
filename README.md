@@ -68,6 +68,14 @@ useful throughput and quality. Integrated continuous optimization is planned;
 current diagnostics and the unreleased manual helper do not establish subscription
 savings or authorize silent model downgrades.
 
+**Usage evidence — In source, not yet released.** The Panel can read a bounded
+local [measurement export](docs/design/usage-measurement.md) to show provider token
+trends, observed duplicate actions suppressed, and controlled-pair estimates per
+accepted work unit. Missing data stays unavailable. Automatic collection and
+subscription-quota savings are unverified; estimates disclose their baseline,
+coverage and author-attested quality/cache conditions. The file reader currently
+supports macOS/Linux; other platforms show evidence unavailable.
+
 ## When a usage limit hits: takeover
 
 - **Handoff into a new conversation** (*Released in v0.2.0*): For a BB loop, an opt-in fallback (`bb.new_thread`) can start a new conversation on another configured provider when a usage limit hits and move supervision to that conversation. Creation is opt-in per loop, capped per loop and spaced at least an hour apart, and covered by offline fixtures only.

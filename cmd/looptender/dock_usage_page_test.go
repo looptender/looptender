@@ -360,6 +360,7 @@ func TestDockUsagePageStaysUnderItsBound(t *testing.T) {
 		}
 		st.ContextWindow.Recent = recent
 		in.Status.Savings, in.Status.ContextWindow = st.Savings, st.ContextWindow
+		in.Status.UsageMeasurement = usageMeasurement{Availability: "recorded", Details: []string{strings.Repeat("x", 6000)}}
 		inputs[i] = in
 	}
 	r := buildDockReport(inputs, dockNow, time.Minute, defaultStaleAfter, true, true, 0, true)
