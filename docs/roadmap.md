@@ -2,6 +2,43 @@
 
 For current installation and command names, see the [README](../README.md#install). Release **v0.3.0** preparation ([notes](releases/v0.3.0.md), including BB plugin **v0.4.0**) is in progress ahead of tagging; earlier published CLI archives are **v0.2.0**. Earlier milestone and verification records retain their original package labels. Documentation and packaging changes do not close live acceptance gaps.
 
+## HIGH PRIORITY: conserve subscription usage
+
+Track this independently of account freshness or route availability. The
+[context efficiency policy and proposed contract](design/context-efficiency.md)
+separates recorded token consumption, cache reuse and context occupancy. Remain
+open until each acceptance case has evidence; a smaller context alone is not
+subscription savings.
+
+- [ ] Rank recent consumers from bounded structured usage metadata across projects,
+  with exact measurement periods, provider/retention gaps, input, cached input,
+  output and reasoning separated; show current context occupancy separately.
+  Keep real conversation identities and runtime evidence in private artifacts.
+- [ ] Suppress or batch redundant wake/status/completion work deterministically,
+  without losing useful progress, owner messages, pending interactions or lane
+  obligations. Prove avoided sends with fictional before/after regressions and
+  live exact-target evidence; withheld checks alone are not avoided model turns.
+- [ ] Verify owner-authorized safe-boundary compact trials on three coordinators:
+  fresh exact-target baseline, durable continuity, structured completion,
+  post-context evidence and continuity reconciliation. An accepted request is
+  not completed compaction; retain blocked and unknown outcomes explicitly.
+- [ ] Measure compact frequency and available overhead/cache effects before
+  selecting a proactive policy. No fixed-time cadence or assumed quota savings;
+  provider automatic thresholds stay unknown unless supported metadata/config
+  exposes them. Preserve the person's model and effort choices.
+- [ ] Review an explicit opt-in compact lifecycle contract with cooldown,
+  durable pre-attempt identity, caps, stop/pause precedence, idle revalidation
+  and hold-on-unknown semantics before adding any automatic action. Today's
+  context threshold remains preview-only.
+- [ ] Review successor creation separately: explicit opt-in, one owner, preserved
+  goal/tasks/approvals/holds/pending obligations, bounded creation, no retry of
+  an unknown outcome and verified continuity. Retain the existing fallback-only
+  creation contract until that dedicated change is reviewed; no blanket archive.
+- [ ] Remove unsupported consumption/savings claims from status and Usage,
+  preserving independent counts/context diagnostics. Source regressions are
+  separate from installed-client and live-provider acceptance.
+
+
 ## Done
 
 **Milestone 1: supervise one loop.** Config validation, the pure decision engine, BB and process adapters, stall detection, time windows, the tick lock, control commands, and JSON tick output.

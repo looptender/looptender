@@ -1,0 +1,1 @@
+- Status and the Usage page no longer multiply withheld-check counts by context size to claim token savings. Counts and context readings remain available; subscription savings are explicitly unavailable, including when displaying older status data.

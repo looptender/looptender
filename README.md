@@ -51,6 +51,11 @@ Supervision runs on the same machine as the agents from a single binary (macOS, 
 
 **When the right move is not clear, looptender holds and asks you.**
 
+The panel's [Usage page](docs/dock.md#what-the-page-shows) and
+[status diagnostics](docs/operations.md#savings-figures) distinguish withheld-check
+counts from current context occupancy. These records do not measure subscription
+savings; cache reuse and provider accounting remain unknown.
+
 ## When a usage limit hits: takeover
 
 - **Handoff into a new conversation** (*Released in v0.2.0*): For a BB loop, an opt-in fallback (`bb.new_thread`) can start a new conversation on another configured provider when a usage limit hits and move supervision to that conversation. Creation is opt-in per loop, capped per loop and spaced at least an hour apart, and covered by offline fixtures only.

@@ -76,7 +76,7 @@ type dockUsageDay struct {
 
 const (
 	dockUsageLede      = "This page is about what looptender did for your loops: the checks where it sent nothing, the messages it sent, and what is recorded about each conversation's context window. Allowance readings for each route are on the Routes page."
-	dockUsageMechanism = "A plain timer would have woken the session at each withheld check, and each wake starts a turn that re-reads the conversation; looptender looked at its records first and sent nothing."
+	dockUsageMechanism = "Withheld checks count occasions when looptender sent nothing to an idle session, compared with a timer that sends at every check. They do not establish how many turns or tokens a different timer would have used."
 	dockUsageChat      = "In an ordinary chat nobody is woken at all, so there looptender adds messages rather than withholding them."
 )
 
@@ -113,11 +113,11 @@ func dockUsagePeriod(loops []dockUsageInput, now time.Time) string {
 	for _, in := range loops {
 		if in.Status != nil && in.Status.Savings.Version != 0 {
 			s := in.Status.Savings
-			return fmt.Sprintf("This week means the last %d UTC days, from %s, today included. Every figure is a count from looptender's own records, except the estimate, which says so.",
+			return fmt.Sprintf("This week means the last %d UTC days, from %s, today included. Wake and message counts come from looptender's records; context readings describe occupancy. Token consumption and subscription savings are not measured.",
 				s.Period.Days, s.Period.From.UTC().Format("Mon 2 Jan"))
 		}
 	}
-	return "This week means the last 7 UTC days, today included. Every figure is a count from looptender's own records, except the estimate, which says so."
+	return "This week means the last 7 UTC days, today included. Wake and message counts come from looptender's records; context readings describe occupancy. Token consumption and subscription savings are not measured."
 }
 
 // dockUsageReadable is a loop whose history could be counted.
@@ -383,33 +383,10 @@ func dockUsageThese(n int) string {
 	return "each of those checks"
 }
 
-// dockUsageEstimate words the estimate with its baseline, or why there is
-// none. The word "estimate" is always in it.
-func dockUsageEstimate(s savingsStatus) string {
-	e := s.Estimate
-	if e.Availability != "recorded" || e.WithheldWakes == nil || e.LowTokens == nil || e.HighTokens == nil || e.LowestReading == nil || e.HighestReading == nil {
-		switch {
-		case e.Reason == "record_unreadable":
-			return "No estimate: the check history could not be read."
-		case s.ContextNow.Reason == "not_supported":
-			return "No estimate: this loop's agent reports no context window size."
-		}
-		return "No estimate: no context window reading was recorded this week."
-	}
-	if *e.WithheldWakes == 0 {
-		return "Estimate: no tokens, since no wakes were withheld."
-	}
-	least := dockUsageAtLeast(s.History.Partial, false)
-	amount := groupDigits(*e.LowTokens) + " to " + groupDigits(*e.HighTokens) + " tokens"
-	if *e.LowTokens == *e.HighTokens {
-		amount = groupDigits(*e.LowTokens) + " tokens"
-	}
-	by := "reported by BB"
-	if e.Estimated {
-		by = "some estimated by BB"
-	}
-	return fmt.Sprintf("Estimate: %s%s not re-read, from %s%s times the lowest (%s tokens) and the highest (%s tokens) context reading this week (%s), against a plain timer that wakes the session at every check. It is not tokens billed.",
-		least, amount, least, dockUsageCount(*e.WithheldWakes, "withheld wake", "withheld wakes"), groupDigits(*e.LowestReading), groupDigits(*e.HighestReading), by)
+// dockUsageEstimate never derives consumption from context occupancy, including
+// when an older status producer still supplies the deprecated token range.
+func dockUsageEstimate(_ savingsStatus) string {
+	return "Token savings unavailable: context size and withheld checks do not measure token consumption or subscription allowance. Cache reuse and provider accounting are unknown."
 }
 
 // dockUsageHistory says why the counts are a floor.

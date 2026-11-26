@@ -364,6 +364,10 @@ The panel owns `build-replacements/<key>/build-update.json` and its `upgrade-bac
 
 ## Context window reset preview (unreleased)
 
+The [context efficiency proposal](design/context-efficiency.md) defines a manual
+compact-trial protocol and review requirements for any later opt-in lifecycle.
+It adds no automatic action, conversation creation or changed loop authority.
+
 `internal/contextwindow.Decide` is a pure function of the latest context window reading, its age, `loop.context_window.reset_at`, the controls, the last check's observation, the run graph's lane listing from that check, and the last reset (none yet). It returns would-reset or not with a stable rule and reason code. It is its own package rather than part of timing, which moves a loop between routes on one usage allowance, and `internal/decide` never reads a reading. Only `status` calls it; no check does, so decisions, sends and saved state are the same with the key set or unset. See [context window reset preview](operations.md#context-window-reset-preview).
 
 Configuration validates optional ordered same-allowance steps after loading the loop's own fallbacks. For an externally followed standard list, unresolved or ineligible references retain a warning and withhold the preview while leaving the loop loadable. The standard resolver's primary-group exclusion is unchanged; multi-step timing needs the loop's own file. Explicit timing syntax, ceilings, thresholds and durations remain validation errors. Unreadable controls or state also withhold `timingWould`; absence is no decision. No route, control, process or account changes are made by a preview.
