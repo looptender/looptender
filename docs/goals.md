@@ -81,7 +81,9 @@ allows ordinary completion with an unbound record, preserving existing loops;
 invalid or wrong-loop goal metadata refuses a new completion without changing
 controls. Existing completed records without binding remain readable and unbound.
 Stop and pause remain available for repair. Older binaries can ignore or discard
-this optional metadata; mixed-version writers and manual runtime-file changes
+this optional metadata. The build-adoption state format rises to 7 so a daemon
+cannot automatically switch back to a build that would drop it; mixed-version
+writers and manual runtime-file changes
 are outside its preservation guarantees.
 
 Offline fixtures cover exact revision binding, reload, revised goals, retained
