@@ -1,0 +1,1 @@
+- Fix a timing race in adapter conformance fixtures by waiting for the working agent's staging prompt receipt before testing a second send. Slow ACP initialization can no longer make the first prompt look like an extra delivery. Adapter behavior is unchanged.
