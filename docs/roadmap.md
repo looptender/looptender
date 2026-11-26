@@ -137,20 +137,22 @@ These priorities are planning decisions, not new verification claims. Maintain s
 
 ### Current release and verification status
 
+- [x] Publish CLI v0.3.0 and BB plugin v0.4.0 source from one tag, and verify CLI package parity. All six published archives passed checksum and exact-inventory checks; the downloaded macOS arm64 executable passed both stand-in smoke scripts. Homebrew fresh, upgrade, alias and legacy-upgrade checks passed. See [v0.3.0 evidence](release-verification.md#v030-release-and-package-evidence). Tagged plugin installation and live walkthroughs remain open.
+
 - [x] Publish CLI v0.2.0 and BB plugin v0.3.0 from one tag, and verify CLI package parity. All six downloaded archives passed checksum and exact-inventory checks, and the downloaded macOS arm64 executable passed both smoke scripts with stand-ins. The Homebrew formula, with its licence field changed, passed a fresh macOS arm64 install. See [v0.2.0 evidence](release-verification.md#v020-release-and-package-evidence).
 - [x] Publish CLI v0.1.5 and BB plugin v0.2.0 source from the checked tag, and verify CLI package parity. All six downloaded archives passed checksum/content checks; native macOS/Linux package smoke checks use stand-ins. Homebrew passed a fresh macOS arm64 installation and goal-setup/help assertions. See [published evidence](release-verification.md#v015-release-and-package-evidence).
 - [ ] Verify the tagged Git plugin installation, activation and installed goal-aware setup UI, then the timed live first-loop journey. The plugin source/collection is published and clean production-dependency builds pass; those checks do not establish installed behavior or full F1/pilot readiness.
 
-Use the [tagged release and package evidence](release-verification.md#v020-release-and-package-evidence) when interpreting the implementation checkboxes below.
+Use the [tagged release and package evidence](release-verification.md#v030-release-and-package-evidence) when interpreting the implementation checkboxes below.
 
 | Surface | Availability | Verification boundary |
 | --- | --- | --- |
 | Goal records/context, BB transfer CLI, registry and client controls | Released in v0.1.4 CLI archives and Homebrew | Offline fixtures; package installation does not verify live provider adoption or transfer |
 | Goal-aware setup, send provenance and goal-help correction | Released in CLI v0.1.5 and matching Homebrew | Offline fixtures and package checks; live onboarding remains open |
 | Recovery and reliability changes, the panel, run discovery, defined agents, Cursor | Released in CLI v0.2.0 and matching Homebrew | Offline fixtures and package checks; network-aware recovery observed once in a real outage ([record](testing.md#observed-once-a-real-outage-2026-11-14)), lanes and the full procedure not; see the [v0.2.0 notes](releases/v0.2.0.md#what-is-fixture-tested-and-what-is-live) |
-| BB plugin goal setup/transfer/status additions, Continue-existing, and service startup | v0.4.0 prepared for v0.3.0 tag (v0.3.0 in v0.2.0; v0.2.0 in v0.1.5); separate Git installation | SDK/DOM fixtures and bundle checks; live deployment remains unverified |
+| BB plugin goal setup/transfer/status additions, Continue-existing, and service startup | v0.4.0 source published in v0.3.0 tag (v0.3.0 in v0.2.0; v0.2.0 in v0.1.5); separate Git installation | SDK/DOM fixtures and bundle checks; live deployment remains unverified |
 | Native macOS menu preview | Developer build; pauses, stops and resumes a loop after a native confirmation showing the panel's review; no packaged installer | Native build, unit and real-CLI fixture checks; no confirmation answered by a person; accessibility and live adoption remain incomplete |
-| Telegram remote channel | Included in v0.3.0 candidate (`TG1`–`TG4`): `looptender telegram setup\|status\|test\|poll\|topics\|service\|disconnect` and outbound `loop.report.format: telegram`; `TG5` planned ([design](telegram.md)) | Offline HTTP stand-ins and independent terminal QR decoding only; phone scanning, background service wiring and live Telegram Bot API verification remain open; opt-in local `doctor --telegram` pairing diagnostics are implemented |
+| Telegram remote channel | Released in CLI v0.3.0 (`TG1`–`TG4`): `looptender telegram setup\|status\|test\|poll\|topics\|service\|disconnect` and outbound `loop.report.format: telegram`; `TG5` planned ([design](telegram.md)) | Offline HTTP stand-ins and independent terminal QR decoding only; phone scanning, background service wiring and live Telegram Bot API verification remain open; opt-in local `doctor --telegram` pairing diagnostics are implemented |
 | Full BB pilot and headless recovery journey | Acceptance unfinished | Existing partial live observations do not close the walkthrough gates |
 
 Existing user authorization and repository merge policy remain in effect. Review workflows may require stronger gates for explicitly designated sensitive work, but a model recommendation or a timeout never grants new authority. This reassessment does not add a blanket human-approval requirement to already authorized routine work.
