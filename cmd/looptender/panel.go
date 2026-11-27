@@ -760,7 +760,7 @@ func panelCommand(e env, args []string) int {
 	panelDir := fs.String("panel-directory", "", "private directory for the panel's runtime record and socket")
 	refresh := fs.Duration("refresh", dockDefaultRefresh, "how often the page reads again (5s to 10m)")
 	staleAfter := fs.Duration("stale-after", defaultStaleAfter, "age at which a check or child listing is shown as stale")
-	offline := fs.Bool("offline", false, "do not ask each loop's local daemon for its next check")
+	offline := fs.Bool("offline", false, "read saved evidence without daemon or quota provider queries")
 	changes := fs.Bool("allow-changes", false, "also let the page replace a loop's own build, edit routes and send allowances, and offer reviewed account sign-in and quota reads")
 	readOnly := fs.Bool("read-only", false, "open a panel that cannot change anything (pause, stop and resume are offered by default)")
 	if err := fs.Parse(args); err != nil {
@@ -1260,7 +1260,7 @@ func panelListCommand(e env, args []string) int {
 	asJSON := fs.Bool("json", false, "print JSON")
 	directory := fs.String("directory", "", "private registry directory")
 	staleAfter := fs.Duration("stale-after", defaultStaleAfter, "age at which a check is shown as stale")
-	offline := fs.Bool("offline", false, "do not ask each loop's local daemon for its next check")
+	offline := fs.Bool("offline", false, "read saved evidence without daemon or quota provider queries")
 	client := fs.String("client", "", "the calling program's NAME@VERSION (bb-plugin, macos-menu), recorded for the panel's Versions view in a panel directory that already exists")
 	archived := fs.Bool("archived", false, "text: list the archived loops instead of the others (JSON always has every loop)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *staleAfter <= 0 {

@@ -68,6 +68,13 @@ useful throughput and quality. Integrated continuous optimization is planned;
 current diagnostics and the unreleased manual helper do not establish subscription
 savings or authorize silent model downgrades.
 
+**Consumer ranking — In source, not yet released.** `looptender usage-rank --evidence FILE`
+(or `--collection-dir DIR`) projects explicitly supplied local records as JSON.
+It ranks recorded token components only among matching provider and declared/observed
+periods with complete metric coverage. Partial counts remain visible and unranked;
+account/model attribution and subscription savings remain unavailable. See the
+[ranking contract](docs/design/usage-measurement.md#read-only-consumer-ranking-unreleased).
+
 **Usage evidence — In source, not yet released.** The Panel can read a bounded
 local [measurement export](docs/design/usage-measurement.md) to show provider token
 trends, observed duplicate actions suppressed, and controlled-pair estimates per
@@ -92,6 +99,7 @@ Takeover moves supervision to a new conversation; it does not mean work is never
 - **Plugin card** (*Plugin v0.4.0 released in v0.3.0*): BB plugin v0.4.0 ships from the v0.3.0 tag as a separate installation, adding the compact **Add to Looptender** modal, **Continue existing**, reboot-persistent service startup, single-line composer chips, weekly-limit status, build freshness lines, and sessionpipe visibility.
 - **macOS menu** (*In source, not yet released as a separate app archive*): Developer build only; not included in CLI release archives. Grouped loop list, **Archive**, sessionpipe & quota summaries, panel opener, notifications, and build self-update checks. Unreleased loop ordering uses saved meaningful activity within the existing status groups, with no new date labels; [ordering semantics](integrations/macos/README.md). Unreleased automatic BB display names follow the latest saved title for the current target; [custom names remain pinned](docs/operations.md#one-name-per-line-of-work).
 - **Accounts, Routes and Account Router** (*Released in v0.3.0*): Lists explicitly named accounts, local file login hints (plus bounded `--allow-changes` status checks and selection recovery), subscription quotas, guided route configuration, and a read-only **Account Router** overview card for `looptender router`. [Accounts](docs/accounts.md).
+  Unreleased Accounts refinements add advancing reading ages and reset countdowns, remaining quota, and explicit ended/unavailable states; a passed reset requires a new reading to confirm capacity. Explicit per-selection automatic model-free reads share the panel/menu cache with bounded cadence and backoff; the updated menu or a non-offline panel/dock process must remain running. See [automatic usage](docs/accounts.md#automatic-selected-context-usage-unreleased).
 
 ## Keeps running while you update
 

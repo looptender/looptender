@@ -134,6 +134,10 @@ final class SectionsTests: XCTestCase {
     }
 
     func testAccountsAreOneItemAndOnlyTheOnesAtALimitAreOnTop() throws {
+        func quotaBuild(_ list: PanelList) -> MenuModel {
+            let at = Contract.date("2030-03-04T12:00:00Z")!
+            return MenuBuilder.build(.read(list, at: at), now: at)
+        }
         let base = #"{"state":"reported","text":"Saved selected context; identity not verified.","source":"codex account/rateLimits/read","observedAt":"2030-03-04T12:00:00Z","freshness":"stale","partial":true,"rows":[{"name":"Codex · 5-hour","text":"37% used · 63% remaining","usedPercent":37,"remainingPercent":63,"resetsAt":"2030-03-04T17:00:00Z"},{"name":"Codex · Credits","text":"Balance 12.75 provider units; currency not reported"}],"failedRefreshAt":"2030-03-04T13:00:00Z","failedRefreshText":"Timed out; earlier evidence retains its time."}"#
         func quota(_ label: String, _ used: Int) -> String {
             let summary = base.replacingOccurrences(of: "37% used · 63% remaining", with: "\(used)% used · \(100 - used)% remaining").replacingOccurrences(of: "\"usedPercent\":37", with: "\"usedPercent\":\(used)").replacingOccurrences(of: "\"remainingPercent\":63", with: "\"remainingPercent\":\(100 - used)")
@@ -143,7 +147,7 @@ final class SectionsTests: XCTestCase {
             Data(("{\"schemaVersion\":1,\"registry\":\"available\",\"complete\":true,\"allClear\":true,\"needsYou\":0,\"unread\":0,\"omitted\":0,\"loops\":[],\"accountQuotas\":{\"state\":\"available\",\"complete\":true,\"omitted\":0,\"accounts\":[" + accounts.joined(separator: ",") + "]}}").utf8)
         }
         let json = doc([quota("Quiet One", 10), quota("Near Limit", 92), quota("Quiet Two", 30), quota("At Limit", 99), quota("Third Full", 95)])
-        let m = build(try Contract.panelList(json, exit: 0))
+        let m = quotaBuild(try Contract.panelList(json, exit: 0))
         let top = m.rows.filter { $0.symbol == "gauge.with.dots.needle.33percent" }.map(\.title)
         XCTAssertEqual(top, ["At Limit", "Third Full"], "top two by highest usage window descending")
         let accounts = try XCTUnwrap(m.rows.first { $0.title == "Accounts" })
@@ -152,12 +156,12 @@ final class SectionsTests: XCTestCase {
         let weekly = #"{"label":"Weekly High","provider":"codex","summary":{"state":"reported","text":"Saved selected context; identity not verified.","source":"codex account/rateLimits/read","observedAt":"2030-03-04T12:00:00Z","freshness":"fresh","rows":[{"name":"Codex · 5-hour","text":"10% used · 90% remaining","usedPercent":10,"remainingPercent":90},{"name":"Codex · Weekly","text":"95% used · 5% remaining","usedPercent":95,"remainingPercent":5}]}}"#
         let ended = #"{"label":"Ended High","provider":"codex","summary":{"state":"reported","text":"Saved selected context; identity not verified.","source":"codex account/rateLimits/read","observedAt":"2030-03-04T12:00:00Z","freshness":"fresh","rows":[{"name":"Codex · 5-hour","text":"100% used · 0% remaining","usedPercent":100,"remainingPercent":0,"ended":true}]}}"#
         let tieA = quota("Tie A", 95)
-        let ranked = build(try Contract.panelList(doc([ended, quota("Low", 85), tieA, weekly]), exit: 0))
+        let ranked = quotaBuild(try Contract.panelList(doc([ended, quota("Low", 85), tieA, weekly]), exit: 0))
         let rankedTop = ranked.rows.filter { $0.symbol == "gauge.with.dots.needle.33percent" }
         XCTAssertEqual(rankedTop.map(\.title), ["Tie A", "Weekly High"], "ties keep list order; ended windows are ignored")
-        XCTAssertTrue(rankedTop[1].detail.contains("95.0% used"))
+        XCTAssertTrue(rankedTop[1].detail.contains("5.0% left"))
         // With none near a limit, nothing but the one item.
-        let calm = build(try Contract.panelList(doc([quota("Quiet One", 10), quota("Quiet Two", 30), quota("Half", 79)]), exit: 0))
+        let calm = quotaBuild(try Contract.panelList(doc([quota("Quiet One", 10), quota("Quiet Two", 30), quota("Half", 79)]), exit: 0))
         XCTAssertEqual(calm.rows.filter { $0.symbol == "gauge.with.dots.needle.33percent" }.count, 0)
         XCTAssertNotNil(calm.rows.first { $0.title == "Accounts" })
     }
@@ -233,6 +237,9 @@ extension SectionsTests {
         let after = build(list([a, b]))
         XCTAssertFalse(MenuBuilder.sameShape(before.rows, after.rows), "same loops, different exact-key order cannot update tracked rows in place")
         XCTAssertTrue(MenuBuilder.deferStructuralUpdate(menuOpen: true, hasHighlightedItem: true))
+        XCTAssertEqual(MenuBuilder.updateMode(shown: before.rows, next: after.rows, itemCount: before.rows.count, menuOpen: true, hasHighlight: true), .deferred)
+        XCTAssertEqual(MenuBuilder.updateMode(shown: before.rows, next: after.rows, itemCount: before.rows.count, menuOpen: true, hasHighlight: false), .rebuild)
+        XCTAssertEqual(MenuBuilder.updateMode(shown: before.rows, next: before.rows, itemCount: before.rows.count, menuOpen: true, hasHighlight: true), .inPlace)
         XCTAssertFalse(MenuBuilder.deferStructuralUpdate(menuOpen: true, hasHighlightedItem: false))
         XCTAssertFalse(MenuBuilder.deferStructuralUpdate(menuOpen: false, hasHighlightedItem: true))
         XCTAssertEqual(after.rows.filter { $0.kind == .loop }.map(\.title), ["first", "second"])

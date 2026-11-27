@@ -25,7 +25,11 @@ savings.
   by loop, lane and provider, with exact measurement periods and provider/retention
   gaps. Separate total, cached and uncached input, output and reasoning where
   exposed; derive uncached input only from compatible counters. Show current
-  context occupancy separately.
+  context occupancy separately. The unreleased `usage-rank` CLI now projects up to
+  eight explicitly supplied exports/collection records, with component-specific
+  recorded counts and ranks only within compatible provider/time cohorts. No new
+  collection or cross-project discovery; historical model/account attribution,
+  complete lane/provider coverage and installed/live acceptance remain open.
   Keep real conversation identities and runtime evidence in private artifacts.
 - [ ] Suppress or batch redundant wake/status/completion work deterministically,
   without losing useful progress, owner messages, pending interactions or lane

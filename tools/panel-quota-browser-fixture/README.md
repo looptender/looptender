@@ -35,3 +35,11 @@ older-reference replies, timeout/cancellation and Read now recovery. Its two
 second loading/error variants are fictional only. The browser test temporarily
 intercepts its own fictional GETs to deliver responses out of order; it records
 zero provider-refresh POSTs. No live endpoint or credential is used.
+
+`freshness-check.js` uses the same server plus its `/freshness/` variant (fictional
+login checks and Claude retrieval). Update its `origin` to the printed port.
+It advances only the fixture browser clock, pauses saved reads, waits for the
+real 15-second timer, and checks focus/disclosure retention, stale check/read
+ages, unknown provider freshness, exhausted and passed windows, missing resets,
+missing quota and partial evidence. It checks six widths in both themes.
+No provider reads, sign-ins, paid probes or account mutations are performed.

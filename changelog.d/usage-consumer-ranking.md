@@ -1,0 +1,1 @@
+- Added unreleased read-only `usage-rank` JSON projection for explicitly supplied local usage evidence, with component coverage and compatible-period ranks; incomplete evidence and subscription savings remain unavailable.
