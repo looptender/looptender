@@ -358,6 +358,14 @@ an allocation preview or return explicit unavailable reasons. A partial list of
 busy loops is not a complete occupancy snapshot; a selected catalog label is not
 an account binding. No other provider is inferred compatible.
 
+In existing Codex source, `QuotaAttempt.At` is local post-RPC/parse time,
+projected as `observedAt` and age-classified `fresh`/`stale`. It is not a verified
+provider measurement timestamp, and a recent retrieval does not prove provider
+freshness. Here, fresh bound evidence means evidence satisfying its explicitly
+stated age/provenance policy; it must not silently promote that local timestamp
+to provider attestation. The additive provenance contract is separate planned
+work; no runtime evidence assembler or operational pooling is established here.
+
 Preview capacity is measured in managed-work concurrency slots, charged against
 the global/account/shared-allowance bounds. Never convert remaining quota
 percentages into estimated turns, tokens or slot inventory. A reserve threshold

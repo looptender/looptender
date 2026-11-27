@@ -680,6 +680,16 @@ own ordinary authentication/network work. The read has a five-second deadline,
 a 64 KiB stdout bound, discarded stderr, strict response correlation and owned
 process cleanup. A rejected or unsupported CLI returns unavailable evidence.
 
+**Codex timestamp provenance:** current source records `QuotaAttempt.At` from
+local time after the RPC/parse attempt and projects a successful value as
+`observedAt`, with `fresh`/`stale` based on its local age. Those existing field
+names do not establish a provider-authenticated measurement time or proof that
+the provider freshly measured quota. Recent retrieval and provider freshness
+remain different facts. An additive provenance contract is planned separately;
+it must preserve this distinction before any runtime evidence assembler or
+operational pool admission is claimed. No such assembler or pooling is delivered
+by the current reading or this documentation.
+
 The supported Codex response can expose several metered buckets. Up to eight
 are retained separately, with primary and secondary windows where present,
 including fractional percentages, duration and reset times. The legacy single
