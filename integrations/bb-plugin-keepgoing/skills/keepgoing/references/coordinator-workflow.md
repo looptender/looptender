@@ -129,3 +129,14 @@ Windows is explicitly unsupported, not execution acceptance. Tests include
 unknown restart/new-grant reservations, mapping lost reply, current artifact
 settlement, duplicates, newer-owner park, two concurrent advances, bounds,
 source/owner/context drift, and the residual submitted-hold race.
+
+## Check declared coverage before waiting
+
+The separate [read-only coverage command](coordinator-coverage.md) consumes pinned
+work-source/item declarations and dated private captures at phase/wait boundaries.
+Unlike a delegation grant or completed lane list, it includes undelegated objective
+work. A known independent authorized item refuses a justified-wait receipt; missing
+sources/dependencies/bindings/acceptance stay explicitly unassessable. It never
+executes this spawn workflow, queries a host/provider, updates a journal or clears
+a hold. Read its schema and adoption limits before use; it is not a host turn-end
+hook, completion verifier or new authority.
