@@ -1,1 +1,1 @@
-- Document the separately pending quota summary provenance v1 producer and consumers, preserving local-retrieval semantics, strict compatibility limits and unverified provider/account/pooling boundaries.
+- Document the landed quota summary provenance v1 producer and pending consumers, preserving local-retrieval semantics, strict compatibility limits and unverified provider/account/pooling boundaries.

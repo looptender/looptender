@@ -685,7 +685,7 @@ local time after the RPC/parse attempt and projects a successful value as
 `observedAt`, with `fresh`/`stale` based on its local age. Those existing field
 names do not establish a provider-authenticated measurement time or proof that
 the provider freshly measured quota. Recent retrieval and provider freshness
-remain different facts. The [pending additive provenance v1 contract](#quota-summary-provenance-v1-pending-source)
+remain different facts. The [additive provenance v1 source contract](#quota-summary-provenance-v1-source-contract)
 makes that distinction explicit without changing those historical fields. It
 establishes neither a runtime evidence assembler nor operational pooling.
 
@@ -876,13 +876,15 @@ registry/route-list plus 64 detailed quota fixture requires the existing main
 6 MiB regression threshold; all quota rows remain obtainable in the separate
 1 MiB response. Native remains bounded to 1 MiB.
 
-### Quota summary provenance v1 (pending source)
+### Quota summary provenance v1 (source contract)
 
-As checked on 2026-11-27 against main `e4705c77`, the additive producer
-[#588](https://github.com/looptender/looptender/pull/588), strict native consumer
-[#589](https://github.com/looptender/looptender/pull/589) and strict web consumer
-[#590](https://github.com/looptender/looptender/pull/590) are separate pending
-changes, not landed, released or installed capability. This reference describes
+As of 2026-11-27, the additive producer
+[#588](https://github.com/looptender/looptender/pull/588) has landed on main in
+[`1c38291e`](https://github.com/looptender/looptender/commit/1c38291ec47b4d01bf01b90dabc834034986b0c5).
+The strict native consumer [#589](https://github.com/looptender/looptender/pull/589)
+and strict web consumer [#590](https://github.com/looptender/looptender/pull/590)
+remain pending integrations. Landed source does not establish released or
+installed capability. This reference preserves the reviewed evidence pins for
 producer [`0f5c60a9`](https://github.com/looptender/looptender/blob/0f5c60a99cc230dfd1f17f4230f98e381e6c211f/internal/accounts/quota_details.go),
 native [`b2feafc4`](https://github.com/looptender/looptender/blob/b2feafc412f320cd13c94c51cd55bc388d85f45d/integrations/macos/Sources/KeepgoingMenuCore/Quota.swift)
 and web [`719e5bfb`](https://github.com/looptender/looptender/blob/719e5bfb2db2e37357378c3e6ea0ccde22e98407/cmd/looptender/dockui/dock.js)
