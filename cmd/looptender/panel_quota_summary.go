@@ -3,12 +3,14 @@ package main
 import "github.com/looptender/looptender/internal/accounts"
 
 type panelQuotaList struct {
-	State    string              `json:"state"`
-	Complete bool                `json:"complete"`
-	Accounts []panelQuotaAccount `json:"accounts"`
-	Omitted  int                 `json:"omitted"`
+	WorkerEligible bool                `json:"workerEligible,omitempty"`
+	State          string              `json:"state"`
+	Complete       bool                `json:"complete"`
+	Accounts       []panelQuotaAccount `json:"accounts"`
+	Omitted        int                 `json:"omitted"`
 }
 type panelQuotaAccount struct {
+	UsageUpdating *accounts.UsageUpdating `json:"usageUpdating,omitempty"`
 	// ID is the account's handle (accounts.File.Handle), not its catalog
 	// ID: read-only native output names no catalog ID. panel --account
 	// accepts it.
@@ -29,6 +31,12 @@ func panelQuotaSummary(r dockReport) *panelQuotaList {
 		if c.Provider != "codex" && c.Provider != "claude-code" && c.Provider != "antigravity" {
 			continue
 		}
+		if c.UsageUpdating != nil {
+			switch c.UsageUpdating.State {
+			case "enabled", "waiting", "backoff":
+				out.WorkerEligible = true
+			}
+		}
 		if len(out.Accounts) >= 16 {
 			out.Omitted++
 			continue
@@ -37,7 +45,7 @@ func panelQuotaSummary(r dockReport) *panelQuotaList {
 		if q == nil {
 			q = &accounts.QuotaView{State: "unavailable", Reason: "unsupported_provider", Freshness: "unavailable"}
 		}
-		out.Accounts = append(out.Accounts, panelQuotaAccount{ID: c.Handle, Label: clip(c.Label, 120), Provider: c.Provider, Summary: accounts.SummarizeQuota(*q, r.ReadAt)})
+		out.Accounts = append(out.Accounts, panelQuotaAccount{UsageUpdating: c.UsageUpdating, ID: c.Handle, Label: clip(c.Label, 120), Provider: c.Provider, Summary: accounts.SummarizeQuota(*q, r.ReadAt)})
 	}
 	return out
 }

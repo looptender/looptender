@@ -7,6 +7,7 @@ check('overview makes no saved account companion read',await p.$eval('body',()=>
 check('default overview renders nonempty loops without reply error',await p.$eval('#pane',e=>e.querySelectorAll('.work-branch').length>0&&!e.textContent.includes('could not show')));
 await p.goto(origin+'/owner/#/accounts');await p.reload();await p.waitForSelector('.account-card');
 check('fictional marker',await p.$eval('body',e=>e.dataset.fictionalQuotaFixture==='true'));
+await p.$eval('body',()=>{Date.now=()=>Date.parse('2030-03-04T12:00:00Z');document.dispatchEvent(new Event('visibilitychange'));});
 check('compact named windows visible before expansion',await p.$eval('.account-card summary',e=>['Codex · 5-hour','37.5% used','Codex · 7-day','82% used'].every(x=>e.textContent.includes(x))));
 await p.$eval('.account-card details',e=>{e.open=false;e.querySelector('summary').focus();});await p.keyboard.press('Enter');
 check('keyboard expands account',await p.$eval('.account-card details',e=>e.open));

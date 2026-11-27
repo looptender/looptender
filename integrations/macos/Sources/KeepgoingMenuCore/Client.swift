@@ -201,7 +201,8 @@ public struct LocalClient {
         return env
     }
 
-    // Only the commands in MenuBuilder.arguments are run. No shell or
+    // Short-lived calls run only MenuBuilder.arguments; startUsageWorker owns
+    // one additional fixed, stdin-leased child command. No shell or
     // commands from registry/goal metadata are executed; stderr is never
     // displayed or retained.
     private func run(_ arguments: [String], timeout: TimeInterval = 5, registry: Bool = true) throws -> (Data, Int32) {

@@ -670,7 +670,10 @@ partial, ended and failed-refresh states remain visible. Claude saved usage
 shows retrieval time and provider freshness unknown: the inspected experimental
 reply may be cached or seeded. It never becomes a fresh observation by being
 retrieved again. Dated route observations stay separate.
-Neither polling surface refreshes a provider. Explicit review can refresh Codex
+Neither polling surface refreshes a provider by default; unreleased source can
+service explicitly enabled [automatic usage](accounts.md#automatic-selected-context-usage-unreleased)
+from a separately owned background worker; report collection never waits for
+provider IO. Explicit review can refresh Codex
 or retrieve Claude usage on Darwin arm64, subject to exact native-image and
 isolation admission. The additive server `accountQuotaProviders` allowlist names
 the enabled providers; when absent, the legacy `accountQuota` capability enables
@@ -710,3 +713,18 @@ With `loop.usage_collection: true`, this page instead reads the private automati
 BB Codex record and labels source, configured primary-thread scope, freshness,
 last read outcome and bounded coverage. Imported exports stay intact. Empty or
 unsupported sources do not become zero usage, and no baseline estimate is created.
+
+### Explicit automatic account usage (unreleased)
+
+Accounts offers **Keep usage updated…** and **Pause usage updates…** in a panel
+with changes allowed. Confirmation authorizes only the reviewed selection;
+subsequent model-free reads need no confirmation. A running macOS menu or non-offline panel/
+dock process owns a separate worker, elected across processes by a catalog lock.
+It polls independently of page reads and tab visibility; collection never waits
+for provider IO. The native menu owns one stdin-leased foreground child after an eligible
+saved read, so Dock-only usage continues with the panel stopped. App exit/crash,
+sleep and Low Power Mode cancel that child; revocation stops selected reads. Panel idle shutdown still stops its worker and is not extended
+by usage polling. Status distinguishes enabled, backoff and paused scheduler or
+changed-selection states. Defaults stay off and no persistent service is installed
+or started. The already-running menu owns only its authorized foreground child. See [the complete cadence, lifecycle and evidence
+contract](accounts.md#automatic-selected-context-usage-unreleased).

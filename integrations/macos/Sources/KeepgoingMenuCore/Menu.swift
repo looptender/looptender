@@ -308,6 +308,9 @@ public struct MenuRow: Equatable {
     public var submenu: [MenuRow] = []
     /// Semantic tint for `symbol`; `.quiet` stays a system-coloured template.
     public var tone: Tone = .quiet
+    /// Stable presentation identity for non-command submenus whose position can
+    /// change. Dynamic titles/countdowns are deliberately not their identity.
+    public var semanticID: String? = nil
     public var isEnabled: Bool { command != nil || !submenu.isEmpty }
 }
 
@@ -525,8 +528,8 @@ public enum MenuBuilder {
             }
             // Accounts: only those at or near a limit on top; the rest in one submenu.
             if let quota = list.accountQuotas {
-                let all = quotaRows(quota)
-                let matter = accountsThatMatter(quota)
+                let all = quotaRows(quota, now: now)
+                let matter = accountsThatMatter(quota, now: now)
                 if !matter.isEmpty || !all.isEmpty {
                     rows.append(separator)
                     rows.append(contentsOf: matter)
@@ -691,10 +694,20 @@ public enum MenuBuilder {
         menuOpen && hasHighlightedItem
     }
 
+    public enum UpdateMode: Equatable { case inPlace, rebuild, deferred }
+
+    /// A structural change must not replace the highlighted interaction target.
+    /// Countdown/text changes for the same semantic rows can still update in place.
+    public static func updateMode(shown: [MenuRow], next: [MenuRow], itemCount: Int, menuOpen: Bool, hasHighlight: Bool) -> UpdateMode {
+        if itemCount == next.count && sameShape(shown, next) { return .inPlace }
+        return deferStructuralUpdate(menuOpen: menuOpen, hasHighlightedItem: hasHighlight) ? .deferred : .rebuild
+    }
+
     /// Two models have the same shape when their rows are the same kinds
-    /// running the same commands, with submenus of the same shape, so an open
+    /// running the same commands and retaining semantic identities, with submenus
+    /// of the same shape, so an open
     /// menu can be updated in place.
     public static func sameShape(_ a: [MenuRow], _ b: [MenuRow]) -> Bool {
-        a.count == b.count && zip(a, b).allSatisfy { $0.kind == $1.kind && $0.command == $1.command && sameShape($0.submenu, $1.submenu) }
+        a.count == b.count && zip(a, b).allSatisfy { $0.kind == $1.kind && $0.command == $1.command && $0.semanticID == $1.semanticID && sameShape($0.submenu, $1.submenu) }
     }
 }

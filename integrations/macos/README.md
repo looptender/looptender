@@ -63,7 +63,8 @@ Everything the earlier preview printed as lines (configured target, timestamps, 
 
 The state words are not written in this app. They come from `keepgoing panel list --json`, which is built by the code that builds the page, so the menu and the page cannot disagree. A state this build has never heard of is shown with the phrase the CLI gave and a question-mark symbol.
 
-**When it reads.** When the app is started, each time the menu is opened, and once a minute while the app runs. The once-a-minute read **replaces the earlier rule that this preview had no timer**: without it, the count beside the icon could only change when the menu was opened, which is the moment a person no longer needs it. Each read is one `keepgoing panel list --json` and one `keepgoing panel status --json`: local files only, no provider call, and the panel is not started. After three failed reads in a row it slows to one every five minutes until a read succeeds. It does not read on the timer while the Mac is asleep (it reads once on wake) or in Low Power Mode, where it reads only when the menu is opened. One read runs at a time, and the status line says when the last one finished. Quitting the menu leaves supervision and the panel alone.
+**When it reads.** When the app is started, each time the menu is opened, and once a minute while the app runs. The once-a-minute read **replaces the earlier rule that this preview had no timer**: without it, the count beside the icon could only change when the menu was opened, which is the moment a person no longer needs it. Each read is one `keepgoing panel list --json` and one `keepgoing panel status --json`: local files only by default, and the panel is not started. The running menu can own an explicitly authorized background child;
+panel/dock processes participate in the same scheduler election; list collection never waits for it. After three failed reads in a row it slows to one every five minutes until a read succeeds. It does not read on the timer while the Mac is asleep (it reads once on wake) or in Low Power Mode, where it reads only when the menu is opened. One read runs at a time, and the status line says when the last one finished. Quitting the menu leaves supervision and the panel alone.
 
 **Activity ordering (unreleased source).** The CLI supplies optional `activityAt`
 from saved loop evidence: the latest actual send timestamp (`lastSentAt`),
@@ -75,8 +76,9 @@ values sort after known dates; equal instants use the exact loop key, independen
 of display names and incoming registry order. Older CLIs omit the field, so
 all their loops use the deterministic key tie-break within each group. This is
 recorded loop activity, not a complete feed of agent or lane events. No activity
-dates are added to loop labels, tooltips or accessibility text. The account
-submenu keeps its existing supplied order and quota behavior.
+dates are added to loop labels, tooltips or accessibility text. This loop
+activity ordering does not sort accounts; quota summaries use the active/ended
+ordering described below.
 
 **While the menu is open** it is never rebuilt under the pointer: when a read finishes and the rows are the same rows, their text is updated in place; when the rows or their exact loop-key order change, the change waits until nothing is highlighted or the menu has closed. Activity sorting uses this same structural guard; a refresh cannot reorder a highlighted choice. The count beside the icon is always updated.
 
@@ -150,7 +152,7 @@ Every subprocess uses a fixed argument array without a shell and a 1 MiB cap per
 | `keepgoing client apply pause\|stop --all --expect KEY=VALUE … [--lanes] --json` | pause or stop each loop of a confirmed review, each only if its record is the one reviewed; `--lanes` for a stop whose option says so | 120 s |
 | `keepgoing client apply pause\|stop\|resume --loop KEY --expect VALUE [--lanes] [--immediately] [--drop-queued] --json` | make a confirmed change; `--lanes`, `--immediately` and `--drop-queued` only for a stop, and only when the review offered them; `--drop-queued` only with `--lanes`, for the one option that says so | 25 s |
 
-The only values ever taken from a reply and passed back are a loop's page key and a review's `expect` value (with `--all`, each loop's, as `KEY=VALUE`), each only after it matches its pattern, and a stop option's choice of `--lanes`. There is no command path that enables a loop, takes it over, or reaches a provider; the reads never start the panel. **The menu acts as no BB thread:** every command gets the environment the panel gives its own server (a fixed `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `TZ`, the locale and the XDG directories) and nothing else, so `BB_THREAD_ID` never reaches looptender wherever the menu was started, and a resume acts as a person at a terminal outside BB. That also drops `LOOPTENDER_REGISTRY_DIR`, `LOOPTENDER_SESSION_DIR` and `LOOPTENDER_PANEL_OPENER`, and their earlier `KEEPGOING_` names: give a non-default registry with `--registry-directory`, which the menu passes as `--directory` to every command that reads the registry (the list, opening the panel, review and apply), and a panel directory with `--panel-directory`, which it passes to the panel commands. A change is recorded in the loop's history as an ordinary `pause`, `stop` or `resume`. Subprocess errors and stderr are never shown as raw text. A missing binary, malformed reply, timeout or failed read shows one plain line and leaves **Open looptender panel** working. Loop names and review sentences are shown as inert text with control characters removed. New additive JSON fields are tolerated.
+The only values ever taken from a reply and passed back are a loop's page key and a review's `expect` value (with `--all`, each loop's, as `KEY=VALUE`), each only after it matches its pattern, and a stop option's choice of `--lanes`. There is no command path that enables or takes over a loop; list reads never start the panel. The menu can own one fixed foreground accounts usage-worker child for explicitly authorized usage, elected with panel/dock workers; list collection remains provider-free. **The menu acts as no BB thread:** every command gets the environment the panel gives its own server (a fixed `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `TZ`, the locale and the XDG directories) and nothing else, so `BB_THREAD_ID` never reaches looptender wherever the menu was started, and a resume acts as a person at a terminal outside BB. That also drops `LOOPTENDER_REGISTRY_DIR`, `LOOPTENDER_SESSION_DIR` and `LOOPTENDER_PANEL_OPENER`, and their earlier `KEEPGOING_` names: give a non-default registry with `--registry-directory`, which the menu passes as `--directory` to every command that reads the registry (the list, opening the panel, review and apply), and a panel directory with `--panel-directory`, which it passes to the panel commands. A change is recorded in the loop's history as an ordinary `pause`, `stop` or `resume`. Subprocess errors and stderr are never shown as raw text. A missing binary, malformed reply, timeout or failed read shows one plain line and leaves **Open looptender panel** working. Loop names and review sentences are shown as inert text with control characters removed. New additive JSON fields are tolerated.
 
 `keepgoing panel` starts the panel's background process, for this computer only, which stops by itself when unused; see [the panel](../../docs/dock.md#opening-it-with-one-command-keepgoing-panel). The menu never starts it except when a row that opens the panel is chosen.
 
@@ -161,6 +163,9 @@ These bounds apply to the directly invoked CLI and its output. An arbitrary repl
 ```sh
 swift build --package-path integrations/macos
 swift test --package-path integrations/macos
+# Provider-free native model execution without XCTest:
+swiftc -o /tmp/quota-clock-smoke integrations/macos/Sources/KeepgoingMenuCore/*.swift integrations/macos/scripts/QuotaClockSmoke.swift
+/tmp/quota-clock-smoke
 # Pass an already-built current Go executable:
 python3 integrations/macos/scripts/smoke-contract.py /path/to/keepgoing
 ```
@@ -199,11 +204,65 @@ keeps the old loop menu. Each account's `id` there is a handle, not the catalog 
 passes it back to `panel --account` unchanged, and its shape is the one the
 menu already validates (32 lowercase hex). New data is validated before rendering (16 projected
 accounts, 41 rows per account, bounded inert text/percent/date/state values);
-menus show six accounts and eight details each with explicit counts for more.
+menus show six accounts and eight quota entries each with explicit counts for more.
+In unreleased source, each account first offers **Open Account in Panel…**;
+remaining quota and the reset countdown of its most-used active window appear
+beside its name. Accounts with active window readings precede historical-only and unavailable
+accounts; active quota entries precede passed windows. Each entry opens
+its last reading, countdown and exact reset timestamp (local time plus the
+original timestamp). A passed reset stays historical and never assumes a new
+allowance. Accounts with no quota say **Quota unavailable** and still open
+details; missing usage is not a sign-in diagnosis. Read/retrieval age, older
+readings, unknown provider freshness, source and refresh failures stay visible
+in account details. Provider freshness remains unknown for Claude/Antigravity.
+Ages and countdowns recompute on menu opening and ordinary saved-evidence
+reads; they do not add provider polling. Existing menu tracking rules can defer
+structural changes until a highlighted menu closes. Window identities include
+the full window name and its original source ordinal, so active/history
+reordering cannot replace a highlighted window in place; countdown changes for
+the same window still update in place. Active remaining-only individual limits
+participate in summaries and active-before-history account ordering without
+inventing a used percentage. Review usage retrieval in
+the account page using a panel with changes allowed; opening it from the menu
+does not refresh quota or begin sign-in.
 Long menu text is shortened visibly, with complete accessible labels/tooltips.
 The existing 180-character generic and 1024-byte authority bounds are unchanged.
-Saved quota does not alter loop badges, grant controls or run provider reads.
-Choose Open Panel, then Accounts for full details and an explicit reviewed provider
-refresh. Unsupported or corrupt data never becomes zero quota. Native menu
-polling remains saved-evidence only; rebuilding does not replace or restart a
+Saved quota does not alter loop badges or grant controls. By default list reads
+run no provider query; a menu-owned child or non-offline panel/dock worker may service explicitly authorized
+[automatic usage](../../docs/accounts.md#automatic-selected-context-usage-unreleased)
+for unchanged selections, using the shared cache. The menu owns one bounded foreground CLI child for explicitly opted-in
+selections, including while closed and with the panel process stopped; list/render
+paths never wait for provider IO. Quota details show
+enabled/backoff/paused state and the next eligible fetch, separately from the
+last successful fetch and provider freshness. Panel idle shutdown stops its worker.
+Choose **Open Account in Panel…** for full details, reviewed manual retrieval or
+**Keep usage updated…** settings. Unsupported or corrupt data never becomes zero quota. Native menu
+polling remains saved-evidence only without those explicit grants; rebuilding does not replace or restart a
 running menu. See [quota capability limits](../../docs/accounts.md#read-selected-context-subscription-quota).
+
+### Menu-owned automatic usage (unreleased)
+
+The updated CLI adds optional `accountQuotas.workerEligible` to a saved list.
+After a successful eligible read, the already-running menu may launch one fixed
+`accounts usage-worker --owner-stdin` child. Missing/false capability (including
+older CLIs), invalid grants or changed selections start none. The worker checks
+grants itself and shares the catalog owner lock, caches, cadence and backoff with
+panel/dock workers. It polls with the menu closed and panel process stopped;
+opening a menu or view is not the provider-work trigger.
+
+The menu retains a private stdin lease, with fixed bounded startup handshake,
+so graceful exit and abrupt app death cancel the child even without AppKit
+termination callbacks. Revocation, sleep and Low Power Mode stop it; wake/power
+restoration rechecks on a normal saved read. Refused/crashed child launches retry
+at most once per five minutes, and child lifetime is capped at 24 hours before
+normal renewal. The owner may terminate only its own child after bounded EOF
+shutdown grace. Nothing detaches, installs a service or starts at login. A
+panel worker remains independent of menu power mode and retains its idle exit.
+
+`MenuUsageWorkerSmoke.swift` uses a compiled fictional child to execute exact
+arguments/environment, controller opt-in/dedup/restart/suspend/revoke, graceful
+EOF and abrupt-parent-exit checks, without a panel/provider. Go fixtures exercise
+owned-worker cancellation during provider IO and menu takeover after panel exit.
+The contract smoke runs these alongside native decoding and real CLI fixtures.
+Physical sleep/reboot, installed-app update and real provider acceptance remain
+unrun; local XCTest availability is reported separately.
