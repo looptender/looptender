@@ -68,6 +68,13 @@ useful throughput and quality. Integrated continuous optimization is planned;
 current diagnostics and the unreleased manual helper do not establish subscription
 savings or authorize silent model downgrades.
 
+**Consumer ranking — In source, not yet released.** `looptender usage-rank --evidence FILE`
+(or `--collection-dir DIR`) projects explicitly supplied local records as JSON.
+It ranks recorded token components only among matching provider and declared/observed
+periods with complete metric coverage. Partial counts remain visible and unranked;
+account/model attribution and subscription savings remain unavailable. See the
+[ranking contract](docs/design/usage-measurement.md#read-only-consumer-ranking-unreleased).
+
 **Usage evidence — In source, not yet released.** The Panel can read a bounded
 local [measurement export](docs/design/usage-measurement.md) to show provider token
 trends, observed duplicate actions suppressed, and controlled-pair estimates per

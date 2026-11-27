@@ -165,3 +165,46 @@ nonblocking regular-file reads on macOS/Linux; other platforms are unavailable.
 The Panel never invokes collection and remains readable while a writer holds the
 tick lock. No verified subscription savings or automatic optimization policy is
 claimed. Native Linux, installed BB integration and wider attribution remain open.
+
+
+## Read-only consumer ranking (unreleased)
+
+`looptender usage-rank --evidence export.json --collection-dir example-state`
+prints JSON from at most eight explicitly supplied sources. Repeat either option;
+no configuration, registry, provider, transcript or new collector is consulted.
+Each export retains the existing 128 KiB/512-snapshot/16-stream validation and
+projection bounds. Collection directories use the existing strict private-record
+reader. macOS/Linux use the existing nonblocking, no-follow regular-file boundary;
+other platforms report unavailable. No files are changed. File errors expose only
+source indices, never paths or raw values. The output itself can contain supplied
+loop/stream aliases: treat real reports as private artifacts.
+
+Each row identifies its supplied loop, stream, provider, imported/automatic source,
+declared period, first/last unique snapshot, metric and covered/possible intervals.
+The shared Panel calculator deduplicates exact snapshots, rejects conflicting
+snapshots/JSON keys and excludes resets. Partial observed counts are retained but
+unranked; no measured interval means null, not zero. Total input plus output is
+emitted only when both components cover every interval. Cached input and reasoning
+are already included and never added again. Uncached input uses compatible deltas.
+Repeated loop sources are all refused, rather than guessing overlap or merging
+identities. There is no aggregate loop total across potentially overlapping streams.
+
+Ranks compare recorded deltas only within identical provider, metric, declared
+period and observed first/last timestamps. Full metric coverage and at least two
+comparable streams are required. Unknown/unavailable provider attribution is
+unranked. Equal counts share a competition rank. Different periods are separate
+cohorts, never extrapolated to an hourly rate. Coverage counts describe supplied
+intervals, not retention completeness: sequence gaps in filtered events cannot
+prove missing usage, and matching endpoints cannot prove complete history.
+The period end and optional last successful collection timestamp expose freshness;
+they do not prove a live query or a current automatic source binding.
+
+Provider labels in imported evidence remain author-attested. Automatic records
+currently retain unavailable historical attribution; the command does not promote
+current configuration to historical provider, model or account evidence. Model
+and account attribution, complete lane coverage, accepted useful work, comparable
+savings and subscription charges remain unavailable. This is a bounded diagnostic
+projection, not a recommendation to change routes or proof of avoided consumption.
+Fictional CLI/pure-function tests establish source behavior only. Wider provider
+normalization, automatic lane discovery, installed/native acceptance and live
+ranking/quality validation remain open; no roadmap live criterion is closed.
