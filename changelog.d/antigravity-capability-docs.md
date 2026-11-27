@@ -1,0 +1,1 @@
+- Correct the adapter guide introduction to identify the registered primary-only Antigravity ACP adapter, retaining individual capability evidence and installed/live/platform limitations.
