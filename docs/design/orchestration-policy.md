@@ -14,7 +14,8 @@ experience targets native macOS; Windows/Linux desktop equivalents are deferred.
 | Ordered routes, fallback probes and opt-in return | Implemented within their documented adapter bounds | Not a balanced account pool or general lane allocator. |
 | Loop/run references, direct-lane observations and partial usage diagnostics | Implemented in their documented scopes | Not complete descendant coverage, a task planner or proof of useful delivery. |
 | Native macOS client | Menu-bar accessory with native menu actions and panel opener | No Dock settings or native HOME window. Native HOME/Accounts/settings are planned. |
-| Shared intensity and pool allocation | Planned | Require the explicit policy, admission and acceptance below. |
+| Inefficiency findings and shared intensity | Planned; existing diagnostics supply partial evidence only | Findings/recommendations need the bounded evidence contract below; no new adjustment authority. |
+| Pooling first slice | Planned pure `internal/poolplan` preview only | Codex structured fresh bound evidence, explicit account/allowance IDs and complete occupancy input; no reader, CLI, reservation, adapter binding or dispatch. |
 
 The [roadmap](../roadmap.md#owner-priorities-and-implementation-boundaries),
 [Accounts contract](../accounts.md) and [release evidence](../release-verification.md)
@@ -45,6 +46,53 @@ to resume itself. Assignment/completion and stage evidence must bind exact goal
 and review revisions. A stale or duplicated terminal receipt cannot settle a
 new revision. New assignments remain the coordinator's authorized action, not
 background conversation creation by looptender.
+
+## Find inefficiencies without maximizing activity
+
+Finding inefficiencies is a core looptender responsibility in the planned
+orchestration work. The purpose is more useful, verified work with less avoidable
+rework and overhead, not more tokens, higher utilization or more active lanes.
+Current usage/status diagnostics are partial inputs, not this complete detector.
+
+| Finding | Structured evidence needed | What remains suspected or unknown |
+| --- | --- | --- |
+| Idle configured capacity with authorized backlog | Current explicit authorized backlog item/revision, eligible route/account evidence, fresh allowance and complete occupancy/hold snapshot | Free quota or an idle process alone proves neither usable capacity nor permission to start work. |
+| Stranded loops | Known owner/run binding, completed-check/heartbeat ages, next-check source and explicit control/hold/transfer state | Missing or old snapshots are unavailable evidence, not proof the loop is abandoned or may be taken over. |
+| Duplicate assignments, overlap or repeated checks | Exact assignment/goal/revision/action IDs, configured repository/ref path intersections and completed-check records | Shared paths suggest collision risk; they do not prove duplicated intent. Repeated reads may be necessary. |
+| Status-only wakes and context reload costs | Typed wake/check outcome, send kind, delivered goal form/bytes, supported usage counters and correlation IDs | A wake with no recorded change is observable; wasted tokens or lost quality require compatible measurement. Never inspect prompt/transcript text to decide. |
+| Model mismatch and rework | Configured policy and supported observed route/model identity, revision-bound external acceptance/rework results | A name/alias mismatch or failed result does not prove the model caused it. Causal attribution needs comparable accepted work and cost/quality evidence. |
+| Review/CI bottlenecks | Pinned head/base, structured review/check identities and states, dependency and queue ages | Waiting is observed; the reason it could safely be shortened may be unknown. Do not infer review acceptance from comments or head-only CI. |
+| Stale or redundant polling | Grant/selection/window identity, attempt/retrieval/provider-freshness times, scheduler records and cadence/backoff | Scheduler liveness is not a successful read, and retrieval age does not establish provider freshness. A reset clock alone does not restore capacity. |
+
+Each finding must carry its kind, exact scoped identities/revisions, observation
+period, source and capture/retrieval times, coverage/completeness and missing or
+contradictory inputs. Separate an **observed fact** from a **suspected explanation**.
+State confidence and its basis (direct structured observation, correlation or
+controlled comparison); unknown is a valid result. Do not invent numerical
+confidence, convert a heuristic into an attestation or silently promote an old
+finding to current state. Age, deduplicate and retire findings by identity/revision.
+
+A recommendation must name the affected action, evidence, expected useful-work
+benefit, uncertainty, prerequisites, authority needed and the check that would
+confirm improvement. Examples include reviewing an apparently stranded owner,
+consolidating overlapping assignments, reducing a separately authorized check
+cadence, or trying an already allowed route at a safe boundary. These remain
+recommendations until an applicable existing policy explicitly permits the exact
+adjustment. A detector does not select new scope, grant spending, raise effort or
+concurrency, clear a hold, move accounts, create lanes or change polling grants.
+
+Measure the detector too: count source reads, CPU/time, bytes, wake/context reload
+work, provider requests and any metered overhead where known. Prefer already
+recorded bounded evidence; detection must not generate unbounded status polling
+or spend on probes to find waste. Publish retention/sampling bounds and unknown
+coverage; stale inputs cannot justify a more aggressive adjustment.
+
+Evaluate useful outcomes where possible: revision-bound accepted work, time to
+verification, rework/reopened findings, duplicate actions avoided and comparable
+resource/measurement overhead. Show before/after periods, workload/quality changes
+and coverage; use controlled comparisons before causal savings claims. Throughput
+or rework improvements can remain unmeasured. Token volume, idle capacity and
+utilization are supporting observations, never the optimization target by themselves.
 
 ## Account pools and lane distribution
 
@@ -87,6 +135,26 @@ Cross-provider/billing and same-provider consumer-pair policy must be explicit;
 open provider-terms decisions remain open. No pooling or lane-distribution
 implementation, default quota threshold or automatic route change is authorized
 by this design document.
+
+### First pooling slice: pure preview
+
+The first implementation slice is scoped to `internal/poolplan`, a pure preview
+accepting caller-supplied structured evidence. Its initial supported evidence is
+Codex only: fresh quota bound to the explicit account/context and allowance IDs,
+with compatible window identities and a complete occupancy snapshot for the
+proposed scope. Unknown/stale/conflicting identity, quota or occupancy must refuse
+an allocation preview or return explicit unavailable reasons. A partial list of
+busy loops is not a complete occupancy snapshot; a selected catalog label is not
+an account binding. No other provider is inferred compatible.
+
+This slice has no evidence reader, CLI, worker, configuration write, account
+selection or dispatch. A suggested allocation is not a reservation, successful
+switch or promise of available capacity at execution time. Atomic reservations,
+actual supported adapter/account binding, execution-time revalidation and P6 lane
+ownership remain future dependencies before any account switching or work moves.
+Test deterministic previews with stale/unknown evidence, shared windows, reserves,
+complete/partial occupancy, conflicting IDs and concurrent-demand examples; such
+tests do not establish a live pool or delivered account switching.
 
 ## Shared work intensity
 
@@ -167,7 +235,11 @@ separate record of released, installed, native and live evidence.
 1. **Truthful projection first:** keep catalog/routes/identity separate; verify
    graph/list meanings with renamed, missing, stale, held, offline and incomplete
    records. Existing polling success/failure times remain unchanged by reads.
-2. **Pure policy and preview:** version the independent intensity dimensions;
+2. **Inefficiency evidence and pure preview:** fixture-test observed versus suspected
+   findings for every class above, incomplete/stale inputs, recommendation authority
+   and measurement overhead without new provider work. Keep `internal/poolplan`
+   pure and Codex-evidence-only with complete occupancy; no reader/CLI/dispatch.
+   Version the independent intensity dimensions;
    table-test scope intersection, stop/hold precedence, unknown billing/quota,
    stale confirmation, policy conflict and no implied runtime effects.
 3. **Pool admission and reservations:** establish supported bindings and P6 lane
