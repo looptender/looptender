@@ -193,7 +193,16 @@ func refuseSecondLoop(cfg *config.Config, others []otherLoop, command string) st
 		return ""
 	}
 	primary, _ := session.Of(cfg.Loop.Agent)
-	return fmt.Sprintf("%s: loop %s (%s) already supervises %s. Two loops on one session would both prompt it. Disable that loop first, or pass --allow-second-loop to %s this one anyway", command, o.Loop, o.Config, primary.Describe(), command)
+	status := "registered and enabled with no recorded hold"
+	if o.Held != "" {
+		status = "registered and enabled, held: " + o.Held
+	}
+	reuse := ""
+	if o.Archived {
+		status += "; archived"
+		reuse = "A person must unarchive it before reuse; unarchive resumes nothing. "
+	}
+	return fmt.Sprintf("%s: loop %s (%s) is %s for %s. This registration blocks a second loop; it does not prove current activity. %sTo reuse it, a person must review its task, routes, limits and holds, then explicitly resume from the panel or a terminal outside BB (resume clears other holds too). For a fresh attachment, disable that loop first, then preview and attach the new one. Pause or archive alone does not release this guard. --allow-second-loop explicitly permits dual registrations and is not routine reuse", command, o.Loop, o.Config, status, primary.Describe(), reuse)
 }
 
 // refusedResult is what init --json and start --json print when they refuse:
@@ -208,12 +217,14 @@ type refusedResult struct {
 type sessionRefusal struct {
 	Code      string `json:"code"`
 	OtherLoop string `json:"otherLoop"`
+	Held      string `json:"held,omitempty"`
+	Archived  bool   `json:"archived,omitempty"`
 }
 
 const refusalSecondLoop = "second_loop_on_session"
 
 func printSecondLoopRefusal(e env, other *otherLoop) {
-	_ = json.NewEncoder(e.stdout).Encode(refusedResult{SchemaVersion: 1, Outcome: "refused", Refusal: sessionRefusal{Code: refusalSecondLoop, OtherLoop: other.Loop}})
+	_ = json.NewEncoder(e.stdout).Encode(refusedResult{SchemaVersion: 1, Outcome: "refused", Refusal: sessionRefusal{Code: refusalSecondLoop, OtherLoop: other.Loop, Held: other.Held, Archived: other.Archived}})
 }
 
 // sharedLoopWarnings are the warnings status, validate and enable print.
