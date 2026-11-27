@@ -138,6 +138,24 @@ edit alone cannot close acceptance. Missing or stale verification and unmatched
 release/version evidence produce scoped findings; incomplete coverage remains
 `cannot_assess`, never inferred compliance or a demand to publish.
 
+For looptender, coordinator-owned upkeep explicitly includes the actual public
+product website, [looptender.com](https://looptender.com), alongside repository
+guides. Behavior and release changes trigger an impact review of product claims,
+feature availability, downloads/install instructions, version/platform support,
+screenshots and links, or a justified no-change result for those surfaces. Website
+drift belongs in per-change impact and release acceptance evidence. A feature
+implemented only in source must not become a released or installed product claim;
+screenshots must identify the evidenced experience rather than imply missing
+native, provider or rollout acceptance.
+
+Maintaining website content is within the coordinator's authorized duties, with
+agent-owned edits and the applicable review checks. This does not request a
+deployment or authorize automatic publication. Record the canonical website
+source/repository, relevant revision and deployment owner when verified; those
+bindings are not established by this contract. Do not infer the site architecture,
+repository or publisher from the domain or this supervisor checkout. Missing
+bindings/verification remain an explicit upkeep gap, not permission to deploy.
+
 **Bounded follow-on:** represent these obligations as structured work items in
 the same bound inventory and goal/assignment lifecycle, with impact/no-change and
 release/verification evidence references supplied by the authorized agent. Add a
@@ -152,9 +170,11 @@ authorized actions; a finding grants no new scope or spend.
 Fictional fixtures must cover explicit versus absent adoption, installation
 without adoption, two projects sharing a template with isolated claims, changed
 source/change/review revisions, a bound justified no-change result, missing/stale
-verification and source-versus-release/installed version mismatch. A docs edit or
+verification and source-versus-release/installed version mismatch. Include website
+claims, download links and screenshots drifting from bound release evidence, plus
+unverified source/deployment ownership that cannot authorize publication. A docs edit or
 passing CI with unmet acceptance must remain open. This is planned follow-on to
-work-source/coverage mechanisms, not delivered upkeep, site implementation,
+work-source/coverage mechanisms, not delivered upkeep automation, site implementation,
 scheduling or a new recurring paid lane.
 
 ## Find inefficiencies without maximizing activity
