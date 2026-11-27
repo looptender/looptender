@@ -1636,7 +1636,7 @@
       var rBox = domEl.getBoundingClientRect();
       return { x: (side === "right" ? rBox.right : rBox.left) - cBox.left, y: (rBox.top + rBox.height / 2 + (dy || 0)) - cBox.top };
     }
-    var placedBadges = [], suppressedBadges = 0;
+    var placedBadges = [], badgeNodes = [], suppressedBadges = 0;
     var maxBadgeY = Math.max(9, cBox.height - 9);
     function badgeCollides(cx, cy, badgeW) {
       return placedBadges.some(function (b) {
@@ -1702,7 +1702,7 @@
           var txt = document.createElementNS(ns, "text");
           txt.setAttribute("x", bx.toFixed(1)); txt.setAttribute("y", by.toFixed(1));
           txt.setAttribute("class", "edge-badge-text"); txt.textContent = badgeLabel;
-          svgEl.appendChild(bg); svgEl.appendChild(txt);
+          badgeNodes.push(bg, txt);
         } else {
           suppressedBadges += 1;
         }
@@ -1772,6 +1772,7 @@
       var mkId = rRec.bindingKind === "none" ? "arr-neutral" : rRec.bindingKind === "mismatch" ? "arr-attn" : "arr-bound";
       ortho(p1, p2, chX, eCls, mkId, "", rRec.bindingKind === "mismatch" ? "is-attn" : "is-neutral", false);
     });
+    badgeNodes.forEach(function (badgeNode) { svgEl.appendChild(badgeNode); });
 
     if (suppressedBadges > 0) svgEl.setAttribute("data-suppressed-badges", String(suppressedBadges));
     else if (typeof svgEl.removeAttribute === "function") svgEl.removeAttribute("data-suppressed-badges");
