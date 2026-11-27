@@ -898,13 +898,128 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
   const chkChip = w.document.querySelector('[data-focus="filter-checks"]')?.textContent;
   if (decChip !== "Decisions & bounds (2)" || chkChip !== "Checks stopped (1)") errs.push(`filter chips mismatch: ${decChip} | ${chkChip}`);
 
+  // Stub map column/card boxes so drawSetupEdges renders badges and arrowheads in JSDOM.
+  const origGetRect = w.HTMLElement.prototype.getBoundingClientRect;
+  let tightRouteCards = false;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    const mkRect = (x, y, wPx, hPx) => ({ x, y, left: x, top: y, right: x + wPx, bottom: y + hPx, width: wPx, height: hPx });
+    if (this.id === "graph-canvas") {
+      const nCards = Math.max(this.querySelectorAll("#col-loops .map-card").length, this.querySelectorAll("#col-routes .map-card").length);
+      return mkRect(0, 0, 1040, Math.max(800, nCards * 96 + 120));
+    }
+    if (this.id === "col-loops") return mkRect(0, 0, 300, 700);
+    if (this.id === "col-routes") return mkRect(390, 0, 275, 700);
+    if (this.id === "col-accounts") return mkRect(755, 0, 285, 700);
+    if (this.classList?.contains("map-card")) {
+      const col = this.closest("#col-loops, #col-routes, #col-accounts");
+      const idx = col ? [...col.querySelectorAll(".map-card")].indexOf(this) : 0;
+      const x = col?.id === "col-routes" ? 390 : col?.id === "col-accounts" ? 755 : 0;
+      const wPx = col?.id === "col-routes" ? 275 : col?.id === "col-accounts" ? 285 : 300;
+      const pitch = tightRouteCards && col?.id === "col-routes" ? 10 : 96;
+      const hPx = tightRouteCards && col?.id === "col-routes" ? 10 : 76;
+      return mkRect(x, 40 + idx * pitch, wPx, hPx);
+    }
+    return origGetRect.call(this);
+  };
+  const checkGraphBadges = (label) => {
+    const bgs = [...w.document.querySelectorAll("#graph-svg .edge-badge-bg")];
+    const txts = [...w.document.querySelectorAll("#graph-svg .edge-badge-text")];
+    const polys = [...w.document.querySelectorAll("#graph-svg polygon")];
+    if (!bgs.length || bgs.length !== txts.length) errs.push(`${label}: expected matching badge rects (${bgs.length}) and labels (${txts.length})`);
+    if (polys.some((p) => !p.getAttribute("class")?.split(/\s+/).includes("edge-arrow"))) errs.push(`${label}: arrowhead polygon missing edge-arrow class`);
+    const boxes = bgs.map((r) => ({ x: parseFloat(r.getAttribute("x")), y: parseFloat(r.getAttribute("y")), w: parseFloat(r.getAttribute("width")), h: parseFloat(r.getAttribute("height")) }));
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i], b = boxes[j];
+        if (Math.abs((a.x + a.w / 2) - (b.x + b.w / 2)) < (a.w + b.w) / 2 + 1 && Math.abs((a.y + a.h / 2) - (b.y + b.h / 2)) < (a.h + b.h) / 2 + 1) {
+          errs.push(`${label}: overlapping edge badges at (${a.x},${a.y}) and (${b.x},${b.y})`);
+        }
+      }
+    }
+    return { boxes, txts };
+  };
+
   // Select card in Setup Map -> highlight + inspector + Esc clear
-  w.document.querySelector('[data-focus="map-loop-' + kQ + '"]').click(); await tick();
+  w.document.querySelector('[data-focus="map-loop-' + kQ + '"]').click(); await settle();
   if (!w.document.getElementById("map-inspector")?.textContent.includes("BB unverified") || !w.document.querySelector('[data-focus="map-loop-' + kSup + '"]')?.classList.contains("is-dimmed")) {
     errs.push("selecting loop in Setup Map did not highlight/inspector/dim properly");
   }
-  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await tick();
+  checkGraphBadges("loop-selected");
+  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await settle();
   if (w.document.querySelector('[data-focus="map-loop-' + kQ + '"]')?.classList.contains("is-selected")) errs.push("Escape did not clear map selection");
+
+  // Exercise badgeCollides stepping when arrival ports sit closer than badge height
+  tightRouteCards = true;
+  w.document.querySelector('[data-focus="map-loop-' + kQ + '"]').click(); await settle();
+  checkGraphBadges("tight-arrival-collision-avoided");
+  tightRouteCards = false;
+  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await settle();
+
+  // Select shared route in Setup Map -> converging multi-loop badges stay non-overlapping
+  w.document.querySelector('[data-focus="map-route-' + r1 + '"]').click(); await settle();
+  checkGraphBadges("shared-route-selected");
+  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await settle();
+
+  // Select shared account with 16 loops x 2 multi-digit routes (#10/#11) -> 0 overlaps, 32 badges
+  const savedDockLoops = clone(currentDock.loops);
+  const savedDockRoutes = clone(currentDock.routes);
+  const savedDockNeeds = clone(currentDock.needsYou);
+  const sharedCardId = acctCardsFixture[0].id;
+  const makeDenseGraph = (nLoops, nRoutes) => {
+    currentDock.needsYou = [];
+    currentDock.routes = Array.from({ length: nRoutes }, (_, j) => ({
+      key: `rdense${j}`, provider: "codex", account: "codex-main", model: "gpt-5.2-codex",
+      title: `Dense route ${j + 1}`, meta: ["Codex CLI"], readiness: "ready", phrase: "Ready",
+      usage: { availability: "unavailable", readLine: "No reading" }, runningNow: [], recordedFor: [], standby: [], unknown: [], leftBy: []
+    }));
+    currentDock.loops = Array.from({ length: nLoops }, (_, i) => ({
+      ...clone(savedDockLoops[0]),
+      key: `ldense${String(i).padStart(4, "0")}`,
+      name: `dense-loop-${i + 1}`,
+      state: "supervising", phrase: "Supervising",
+      hold: undefined, lanes: { availability: "none_recorded", lanes: [], omitted: 0 },
+      chain: {
+        availability: "known",
+        handoffOn: ["usage_limit"],
+        entries: Array.from({ length: nRoutes }, (_, j) => ({
+          position: 9 + j, route: `rdense${j}`, title: `Dense route ${j + 1}`,
+          current: j === 0, inUse: j === 0, readiness: j === 0 ? "in_use" : "ready",
+          meta: ["Codex CLI"], usage: { availability: "unavailable", readLine: "No reading" },
+          catalogAccount: { assigned: "by_you", card: sharedCardId, check: "consistent" }
+        }))
+      }
+    }));
+  };
+  makeDenseGraph(16, 2);
+  w.document.getElementById("refresh").click(); await settle();
+  w.document.querySelector(`[data-focus="map-acct-acct:${sharedCardId}"]`)?.click(); await settle();
+  const dense16x2 = checkGraphBadges("account-16x2-multidigit");
+  if (dense16x2.boxes.length !== 32 || Math.min(...dense16x2.boxes.map((b) => b.w)) < 28) {
+    errs.push(`account-16x2-multidigit: expected 32 badges >=28px wide, got ${dense16x2.boxes.length}`);
+  }
+  if (!w.document.getElementById("map-badge-fallback")?.hidden) {
+    errs.push("account-16x2-multidigit: expected fallback notice hidden when all badges fit");
+  }
+
+  // Exhaust bounded search with 16 loops x 6 routes -> 0 overlaps + accessible fallback notice & List view switch
+  makeDenseGraph(16, 6);
+  w.document.getElementById("refresh").click(); await settle();
+  checkGraphBadges("account-16x6-exhausted");
+  const supAttr = parseInt(w.document.getElementById("graph-svg")?.getAttribute("data-suppressed-badges") || "0", 10);
+  const fbNode = w.document.getElementById("map-badge-fallback");
+  if (supAttr <= 0 || !fbNode || fbNode.hidden || !fbNode.textContent.includes("omitted to avoid overlap")) {
+    errs.push(`account-16x6-exhausted: expected suppressed count and visible fallback notice (suppressed=${supAttr})`);
+  }
+  w.document.querySelector('[data-focus="map-fallback-list"]')?.click(); await settle();
+  if (w.document.getElementById("setup-map")?.getAttribute("data-map-mode") !== "list" || !w.document.querySelector("#setup-list .list-route-chain")?.textContent.includes("#10")) {
+    errs.push("map-fallback-list button did not open accessible List view with full route chain");
+  }
+  w.document.querySelector('[data-focus="mode-map"]')?.click(); await settle();
+  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await settle();
+  currentDock.loops = savedDockLoops;
+  currentDock.routes = savedDockRoutes;
+  currentDock.needsYou = savedDockNeeds;
+  w.document.getElementById("refresh").click(); await settle();
 
   // Task flow 1: Question -> Open question drawer with honest G9 copy
   const qCard = w.document.querySelector(`#attention-section [data-issue-key="${kQ}"]`);

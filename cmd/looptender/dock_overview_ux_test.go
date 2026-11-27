@@ -128,14 +128,27 @@ func TestDockOverviewGlossaryAndBoundaryInvariants(t *testing.T) {
 		}
 	}
 
-	// Forced colors rules must cover new pressed, selected, card, and drawer states.
+	// Forced colors rules must cover new pressed, selected, card, and drawer states,
+	// and graph SVG non-edge primitives must reset inherited stroke.
 	for _, want := range []string{
 		`.chip-btn[aria-pressed="true"], .view-switch button[aria-pressed="true"], .cat-pill[aria-pressed="true"]`,
 		`.map-card.is-selected`,
+		`.edge-arrow { fill: CanvasText; stroke: none; stroke-width: 0; }`,
 		`.edge-badge-bg`,
+		`.edge-badge-text { fill: CanvasText; stroke: none; stroke-width: 0; }`,
+		`.graph-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; overflow: visible; stroke: none; stroke-width: 0; }`,
+		`.edge-arrow { stroke: none; stroke-width: 0; }`,
+		`.edge-badge-text { fill: var(--ink); stroke: none; stroke-width: 0;`,
+		`.map-badge-fallback`,
 	} {
 		if !strings.Contains(css, want) {
-			t.Errorf("dock.css forced-colors rules lack %q", want)
+			t.Errorf("dock.css lacks badge/forced-colors rule %q", want)
+		}
+	}
+	drawBody := jsFunction(t, js, "function drawSetupEdges(topo, canvasEl, svgEl) {")
+	for _, want := range []string{`"edge-arrow"`, `badgeCollides(`, `useStartBadges`, `if (placed)`, `suppressedBadges`, `"data-suppressed-badges"`, `outSeq`, `maxBadgeW`, `#map-badge-fallback`} {
+		if !strings.Contains(drawBody, want) {
+			t.Errorf("drawSetupEdges lacks %q", want)
 		}
 	}
 }

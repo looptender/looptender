@@ -105,12 +105,15 @@ export const setupInput = z.object({
 export const refusalSchema = z.object({
   code: z.literal("second_loop_on_session"),
   otherLoop: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+  held: z.enum(["paused", "stopped", "completed", "awaiting a person"]).optional(),
+  archived: z.boolean().optional(),
 });
 export type Refusal = z.infer<typeof refusalSchema>;
 /** What `keepgoing init --json` and `start` print on stdout when they refuse. */
 export const refusedReportSchema = z.object({ schemaVersion: z.literal(1), outcome: z.literal("refused"), refusal: refusalSchema });
 export function refusalMessage(r: Refusal, command: "init" | "start"): string {
-  return `looptender refused to ${command === "init" ? "set up" : "start"} this loop: loop ${r.otherLoop} already supervises this thread's session, and two loops on one session would both prompt it. ${command === "init" ? "Nothing was created." : "Nothing was started."} To have this thread supervised here instead, pause or disable ${r.otherLoop} first.`;
+  const state = r.held ? `registered and enabled, held: ${r.held}` : "registered and enabled; current activity is unverified";
+  return `looptender refused to ${command === "init" ? "set up" : "start"} this loop: loop ${r.otherLoop} is ${state}${r.archived ? "; archived" : ""} for this thread's session. ${command === "init" ? "Nothing was created." : "Nothing was started."} ${r.archived ? "A person must unarchive it before reuse; unarchive resumes nothing. " : ""}To reuse it, a person must review its task, routes, limits and holds, then explicitly resume from the looptender panel or a terminal outside BB; resume clears other holds too. For a fresh attachment, disable ${r.otherLoop} first, then preview and attach the new loop. Pause or archive alone does not release this registration guard.`;
 }
 /**
  * Why a looptender command the plugin ran for setup did not give a plan, said
