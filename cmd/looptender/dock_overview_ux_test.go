@@ -64,9 +64,9 @@ func TestDockOverviewGlossaryAndBoundaryInvariants(t *testing.T) {
 		}
 	}
 	fpBody := jsFunction(t, js, "function issueFingerprint(nItem, loopObj, includeIdentifiers) {")
-	for _, want := range []string{"currentRoute", "identifiers", "currentChainRouteKey"} {
+	for _, want := range []string{"currentRoute", "identifiers", "currentChainRouteKey", "has_title", "canonMaskedNote"} {
 		if !strings.Contains(fpBody, want) {
-			t.Errorf("issueFingerprint must include backend-emitted field %q", want)
+			t.Errorf("issueFingerprint must include backend-emitted field/normalization %q", want)
 		}
 	}
 	uncBody := jsFunction(t, js, "function taskUnconfirmedText(d, nItem, loopObj) {")
@@ -75,11 +75,26 @@ func TestDockOverviewGlossaryAndBoundaryInvariants(t *testing.T) {
 			t.Errorf("taskUnconfirmedText lacks %q", want)
 		}
 	}
-	if !strings.Contains(jsFunction(t, js, "function load(byHand) {"), "syncTaskUnconfirmedDOM(") {
-		t.Errorf("load(byHand) must update retained task DOM badges on failed refresh via syncTaskUnconfirmedDOM()")
+	loadBody := jsFunction(t, js, "function load(byHand) {")
+	for _, want := range []string{"syncTaskUnconfirmedDOM(", "scrubNeedForHiddenIds(", "scrubLoopForHiddenIds("} {
+		if !strings.Contains(loadBody, want) {
+			t.Errorf("load(byHand) lacks %q", want)
+		}
+	}
+	for _, fnHead := range []string{"function scrubNeedForHiddenIds(n) {", "function scrubLoopForHiddenIds(l) {"} {
+		if !strings.Contains(js, fnHead) {
+			t.Errorf("dock.js lacks %q", fnHead)
+		}
+	}
+	if !strings.Contains(js, "scrubRetainedForHiddenIds()") {
+		t.Errorf("dock.js must scrub retained state immediately when identifiers are hidden")
 	}
 	if !strings.Contains(jsFunction(t, js, "function prepareChange(key, action, amount, issueFp, issueBaseFp, issueIdsMode) {"), "changeSerial") {
 		t.Errorf("prepareChange must guard out-of-order responses with changeSerial")
+	}
+	confirmBody := jsFunction(t, js, "function confirmChange(option) {")
+	if !strings.Contains(confirmBody, "seq !== state.changeSerial") || !strings.Contains(confirmBody, "supersededChangeResult") {
+		t.Errorf("confirmChange must guard all continuations with changeSerial and preserve supersededChangeResult")
 	}
 
 	// Home view and Setup Map must never initiate account auto-checks or quota POSTs.

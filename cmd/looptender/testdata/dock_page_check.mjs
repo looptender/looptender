@@ -818,7 +818,9 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
   };
   const posts = [];
   let failDock = false;
+  let delayDock = null;
   let deferredPrepare = Object.create(null);
+  let deferredConfirm = Object.create(null);
   const srv = { ...clone(fixture.server), servedBy: "panel", version: "v0.3.0", changes: "on", sendAllowanceEdit: true, accountSelectionReview: true, accountQuota: true, accountQuotaProviders: ["codex", "claude-code", "antigravity"], form: "a".repeat(64) };
   w.fetch = async (url, opts) => {
     const rawUrl = String(url);
@@ -828,6 +830,9 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
       posts.push(path);
       if (deferredPrepare[path]) {
         return deferredPrepare[path]();
+      }
+      if (deferredConfirm[path]) {
+        return deferredConfirm[path]();
       }
       if (path === `api/v1/loops/${kQ}/prepare`) {
         return { ok: true, status: 200, json: async () => ({ schemaVersion: 1, preview: { action: "resume", key: kQ, title: "Resume?", confirm: "Confirm resume", form: "c".repeat(64), expiresAt: "2035-01-01T00:00:00Z", lines: [[{ t: "Confirm parent resume." }]], lost: "lost", refused: "refused" } }) };
@@ -842,13 +847,23 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
       return { ok: true, status: 200, json: async () => p, text: async () => JSON.stringify(p) };
     }
     if (path === "api/v1/dock") {
+      if (delayDock) await delayDock();
       if (failDock) return Promise.reject(new Error("simulated fetch failure"));
       const snap = clone(currentDock);
       snap.identifiers = withIds;
       if (!withIds) {
+        for (const n of snap.needsYou) {
+          if (n.noteMasked && n.maskedNote) { n.note = n.maskedNote; delete n.maskedNote; }
+        }
         for (const lp of snap.loops) {
           delete lp.identifiers;
           if (lp.currentRoute) delete lp.currentRoute.name;
+          if (lp.lanes && Array.isArray(lp.lanes.lanes)) {
+            for (const ln of lp.lanes.lanes) {
+              if (ln.title || ln.titleEvidence === "recorded") ln.titleEvidence = "withheld";
+              delete ln.title; delete ln.key;
+            }
+          }
         }
       }
       return { ok: true, status: 200, json: async () => snap, text: async () => JSON.stringify(snap) };
@@ -986,6 +1001,105 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
   deferredPrepare = Object.create(null);
   w.document.querySelector('[data-focus="change-cancel"]')?.click(); await tick();
   w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await tick();
+
+  // Adversarial Test G: P3 privacy-only toggle preserves baseFp & keeps drawer open
+  currentDock.loops[0].lanes.lanes[0] = { number: 1, state: "waiting", phrase: "Waiting for answer", title: "FICTIONAL-PRIVATE-LANE", titleEvidence: "recorded", key: "lane_priv_1" };
+  currentDock.needsYou[0].note = "Approve /private/path/secret.md";
+  currentDock.needsYou[0].noteMasked = true;
+  currentDock.needsYou[0].maskedNote = "Approve [hidden]";
+  w.document.getElementById("identifiers").click(); await settle();
+  w.document.querySelector(`[data-focus="open-question-${kQ}"]`)?.click(); await tick();
+  if (!w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"]`)?.textContent.includes("FICTIONAL-PRIVATE-LANE")) {
+    errs.push("expected FICTIONAL-PRIVATE-LANE when identifiers are on");
+  }
+  w.document.getElementById("identifiers").click(); await settle();
+  if (!w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"]`)) errs.push("privacy-only toggle closed question drawer");
+  if (w.document.querySelector(".issue-stale-banner")) errs.push("privacy-only toggle showed stale issue banner");
+  if (w.document.body.textContent.includes("FICTIONAL-PRIVATE-LANE") || w.document.body.textContent.includes("/private/path/secret.md")) {
+    errs.push("private lane title or note leaked after identifiers toggled off");
+  }
+
+  // Adversarial Test H: P2 retained private lane title scrubbed on incomplete omission AND hidden during delayed identifiers-on reply
+  w.document.getElementById("identifiers").click(); await settle();
+  if (w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"]`)) {
+    w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await tick();
+  }
+  const savedHNeed = clone(currentDock.needsYou[0]);
+  const savedHLoop = clone(currentDock.loops[0]);
+  currentDock.complete = false;
+  currentDock.needsYou = currentDock.needsYou.filter((x) => x.key !== kQ);
+  currentDock.loops = currentDock.loops.filter((x) => x.key !== kQ);
+  w.document.getElementById("identifiers").click(); await settle();
+  if (!w.document.querySelector(`#attention-section [data-issue-key="${kQ}"]`)) errs.push("incomplete read omitted kQ before Test H");
+  w.document.querySelector(`[data-focus="open-question-${kQ}"]`)?.click(); await tick();
+  if (w.document.body.textContent.includes("FICTIONAL-PRIVATE-LANE") || w.document.body.textContent.includes("thr_alpha_1") || !w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"]`)?.textContent.includes("title withheld")) {
+    errs.push("retained omitted drawer leaked private identifiers or omitted title withheld label");
+  }
+  currentDock.complete = true;
+  currentDock.needsYou.unshift(savedHNeed);
+  currentDock.loops.unshift(savedHLoop);
+  w.document.getElementById("refresh").click(); await settle();
+  // Delayed identifiers-on reply when toggled off mid-flight
+  w.document.getElementById("identifiers").click(); await settle();
+  if (!w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"]`)) {
+    w.document.querySelector(`[data-focus="open-question-${kQ}"]`)?.click(); await tick();
+  }
+  let resDelayed;
+  delayDock = () => new Promise((r) => { resDelayed = r; });
+  w.document.getElementById("refresh").click(); await tick();
+  w.document.getElementById("identifiers").click(); await tick();
+  if (w.document.body.textContent.includes("FICTIONAL-PRIVATE-LANE")) {
+    errs.push("private lane title remained visible immediately after toggling identifiers off while refresh in flight");
+  }
+  delayDock = null; resDelayed(); await settle();
+  if (w.document.body.textContent.includes("FICTIONAL-PRIVATE-LANE")) {
+    errs.push("delayed identifiers-on reply leaked private lane title after identifiers turned off");
+  }
+  if (w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"]`)) {
+    w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await tick();
+  }
+
+  // Adversarial Test I: P2 confirmChange serial guard prevents late confirm A from overwriting B or resurrecting cancelled review
+  let confResolveA, confRejectA;
+  w.document.querySelector(`[data-focus="open-question-${kQ}"]`)?.click(); await tick();
+  w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"] [data-focus="act-resume-${kQ}"]`)?.click(); await settle();
+  deferredConfirm[`api/v1/loops/${kQ}/confirm`] = () => new Promise((r) => { confResolveA = r; });
+  w.document.querySelector('[data-focus="change-confirm"]')?.click(); await tick();
+  deferredPrepare[`api/v1/loops/${kDl}/prepare`] = () => Promise.resolve({ ok: true, status: 200, json: async () => ({ schemaVersion: 1, preview: { action: "archive", key: kDl, title: "Archive B?", confirm: "Confirm archive B", form: "b".repeat(64), expiresAt: "2035-01-01T00:00:00Z", lines: [[{ t: "Archive B." }]], lost: "lost", refused: "refused" } }) });
+  w.document.querySelector(`[data-focus="review-deadline-${kDl}"]`)?.click(); await tick();
+  w.document.querySelector(`.task-drawer[data-drawer-key="${kDl}"] [data-focus="act-archive-${kDl}"]`)?.click(); await settle();
+  confResolveA({ ok: true, status: 200, json: async () => ({ schemaVersion: 1, result: { outcome: "done", text: "Late A finished" } }) });
+  await settle();
+  if (w.document.querySelector('[data-focus="change-confirm"]')?.textContent !== "Confirm archive B") {
+    errs.push("late confirm A overwrote active review B");
+  }
+  if (!w.document.querySelector('[data-bg-outcome="1"]')?.textContent.includes("Late A finished")) {
+    errs.push("superseded confirm A outcome was not preserved separately");
+  }
+  w.document.querySelector('[data-focus="dismiss-bg-outcome"]')?.click(); await tick();
+  w.document.querySelector('[data-focus="change-cancel"]')?.click(); await tick();
+
+  // Uncertain late confirm A must not resurrect a cancelled review
+  w.document.querySelector(`[data-focus="open-question-${kQ}"]`)?.click(); await tick();
+  w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"] [data-focus="act-resume-${kQ}"]`)?.click(); await settle();
+  deferredConfirm[`api/v1/loops/${kQ}/confirm`] = () => new Promise((_, rej) => { confRejectA = rej; });
+  w.document.querySelector('[data-focus="change-confirm"]')?.click(); await tick();
+  w.document.querySelector(`[data-focus="review-deadline-${kDl}"]`)?.click(); await tick();
+  w.document.querySelector(`.task-drawer[data-drawer-key="${kDl}"] [data-focus="act-archive-${kDl}"]`)?.click(); await settle();
+  w.document.querySelector('[data-focus="change-cancel"]')?.click(); await tick();
+  confRejectA(new Error("timeout"));
+  await settle();
+  if (w.document.querySelector('[data-focus="change-result"]')) errs.push("late failed confirm A resurrected cancelled changeBox result");
+  if (!w.document.querySelector('[data-bg-outcome="1"]')?.textContent.includes("uncertain")) {
+    errs.push("late failed confirm A did not surface preserved uncertain outcome");
+  }
+  w.document.querySelector('[data-focus="dismiss-bg-outcome"]')?.click(); await tick();
+  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await tick();
+  deferredPrepare = Object.create(null);
+  deferredConfirm = Object.create(null);
+  currentDock.loops[0].lanes.lanes[0] = { number: 1, state: "waiting", phrase: "Waiting for answer", title: "Schema bump" };
+  currentDock.needsYou[0].note = "Approve schema change in docs/api.md";
+  currentDock.needsYou[0].maskedNote = "Approve schema change in docs/api.md";
 
   // Transition 1b: Original question resolved while loop stays held for a separate bound reason (send allowance)
   currentDock.needsYou[0] = { kind: "held", waiting: "limit", by: "check", key: kQ, loop: "atlas-question", reason: "It reached its limit on messages sent.", waited: "Waiting 1 min", action: "Review send allowance." };

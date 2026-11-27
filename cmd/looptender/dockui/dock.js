@@ -23,7 +23,7 @@
   // What looptender did: worded by the same read as API, served on its own
   // for its size, and read only for the Usage page and a loop's page.
   var USAGE = "api/v1/usage";
-  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false, accountRemove: null, mapMode: "map", mapQuery: "", mapFilter: "all", mapShowRetired: false, mapSelected: null, activeDrawer: null, issueStaleNotice: "", changeSerial: 0, retainedNeeds: [], retainedLoops: Object.create(null), acctFilter: "all", acctDensity: "detailed" };
+  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false, accountRemove: null, mapMode: "map", mapQuery: "", mapFilter: "all", mapShowRetired: false, mapSelected: null, activeDrawer: null, issueStaleNotice: "", changeSerial: 0, supersededChangeResult: null, retainedNeeds: [], retainedLoops: Object.create(null), acctFilter: "all", acctDensity: "detailed" };
 
   var TONES = {
     supervising: "good", waiting_for_you: "attn", waiting_on_limit: "limit", waiting_on_network: "limit", checks_failing: "warn",
@@ -142,6 +142,86 @@
     m = /^loop\/([a-z0-9]+)$/.exec(h);
     if (m) return { view: "loop", key: m[1] };
     return { view: "home" };
+  }
+  function scrubNeedForHiddenIds(n) {
+    if (!n) return n;
+    var out = Object.assign({}, n);
+    if (out.maskedNote) {
+      out.note = out.maskedNote;
+      delete out.maskedNote;
+    } else if (out.noteMasked && state.data && state.data.identifiers) {
+      out.note = "[hidden]";
+    }
+    return out;
+  }
+  function scrubLoopForHiddenIds(l) {
+    if (!l) return l;
+    var out = Object.assign({}, l);
+    delete out.identifiers;
+    if (out.currentRoute) {
+      out.currentRoute = Object.assign({}, out.currentRoute);
+      delete out.currentRoute.name;
+    }
+    if (out.device) {
+      out.device = Object.assign({}, out.device);
+      delete out.device.hostname;
+      delete out.device.hostText;
+    }
+    if (out.archived) {
+      out.archived = Object.assign({}, out.archived);
+      delete out.archived.note;
+    }
+    if (out.archiveLapsed) {
+      out.archiveLapsed = Object.assign({}, out.archiveLapsed);
+      delete out.archiveLapsed.note;
+    }
+    if (out.chain && Array.isArray(out.chain.entries)) {
+      out.chain = Object.assign({}, out.chain, {
+        entries: out.chain.entries.map(function (ent) {
+          var eCopy = Object.assign({}, ent);
+          delete eCopy.id;
+          return eCopy;
+        })
+      });
+    }
+    if (out.lanes && Array.isArray(out.lanes.lanes)) {
+      out.lanes = Object.assign({}, out.lanes, {
+        lanes: out.lanes.lanes.map(function (ln) {
+          var lnCopy = Object.assign({}, ln);
+          if (lnCopy.title || lnCopy.titleEvidence === "recorded" || lnCopy.titleEvidence === "withheld") {
+            lnCopy.titleEvidence = "withheld";
+          }
+          delete lnCopy.title;
+          delete lnCopy.key;
+          return lnCopy;
+        })
+      });
+    }
+    return out;
+  }
+  function scrubRetainedForHiddenIds() {
+    if (state.retainedNeeds && state.retainedNeeds.length) {
+      state.retainedNeeds = state.retainedNeeds.map(scrubNeedForHiddenIds);
+    }
+    if (state.retainedLoops) {
+      var nextLoops = Object.create(null);
+      Object.keys(state.retainedLoops).forEach(function (k) {
+        nextLoops[k] = scrubLoopForHiddenIds(state.retainedLoops[k]);
+      });
+      state.retainedLoops = nextLoops;
+    }
+  }
+  function supersededOutcomeBanner(d) {
+    var bg = state.supersededChangeResult;
+    if (!bg || !bg.result) return null;
+    var bgLoop = effectiveLoopByKey(d, bg.key);
+    var bnr = el("div", "issue-stale-banner");
+    bnr.setAttribute("role", "status");
+    bnr.dataset.bgOutcome = "1";
+    var label = "Earlier action (" + bg.action + (bgLoop ? " on " + bgLoop.name : "") + ") finished (" + bg.result.outcome + "): " + bg.result.text;
+    bnr.appendChild(el("span", null, label));
+    bnr.appendChild(button("Dismiss", "dismiss-bg-outcome", "", function () { state.supersededChangeResult = null; render(false, true); }));
+    return bnr;
   }
   function effectiveNeeds(d) {
     var cur = list(d && d.needsYou);
@@ -461,11 +541,13 @@
     var ids = loopObj && loopObj.identifiers;
     var idParts = includeIds && ids ? [ids.registrationId || "", ids.thread || ""].join(":") : "";
     var laneIds = waitingLanesOf(loopObj).map(function (ln) {
-      return [ln.number || "", ln.loopKey || "", ln.state || "", ln.phrase || "", ln.titleEvidence || "", includeIds ? (ln.key || "") : "", includeIds ? (ln.title || "") : ""].join(":");
+      var laneTitleEv = includeIds ? (ln.titleEvidence || "") : ((ln.titleEvidence === "recorded" || ln.titleEvidence === "withheld") ? "has_title" : (ln.titleEvidence || ""));
+      return [ln.number || "", ln.loopKey || "", ln.state || "", ln.phrase || "", laneTitleEv, includeIds ? (ln.key || "") : "", includeIds ? (ln.title || "") : ""].join(":");
     }).sort().join(",");
     var limIds = list(loopObj && loopObj.limits).filter(function (lm) { return !!lm.reached; }).map(function (lm) {
       return [lm.label || "", lm.phrase || "", lm.effect || ""].join(":");
     }).sort().join(",");
+    var canonMaskedNote = nItem.maskedNote || nItem.note || "";
     return [
       nItem.key || "",
       nItem.kind || "",
@@ -474,7 +556,7 @@
       nItem.since || "",
       nItem.sinceEvidence || "",
       nItem.reason || "",
-      nItem.maskedNote || "",
+      canonMaskedNote,
       includeIds ? (nItem.note || "") : "",
       loopObj ? (loopObj.state || "") : "",
       loopObj ? (loopObj.evidence || "") : "",
@@ -615,7 +697,8 @@
       if (waitLanes.length) {
         waitLanes.forEach(function (ln, idx) {
           if (idx) lanesCell.appendChild(document.createTextNode(", "));
-          var lbl = ln.title || ("Lane " + ln.number);
+          var hasPrivTitle = !!(ln.title || ln.titleEvidence === "recorded" || ln.titleEvidence === "withheld");
+          var lbl = (state.identifiers && ln.title) ? ln.title : ("Lane " + ln.number + (!state.identifiers && hasPrivTitle ? " (title withheld)" : ""));
           if (ln.loopKey) lanesCell.appendChild(link("#/loop/" + ln.loopKey, lbl));
           else lanesCell.appendChild(document.createTextNode(lbl));
         });
@@ -627,7 +710,7 @@
       var thId = loopObj && loopObj.identifiers && loopObj.identifiers.thread;
       kv.appendChild(el("dt", null, "Target thread"));
       var tgtCell = el("dd");
-      if (firstLaneLink) tgtCell.appendChild(link("#/loop/" + firstLaneLink.loopKey, "Open " + (firstLaneLink.loop || firstLaneLink.title || "lane loop")));
+      if (firstLaneLink) tgtCell.appendChild(link("#/loop/" + firstLaneLink.loopKey, "Open " + (firstLaneLink.loop || (state.identifiers && firstLaneLink.title) || "lane loop")));
       else if (state.identifiers && thId) tgtCell.appendChild(copyCommand("div", "bb thread open " + thId, "copy-qthread-" + nItem.key));
       else {
         tgtCell.appendChild(document.createTextNode("Thread identifier hidden or unavailable. "));
@@ -722,7 +805,8 @@
       li.appendChild(lin);
     }
     li.appendChild(el("p", "reason", nItem.reason));
-    var textVal = !state.identifiers && nItem.maskedNote ? nItem.maskedNote : nItem.note;
+    var hideLiveIds = !state.identifiers && !!(state.data && state.data.identifiers);
+    var textVal = !state.identifiers && nItem.maskedNote ? nItem.maskedNote : (hideLiveIds && nItem.noteMasked ? "[hidden]" : nItem.note);
     if (textVal) {
       var noteEl = el("div", "note");
       noteEl.appendChild(el("span", "note-label", "Note left with the hold"));
@@ -1918,6 +2002,8 @@
       bnr.appendChild(button("Dismiss", "dismiss-stale-notice", "", function () { state.issueStaleNotice = ""; render(false, true); }));
       sec.appendChild(bnr);
     }
+    var bgBanner = supersededOutcomeBanner(d);
+    if (bgBanner) sec.appendChild(bgBanner);
 
     var loopLookup = Object.create(null);
     if (state.retainedLoops) Object.keys(state.retainedLoops).forEach(function (k) { loopLookup[k] = state.retainedLoops[k]; });
@@ -2216,9 +2302,10 @@
       li.appendChild(el("span", "dot " + (x.state === "working" ? "dot-good" : x.state === "waiting" ? "dot-attn" : x.state === "failed" ? "dot-warn" : "dot-unknown")));
       li.appendChild(el("span", "lane-state", x.phrase));
       var what = el("span", "lane-what");
-      what.appendChild(el("span", "lane-title", x.title || "Lane " + x.number));
+      var laneTitle = state.identifiers ? x.title : "";
+      what.appendChild(el("span", "lane-title", laneTitle || "Lane " + x.number));
       // A recorded title is the person's own text: shown with identifiers only.
-      if (!x.title && x.titleEvidence === "withheld") what.appendChild(el("span", "sub", " · title withheld"));
+      if (!laneTitle && (x.titleEvidence === "withheld" || x.titleEvidence === "recorded" || (!state.identifiers && x.title))) what.appendChild(el("span", "sub", " \u00B7 title withheld"));
       if (x.loop) {
         what.appendChild(document.createTextNode(" · also a registered loop: "));
         what.appendChild(link("#/loop/" + x.loopKey, x.loop));
@@ -2374,6 +2461,8 @@
     // The standing wake policy, when status warns about it. Names no path.
     if (list(l.wakePolicy).length) pane.appendChild(el("p", "detail wake-policy", say(l.wakePolicy)));
     if (l.sessionpipeWake && l.sessionpipeWake.text) pane.appendChild(el("p", "detail sessionpipe-wake", "Wake: " + l.sessionpipeWake.text));
+    var bgOutcome = supersededOutcomeBanner(d);
+    if (bgOutcome) pane.appendChild(bgOutcome);
     var change = changeBox(l);
     if (change) pane.appendChild(change);
     if (l.migrationReview && l.migrationReview.availability === "available" && l.migrationReview.counts && l.migrationReview.counts.unfinished > 0) {
@@ -2787,7 +2876,8 @@
         return;
       }
     }
-    state.changeSerial = (state.changeSerial || 0) + 1;
+    var seq = state.changeSerial = (state.changeSerial || 0) + 1;
+    state.supersededChangeResult = null;
     state.change = { key: c.key, action: c.action, preview: p, busy: true, issueFp: c.issueFp || "", issueBaseFp: c.issueBaseFp || "", issueIdsMode: !!c.issueIdsMode };
     render(false, true);
     var body = { action: p.action };
@@ -2797,14 +2887,29 @@
       if (p.stop.immediately) body.immediately = true;
     }
     (c.action === "set_send_allowance" ? allowancePost(c.key, "confirm", p.form) : post("api/v1/loops/" + c.key + "/confirm", p.form, body))
-      .then(function (d) { state.change = { key: c.key, action: c.action, result: d.result }; })
+      .then(function (d) {
+        if (seq !== state.changeSerial) {
+          state.supersededChangeResult = { key: c.key, action: c.action, result: d.result };
+          return;
+        }
+        state.change = { key: c.key, action: c.action, result: d.result };
+      })
       // A refusal (4xx) comes before anything is done. Anything else, or no
       // reply: whether it was saved is not known, and it is not sent again.
       .catch(function (err) {
         var refused = err && err.status >= 400 && err.status < 500;
-        state.change = { key: c.key, action: c.action, result: refused ? { outcome: "refused", retry: c.action !== "set_send_allowance", text: p.refused } : { outcome: "uncertain", text: p.lost } };
+        var res = refused ? { outcome: "refused", retry: c.action !== "set_send_allowance", text: p.refused } : { outcome: "uncertain", text: p.lost };
+        if (seq !== state.changeSerial) {
+          state.supersededChangeResult = { key: c.key, action: c.action, result: res };
+          return;
+        }
+        state.change = { key: c.key, action: c.action, result: res };
       })
       .then(function () {
+        if (seq !== state.changeSerial) {
+          render(false);
+          return;
+        }
         render(false, true);
         focusOn("change-result");
         announce(state.change.result.text);
@@ -2897,7 +3002,7 @@
       }
       var again = el("div", "change-buttons");
       if (c.result.retry && changesOn()) again.appendChild(button("Review again", "change-retry", "", function () { prepareChange(l.key, c.action); }));
-      again.appendChild(button("Close", "change-close", "", function () { state.change = null; render(false, true); focusOn("act-" + c.action); }));
+      again.appendChild(button("Close", "change-close", "", function () { state.changeSerial = (state.changeSerial || 0) + 1; state.change = null; render(false, true); focusOn("act-" + c.action); }));
       box.appendChild(again);
       if (inlineOnly || !changesOn()) return box;
     }
@@ -4755,12 +4860,15 @@
           if (prevData) list(prevData.loops).forEach(function (l) { prevLoops[l.key] = l; });
           var keptNeeds = [];
           var keptLoops = Object.create(null);
+          var hideIds = !d.identifiers || !state.identifiers;
           prevNeeds.forEach(function (pn) {
             if (!seenNeedKeys[pn.key]) {
               var cloneNeed = Object.assign({}, pn, { _retainedIncomplete: true });
-              if (!d.identifiers && cloneNeed.noteMasked && cloneNeed.maskedNote) cloneNeed.note = cloneNeed.maskedNote;
+              if (hideIds) cloneNeed = scrubNeedForHiddenIds(cloneNeed);
               keptNeeds.push(cloneNeed);
-              if (!seenLoopMap[pn.key] && prevLoops[pn.key]) keptLoops[pn.key] = prevLoops[pn.key];
+              if (!seenLoopMap[pn.key] && prevLoops[pn.key]) {
+                keptLoops[pn.key] = hideIds ? scrubLoopForHiddenIds(prevLoops[pn.key]) : prevLoops[pn.key];
+              }
             }
           });
           state.retainedNeeds = keptNeeds;
@@ -4816,6 +4924,7 @@
     $("identifiers").addEventListener("click", function () {
       state.identifiers = !state.identifiers;
       this.setAttribute("aria-pressed", String(state.identifiers));
+      if (!state.identifiers) scrubRetainedForHiddenIds();
       // Hide (or keep hidden) at once from the data in hand: identifiers and
       // unmasked notes never stay on screen waiting for a read that is slow or failing.
       render(false, true);
