@@ -187,6 +187,8 @@ looptender complete -c /private/example-loop/looptender.yaml --note "Task verifi
 
 `stop` stops the supervised conversation at the next check (`--lanes` also stops the conversations it started); `complete` records a declaration, not a verification (unreleased source [binds it to the current goal revision](docs/goals.md#completion-declarations-unreleased)); `resume` clears the holds a person or looptender set. The [setup guide](docs/setup.md) covers scripted setup, accounts, limits and Windows; [operations](docs/operations.md) covers every control.
 
+Unreleased source includes a read-only [`pr-ready` helper](docs/pr-ready.md) beside `ci-wait`. It prints a commit to pin only for its conservative supported evidence subset; queue policy and head-only CI evidence remain unsupported.
+
 ## Where it stands
 
 - **Latest release:** v0.3.0 (26 November 2026; [notes](docs/releases/v0.3.0.md), folding the earlier unpublished v0.2.1 preparation).

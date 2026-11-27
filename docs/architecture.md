@@ -18,7 +18,7 @@ A manually created successor with separate loop state has no inferred relationsh
 ## Packages
 
 ```
-cmd/looptender               CLI: start, service, tick, daemon, status, context, timeline, goal, assignment, registry, client status/pause/stop/prepare-resume/resume/review/apply, dock, panel, telegram, transfer, control, fallbacks, report, adapter check, pr-backlog, ci-wait, net-retry
+cmd/looptender               CLI: start, service, tick, daemon, status, context, timeline, goal, assignment, registry, client status/pause/stop/prepare-resume/resume/review/apply, dock, panel, telegram, transfer, control, fallbacks, report, adapter check, pr-backlog, pr-ready, ci-wait, net-retry
 internal/legacyretire       explicit manual legacy retirement: private attempt journal, application guards and Darwin native observer; no replacement launch
 internal/config             a loop's configuration file (looptender.yaml, or keepgoing.yaml) and fallbacks.yaml: loading, defaults, validation
 internal/envvar             the environment variables' two names: LOOPTENDER_X, and the earlier KEEPGOING_X
@@ -56,6 +56,7 @@ internal/scenario           test-only scenario suite that drives the built binar
 internal/daemoninfo         private loopback diagnostics and authenticated shutdown transport for a running daemon
 internal/netretry           retry only while the network is down
 internal/ciwait             wait for CI on an exact commit
+internal/prready            bounded read-only head/base/check/review evidence; conservative readiness subset
 internal/router/route       the account router's decision, pure: which subscription serves a request of a conversation; nothing uses it yet (design/router.md)
 internal/router/front       the account router's forwarding front: one fixed upstream, a bounded wait for a decision, unchanged pass-through on any failure; what it knows of a provider is a Profile (Claude Code, and Codex on paper); standard library only, reads and writes no file; nothing starts it yet
 internal/router/limits      a provider's limit headers, as the front reports them, read into the routing decision's windows; pure
