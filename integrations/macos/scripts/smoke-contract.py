@@ -15,6 +15,11 @@ with tempfile.TemporaryDirectory(prefix="keepgoing-menu-smoke-") as temporary:
     native = work / "contract-smoke"
     subprocess.run(["swiftc", *map(str, sorted((root / "Sources/KeepgoingMenuCore").glob("*.swift"))),
                     str(root / "scripts/ContractSmoke.swift"), "-o", str(native)], check=True)
+    provenance = work / "quota-provenance-smoke"
+    subprocess.run(["swiftc", *map(str, sorted((root / "Sources/KeepgoingMenuCore").glob("*.swift"))),
+                    str(root / "Tests/KeepgoingMenuCoreTests/QuotaProvenanceFixture.swift"),
+                    str(root / "scripts/QuotaProvenanceSmoke.swift"), "-o", str(provenance)], check=True)
+    subprocess.run([str(provenance)], check=True, timeout=10)
     usage = work / "usage-updating-smoke"
     subprocess.run(["swiftc", *map(str, sorted((root / "Sources/KeepgoingMenuCore").glob("*.swift"))),
                     str(root / "scripts/UsageUpdatingSmoke.swift"), "-o", str(usage)], check=True)

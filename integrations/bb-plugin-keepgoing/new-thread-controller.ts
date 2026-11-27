@@ -112,7 +112,7 @@ export function createNewThreadController(d: NewThreadDependencies) {
     let attempted: { loop: string; configPath: string } | undefined;
     try {
       const supervision = await d.supervision(threadId);
-      if (supervision !== "none") { fail(job, supervision === "supervised" ? "Another loop already supervises this thread. Nothing was created or started." : "looptender could not check whether this thread is already supervised, so it set nothing up. Refresh, then use Add to Looptender."); return; }
+      if (supervision !== "none") { fail(job, supervision === "supervised" ? "Another loop is already registered for this thread; this does not establish current activity. Nothing was created or started. Open its diagnostics to review the configured task, holds and supported reuse or attachment choices." : "looptender could not check whether this thread is already supervised, so it set nothing up. Refresh, then use Add to Looptender."); return; }
       const capacity = await d.capacity();
       if (capacity.used >= capacity.max) { fail(job, FULL(capacity)); return; }
       const preview = await d.setup({ action: "preview", threadId, name: loopName(ready.project, d.id()), task, withGoal: true }, job.bounds);

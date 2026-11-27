@@ -17,14 +17,14 @@ test("card shows completion and evidence; failed refresh labels retained data an
     forThread: () => { if (phase === "lost") throw new Error("PRIVATE RPC ERROR"); return { loops: [loop], errors: [] }; },
   } });
   try {
-    const label = await ui.findByText("looptender: completed");
+    const label = await ui.findByText("looptender: loop completion declared");
     const title = label.closest("[title]")?.getAttribute("title") ?? ui.container.querySelector("[title]")?.getAttribute("title") ?? "";
     assert.match(title, /Goal: goal_0123456789abcdef0123456789abcdef.*revision 2/);
-    assert.match(title, /Task completion: declared; not independently verified/);
+    assert.match(title, /Loop completion: declared for this loop; project and current thread work are not independently verified/);
     assert.match(title, /Current target: thr_example/); assert.match(title, /Last recorded action: wake · failed/);
     assert.match(title, /running supervisor not confirmed/); assert.match(title, /Last sent: unavailable/);
     // A held loop says where a person resumes it; the plugin offers no Resume.
-    assert.ok(ui.getByText(/^Marked finished\. Resuming it reopens it from the looptender panel \(looptender panel\), or from a terminal outside BB with looptender resume\./)); assert.equal(ui.queryByRole("button", { name: "Resume" }), null);
+    assert.ok(ui.getByText(/^Completion declared for this loop\. Project and current thread work are not verified; new messages do not clear this hold\./)); assert.equal(ui.queryByRole("button", { name: "Resume" }), null);
     assert.ok(ui.getByText('looptender resume -c "/private/example/keepgoing.yaml"'));
     phase = "lost"; await ui.behavior.emitRealtime("changed", {});
     await ui.findByRole("alert"); assert.ok(ui.getByText(/previous snapshot/));
@@ -56,7 +56,7 @@ test("banner names a different target and expands historical evidence with expli
   try {
     await summary.findByRole("button", { name: "looptender: watching thr_example" });
     await details.findByText(/Current target: thr_example.*not this thread/);
-    assert.ok(details.getByText(/Task completion: declared; not independently verified/));
+    assert.ok(details.getByText(/Loop completion: declared for this loop; project and current thread work are not independently verified/));
     assert.ok(details.getByText(/Goal: goal_0123456789abcdef0123456789abcdef.*revision 2/));
     assert.ok(details.getByText(/Last recorded action: wake · failed/));
     assert.ok(details.getByText(/External scheduler health: not inspected/));

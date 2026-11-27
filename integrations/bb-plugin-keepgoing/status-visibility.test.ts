@@ -34,7 +34,7 @@ test("deadline, send allowance and a low disk reach the card's details; an ok di
     assert.deepEqual(reasonLines("enabled", null, d), [
       `Deadline reached (${new Date("2026-01-01T00:00:00Z").toLocaleString()}); evaluated on the next check`,
       "Send limit reached: 40/40 attempts reserved; 0 remaining",
-      "Disk: the volume that holds the state directory is filling (900 MiB free of 100 GiB, below 2.0 GiB): free space on it before records fail to save",
+      "State-volume disk: low (measurement evidence unavailable) · measurement time/provenance unavailable · source unavailable. the volume that holds the state directory is filling (900 MiB free of 100 GiB, below 2.0 GiB): free space on it before records fail to save",
     ]);
   } finally { await w.dispose(); }
   const ok = await loopWith({ ...healthy, deadline: "2099-01-01T00:00:00Z", deadlineReached: false, sendAllowance: { max: 40, used: 3, remaining: 37, reached: false }, diskSpace: { level: "ok" } });
@@ -156,4 +156,25 @@ test("the listing says records unreadable, as the card does, where the control s
   } finally { await w.dispose(); }
   const ok = await loopWith(healthy);
   try { assert.match((await ok.listing()).split("\n").find(l => l.startsWith("example-loop"))!, /^example-loop\tenabled\t/); } finally { await ok.dispose(); }
+});
+
+test("disk probe evidence crosses the CLI boundary unchanged; legacy and unavailable readings are honest", async () => {
+  for (const diskSpace of [
+    { level: "critical", message: "Fictional volume nearly full", measuredAt: "2026-01-02T03:04:05Z", source: "filesystem" },
+    { level: "low", message: "Legacy warning" },
+    { level: "unknown", source: "filesystem" },
+    { level: "critical", message: "Warning", measuredAt: { private: "not carried" }, source: "/private/example/not-carried" },
+  ]) {
+    const w = await loopWith({ ...healthy, diskSpace });
+    try {
+      const { loops, errors } = await w.forThread();
+      assert.deepEqual(errors, []); assert.equal(loops.length, 1);
+      const d = loops[0]!.details;
+      assert.equal(d.disk?.level, diskSpace.level);
+      assert.equal(d.disk?.measuredAt, typeof diskSpace.measuredAt === "string" ? diskSpace.measuredAt : undefined);
+      assert.notEqual(d.disk?.measuredAt, d.readAt);
+      assert.equal(d.disk?.source, diskSpace.source === "filesystem" ? "filesystem" : undefined);
+      assert.ok(d.disk?.message); assert.ok(!JSON.stringify(d).includes("not-carried"));
+    } finally { await w.dispose(); }
+  }
 });

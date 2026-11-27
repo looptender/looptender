@@ -23,11 +23,11 @@
   // What looptender did: worded by the same read as API, served on its own
   // for its size, and read only for the Usage page and a loop's page.
   var USAGE = "api/v1/usage";
-  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false, accountRemove: null };
+  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false, accountRemove: null, mapMode: "map", mapQuery: "", mapFilter: "all", mapShowRetired: false, mapSelected: null, activeDrawer: null, issueStaleNotice: "", changeSerial: 0, supersededChangeResult: null, retainedNeeds: [], retainedLoops: Object.create(null), acctFilter: "all", acctDensity: "detailed" };
 
   var TONES = {
     supervising: "good", waiting_for_you: "attn", waiting_on_limit: "limit", waiting_on_network: "limit", checks_failing: "warn",
-    not_checked_recently: "warn", outside_hours: "calm", paused: "calm", stopped: "calm", finished: "calm", off: "calm", unknown: "unknown"
+    not_checked_recently: "warn", outside_hours: "calm", recovering: "calm", paused: "calm", stopped: "calm", finished: "calm", off: "calm", unknown: "unknown"
   };
   // Icons: one 20px grid, one stroke weight.
   var ICONS = {
@@ -45,7 +45,7 @@
   };
   var STATE_ICON = {
     supervising: "good", waiting_for_you: "attn", waiting_on_limit: "limit", waiting_on_network: "limit", checks_failing: "warn",
-    not_checked_recently: "warn", outside_hours: "limit", paused: "paused", stopped: "stopped", finished: "finished", off: "off", unknown: "unknown"
+    not_checked_recently: "warn", outside_hours: "limit", recovering: "limit", paused: "paused", stopped: "stopped", finished: "finished", off: "off", unknown: "unknown"
   };
 
   function $(id) { return document.getElementById(id); }
@@ -143,8 +143,100 @@
     if (m) return { view: "loop", key: m[1] };
     return { view: "home" };
   }
+  function scrubNeedForHiddenIds(n) {
+    if (!n) return n;
+    var out = Object.assign({}, n);
+    if (out.maskedNote) {
+      out.note = out.maskedNote;
+      delete out.maskedNote;
+    } else if (out.noteMasked && state.data && state.data.identifiers) {
+      out.note = "[hidden]";
+    }
+    return out;
+  }
+  function scrubLoopForHiddenIds(l) {
+    if (!l) return l;
+    var out = Object.assign({}, l);
+    delete out.identifiers;
+    if (out.currentRoute) {
+      out.currentRoute = Object.assign({}, out.currentRoute);
+      delete out.currentRoute.name;
+    }
+    if (out.device) {
+      out.device = Object.assign({}, out.device);
+      delete out.device.hostname;
+      delete out.device.hostText;
+    }
+    if (out.archived) {
+      out.archived = Object.assign({}, out.archived);
+      delete out.archived.note;
+    }
+    if (out.archiveLapsed) {
+      out.archiveLapsed = Object.assign({}, out.archiveLapsed);
+      delete out.archiveLapsed.note;
+    }
+    if (out.chain && Array.isArray(out.chain.entries)) {
+      out.chain = Object.assign({}, out.chain, {
+        entries: out.chain.entries.map(function (ent) {
+          var eCopy = Object.assign({}, ent);
+          delete eCopy.id;
+          return eCopy;
+        })
+      });
+    }
+    if (out.lanes && Array.isArray(out.lanes.lanes)) {
+      out.lanes = Object.assign({}, out.lanes, {
+        lanes: out.lanes.lanes.map(function (ln) {
+          var lnCopy = Object.assign({}, ln);
+          if (lnCopy.title || lnCopy.titleEvidence === "recorded" || lnCopy.titleEvidence === "withheld") {
+            lnCopy.titleEvidence = "withheld";
+          }
+          delete lnCopy.title;
+          delete lnCopy.key;
+          return lnCopy;
+        })
+      });
+    }
+    return out;
+  }
+  function scrubRetainedForHiddenIds() {
+    if (state.retainedNeeds && state.retainedNeeds.length) {
+      state.retainedNeeds = state.retainedNeeds.map(scrubNeedForHiddenIds);
+    }
+    if (state.retainedLoops) {
+      var nextLoops = Object.create(null);
+      Object.keys(state.retainedLoops).forEach(function (k) {
+        nextLoops[k] = scrubLoopForHiddenIds(state.retainedLoops[k]);
+      });
+      state.retainedLoops = nextLoops;
+    }
+  }
+  function supersededOutcomeBanner(d) {
+    var bg = state.supersededChangeResult;
+    if (!bg || !bg.result) return null;
+    var bgLoop = effectiveLoopByKey(d, bg.key);
+    var bnr = el("div", "issue-stale-banner");
+    bnr.setAttribute("role", "status");
+    bnr.dataset.bgOutcome = "1";
+    var label = "Earlier action (" + bg.action + (bgLoop ? " on " + bgLoop.name : "") + ") finished (" + bg.result.outcome + "): " + bg.result.text;
+    bnr.appendChild(el("span", null, label));
+    bnr.appendChild(button("Dismiss", "dismiss-bg-outcome", "", function () { state.supersededChangeResult = null; render(false, true); }));
+    return bnr;
+  }
+  function effectiveNeeds(d) {
+    var cur = list(d && d.needsYou);
+    if (!state.retainedNeeds || !state.retainedNeeds.length) return cur;
+    var seen = Object.create(null);
+    cur.forEach(function (n) { seen[n.key] = true; });
+    var out = cur.slice();
+    state.retainedNeeds.forEach(function (n) { if (!seen[n.key]) out.push(n); });
+    return out;
+  }
+  function effectiveLoopByKey(d, key) {
+    return list(d && d.loops).filter(function (l) { return l.key === key; })[0] || (state.retainedLoops && state.retainedLoops[key]) || null;
+  }
   function loopByKey(key) { return list(state.data.loops).filter(function (l) { return l.key === key; })[0]; }
-  function needFor(key) { return list(state.data.needsYou).filter(function (n) { return n.key === key; })[0]; }
+  function needFor(key) { return effectiveNeeds(state.data).filter(function (n) { return n.key === key; })[0]; }
 
   // ---- Small pieces shared by the views ----
 
@@ -368,60 +460,437 @@
     if (l.supervisor !== "not_answering" || !l.lastCheck || l.lastCheck.ageSeconds == null) return "";
     return "\u00B7 last check " + spanWords(l.lastCheck.ageSeconds * 1000) + " ago";
   }
-  function needCard(n, onOverview) {
-    var li = el("li", "need");
-    var head = el("div", "need-head");
-    if (onOverview) {
-      var h = el("h2", "need-name");
-      h.appendChild(link("#/loop/" + n.key, n.loop));
-      head.appendChild(h);
+  function uiBadge(toneClass, textValue) { return el("span", "ui-badge" + (toneClass ? " ui-badge-" + toneClass : ""), textValue); }
+  function buildRevisionNote(verStr) {
+    if (!verStr || verStr === "dev" || verStr === "unavailable") return "source revision unknown (dev)";
+    if (/-dev\.[0-9a-f]+/i.test(verStr)) return "embedded revision";
+    return "release label · commit revision not embedded";
+  }
+  function countVersionDiffs(d) {
+    var vs = (d && d.versions) || {}, rows = list(vs.rows), bf = (d && d.buildFreshness) || {};
+    var behindCount = typeof vs.behind === "number" ? vs.behind : 0;
+    var differCount = 0;
+    rows.forEach(function (rowItem) {
+      if (rowItem.availability === "different" || rowItem.availability === "different_file") differCount++;
+    });
+    if (!behindCount && !differCount && typeof bf.notOnIt === "number") differCount = bf.notOnIt;
+    return behindCount + differCount;
+  }
+  function renderBuildPill(d) {
+    var pillEl = $("build-pill");
+    if (!pillEl) return;
+    var verStr = state.server && typeof state.server.version === "string" ? state.server.version : "";
+    if (!verStr && !d) { pillEl.hidden = true; return; }
+    var shownVer = (!verStr || verStr === "dev") ? "Build unknown (dev)" : verStr;
+    var diffs = countVersionDiffs(d);
+    pillEl.hidden = false;
+    pillEl.classList.toggle("is-diff", diffs > 0);
+    pillEl.textContent = diffs > 0 ? shownVer + " \u00B7 " + diffs + " differ" : shownVer;
+    pillEl.title = shownVer + " (" + buildRevisionNote(verStr) + "). Inspect Versions.";
+  }
+
+  function isLoopSuperseded(loopObj) {
+    return !!(loopObj && ((loopObj.hold && loopObj.hold.state === "superseded") || loopObj.phrase === "Superseded" || (loopObj.archived && loopObj.archived.continuedIn)));
+  }
+  function isLoopRetired(loopObj) {
+    return !!(loopObj && (loopObj.inactive || loopObj.state === "archived" || isLoopSuperseded(loopObj)));
+  }
+  function countAccountDrift() {
+    var src = (state.data && state.data.accounts && list(state.data.accounts.cards)) || (savedAccounts.status === "ready" && savedAccounts.data && list(savedAccounts.data.cards)) || [];
+    return src.filter(function (cItem) { return cItem.attention === "context_changed" || cItem.reason === "context_changed"; });
+  }
+  function categorizeNeeds(d) {
+    var items = effectiveNeeds(d), dec = [], chk = [], unr = [];
+    items.forEach(function (nItem) {
+      var kindStr = nItem.waiting || "";
+      if (kindStr === "checks" || (!kindStr && (nItem.kind === "overdue" || nItem.kind === "build_replaced"))) chk.push(nItem);
+      else if (kindStr === "unreadable" || kindStr === "unknown" || (!kindStr && nItem.kind === "unreadable")) unr.push(nItem);
+      else dec.push(nItem);
+    });
+    var loopsArr = list(d && d.loops);
+    var activeLoops = [], retiredLoops = [], atLimitLoops = [];
+    loopsArr.forEach(function (loopObj) {
+      if (isLoopRetired(loopObj)) retiredLoops.push(loopObj);
+      else activeLoops.push(loopObj);
+      if (!isLoopRetired(loopObj) && loopObj.state === "waiting_on_limit") atLimitLoops.push(loopObj);
+    });
+    return {
+      decisions: dec,
+      checks: chk,
+      unreadable: unr,
+      all: items,
+      activeLoops: activeLoops,
+      retiredLoops: retiredLoops,
+      atLimit: atLimitLoops,
+      driftCards: countAccountDrift()
+    };
+  }
+  function waitingLanesOf(loopObj) {
+    return list(loopObj && loopObj.lanes && loopObj.lanes.lanes).filter(function (laneRow) { return laneRow.state === "waiting"; });
+  }
+  function currentChainRouteKey(loopObj) {
+    var entries = list(loopObj && loopObj.chain && loopObj.chain.entries);
+    var cur = entries.filter(function (e) { return !!e.current; })[0] || entries[0] || null;
+    return cur && cur.route ? cur.route : "";
+  }
+  function issueFingerprint(nItem, loopObj, includeIdentifiers) {
+    if (!nItem) return "";
+    var includeIds = includeIdentifiers !== false;
+    var cr = loopObj && loopObj.currentRoute;
+    var crParts = cr ? [cr.availability || "", cr.role || "", includeIds ? (cr.name || "") : "", cr.tool || "", cr.provider || "", cr.model || ""].join(":") : "";
+    var ids = loopObj && loopObj.identifiers;
+    var idParts = includeIds && ids ? [ids.registrationId || "", ids.thread || ""].join(":") : "";
+    var laneIds = waitingLanesOf(loopObj).map(function (ln) {
+      var laneTitleEv = includeIds ? (ln.titleEvidence || "") : ((ln.titleEvidence === "recorded" || ln.titleEvidence === "withheld") ? "has_title" : (ln.titleEvidence || ""));
+      return [ln.number || "", ln.loopKey || "", ln.state || "", ln.phrase || "", laneTitleEv, includeIds ? (ln.key || "") : "", includeIds ? (ln.title || "") : ""].join(":");
+    }).sort().join(",");
+    var limIds = list(loopObj && loopObj.limits).filter(function (lm) { return !!lm.reached; }).map(function (lm) {
+      return [lm.label || "", lm.phrase || "", lm.effect || ""].join(":");
+    }).sort().join(",");
+    var canonMaskedNote = nItem.maskedNote || nItem.note || "";
+    return [
+      nItem.key || "",
+      nItem.kind || "",
+      nItem.waiting || "",
+      nItem.by || "",
+      nItem.since || "",
+      nItem.sinceEvidence || "",
+      nItem.reason || "",
+      canonMaskedNote,
+      includeIds ? (nItem.note || "") : "",
+      loopObj ? (loopObj.state || "") : "",
+      loopObj ? (loopObj.evidence || "") : "",
+      loopObj && loopObj.hold ? [loopObj.hold.state || "", loopObj.hold.since || "", loopObj.hold.sinceEvidence || ""].join(":") : "",
+      loopObj && loopObj.waiting ? [loopObj.waiting.kind || "", loopObj.waiting.by || "", loopObj.waiting.since || ""].join(":") : "",
+      crParts,
+      currentChainRouteKey(loopObj),
+      loopObj ? (loopObj.provider || "") : "",
+      loopObj ? (loopObj.model || "") : "",
+      loopObj && loopObj.moved ? String(!!loopObj.moved.held) : "",
+      loopObj && loopObj.archived ? (loopObj.archived.at || "") : "",
+      loopObj && loopObj.lineage ? [loopObj.lineage.count || 0, loopObj.lineage.from || ""].join(":") : "",
+      loopObj && loopObj.lanes ? (loopObj.lanes.availability || "") : "",
+      idParts,
+      laneIds,
+      limIds
+    ].join("|");
+  }
+  function taskUnconfirmedText(d, nItem, loopObj) {
+    if (state.failed) return "Unconfirmed \u2014 last read failed; showing retained snapshot";
+    if (nItem && nItem._retainedIncomplete) return "Unconfirmed \u2014 omitted from incomplete read; not confirmed resolved";
+    if (d && d.complete === false) return "Unconfirmed \u2014 read was incomplete";
+    if (loopObj && loopObj.evidence === "partial") return "Unconfirmed \u2014 loop evidence is partial";
+    if (loopObj && loopObj.evidence === "unavailable") return "Unconfirmed \u2014 loop evidence is unavailable";
+    return "";
+  }
+  function reconcileActiveIssue(d) {
+    if (!d || state.failed) return;
+    var curIdsMode = !!d.identifiers;
+    if (state.activeDrawer) {
+      var drKey = state.activeDrawer.key;
+      var curNeed = effectiveNeeds(d).filter(function (x) { return x.key === drKey; })[0] || null;
+      var curLoop = effectiveLoopByKey(d, drKey);
+      if (!curNeed) {
+        if (curLoop && isLoopSuperseded(curLoop)) state.issueStaleNotice = curLoop.name + " is now superseded; previous task flow was cleared.";
+        else state.issueStaleNotice = "";
+        state.activeDrawer = null;
+      } else if (!curNeed._retainedIncomplete) {
+        var nextFullFp = issueFingerprint(curNeed, curLoop, true);
+        var nextBaseFp = issueFingerprint(curNeed, curLoop, false);
+        var fpMismatch = curIdsMode === state.activeDrawer.idsMode ? nextFullFp !== state.activeDrawer.fp : nextBaseFp !== state.activeDrawer.baseFp;
+        if (fpMismatch) {
+          state.activeDrawer = null;
+          state.issueStaleNotice = "Issue details updated for " + curNeed.loop + " (target, route, thread, or hold changed). Review current state before acting.";
+        } else if (curIdsMode !== state.activeDrawer.idsMode) {
+          state.activeDrawer.idsMode = curIdsMode;
+          state.activeDrawer.fp = nextFullFp;
+          state.activeDrawer.baseFp = nextBaseFp;
+        }
+      }
     }
-    head.appendChild(el("span", "waited", n.waited || "Waiting time unknown"));
+    if (state.change && state.change.issueFp) {
+      var chKey = state.change.key;
+      var chNeed = effectiveNeeds(d).filter(function (x) { return x.key === chKey; })[0] || null;
+      var chLoop = effectiveLoopByKey(d, chKey);
+      if (d.complete === false && (!chNeed || chNeed._retainedIncomplete || (chLoop && chLoop.evidence !== "available"))) {
+        state.changeSerial = (state.changeSerial || 0) + 1;
+        state.change = null;
+        state.issueStaleNotice = "Read was incomplete; previous pending review was cancelled until a complete read confirms current state.";
+      } else {
+        var chNextFp = chNeed ? issueFingerprint(chNeed, chLoop, true) : "";
+        var chNextBaseFp = chNeed ? issueFingerprint(chNeed, chLoop, false) : "";
+        var chFpMismatch = chNeed && (curIdsMode === state.change.issueIdsMode ? chNextFp !== state.change.issueFp : chNextBaseFp !== state.change.issueBaseFp);
+        var changedOut = !chNeed || chNeed._retainedIncomplete || (chLoop && (isLoopRetired(chLoop) || isLoopSuperseded(chLoop))) || chFpMismatch;
+        if (changedOut) {
+          state.changeSerial = (state.changeSerial || 0) + 1;
+          state.issueStaleNotice = chLoop && isLoopSuperseded(chLoop)
+            ? chLoop.name + " was superseded on the latest read. Previous pending review was cancelled."
+            : "Issue, target, or hold state updated before confirming" + (chNeed ? " for " + chNeed.loop : "") + ". Previous pending review was cancelled.";
+          state.change = null;
+        } else if (curIdsMode !== state.change.issueIdsMode) {
+          state.change.issueIdsMode = curIdsMode;
+          state.change.issueFp = chNextFp;
+          state.change.issueBaseFp = chNextBaseFp;
+        }
+      }
+    }
+  }
+  function verifiedStopCause(nItem, loopObj) {
+    var issuesArr = list(loopObj && loopObj.issues);
+    var reasonStr = (nItem && nItem.reason) || "";
+    if (loopObj && loopObj.supervisor === "not_answering") return { label: "Supervisor did not answer", detail: "A recorded daemon did not answer status checks just now." };
+    if (/cannot load the configuration file/i.test(reasonStr) || issuesArr.some(function (x) { return /config/i.test(x); })) return { label: "Configuration unreadable", detail: "The daemon could not load the loop's configuration file." };
+    if (nItem && (nItem.kind === "build_replaced" || /replaced from this panel/i.test(reasonStr))) return { label: "Check file replaced before checks stopped", detail: "A panel build update changed the check file before checks stopped." };
+    if (/Nothing is supervising/i.test(reasonStr) || (loopObj && loopObj.checkedBy && loopObj.checkedBy.kind === "none")) return { label: "No scheduler on record", detail: "Nothing has checked this loop since it was enabled, resumed, or moved." };
+    if (issuesArr.length) return { label: issuesArr[0], detail: "Reported issue in loop records." };
+    return { label: "Cause unknown from saved records", detail: "Saved records show overdue checks without an identified scheduler failure cause." };
+  }
+  function currentDeadlineLimit(loopObj) {
+    return list(loopObj && loopObj.limits).filter(function (x) { return /deadline/i.test(x.label || ""); })[0] || null;
+  }
+  function isDeadlineNeed(nItem, loopObj) {
+    return !!((nItem && /deadline/i.test(nItem.reason || "")) || (currentDeadlineLimit(loopObj) && currentDeadlineLimit(loopObj).reached));
+  }
+  function isSendAllowanceNeed(nItem, loopObj) {
+    var hasSendLimit = list(loopObj && loopObj.limits).some(function (x) { return x.reached && /send|message/i.test(x.label || ""); });
+    return !!((nItem && /limit on messages sent|send allowance/i.test(nItem.reason || "")) || hasSendLimit);
+  }
+  function renderResumeFallback(n, isQuestion) {
+    if (n.resume && !changesOn()) {
+      var fold = el("details", "cli-fold");
+      fold.appendChild(el("summary", null, isQuestion ? "Terminal fallback (only if parent hold remains)" : "Terminal resume command (read-only panel)"));
+      var body = el("div", "cli-fold-body");
+      body.appendChild(el("p", "sub resume-where", isQuestion ? "If answering outside the panel leaves a separate parent hold, run:" : "This page cannot resume a loop. In a terminal, run:"));
+      var cmdEl = copyCommand("p", n.resume, "copy-resume-" + n.key, "resume-where-" + n.key);
+      cmdEl.classList.add("resume-command");
+      body.appendChild(cmdEl);
+      var where = el("p", "sub resume-where");
+      where.id = "resume-where-" + n.key;
+      put(where, ["CONFIG is the path of " + n.loop + "'s configuration file; ", el("code", null, "looptender registry list --private"), " lists it."]);
+      body.appendChild(where);
+      fold.appendChild(body);
+      return fold;
+    }
+    return null;
+  }
+  function taskDrawerBox(nItem, loopObj) {
+    var dr = state.activeDrawer;
+    if (!dr || dr.key !== nItem.key) return null;
+    var boxEl = el("div", "task-drawer");
+    boxEl.dataset.drawerKey = nItem.key;
+    boxEl.dataset.drawerMode = dr.mode;
+    var head = el("div", "task-drawer-head");
+    var uncText = taskUnconfirmedText(state.data, nItem, loopObj);
+    var readPaused = !!(state.failed || (nItem && nItem._retainedIncomplete));
+    var fpFull = issueFingerprint(nItem, loopObj, true);
+    var fpBase = issueFingerprint(nItem, loopObj, false);
+    var idsMode = !!(state.data && state.data.identifiers);
+    if (dr.mode === "question") {
+      head.appendChild(el("span", null, "Question details"));
+      head.appendChild(uiBadge("attn", "Wait: resolves externally when answered"));
+      boxEl.appendChild(head);
+      if (uncText) boxEl.appendChild(el("span", "unconfirmed-badge", uncText));
+      var kv = el("dl", "drawer-kv");
+      var waitLanes = waitingLanesOf(loopObj);
+      kv.appendChild(el("dt", null, "Waiting lanes"));
+      var lanesCell = el("dd");
+      if (waitLanes.length) {
+        waitLanes.forEach(function (ln, idx) {
+          if (idx) lanesCell.appendChild(document.createTextNode(", "));
+          var hasPrivTitle = !!(ln.title || ln.titleEvidence === "recorded" || ln.titleEvidence === "withheld");
+          var lbl = (state.identifiers && ln.title) ? ln.title : ("Lane " + ln.number + (!state.identifiers && hasPrivTitle ? " (title withheld)" : ""));
+          if (ln.loopKey) lanesCell.appendChild(link("#/loop/" + ln.loopKey, lbl));
+          else lanesCell.appendChild(document.createTextNode(lbl));
+        });
+      } else {
+        lanesCell.textContent = "Not enumerated separately in this snapshot";
+      }
+      kv.appendChild(lanesCell);
+      var firstLaneLink = waitLanes.filter(function (ln) { return !!ln.loopKey; })[0];
+      var thId = loopObj && loopObj.identifiers && loopObj.identifiers.thread;
+      kv.appendChild(el("dt", null, "Target thread"));
+      var tgtCell = el("dd");
+      if (firstLaneLink) tgtCell.appendChild(link("#/loop/" + firstLaneLink.loopKey, "Open " + (firstLaneLink.loop || (state.identifiers && firstLaneLink.title) || "lane loop")));
+      else if (state.identifiers && thId) tgtCell.appendChild(copyCommand("div", "bb thread open " + thId, "copy-qthread-" + nItem.key));
+      else {
+        tgtCell.appendChild(document.createTextNode("Thread identifier hidden or unavailable. "));
+        if (!state.identifiers) tgtCell.appendChild(showNotesButton());
+      }
+      kv.appendChild(tgtCell);
+      boxEl.appendChild(kv);
+      if (changesOn() && loopObj && list(loopObj.can).indexOf("resume") >= 0 && loopObj.hold && loopObj.hold.state === "held") {
+        var optRow = el("div", "task-actions");
+        optRow.appendChild(button("Review parent resume…", "act-resume-" + nItem.key, "", function () {
+          prepareChange(nItem.key, "resume", undefined, fpFull, fpBase, idsMode);
+        }, readPaused));
+        optRow.appendChild(el("span", "sub", readPaused ? "Actions paused until a complete read confirms current state." : "Only if a separate parent hold remains after answering."));
+        boxEl.appendChild(optRow);
+      }
+      boxEl.appendChild(el("p", "gap-note", "Direct conversation URLs and backend question, target, or owner revisions are not yet emitted by the panel feed (contract gap G9). This panel conservatively guards against observed route, thread, hold, and lane changes in saved snapshots and relies on backend prepare/confirm checks; same-snapshot replacements without a changed field are not verified separately here. Answer in BB/IDE above; supervision updates on the next saved check."));
+    } else if (dr.mode === "deadline") {
+      var dlLim = currentDeadlineLimit(loopObj);
+      head.appendChild(el("span", null, "Configured deadline details"));
+      head.appendChild(uiBadge("attn", dlLim && dlLim.reached ? "Deadline reached" : "Bound reached"));
+      boxEl.appendChild(head);
+      if (uncText) boxEl.appendChild(el("span", "unconfirmed-badge", uncText));
+      var dkv = el("dl", "drawer-kv");
+      dkv.appendChild(el("dt", null, "Deadline"));
+      dkv.appendChild(el("dd", null, dlLim ? say(dlLim.text) : "Configured deadline reached"));
+      dkv.appendChild(el("dt", null, "Impact"));
+      dkv.appendChild(el("dd", null, (dlLim && dlLim.effect) || (loopObj && loopObj.limitWait && loopObj.limitWait.afterDeadline ? "Limit reset falls after deadline; held until deadline is extended or marked finished." : "Loop held until finished or deadline extended.")));
+      boxEl.appendChild(dkv);
+      if (changesOn() && loopObj) {
+        var actRow = el("div", "task-actions");
+        if (list(loopObj.can).indexOf("archive") >= 0) actRow.appendChild(button("Archive loop…", "act-archive-" + nItem.key, "", function () { prepareChange(nItem.key, "archive", undefined, fpFull, fpBase, idsMode); }, readPaused));
+        if (list(loopObj.can).indexOf("stop") >= 0) actRow.appendChild(button("Stop…", "act-stop-" + nItem.key, "", function () { prepareChange(nItem.key, "stop", undefined, fpFull, fpBase, idsMode); }, readPaused));
+        if (readPaused && actRow.childNodes.length) actRow.appendChild(el("span", "sub", "Actions paused until a complete read confirms current state."));
+        if (actRow.childNodes.length) boxEl.appendChild(actRow);
+      }
+      boxEl.appendChild(el("p", "gap-note", "Extending loop.limits.deadline or marking finished directly from the panel is not supported yet (contract gap G11). Archive above if done, update the loop's configuration, or run looptender complete in Terminal."));
+    } else if (dr.mode === "supervision") {
+      var causeInfo = verifiedStopCause(nItem, loopObj);
+      head.appendChild(el("span", null, "Supervision diagnostics"));
+      head.appendChild(uiBadge("plain", causeInfo.label));
+      boxEl.appendChild(head);
+      if (uncText) boxEl.appendChild(el("span", "unconfirmed-badge", uncText));
+      var skv = el("dl", "drawer-kv");
+      skv.appendChild(el("dt", null, "Verified cause"));
+      skv.appendChild(el("dd", null, causeInfo.detail));
+      skv.appendChild(el("dt", null, "Scheduler / check"));
+      skv.appendChild(el("dd", null, (loopObj && loopObj.checkedBy && loopObj.checkedBy.text) || "No check source recorded"));
+      skv.appendChild(el("dt", null, "Last check"));
+      skv.appendChild(el("dd", null, ((loopObj && loopObj.lastCheck && loopObj.lastCheck.text) || "Never checked") + (nItem.reason ? " \u00B7 " + nItem.reason : "")));
+      if (loopObj && loopObj.buildFreshness && loopObj.buildFreshness.text) {
+        skv.appendChild(el("dt", null, "Build check"));
+        skv.appendChild(el("dd", null, loopObj.buildFreshness.text + (loopObj.buildFreshness.detail ? " " + loopObj.buildFreshness.detail : "")));
+      }
+      boxEl.appendChild(skv);
+      var sAct = el("div", "task-actions");
+      if (changesOn() && loopObj && loopObj.buildChange && loopObj.buildChange.action) {
+        sAct.appendChild(button(loopObj.buildChange.label + "\u2026", "act-" + loopObj.buildChange.action + "-" + nItem.key, "", function () {
+          prepareChange(nItem.key, loopObj.buildChange.action, undefined, fpFull, fpBase, idsMode);
+        }, readPaused));
+        if (readPaused) sAct.appendChild(el("span", "sub", "Actions paused until a complete read confirms current state."));
+      }
+      sAct.appendChild(link("#/versions", "Inspect Versions \u2192", "overview-jump"));
+      boxEl.appendChild(sAct);
+      boxEl.appendChild(el("p", "gap-note", "Starting or restarting a daemon or host launchd/scheduler is outside panel permissions, and structured overdueCause / Recovering states are tracked under contract gap G12."));
+    }
+    var closeBtn = el("div", "task-actions");
+    closeBtn.appendChild(button("Close details", "drawer-close-" + nItem.key, "", function () { state.activeDrawer = null; render(false, true); }));
+    boxEl.appendChild(closeBtn);
+    return boxEl;
+  }
+  function taskCard(nItem, onOverview, loopObj) {
+    var cat = (nItem.waiting === "checks" || (!nItem.waiting && (nItem.kind === "overdue" || nItem.kind === "build_replaced"))) ? "checks"
+      : (nItem.waiting === "unreadable" || nItem.waiting === "unknown" || (!nItem.waiting && nItem.kind === "unreadable")) ? "unreadable" : "decisions";
+    var li = el("li", "need task-card " + (cat === "checks" ? "is-stale" : cat === "decisions" ? "is-person" : "is-unreadable"));
+    li.dataset.issueKey = nItem.key;
+    var head = el("div", "need-head task-top");
+    if (onOverview) {
+      var hEl = el("h3", "need-name task-name-head");
+      hEl.appendChild(link("#/loop/" + nItem.key, nItem.loop));
+      head.appendChild(hEl);
+    }
+    head.appendChild(el("span", "waited", nItem.waited || "Waiting time unknown"));
     li.appendChild(head);
-    // The card's own sentence (reason) already says what it waits for and who set
-    // it, in the server's fixed words, and its head says for how long; the
-    // group it sits in says the kind. Rows and a loop's page have no such
-    // sentence, so they use waitsLine.
-    li.appendChild(el("p", "reason", n.reason));
-    // Data read with identifiers carries the masked note too, so turning
-    // identifiers off hides them at once.
-    var text = !state.identifiers && n.maskedNote ? n.maskedNote : n.note;
-    if (text) {
-      var note = el("div", "note");
-      note.appendChild(el("span", "note-label", "Note left with the hold"));
-      note.appendChild(document.createTextNode("“" + text + "”"));
-      li.appendChild(note);
-      if (n.noteMasked && !state.identifiers) {
-        var p = el("p", "sub", "Some identifiers are hidden. ");
-        p.appendChild(showNotesButton());
-        li.appendChild(p);
+    var uncText = taskUnconfirmedText(state.data, nItem, loopObj);
+    if (uncText) {
+      li.dataset.unconfirmed = "1";
+      li.appendChild(el("span", "unconfirmed-badge", uncText));
+    }
+    if (loopObj && loopObj.lineage && loopObj.lineage.from) {
+      var lin = el("p", "sub");
+      lin.appendChild(uiBadge("plain", "Continues earlier loop (" + loopObj.lineage.count + " prior)"));
+      li.appendChild(lin);
+    }
+    li.appendChild(el("p", "reason", nItem.reason));
+    var hideLiveIds = !state.identifiers && !!(state.data && state.data.identifiers);
+    var textVal = !state.identifiers && nItem.maskedNote ? nItem.maskedNote : (hideLiveIds && nItem.noteMasked ? "[hidden]" : nItem.note);
+    if (textVal) {
+      var noteEl = el("div", "note");
+      noteEl.appendChild(el("span", "note-label", "Note left with the hold"));
+      noteEl.appendChild(document.createTextNode("\u201C" + textVal + "\u201D"));
+      li.appendChild(noteEl);
+      if (nItem.noteMasked && !state.identifiers) {
+        var maskP = el("p", "sub", "Some identifiers are hidden. ");
+        maskP.appendChild(showNotesButton());
+        li.appendChild(maskP);
         var rule = el("details", "mask-rule");
-        rule.dataset.rule = n.key;
-        rule.open = !!state.ruleOpen[n.key];
-        rule.addEventListener("toggle", function () { state.ruleOpen[n.key] = rule.open; });
+        rule.dataset.rule = nItem.key;
+        rule.open = !!state.ruleOpen[nItem.key];
+        rule.addEventListener("toggle", function () { state.ruleOpen[nItem.key] = rule.open; });
         rule.appendChild(el("summary", null, "What is hidden"));
         rule.appendChild(el("p", "sub", "Parts that look like an ID, an absolute or home path (a /, ~/, ~name, C:\\ or C:/ or \\ path, with its spaces when each word after the first starts with a capital letter, a digit or a bracket, also one that contains .. or starts with Users, home or root, with / or \\ between its parts, a \\\\server\\share path, and a path with %2F or %5C in it), a web address, a user name and password before a host, an email address, an IPv4 or IPv6 address or a long code are hidden; another relative path such as docs/plan.md or docs\\plan.md is shown. "));
         li.appendChild(rule);
       }
     }
-    var todo = el("p", "todo");
-    todo.appendChild(el("span", "todo-label", "What to do"));
-    todo.appendChild(document.createTextNode(n.action));
-    li.appendChild(todo);
-    // A page that cannot resume says how to, rather than end on an action
-    // it cannot take. With changes allowed, the loop's own controls do it.
-    if (n.resume && !changesOn()) {
-      li.appendChild(el("p", "sub resume-where", "This page cannot resume a loop. In a terminal, run:"));
-      // The page may hold several copy buttons; this one names its loop.
-      var cmd = copyCommand("p", n.resume, "copy-resume-" + n.key, "resume-where-" + n.key);
-      cmd.classList.add("resume-command");
-      li.appendChild(cmd);
-      var where = el("p", "sub resume-where");
-      where.id = "resume-where-" + n.key;
-      put(where, ["CONFIG is the path of " + n.loop + "'s configuration file; ", el("code", null, "looptender registry list --private"), " lists it."]);
-      li.appendChild(where);
+    var todoEl = el("p", "todo");
+    todoEl.appendChild(el("span", "todo-label", "Next step"));
+    todoEl.appendChild(document.createTextNode(nItem.action));
+    li.appendChild(todoEl);
+
+    var actRow = el("div", "task-actions");
+    var fpFull = issueFingerprint(nItem, loopObj, true);
+    var fpBase = issueFingerprint(nItem, loopObj, false);
+    var idsMode = !!(state.data && state.data.identifiers);
+    var readPaused = !!(state.failed || (nItem && nItem._retainedIncomplete));
+    var isQ = nItem.waiting === "asked";
+    var isDl = !isQ && isDeadlineNeed(nItem, loopObj);
+    var isAllow = !isQ && !isDl && isSendAllowanceNeed(nItem, loopObj);
+    function toggleDrawer(modeName) {
+      if (state.activeDrawer && state.activeDrawer.key === nItem.key && state.activeDrawer.mode === modeName) state.activeDrawer = null;
+      else state.activeDrawer = { key: nItem.key, mode: modeName, fp: fpFull, baseFp: fpBase, idsMode: idsMode };
+      render(false, true);
     }
+    if (isQ) {
+      var laneTargets = waitingLanesOf(loopObj).filter(function (ln) { return !!ln.loopKey; });
+      if (laneTargets.length === 1) {
+        var qLane = link("#/loop/" + laneTargets[0].loopKey, "Open question", "btn is-primary");
+        qLane.dataset.focus = "open-question-" + nItem.key;
+        actRow.appendChild(qLane);
+      } else {
+        var qBtn = button("Open question", "open-question-" + nItem.key, "is-primary", function () { toggleDrawer("question"); });
+        qBtn.setAttribute("aria-pressed", String(!!(state.activeDrawer && state.activeDrawer.key === nItem.key && state.activeDrawer.mode === "question")));
+        actRow.appendChild(qBtn);
+      }
+    } else if (isDl) {
+      var dlBtn = button("Review deadline", "review-deadline-" + nItem.key, "is-primary", function () { toggleDrawer("deadline"); });
+      dlBtn.setAttribute("aria-pressed", String(!!(state.activeDrawer && state.activeDrawer.key === nItem.key && state.activeDrawer.mode === "deadline")));
+      actRow.appendChild(dlBtn);
+    } else if (isAllow) {
+      var canAllow = !readPaused && changesOn() && !!(state.server && state.server.sendAllowanceEdit === true);
+      var allowBtn = button("Review send allowance\u2026", "act-set_send_allowance-" + nItem.key, "is-primary", function () {
+        if (onOverview) window.location.hash = "#/loop/" + nItem.key;
+        editAllowance(nItem.key, fpFull, fpBase, idsMode);
+      }, !canAllow);
+      if (!canAllow) allowBtn.title = readPaused ? "Paused until a complete read confirms current state." : "Requires panel started with --allow-changes outside a supervised thread.";
+      actRow.appendChild(allowBtn);
+      if (!canAllow) actRow.appendChild(el("span", "sub", readPaused ? "Actions paused until a complete read confirms current state." : "Read-only or in-thread: editAllowance unavailable here."));
+    } else if (cat === "checks") {
+      var supBtn = button("Inspect supervision", "inspect-supervision-" + nItem.key, "", function () { toggleDrawer("supervision"); });
+      supBtn.setAttribute("aria-pressed", String(!!(state.activeDrawer && state.activeDrawer.key === nItem.key && state.activeDrawer.mode === "supervision")));
+      actRow.appendChild(supBtn);
+    } else if (cat === "decisions" && changesOn() && loopObj && list(loopObj.can).indexOf("resume") >= 0) {
+      actRow.appendChild(button("Review resume\u2026", "act-resume-" + nItem.key, "", function () {
+        if (onOverview) window.location.hash = "#/loop/" + nItem.key;
+        prepareChange(nItem.key, "resume", undefined, fpFull, fpBase, idsMode);
+      }, readPaused));
+    }
+    if (onOverview) actRow.appendChild(link("#/loop/" + nItem.key, cat === "checks" ? "Loop diagnostics \u2192" : "Inspect loop \u2192", "overview-jump"));
+    li.appendChild(actRow);
+    var drBox = taskDrawerBox(nItem, loopObj);
+    if (drBox) li.appendChild(drBox);
+    if (onOverview && loopObj && state.change && state.change.key === loopObj.key) {
+      var inlineCh = changeBox(loopObj, false, true);
+      if (inlineCh) li.appendChild(inlineCh);
+    }
+    var cliFall = renderResumeFallback(nItem, isQ);
+    if (cliFall) li.appendChild(cliFall);
     return li;
+  }
+  function needCard(n, onOverview) {
+    return taskCard(n, onOverview, state.data ? effectiveLoopByKey(state.data, n.key) : null);
   }
 
   // ---- Level 1: the picker ----
@@ -454,21 +923,34 @@
     nav.replaceChildren();
 
     var fixed = el("div", "pick-fixed");
-    var needs = list(d.needsYou).length;
-    var top = el("a", "pick pick-needs" + (needs ? "" : " is-clear"));
+    var cats = categorizeNeeds(d);
+    var decCount = cats.decisions.length, chkCount = cats.checks.length, unrCount = cats.unreadable.length;
+    var urgentNeeds = decCount + unrCount;
+    var totalNeeds = list(d.needsYou).length;
+    var top = el("a", "pick pick-needs" + (urgentNeeds ? "" : " is-clear"));
     top.href = "#/";
     if (r.view === "home") top.setAttribute("aria-current", "page");
-    if (needs) top.appendChild(el("span", "count", String(needs)));
+    if (urgentNeeds) top.appendChild(el("span", "count", String(urgentNeeds)));
+    else if (chkCount) top.appendChild(el("span", "dot dot-warn"));
     else top.appendChild(icon(d.allClear ? "check" : "unknown"));
-    var line = d.needsLine || "Needs you: unknown";
-    top.appendChild(el("span", "pick-needs-text", needs ? line.replace(/^\d+ /, "") : line));
-    if (needs) top.setAttribute("aria-label", line);
+    var line = d.needsLine || "Overview status unknown";
+    var topTitle = urgentNeeds ? "Decisions & bounds" : chkCount ? "Checks stopped" : (line || "Overview");
+    var subParts = [];
+    if (decCount) subParts.push(decCount + (decCount === 1 ? " decision" : " decisions"));
+    if (chkCount) subParts.push(chkCount + " checks stopped");
+    if (cats.atLimit.length) subParts.push(cats.atLimit.length + " at limit");
+    if (unrCount) subParts.push(unrCount + " unreadable");
+    top.appendChild(el("span", "pick-name", topTitle));
+    top.appendChild(el("span", "pick-state", subParts.length ? subParts.join(" \u00B7 ") : (d.allClear ? "All clear" : line)));
+    top.setAttribute("aria-label", topTitle + (subParts.length ? ": " + subParts.join(", ") : ""));
     top.appendChild(icon("chevron"));
     fixed.appendChild(top);
     var rs = d.routesSummary || {};
     fixed.appendChild(pickRow("#/routes", rs.trouble ? "dot-limit" : "dot-calm", "Routes", rs.picker || "", r.view === "routes"));
     var ac = d.accounts || {};
-    fixed.appendChild(pickRow("#/accounts", "dot-calm", "Accounts", ac.complete ? (d.accountsReference ? d.selectedAccounts || 0 : list(ac.cards).length) + " selected" : "Unavailable", r.view === "accounts"));
+    var driftLen = cats.driftCards.length;
+    var acctSub = ac.complete ? ((d.accountsReference ? d.selectedAccounts || 0 : list(ac.cards).length) + " selected" + (driftLen ? " \u00B7 " + driftLen + " review needed" : "")) : "Unavailable";
+    fixed.appendChild(pickRow("#/accounts", driftLen ? "dot-attn" : "dot-calm", "Accounts", acctSub, r.view === "accounts"));
     nav.appendChild(fixed);
 
     var label = el("p", "pick-label", "Loops");
@@ -772,44 +1254,917 @@
     return wrap;
   }
 
+  function overviewHealthBar(d, cats) {
+    var wrap = el("section", "overview-health");
+    wrap.setAttribute("aria-label", "Build status and categorized summary");
+    var left = el("div", "overview-build-meta");
+    var verStr = state.server && typeof state.server.version === "string" ? state.server.version : "";
+    var verShown = (!verStr || verStr === "dev") ? "Build unknown (dev)" : verStr;
+    var panelLbl = el("span", null);
+    panelLbl.appendChild(el("span", "sub", "Panel running: "));
+    panelLbl.appendChild(el("code", null, verShown));
+    left.appendChild(panelLbl);
+    if (verStr || (state.server && state.server.servedBy)) left.appendChild(el("span", "build-rev-note", buildRevisionNote(verStr)));
+    if (d.buildFreshness && d.buildFreshness.text && list(d.loops).length) {
+      var freshSpan = el("span", "sub fresh-summary", d.buildFreshness.text);
+      left.appendChild(freshSpan);
+    } else if (d.versions && d.versions.summary) {
+      left.appendChild(el("span", "sub", d.versions.summary));
+    }
+    left.appendChild(link("#/versions", "Versions \u2192", "overview-jump"));
+    wrap.appendChild(left);
+
+    var countsDiv = el("div", "cat-counts");
+    function addCatPill(filterId, clsName, numVal, labelStr) {
+      var btnEl = el("button", "cat-pill " + clsName);
+      btnEl.type = "button";
+      btnEl.setAttribute("aria-pressed", String(state.mapFilter === filterId));
+      btnEl.dataset.focus = "health-" + filterId;
+      btnEl.appendChild(el("span", "count-num", String(numVal)));
+      btnEl.appendChild(el("span", null, labelStr));
+      btnEl.addEventListener("click", function () {
+        if (state.mapFilter === filterId) {
+          var targetSec = $("attention-section");
+          if (targetSec && targetSec.scrollIntoView) targetSec.scrollIntoView({ block: "start" });
+          return;
+        }
+        state.mapFilter = filterId;
+        render(false, true);
+      });
+      countsDiv.appendChild(btnEl);
+    }
+    if (cats.decisions.length) addCatPill("decisions", "is-attn", cats.decisions.length, cats.decisions.length === 1 ? "Decision or bound" : "Decisions & bounds");
+    if (cats.atLimit.length) addCatPill("at_limit", "is-limit", cats.atLimit.length, "At limit");
+    if (cats.checks.length) addCatPill("checks", "", cats.checks.length, "Checks stopped");
+    if (cats.unreadable.length) addCatPill("all", "is-warn", cats.unreadable.length, "Unreadable");
+    if (cats.driftCards.length) {
+      var driftLink = link("#/accounts", "", "cat-pill is-attn");
+      driftLink.appendChild(el("span", "count-num", String(cats.driftCards.length)));
+      driftLink.appendChild(el("span", null, "Account review"));
+      countsDiv.appendChild(driftLink);
+    }
+    if (!cats.all.length && !cats.atLimit.length && !cats.driftCards.length && d.allClear) {
+      countsDiv.appendChild(uiBadge("good", "All active loops clear"));
+    } else if (cats.all.length || cats.driftCards.length) {
+      var jump = link("#/", "Jump to actions \u2193", "overview-jump");
+      jump.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        var targetSec = $("attention-section");
+        if (targetSec && targetSec.scrollIntoView) targetSec.scrollIntoView({ block: "start" });
+      });
+      countsDiv.appendChild(jump);
+    }
+    wrap.appendChild(countsDiv);
+    return wrap;
+  }
+
+  function buildSetupTopology(d, cats) {
+    var needByKey = Object.create(null);
+    list(d.needsYou).forEach(function (nItem) { needByKey[nItem.key] = nItem; });
+    var decKeys = Object.create(null), chkKeys = Object.create(null);
+    cats.decisions.forEach(function (nItem) { decKeys[nItem.key] = true; });
+    cats.checks.forEach(function (nItem) { chkKeys[nItem.key] = true; });
+
+    var routeCatalogMap = Object.create(null);
+    function ensureRouteObj(rKey, rawTitle, rawMeta, extraSrc) {
+      if (!rKey) return null;
+      if (!routeCatalogMap[rKey]) {
+        routeCatalogMap[rKey] = {
+          key: rKey, title: rawTitle || rKey, meta: list(rawMeta), readiness: "", phrase: "",
+          attention: "", inUseCount: 0, standbyCount: 0, accountId: "acct:unbound",
+          bindingKind: "none", bindingNote: "Account not assigned in catalog", groupName: "",
+          rawRoute: null
+        };
+      }
+      var rec = routeCatalogMap[rKey];
+      if (extraSrc) {
+        if (extraSrc.title && rec.title === rKey) rec.title = extraSrc.title;
+        if (extraSrc.account && !rec.groupName) rec.groupName = extraSrc.account;
+      }
+      return rec;
+    }
+    list(d.routes).forEach(function (rt) {
+      var rec = ensureRouteObj(rt.key, routeDisplayTitle(rt), rt.meta, rt);
+      rec.rawRoute = rt;
+      rec.readiness = rt.readiness || "";
+      rec.phrase = rt.phrase || "";
+      rec.attention = rt.attention || "";
+      rec.inUseCount = list(rt.runningNow).length + list(rt.recordedFor).length;
+      var stTotal = 0;
+      list(rt.standby).forEach(function (sg) { stTotal += list(sg.loops).length; });
+      rec.standbyCount = stTotal;
+    });
+
+    var cardList = (d.accounts && d.accounts.complete && list(d.accounts.cards)) || (savedAccounts.status === "ready" && savedAccounts.data && list(savedAccounts.data.cards)) || [];
+    var cardById = Object.create(null), acctMap = Object.create(null), accts = [];
+    cardList.forEach(function (cItem) { cardById[cItem.id] = cItem; });
+    var usesArr = list(d.accountUses);
+    usesArr.forEach(function (uItem) {
+      if (uItem.card && uItem.routes) {
+        list(uItem.routes).forEach(function (ur) {
+          var rec = ensureRouteObj(ur.route, ur.title, [], null);
+          if (!rec) return;
+          if (ur.checkText) {
+            rec.accountId = "acct:mismatch:" + uItem.card;
+            rec.bindingKind = "mismatch";
+            rec.bindingNote = ur.checkText;
+          } else {
+            rec.accountId = "acct:" + uItem.card;
+            rec.bindingKind = ur.bbThread ? "not_verified" : "consistent";
+            rec.bindingNote = ur.bbThread ? "Assigned by you (BB thread unverified)" : "Assigned by you";
+          }
+        });
+      }
+    });
+
+    var q = state.mapQuery.trim().toLowerCase();
+    var baseLoops = state.mapShowRetired ? list(d.loops) : cats.activeLoops;
+    var visibleLoops = [];
+    baseLoops.forEach(function (loopObj) {
+      if (state.mapFilter === "decisions" && !decKeys[loopObj.key]) return;
+      if (state.mapFilter === "at_limit" && loopObj.state !== "waiting_on_limit") return;
+      if (state.mapFilter === "checks" && !chkKeys[loopObj.key]) return;
+      var chainEntries = list(loopObj.chain && loopObj.chain.entries);
+      var edges = [];
+      chainEntries.forEach(function (entryItem, idx) {
+        var rKey = entryItem.route;
+        var rRec = ensureRouteObj(rKey, entryItem.title, entryItem.meta, entryItem);
+        var ca = entryItem.catalogAccount;
+        if (ca && ca.assigned === "by_you") {
+          var acctKey = ca.card || (ca.label ? "label:" + ca.label : "");
+          if (ca.check === "consistent" || ca.check === "not_verified") {
+            rRec.accountId = acctKey ? "acct:" + acctKey : "acct:unbound";
+            rRec.bindingKind = ca.check === "not_verified" ? "not_verified" : "consistent";
+            rRec.bindingNote = ca.check === "not_verified" ? "Assigned by you (BB thread unverified)" : "Assigned by you";
+          } else if (ca.check) {
+            rRec.accountId = acctKey ? "acct:" + acctKey : "acct:unbound";
+            rRec.bindingKind = "mismatch";
+            rRec.bindingNote = ca.check.replace(/_/g, " ");
+          }
+        }
+        var departedLimit = list(loopObj.away && loopObj.away.departures).some(function (dep) {
+          return dep.route === rKey && dep.how === "usage_limit" && !dep.resetPassed;
+        });
+        var edgeObj = {
+          loopKey: loopObj.key, routeKey: rKey, pos: (typeof entryItem.position === "number" ? entryItem.position : idx) + 1,
+          inUse: !!entryItem.inUse, current: !!entryItem.current, departedLimit: departedLimit,
+          handoffAuto: list(loopObj.chain && loopObj.chain.handoffOn).length > 0,
+          readiness: entryItem.readiness || "", title: entryItem.title || rRec.title
+        };
+        edges.push(edgeObj);
+      });
+      if (!edges.length && loopObj.currentRoute && loopObj.currentRoute.availability === "known") {
+        var cr = loopObj.currentRoute;
+        var synKey = "current:" + loopObj.key;
+        var synRec = ensureRouteObj(synKey, (cr.model || cr.tool || "Configured route"), [], cr);
+        edges.push({ loopKey: loopObj.key, routeKey: synKey, pos: 1, inUse: loopObj.state === "supervising", current: true, departedLimit: false, handoffAuto: false, readiness: "", title: synRec.title });
+      }
+      var hay = [loopObj.name, loopObj.phrase, (loopObj.device && loopObj.device.text) || ""].concat(edges.map(function (ed) {
+        var rRec = routeCatalogMap[ed.routeKey];
+        var caCard = rRec && cardById[rRec.accountId.replace(/^acct:/, "")];
+        return (ed.title || "") + " " + (rRec ? rRec.meta.join(" ") : "") + " " + (caCard ? caCard.label : "");
+      })).join(" ").toLowerCase();
+      if (q && hay.indexOf(q) < 0) return;
+      visibleLoops.push({ loop: loopObj, edges: edges, need: needByKey[loopObj.key] || null });
+    });
+
+    var routeKeysSeen = Object.create(null), visibleRoutes = [];
+    visibleLoops.forEach(function (vItem) {
+      vItem.edges.forEach(function (ed) {
+        if (!routeKeysSeen[ed.routeKey]) { routeKeysSeen[ed.routeKey] = true; visibleRoutes.push(routeCatalogMap[ed.routeKey]); }
+      });
+    });
+    if (state.mapFilter === "all" && !q) {
+      list(d.routes).forEach(function (rt) {
+        if (!routeKeysSeen[rt.key] && routeCatalogMap[rt.key]) { routeKeysSeen[rt.key] = true; visibleRoutes.push(routeCatalogMap[rt.key]); }
+      });
+    }
+
+    function ensureAcctNode(aid, labelStr, providerStr, unboundFlag, cardData) {
+      if (!acctMap[aid]) {
+        acctMap[aid] = { id: aid, label: labelStr, provider: providerStr, unbound: !!unboundFlag, card: cardData || null, uses: null };
+        accts.push(acctMap[aid]);
+      }
+      return acctMap[aid];
+    }
+    var hasUnboundRoute = false;
+    visibleRoutes.forEach(function (rRec) {
+      if (rRec.accountId === "acct:unbound" || rRec.bindingKind === "none") {
+        hasUnboundRoute = true;
+        return;
+      }
+      var cid = rRec.accountId.replace(/^acct:mismatch:/, "").replace(/^acct:/, "");
+      var cObj = cardById[cid];
+      var lbl = cObj ? cObj.label : (rRec.groupName || "Assigned account");
+      var prv = cObj ? cObj.provider : "";
+      var acNode = ensureAcctNode("acct:" + cid, lbl, prv, false, cObj);
+      if (rRec.bindingKind === "mismatch") rRec.accountId = "acct:" + cid;
+      acNode.hasRoutes = true;
+    });
+    if (state.mapFilter === "all" && !q) {
+      cardList.forEach(function (cItem) { ensureAcctNode("acct:" + cItem.id, cItem.label, cItem.provider, false, cItem); });
+    }
+    usesArr.forEach(function (uItem) {
+      if (uItem.card && acctMap["acct:" + uItem.card]) acctMap["acct:" + uItem.card].uses = uItem;
+      if (uItem.context) hasUnboundRoute = true;
+    });
+    if (hasUnboundRoute) {
+      ensureAcctNode("acct:unbound", "Unbound route contexts", "Account unknown", true, null);
+    }
+
+    var sel = state.mapSelected;
+    var selLoops = Object.create(null), selRoutes = Object.create(null), selAccts = Object.create(null);
+    if (sel) {
+      if (sel.kind === "loop") {
+        selLoops[sel.id] = true;
+        visibleLoops.forEach(function (vItem) {
+          if (vItem.loop.key !== sel.id) return;
+          vItem.edges.forEach(function (ed) {
+            selRoutes[ed.routeKey] = true;
+            var rRec = routeCatalogMap[ed.routeKey];
+            if (rRec) selAccts[rRec.accountId] = true;
+          });
+        });
+      } else if (sel.kind === "route") {
+        selRoutes[sel.id] = true;
+        var rPicked = routeCatalogMap[sel.id];
+        if (rPicked) selAccts[rPicked.accountId] = true;
+        visibleLoops.forEach(function (vItem) {
+          if (vItem.edges.some(function (ed) { return ed.routeKey === sel.id; })) selLoops[vItem.loop.key] = true;
+        });
+      } else if (sel.kind === "acct") {
+        selAccts[sel.id] = true;
+        visibleRoutes.forEach(function (rRec) {
+          if (rRec.accountId !== sel.id) return;
+          selRoutes[rRec.key] = true;
+          visibleLoops.forEach(function (vItem) {
+            if (vItem.edges.some(function (ed) { return ed.routeKey === rRec.key; })) selLoops[vItem.loop.key] = true;
+          });
+        });
+      }
+    }
+    return {
+      loops: visibleLoops, routes: visibleRoutes, accounts: accts,
+      routeMap: routeCatalogMap, acctMap: acctMap,
+      sel: sel, selLoops: selLoops, selRoutes: selRoutes, selAccts: selAccts
+    };
+  }
+
+  function renderPathInspector(topo) {
+    var insp = el("div", "path-inspector" + (topo.sel ? " is-active" : ""));
+    insp.id = "map-inspector";
+    var desc = el("div");
+    var linksDiv = el("div", "path-inspector-links");
+    if (!topo.sel) {
+      desc.appendChild(el("span", "sub", "Minimal view active: showing active current routes only. Select any loop, configured route, or account card to trace full #1 \u2192 #2 fallback chains."));
+      insp.appendChild(desc);
+      return insp;
+    }
+    if (topo.sel.kind === "loop") {
+      var vMatch = topo.loops.filter(function (v) { return v.loop.key === topo.sel.id; })[0];
+      if (!vMatch) {
+        desc.textContent = "Selected loop is hidden by current filter.";
+      } else {
+        desc.appendChild(el("strong", null, "Selected loop: "));
+        desc.appendChild(document.createTextNode(vMatch.loop.name + " "));
+        vMatch.edges.forEach(function (ed) {
+          var rRec = topo.routeMap[ed.routeKey];
+          var acNode = rRec && topo.acctMap[rRec.accountId];
+          desc.appendChild(document.createTextNode(" \u2192 #" + ed.pos + " " + ed.title + " (" + (ed.inUse ? "in use" : ed.departedLimit ? "hit limit" : ed.current ? "current \u00B7 held" : (ed.handoffAuto ? "standby \u00B7 auto" : "standby \u00B7 manual")) + (acNode ? " \u2192 " + acNode.label + (rRec.bindingKind === "not_verified" ? " [BB unverified]" : rRec.bindingKind === "none" ? " [unbound]" : "") : "") + ")"));
+        });
+        linksDiv.appendChild(link("#/loop/" + vMatch.loop.key, "Inspect loop \u2192", "overview-jump"));
+      }
+    } else if (topo.sel.kind === "route") {
+      var rMatch = topo.routeMap[topo.sel.id];
+      if (rMatch) {
+        var acTarget = topo.acctMap[rMatch.accountId];
+        desc.appendChild(el("strong", null, "Selected route: "));
+        desc.appendChild(document.createTextNode(rMatch.title + (rMatch.groupName ? " \u00B7 group " + rMatch.groupName : "") + (acTarget ? " \u2192 " + acTarget.label + " (" + rMatch.bindingNote + ")" : "")));
+        if (!/^current:/.test(rMatch.key)) linksDiv.appendChild(link("#/routes/" + rMatch.key, "View route \u2192", "overview-jump"));
+      }
+    } else if (topo.sel.kind === "acct") {
+      var aMatch = topo.acctMap[topo.sel.id];
+      if (aMatch) {
+        desc.appendChild(el("strong", null, aMatch.unbound ? "Unbound contexts: " : "Selected account: "));
+        desc.appendChild(document.createTextNode(aMatch.label + (aMatch.unbound ? " \u2014 separate routes do not prove shared or separate subscriptions." : "")));
+        if (!aMatch.unbound && aMatch.card && aMatch.card.id) linksDiv.appendChild(link("#/accounts/" + aMatch.card.id, "Open account \u2192", "overview-jump"));
+        else linksDiv.appendChild(link("#/accounts", "View Accounts \u2192", "overview-jump"));
+      }
+    }
+    linksDiv.appendChild(button("Clear selection", "map-clear-selection", "", function () { state.mapSelected = null; render(false, true); }));
+    insp.appendChild(desc);
+    insp.appendChild(linksDiv);
+    return insp;
+  }
+
+  function setupListFallback(topo) {
+    var wrap = el("div", "list-fallback");
+    wrap.id = "setup-list";
+    if (!topo.loops.length) {
+      wrap.appendChild(el("p", "sub", "No loops match the current Setup Map filter."));
+      return wrap;
+    }
+    topo.loops.forEach(function (vItem) {
+      var lObj = vItem.loop, selectedHere = topo.sel && topo.sel.kind === "loop" && topo.sel.id === lObj.key;
+      var cardDiv = el("div", "list-loop-card" + (selectedHere ? " is-selected" : ""));
+      var topRow = el("div", "map-card-top");
+      var titleSpan = el("span", "map-card-title");
+      var lTone = lObj.alsoWaiting ? "attn" : (TONES[lObj.state] || "unknown");
+      titleSpan.appendChild(el("span", "dot dot-" + lTone));
+      titleSpan.appendChild(link("#/loop/" + lObj.key, lObj.name));
+      topRow.appendChild(titleSpan);
+      topRow.appendChild(uiBadge(lTone === "unknown" ? "plain" : lTone, lObj.phrase));
+      cardDiv.appendChild(topRow);
+      var metaParts = [];
+      if (lObj.device && lObj.device.text) metaParts.push(lObj.device.text);
+      if (lObj.lastCheck && lObj.lastCheck.text) metaParts.push(lObj.lastCheck.text);
+      if (metaParts.length) cardDiv.appendChild(el("div", "map-card-meta", metaParts.join(" \u00B7 ")));
+      if (lObj.lanes && lObj.lanes.summary) cardDiv.appendChild(el("div", "map-card-meta", "Lanes: " + lObj.lanes.summary));
+      if (vItem.edges.length) {
+        var ol = el("ol", "list-route-chain");
+        vItem.edges.forEach(function (ed) {
+          var rRec = topo.routeMap[ed.routeKey];
+          var acTarget = rRec && topo.acctMap[rRec.accountId];
+          var rowLi = el("li", "list-route-row");
+          var leftTxt = el("span");
+          leftTxt.appendChild(el("strong", null, "#" + ed.pos + " "));
+          leftTxt.appendChild(document.createTextNode(ed.title + " (" + (ed.inUse ? "in use" : ed.departedLimit ? "hit limit" : ed.current ? "current \u00B7 held" : (ed.handoffAuto ? "standby \u00B7 auto" : "standby \u00B7 manual")) + ")"));
+          rowLi.appendChild(leftTxt);
+          if (acTarget) rowLi.appendChild(uiBadge(acTarget.unbound ? "plain" : (rRec.bindingKind === "mismatch" ? "attn" : "good"), acTarget.label + (rRec.bindingKind === "not_verified" ? " (BB unverified)" : rRec.bindingKind === "none" ? " (unknown)" : "")));
+          ol.appendChild(rowLi);
+        });
+        cardDiv.appendChild(ol);
+      }
+      wrap.appendChild(cardDiv);
+    });
+    if (topo.accounts.length) {
+      var acHeading = el("h3", "attn-group-title", "Selected accounts & unbound contexts (" + topo.accounts.length + ")");
+      wrap.appendChild(acHeading);
+      topo.accounts.forEach(function (ac) {
+        var acCard = el("div", "list-loop-card" + (ac.unbound ? " is-unbound" : ""));
+        var topA = el("div", "map-card-top");
+        topA.appendChild(el("span", "map-card-title", ac.label));
+        topA.appendChild(uiBadge(ac.unbound ? "plain" : "good", ac.provider || "Account"));
+        acCard.appendChild(topA);
+        if (ac.unbound) acCard.appendChild(el("div", "map-card-meta", "No assigned catalog account. Separate routes do not prove separate subscriptions."));
+        wrap.appendChild(acCard);
+      });
+    }
+    return wrap;
+  }
+
+  function drawSetupEdges(topo, canvasEl, svgEl) {
+    if (!canvasEl || !svgEl) return;
+    if (window.getComputedStyle && window.getComputedStyle(canvasEl).display === "none") { svgEl.replaceChildren(); return; }
+    var cBox = canvasEl.getBoundingClientRect();
+    if (!cBox || cBox.width < 40 || cBox.height < 20) { svgEl.replaceChildren(); return; }
+    svgEl.setAttribute("viewBox", "0 0 " + cBox.width.toFixed(1) + " " + cBox.height.toFixed(1));
+    svgEl.replaceChildren();
+
+    var ns = "http://www.w3.org/2000/svg";
+    var markerColors = {
+      "arr-good": "var(--good)",
+      "arr-neutral": "var(--ink-3)",
+      "arr-limit": "var(--limit)",
+      "arr-bound": "var(--border-ui)",
+      "arr-attn": "var(--attn)"
+    };
+
+    function anchorPt(cardId, side, dy) {
+      var domEl = canvasEl.querySelector('[data-card-id="' + cardId + '"]');
+      if (!domEl) return null;
+      var rBox = domEl.getBoundingClientRect();
+      return { x: (side === "right" ? rBox.right : rBox.left) - cBox.left, y: (rBox.top + rBox.height / 2 + (dy || 0)) - cBox.top };
+    }
+    var placedBadges = [], badgeNodes = [], suppressedBadges = 0;
+    var maxBadgeY = Math.max(9, cBox.height - 9);
+    function badgeCollides(cx, cy, badgeW) {
+      return placedBadges.some(function (b) {
+        return Math.abs(b.x - cx) < (b.w + badgeW) / 2 + 2 && Math.abs(b.y - cy) < 18;
+      });
+    }
+    function ortho(p1, p2, channelX, clsStr, markerId, badgeLabel, portCls, isLimitBadge, badgeSide) {
+      if (!p1 || !p2) return;
+      var x1 = p1.x, y1 = p1.y, x2 = p2.x - 1, y2 = p2.y;
+      var endX = x2 - 6;
+      var pathD;
+      if (Math.abs(y1 - y2) < 2) {
+        pathD = "M" + x1.toFixed(1) + "," + y1.toFixed(1) + " L" + endX.toFixed(1) + "," + y2.toFixed(1);
+      } else {
+        var rVal = Math.min(6, Math.abs(y2 - y1) / 2, Math.abs(channelX - x1) / 2, Math.abs(endX - channelX) / 2);
+        var sy = y2 > y1 ? 1 : -1;
+        pathD = "M" + x1.toFixed(1) + "," + y1.toFixed(1)
+          + " H" + (channelX - rVal).toFixed(1)
+          + " Q" + channelX.toFixed(1) + "," + y1.toFixed(1) + " " + channelX.toFixed(1) + "," + (y1 + sy * rVal).toFixed(1)
+          + " V" + (y2 - sy * rVal).toFixed(1)
+          + " Q" + channelX.toFixed(1) + "," + y2.toFixed(1) + " " + (channelX + rVal).toFixed(1) + "," + y2.toFixed(1)
+          + " H" + endX.toFixed(1);
+      }
+      var pNode = document.createElementNS(ns, "path");
+      pNode.setAttribute("d", pathD); pNode.setAttribute("class", "edge " + clsStr);
+      svgEl.appendChild(pNode);
+
+      if (markerId && markerColors[markerId]) {
+        var arrowEl = document.createElementNS(ns, "polygon");
+        arrowEl.setAttribute("points", (endX - 1).toFixed(1) + "," + (y2 - 3.5).toFixed(1) + " " + x2.toFixed(1) + "," + y2.toFixed(1) + " " + (endX - 1).toFixed(1) + "," + (y2 + 3.5).toFixed(1));
+        arrowEl.setAttribute("fill", markerColors[markerId]);
+        arrowEl.setAttribute("class", "edge-arrow" + (markerId === "arr-good" || markerId === "arr-limit" ? " is-accent" : ""));
+        svgEl.appendChild(arrowEl);
+      }
+
+      var dotEl = document.createElementNS(ns, "circle");
+      dotEl.setAttribute("cx", x1.toFixed(1)); dotEl.setAttribute("cy", y1.toFixed(1)); dotEl.setAttribute("r", "3");
+      dotEl.setAttribute("class", "edge-port " + (portCls || ""));
+      svgEl.appendChild(dotEl);
+
+      if (badgeLabel) {
+        var bw = Math.max(22, Math.ceil(badgeLabel.length * 6.5 + 8));
+        var bx = badgeSide === "start"
+          ? Math.max(x1 + bw / 2 + 6, Math.min(channelX - bw / 2 - 4, x1 + bw / 2 + 7))
+          : Math.max(channelX + bw / 2 + 3, endX - bw / 2 - 7);
+        var baseBy = badgeSide === "start" ? y1 : y2;
+        var by = Math.min(maxBadgeY, Math.max(9, baseBy));
+        var placed = !badgeCollides(bx, by, bw);
+        if (!placed) {
+          for (var step = 1; step <= 12; step++) {
+            var upY = baseBy - step * 18;
+            if (upY >= 9 && upY <= maxBadgeY && !badgeCollides(bx, upY, bw)) { by = upY; placed = true; break; }
+            var dnY = baseBy + step * 18;
+            if (dnY >= 9 && dnY <= maxBadgeY && !badgeCollides(bx, dnY, bw)) { by = dnY; placed = true; break; }
+          }
+        }
+        if (placed) {
+          placedBadges.push({ x: bx, y: by, w: bw });
+          var bg = document.createElementNS(ns, "rect");
+          bg.setAttribute("x", (bx - bw / 2).toFixed(1)); bg.setAttribute("y", (by - 8).toFixed(1));
+          bg.setAttribute("width", String(bw)); bg.setAttribute("height", "16"); bg.setAttribute("rx", "3");
+          bg.setAttribute("class", "edge-badge-bg" + (isLimitBadge ? " is-limit" : ""));
+          var txt = document.createElementNS(ns, "text");
+          txt.setAttribute("x", bx.toFixed(1)); txt.setAttribute("y", by.toFixed(1));
+          txt.setAttribute("class", "edge-badge-text"); txt.textContent = badgeLabel;
+          badgeNodes.push(bg, txt);
+        } else {
+          suppressedBadges += 1;
+        }
+      }
+    }
+
+    var col1 = canvasEl.querySelector("#col-loops"), col2 = canvasEl.querySelector("#col-routes"), col3 = canvasEl.querySelector("#col-accounts");
+    if (!col1 || !col2 || !col3) return;
+    var c1R = col1.getBoundingClientRect().right - cBox.left, c2L = col2.getBoundingClientRect().left - cBox.left;
+    var c2R = col2.getBoundingClientRect().right - cBox.left, c3L = col3.getBoundingClientRect().left - cBox.left;
+
+    var lrList = [], inCountByRoute = Object.create(null), outCountByLoop = Object.create(null);
+    topo.loops.forEach(function (vItem) {
+      var lKey = vItem.loop.key;
+      vItem.edges.forEach(function (ed, idx) {
+        if (topo.sel) {
+          if (!(topo.selLoops[lKey] && topo.selRoutes[ed.routeKey])) return;
+        } else {
+          if (!ed.current && !(idx === 0 && !vItem.edges.some(function (e2) { return e2.current; }))) return;
+        }
+        inCountByRoute[ed.routeKey] = (inCountByRoute[ed.routeKey] || 0) + 1;
+        outCountByLoop[lKey] = (outCountByLoop[lKey] || 0) + 1;
+        lrList.push({ loopKey: lKey, edge: ed, seq: inCountByRoute[ed.routeKey], outSeq: outCountByLoop[lKey] });
+      });
+    });
+    var maxInPerRoute = 0, maxOutPerLoop = 0, maxBadgeW = 22;
+    Object.keys(inCountByRoute).forEach(function (k) { if (inCountByRoute[k] > maxInPerRoute) maxInPerRoute = inCountByRoute[k]; });
+    Object.keys(outCountByLoop).forEach(function (k) { if (outCountByLoop[k] > maxOutPerLoop) maxOutPerLoop = outCountByLoop[k]; });
+    if (topo.sel) {
+      lrList.forEach(function (it) {
+        var lblW = Math.max(22, Math.ceil(("#" + it.edge.pos).length * 6.5 + 8));
+        if (lblW > maxBadgeW) maxBadgeW = lblW;
+      });
+    }
+    var useStartBadges = Boolean(topo.sel && topo.sel.kind !== "loop" && maxInPerRoute > 1 && maxOutPerLoop < maxInPerRoute);
+    lrList.forEach(function (item, i) {
+      var ed = item.edge, totalIn = inCountByRoute[ed.routeKey] || 1, totalOut = outCountByLoop[item.loopKey] || 1;
+      var tgtDy = totalIn > 1 ? (item.seq - (totalIn + 1) / 2) * 8 : 0;
+      var srcStep = useStartBadges ? Math.min(19, 54 / Math.max(1, totalOut - 1)) : Math.min(8, 44 / Math.max(1, totalOut - 1));
+      var srcDy = totalOut > 1 ? (item.outSeq - (totalOut + 1) / 2) * srcStep : 0;
+      var p1 = anchorPt("loop-" + item.loopKey, "right", srcDy), p2 = anchorPt("route-" + ed.routeKey, "left", tgtDy);
+      var chLeft = useStartBadges ? Math.min(c1R + maxBadgeW + 16, c2L - 20) : (c1R + 12);
+      var chRight = Math.max(chLeft + 4, useStartBadges ? (c2L - 16) : (c2L - (maxBadgeW + 24)));
+      var spanW = Math.max(4, chRight - chLeft);
+      var chX = chLeft + (lrList.length <= 1 ? spanW / 2 : (i / (lrList.length - 1)) * spanW);
+      var eCls = ed.departedLimit ? "edge-limit" : ed.inUse ? "edge-inuse" : ed.current ? "edge-current" : "edge-fallback";
+      var mkId = ed.departedLimit ? "arr-limit" : (ed.inUse || !ed.current) ? "arr-good" : "arr-neutral";
+      var pCls = ed.departedLimit ? "is-limit" : ed.current && !ed.inUse ? "is-neutral" : "";
+      ortho(p1, p2, chX, eCls, mkId, topo.sel ? "#" + ed.pos : "", pCls, ed.departedLimit, useStartBadges ? "start" : "end");
+    });
+
+    var raList = [], inCountByAcct = Object.create(null);
+    topo.routes.forEach(function (rRec) {
+      if (topo.sel && (!topo.selRoutes[rRec.key] || !topo.selAccts[rRec.accountId])) return;
+      if (!topo.sel && !lrList.some(function (it) { return it.edge.routeKey === rRec.key; })) return;
+      inCountByAcct[rRec.accountId] = (inCountByAcct[rRec.accountId] || 0) + 1;
+      raList.push({ route: rRec, seq: inCountByAcct[rRec.accountId] });
+    });
+    raList.forEach(function (item, i) {
+      var rRec = item.route, totalIn = inCountByAcct[rRec.accountId] || 1;
+      var tgtDy = totalIn > 1 ? (item.seq - (totalIn + 1) / 2) * 8 : 0;
+      var p1 = anchorPt("route-" + rRec.key, "right", 0), p2 = anchorPt("acct-" + rRec.accountId, "left", tgtDy);
+      var chLeft = c2R + 12, chRight = Math.max(chLeft + 4, c3L - 18);
+      var spanW = Math.max(4, chRight - chLeft);
+      var chX = chLeft + (raList.length <= 1 ? spanW / 2 : (i / (raList.length - 1)) * spanW);
+      var eCls = rRec.bindingKind === "none" ? "edge-unbound" : rRec.bindingKind === "mismatch" ? "edge-mismatch" : "edge-bound";
+      var mkId = rRec.bindingKind === "none" ? "arr-neutral" : rRec.bindingKind === "mismatch" ? "arr-attn" : "arr-bound";
+      ortho(p1, p2, chX, eCls, mkId, "", rRec.bindingKind === "mismatch" ? "is-attn" : "is-neutral", false);
+    });
+    badgeNodes.forEach(function (badgeNode) { svgEl.appendChild(badgeNode); });
+
+    if (suppressedBadges > 0) svgEl.setAttribute("data-suppressed-badges", String(suppressedBadges));
+    else if (typeof svgEl.removeAttribute === "function") svgEl.removeAttribute("data-suppressed-badges");
+    var fbEl = canvasEl.parentElement && typeof canvasEl.parentElement.querySelector === "function"
+      ? canvasEl.parentElement.querySelector("#map-badge-fallback")
+      : null;
+    if (fbEl) {
+      fbEl.replaceChildren();
+      if (suppressedBadges > 0) {
+        fbEl.hidden = false;
+        fbEl.appendChild(el("span", null, suppressedBadges + " route-order badge" + (suppressedBadges === 1 ? "" : "s") + " omitted to avoid overlap in this dense view. Full #1 \u2192 #2 chains remain in List view or by selecting a single loop."));
+        var fbBtn = el("button", "linkish", "Open List view");
+        fbBtn.type = "button";
+        fbBtn.dataset.focus = "map-fallback-list";
+        fbBtn.addEventListener("click", function () { state.mapMode = "list"; render(false, true); });
+        fbEl.appendChild(fbBtn);
+      } else {
+        fbEl.hidden = true;
+      }
+    }
+  }
+  function vEdgesCount(topo, lKey) {
+    var hit = topo.loops.filter(function (v) { return v.loop.key === lKey; })[0];
+    return hit ? hit.edges.length : 0;
+  }
+
+  function setupMapPanel(d, cats) {
+    var topo = buildSetupTopology(d, cats);
+    var sec = el("section", "panel setup-map-panel");
+    sec.id = "setup-map";
+    sec.dataset.mapMode = state.mapMode;
+    sec.setAttribute("aria-labelledby", "setup-map-title");
+
+    var head = el("div", "setup-map-head");
+    var headLeft = el("div");
+    var h2El = el("h2", null, "Setup map");
+    h2El.id = "setup-map-title";
+    headLeft.appendChild(h2El);
+    headLeft.appendChild(el("p", "sub setup-map-sub", topo.sel ? "Tracing full configured chain and account bindings for the selected item. Press Esc to clear." : "Loops, direct lanes, configured routes, and selected accounts. Only current routes are connected until you select an item."));
+    head.appendChild(headLeft);
+
+    var modeSwitch = el("div", "view-switch");
+    modeSwitch.setAttribute("role", "group");
+    modeSwitch.setAttribute("aria-label", "Setup layout mode");
+    var mapBtn = el("button", null, "Map");
+    mapBtn.type = "button"; mapBtn.dataset.focus = "mode-map"; mapBtn.setAttribute("aria-pressed", String(state.mapMode !== "list"));
+    mapBtn.addEventListener("click", function () { state.mapMode = "map"; render(false, true); });
+    var listBtn = el("button", null, "List");
+    listBtn.type = "button"; listBtn.dataset.focus = "mode-list"; listBtn.setAttribute("aria-pressed", String(state.mapMode === "list"));
+    listBtn.addEventListener("click", function () { state.mapMode = "list"; render(false, true); });
+    modeSwitch.appendChild(mapBtn); modeSwitch.appendChild(listBtn);
+    head.appendChild(modeSwitch);
+    sec.appendChild(head);
+
+    var toolbar = el("div", "map-toolbar");
+    var filters = el("search", "map-filters");
+    var searchIn = document.createElement("input");
+    searchIn.type = "search"; searchIn.className = "map-search"; searchIn.dataset.focus = "map-search";
+    searchIn.placeholder = "Filter loops, routes, accounts\u2026";
+    searchIn.setAttribute("aria-label", "Filter setup map");
+    searchIn.value = state.mapQuery;
+    searchIn.addEventListener("input", function () { state.mapQuery = searchIn.value; render(false, true); });
+    filters.appendChild(searchIn);
+
+    [
+      ["all", "All active (" + cats.activeLoops.length + ")"],
+      ["decisions", "Decisions & bounds (" + cats.decisions.length + ")"],
+      ["at_limit", "At limit (" + cats.atLimit.length + ")"],
+      ["checks", "Checks stopped (" + cats.checks.length + ")"]
+    ].forEach(function (pair) {
+      var chip = el("button", "chip-btn", pair[1]);
+      chip.type = "button"; chip.dataset.focus = "filter-" + pair[0];
+      chip.setAttribute("aria-pressed", String(state.mapFilter === pair[0]));
+      chip.addEventListener("click", function () { state.mapFilter = pair[0]; render(false, true); });
+      filters.appendChild(chip);
+    });
+    if (cats.retiredLoops.length) {
+      var retChip = el("button", "chip-btn", "Show retired (" + cats.retiredLoops.length + ")");
+      retChip.type = "button"; retChip.dataset.focus = "filter-retired";
+      retChip.setAttribute("aria-pressed", String(state.mapShowRetired));
+      retChip.addEventListener("click", function () { state.mapShowRetired = !state.mapShowRetired; render(false, true); });
+      filters.appendChild(retChip);
+    }
+    toolbar.appendChild(filters);
+    sec.appendChild(toolbar);
+
+    sec.appendChild(renderPathInspector(topo));
+    var badgeFallback = el("div", "map-badge-fallback");
+    badgeFallback.id = "map-badge-fallback";
+    badgeFallback.setAttribute("role", "status");
+    badgeFallback.hidden = true;
+    sec.appendChild(badgeFallback);
+
+    var canvas = el("div", "graph-canvas");
+    canvas.id = "graph-canvas";
+    var svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svgEl.setAttribute("class", "graph-svg");
+    svgEl.setAttribute("id", "graph-svg");
+    svgEl.setAttribute("aria-hidden", "true");
+    canvas.appendChild(svgEl);
+
+    var cols = el("div", "graph-cols");
+    function mkCol(idStr, headingTxt, countTxt) {
+      var cDiv = el("div", "graph-col");
+      cDiv.id = idStr;
+      var ch = el("div", "col-head");
+      ch.appendChild(el("h3", null, headingTxt));
+      ch.appendChild(el("span", "col-count", countTxt));
+      cDiv.appendChild(ch);
+      return cDiv;
+    }
+    var colLoops = mkCol("col-loops", "Loops & direct lanes", topo.loops.length + (cats.retiredLoops.length ? " \u00B7 " + cats.retiredLoops.length + " retired" : ""));
+    var colRoutes = mkCol("col-routes", "Configured routes", topo.routes.length + " shown");
+    var colAccts = mkCol("col-accounts", "Selected accounts & unbound", topo.accounts.length + " items");
+
+    function selectCard(kindStr, idStr) {
+      if (state.mapSelected && state.mapSelected.kind === kindStr && state.mapSelected.id === idStr) state.mapSelected = null;
+      else state.mapSelected = { kind: kindStr, id: idStr };
+      render(false, true);
+    }
+
+    if (!topo.loops.length) {
+      colLoops.appendChild(el("p", "sub", "No loops match this filter."));
+    }
+    topo.loops.forEach(function (vItem) {
+      var loopObj = vItem.loop;
+      var isSel = topo.sel && topo.sel.kind === "loop" && topo.sel.id === loopObj.key;
+      var isRel = !!topo.selLoops[loopObj.key];
+      var lTone = loopObj.alsoWaiting ? "attn" : (TONES[loopObj.state] || "unknown");
+      var cardBtn = el("button", "map-card" + (isSel ? " is-selected" : topo.sel ? (isRel ? " is-related" : " is-dimmed") : "") + (lTone === "attn" ? " is-attn" : "") + (isLoopRetired(loopObj) ? " is-retired" : ""));
+      cardBtn.type = "button";
+      cardBtn.dataset.cardId = "loop-" + loopObj.key;
+      cardBtn.dataset.focus = "map-loop-" + loopObj.key;
+      cardBtn.setAttribute("aria-pressed", String(!!isSel));
+      cardBtn.addEventListener("click", function () { selectCard("loop", loopObj.key); });
+
+      var cTop = el("div", "map-card-top");
+      var cTit = el("span", "map-card-title");
+      cTit.appendChild(el("span", "dot dot-" + lTone));
+      cTit.appendChild(document.createTextNode(loopObj.name));
+      cTop.appendChild(cTit);
+      cTop.appendChild(uiBadge(lTone === "unknown" ? "plain" : lTone, loopObj.phrase));
+      cardBtn.appendChild(cTop);
+
+      var m1 = [];
+      if (loopObj.device && loopObj.device.text) m1.push(loopObj.device.text);
+      if (vItem.need && vItem.need.waited) m1.push(vItem.need.waited);
+      else if (loopObj.lastCheck && loopObj.lastCheck.text) m1.push(loopObj.lastCheck.text);
+      if (m1.length) cardBtn.appendChild(el("div", "map-card-meta", m1.join(" \u00B7 ")));
+      if (loopObj.lanes && loopObj.lanes.summary) cardBtn.appendChild(el("div", "map-card-meta", "Lanes: " + loopObj.lanes.summary));
+      if (isLoopSuperseded(loopObj)) cardBtn.appendChild(el("div", "map-card-meta", "Superseded \u2014 do not resume"));
+      else if (loopObj.lineage && loopObj.lineage.from) cardBtn.appendChild(el("div", "map-card-meta", "Continues earlier loop (" + loopObj.lineage.count + " prior)"));
+      if (loopObj.state === "recovering" || loopObj.recovering) cardBtn.appendChild(el("div", "map-card-meta", "Recovering"));
+      colLoops.appendChild(cardBtn);
+    });
+
+    topo.routes.forEach(function (rRec) {
+      var isSel = topo.sel && topo.sel.kind === "route" && topo.sel.id === rRec.key;
+      var isRel = !!topo.selRoutes[rRec.key];
+      var rTone = rRec.attention === "limit" ? "limit" : rRec.attention === "not_ready" ? "warn" : rRec.inUseCount > 0 ? "good" : "calm";
+      var cardBtn = el("button", "map-card" + (isSel ? " is-selected" : topo.sel ? (isRel ? " is-related" : " is-dimmed") : ""));
+      cardBtn.type = "button";
+      cardBtn.dataset.cardId = "route-" + rRec.key;
+      cardBtn.dataset.focus = "map-route-" + rRec.key;
+      cardBtn.setAttribute("aria-pressed", String(!!isSel));
+      cardBtn.addEventListener("click", function () { selectCard("route", rRec.key); });
+
+      var cTop = el("div", "map-card-top");
+      var cTit = el("span", "map-card-title");
+      cTit.appendChild(el("span", "dot dot-" + rTone));
+      cTit.appendChild(document.createTextNode(rRec.title));
+      cTop.appendChild(cTit);
+      if (rRec.bindingKind === "not_verified") cTop.appendChild(uiBadge("plain", "BB unverified"));
+      else if (rRec.bindingKind === "none") cTop.appendChild(uiBadge("plain", "Unassigned"));
+      else if (rRec.bindingKind === "mismatch") cTop.appendChild(uiBadge("attn", "Check mismatch"));
+      cardBtn.appendChild(cTop);
+
+      if (rRec.meta.length) cardBtn.appendChild(el("div", "map-card-meta", rRec.meta.slice(0, 3).join(" \u00B7 ")));
+      var rStatusTxt = (rRec.inUseCount ? rRec.inUseCount + " active" : "0 active") + (rRec.standbyCount ? " \u00B7 " + rRec.standbyCount + " standby" : "");
+      if (rRec.phrase) rStatusTxt += " \u00B7 " + rRec.phrase;
+      cardBtn.appendChild(el("div", "map-card-meta", rStatusTxt));
+      colRoutes.appendChild(cardBtn);
+    });
+
+    topo.accounts.forEach(function (ac) {
+      var isSel = topo.sel && topo.sel.kind === "acct" && topo.sel.id === ac.id;
+      var isRel = !!topo.selAccts[ac.id];
+      var cardData = ac.card;
+      var isDrift = !!(cardData && (cardData.attention === "context_changed" || cardData.reason === "context_changed"));
+      var acTone = ac.unbound ? "calm" : isDrift ? "attn" : "good";
+      var cardBtn = el("button", "map-card" + (ac.unbound ? " is-unbound" : "") + (isSel ? " is-selected" : topo.sel ? (isRel ? " is-related" : " is-dimmed") : "") + (isDrift ? " is-attn" : ""));
+      cardBtn.type = "button";
+      cardBtn.dataset.cardId = "acct-" + ac.id;
+      cardBtn.dataset.focus = "map-acct-" + ac.id;
+      cardBtn.setAttribute("aria-pressed", String(!!isSel));
+      cardBtn.addEventListener("click", function () { selectCard("acct", ac.id); });
+
+      var cTop = el("div", "map-card-top");
+      var cTit = el("span", "map-card-title");
+      cTit.appendChild(el("span", "dot dot-" + acTone));
+      cTit.appendChild(document.createTextNode(ac.label));
+      cTop.appendChild(cTit);
+      cTop.appendChild(uiBadge(ac.unbound ? "plain" : isDrift ? "attn" : "good", ac.provider || "Account"));
+      cardBtn.appendChild(cTop);
+
+      if (ac.unbound) {
+        cardBtn.appendChild(el("div", "map-card-meta", "No account assigned \u2014 separate routes do not prove separate subscriptions."));
+      } else if (cardData) {
+        var qs = accountQuotaSummary(cardData);
+        var uUpd = cardData.usageUpdating;
+        if (isDrift) {
+          cardBtn.appendChild(el("div", "map-card-meta", "Context review needed \u2014 not a quota limit. Prior quota withheld."));
+        } else if (accountQuotaMalformedProvenance(cardData)) {
+          cardBtn.appendChild(el("div", "map-card-meta", "Quota rejected \u00B7 invalid provenance metadata"));
+        } else if (qs && qs.state === "reported") {
+          var rowsQ = list(qs.rows), nowMs = readTime();
+          var allEnded = rowsQ.length > 0 && rowsQ.every(function (w) { return accountWindowEnded(w.resetsAt, w.ended, nowMs); });
+          var firstW = rowsQ.filter(function (w) { return typeof w.usedPercent === "number"; })[0];
+          var qsAtMs = Date.parse(accountQuotaRetrievedAt(qs));
+          var isOlder = qs.freshness === "stale" || !isFinite(qsAtMs) || qsAtMs > nowMs || (nowMs - qsAtMs) > 1800000;
+          var freshStr = (qs.provenance || qs.retrievedAt)
+            ? (isOlder ? "Retrieved (older \u00B7 provider freshness unknown)" : "Retrieved (provider freshness unknown)")
+            : (isOlder ? "Older local read (provider freshness unknown)" : "Local read (provider freshness unknown)");
+          cardBtn.appendChild(el("div", "map-card-meta", allEnded ? freshStr + " \u00B7 Window ended \u00B7 current unknown" : freshStr + (firstW ? " \u00B7 " + firstW.usedPercent + "% used" : "")));
+          if (!allEnded && firstW) {
+            var mDiv = el("div", "map-mini-meter" + (firstW.usedPercent >= 100 ? " is-limit" : ""));
+            var mBar = el("i");
+            mBar.style.width = Math.min(100, Math.max(2, firstW.usedPercent)) + "%";
+            mDiv.appendChild(mBar);
+            cardBtn.appendChild(mDiv);
+          }
+        } else if (cardData.quota && cardData.quota.summary && cardData.quota.summary.state === "reported") {
+          cardBtn.appendChild(el("div", "map-card-meta", "Quota reading unavailable"));
+        } else {
+          cardBtn.appendChild(el("div", "map-card-meta", "No saved quota reading"));
+        }
+        cardBtn.appendChild(el("div", "map-card-meta", (uUpd && uUpd.text) || "Automatic updates: not reported"));
+      } else {
+        var useSub = ac.uses && list(ac.uses.reading).length ? say(ac.uses.reading) : "Selected account (snapshot loading or read-only summary)";
+        cardBtn.appendChild(el("div", "map-card-meta", useSub));
+      }
+      colAccts.appendChild(cardBtn);
+    });
+
+    cols.appendChild(colLoops); cols.appendChild(colRoutes); cols.appendChild(colAccts);
+    canvas.appendChild(cols);
+    sec.appendChild(canvas);
+    sec.appendChild(setupListFallback(topo));
+
+    var leg = el("details", "map-legend-fold");
+    leg.appendChild(el("summary", null, "Connection legend (orthogonal ports & edge meanings)"));
+    var legRow = el("div", "map-legend-row");
+    [
+      ["edge-inuse", "Current in use"],
+      ["edge-current", "Current (held / stale)"],
+      ["edge-fallback", "Configured fallback (on select)"],
+      ["edge-limit", "Left on usage limit"],
+      ["edge-bound", "Assigned account (by you)"],
+      ["edge-unbound", "Unbound (account unknown)"]
+    ].forEach(function (pair) {
+      var itemSpan = el("span", "legend-item");
+      var swSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      swSvg.setAttribute("class", "legend-swatch"); swSvg.setAttribute("viewBox", "0 0 24 12"); swSvg.setAttribute("aria-hidden", "true");
+      var swLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      swLine.setAttribute("x1", "1"); swLine.setAttribute("y1", "6"); swLine.setAttribute("x2", "23"); swLine.setAttribute("y2", "6");
+      swLine.setAttribute("class", pair[0]);
+      swSvg.appendChild(swLine);
+      itemSpan.appendChild(swSvg);
+      itemSpan.appendChild(document.createTextNode(pair[1]));
+      legRow.appendChild(itemSpan);
+    });
+    leg.appendChild(legRow);
+    sec.appendChild(leg);
+
+    var drawSoon = function () { drawSetupEdges(topo, canvas, svgEl); };
+    if (typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(drawSoon);
+    else drawSoon();
+    if (typeof ResizeObserver === "function") {
+      state.mapObserver = new ResizeObserver(function () { drawSetupEdges(topo, canvas, svgEl); });
+      state.mapObserver.observe(canvas);
+    }
+    return sec;
+  }
+
+  function attentionPanel(d, cats) {
+    var sec = el("section", "panel attn-section");
+    sec.id = "attention-section";
+    sec.setAttribute("aria-labelledby", "attn-section-title");
+    var hd = el("h2", null, "Needs attention");
+    hd.id = "attn-section-title";
+    hd.appendChild(el("span", "sub", "Clears on the next complete saved read once resolved externally; failed or incomplete reads retain items as Unconfirmed."));
+    sec.appendChild(hd);
+
+    if (state.issueStaleNotice) {
+      var bnr = el("div", "issue-stale-banner");
+      bnr.setAttribute("role", "status");
+      bnr.appendChild(el("span", null, state.issueStaleNotice));
+      bnr.appendChild(button("Dismiss", "dismiss-stale-notice", "", function () { state.issueStaleNotice = ""; render(false, true); }));
+      sec.appendChild(bnr);
+    }
+    var bgBanner = supersededOutcomeBanner(d);
+    if (bgBanner) sec.appendChild(bgBanner);
+
+    var loopLookup = Object.create(null);
+    if (state.retainedLoops) Object.keys(state.retainedLoops).forEach(function (k) { loopLookup[k] = state.retainedLoops[k]; });
+    list(d.loops).forEach(function (loopObj) { loopLookup[loopObj.key] = loopObj; });
+    var hasAny = cats.decisions.length || cats.checks.length || cats.unreadable.length || cats.driftCards.length;
+    if (!hasAny) {
+      if (!d.allClear) {
+        sec.appendChild(emptyBox("Not every loop was read.", "So this cannot confirm every loop is clear. It reads again shortly."));
+      } else {
+        var clearP = el("p", "clear");
+        clearP.appendChild(icon("check"));
+        clearP.appendChild(document.createTextNode("Nothing needs you: every registered loop was read and none is held."));
+        sec.appendChild(clearP);
+      }
+      return sec;
+    }
+
+    function addGroup(titleStr, items, clsOverride) {
+      if (!items.length) return;
+      var boxDiv = el("div");
+      boxDiv.appendChild(el("h3", "attn-group-title", titleStr));
+      var ul = el("ul", "attn-grid need-list");
+      items.forEach(function (nItem) { ul.appendChild(taskCard(nItem, true, loopLookup[nItem.key] || null)); });
+      boxDiv.appendChild(ul);
+      sec.appendChild(boxDiv);
+    }
+    addGroup("Decisions & bounds waiting for you (" + cats.decisions.length + ")", cats.decisions);
+    addGroup("Checks stopped \u2014 supervision stale (" + cats.checks.length + ", not a person hold)", cats.checks);
+    addGroup("Records unreadable (" + cats.unreadable.length + ")", cats.unreadable);
+
+    if (cats.driftCards.length) {
+      var drDiv = el("div");
+      drDiv.appendChild(el("h3", "attn-group-title", "Account context review needed (" + cats.driftCards.length + ", not a quota limit)"));
+      var drList = el("ul", "attn-grid");
+      cats.driftCards.forEach(function (cItem) {
+        var li = el("li", "need task-card is-person");
+        var topA = el("div", "task-top");
+        topA.appendChild(link("#/accounts/" + cItem.id, cItem.label, "task-name"));
+        topA.appendChild(uiBadge("attn", "Context review needed \u2014 not a quota limit"));
+        li.appendChild(topA);
+        li.appendChild(el("p", "reason", "Selection saved under a different shell, context, or CLI path. Prior quota stays withheld until reviewed."));
+        var acts = el("div", "task-actions");
+        if (changesOn() && state.server && state.server.accountSelectionReview) {
+          acts.appendChild(button("Review selection\u2026", "drift-review-" + cItem.id, "is-primary", function () {
+            window.location.hash = "#/accounts/" + cItem.id;
+            accountQuotaRequest(cItem, false, true);
+          }));
+        } else {
+          acts.appendChild(el("span", "sub", "Requires panel with --allow-changes to review selection."));
+        }
+        acts.appendChild(link("#/accounts/" + cItem.id, "Open account \u2192", "overview-jump"));
+        li.appendChild(acts);
+        drList.appendChild(li);
+      });
+      drDiv.appendChild(drList);
+      sec.appendChild(drDiv);
+    }
+    return sec;
+  }
+
   function renderHome(d, pane) {
     pane.appendChild(paneHead("Overview"));
-    var group = groupBox(d);
-    if (group) pane.appendChild(group);
-    var router = routerBox(d.router);
     if (d.registry.availability !== "available") {
-      if (router) pane.appendChild(router);
+      var groupBad = groupBox(d);
+      if (groupBad) pane.appendChild(groupBad);
+      var routerBad = routerBox(d.router);
+      if (routerBad) pane.appendChild(routerBad);
       pane.appendChild(el("p", "lede", "Unknown."));
       pane.appendChild(emptyBox("The registry could not be read.", "Nothing is shown rather than guessing. Check it with looptender registry list."));
       return;
     }
-    var needs = list(d.needsYou);
     if (d.lede) pane.appendChild(el("p", "lede", d.lede));
-    if (d.buildFreshness && d.buildFreshness.text && list(d.loops).length) pane.appendChild(el("p", "sub fresh-summary", d.buildFreshness.text));
-    if (router) pane.appendChild(router);
-    pane.appendChild(noticeArea());
-    if (!list(d.loops).length) {
+    var cats = categorizeNeeds(d);
+    if (!list(d.loops).length && !cats.all.length) {
+      var gEmpty = groupBox(d);
+      if (gEmpty) pane.appendChild(gEmpty);
+      var rEmpty = routerBox(d.router);
+      if (rEmpty) pane.appendChild(rEmpty);
+      pane.appendChild(noticeArea());
       pane.appendChild(emptyBox("No loops are registered yet.", "Register one with looptender registry add -c path/to/looptender.yaml (or keepgoing.yaml), and it appears here on the next read."));
       return;
     }
-    if (!needs.length && !d.allClear) {
-      pane.appendChild(emptyBox("Not every loop was read.", "So this cannot say that nothing needs you. It reads again shortly."));
-    } else if (!needs.length) {
-      var p = el("p", "clear panel");
-      p.appendChild(icon("check"));
-      p.appendChild(document.createTextNode("Nothing needs you: every registered loop was read and none is held."));
-      pane.appendChild(p);
-    } else {
-      pane.appendChild(el("h2", "overview-heading", "Needs you"));
-      var wrap = el("div", "panel is-need");
-      needGroups(needs).forEach(function (g) {
-        if (g.label) wrap.appendChild(el("h3", "need-group", g.label));
-        var ol = el("ol", "need-list");
-        g.needs.forEach(function (x) { ol.appendChild(needCard(x, true)); });
-        wrap.appendChild(ol);
-      });
-      pane.appendChild(wrap);
-    }
+    pane.appendChild(overviewHealthBar(d, cats));
+    pane.appendChild(setupMapPanel(d, cats));
+    pane.appendChild(attentionPanel(d, cats));
+    var group = groupBox(d);
+    if (group) pane.appendChild(group);
+    var router = routerBox(d.router);
+    if (router) pane.appendChild(router);
+    pane.appendChild(noticeArea());
     pane.appendChild(workTree(d));
     pane.appendChild(recentAcrossLoops(d));
   }
@@ -833,6 +2188,9 @@
     if (l.provider) { var chip = el("span", "work-role", l.provider + (l.model ? " \u00B7 " + l.model : "")); chip.title = "Configured provider and model"; name.appendChild(chip); }
     if (l.observed) name.appendChild(el("span", "work-role work-observed", observedLabel(l)));
     if (l.inactive) name.appendChild(el("span", "work-role work-inactive", "inactive 3d+"));
+    if (isLoopSuperseded(l)) name.appendChild(el("span", "work-role", "superseded"));
+    if (l.lineage && l.lineage.from) name.appendChild(el("span", "work-role", "continues prior loop"));
+    if (l.state === "recovering" || l.recovering) name.appendChild(el("span", "work-role", "recovering"));
     summary.appendChild(name);
     var status = el("span", "work-status");
     var tone = l.inactive ? "calm" : (TONES[l.state] || "unknown");
@@ -1015,9 +2373,10 @@
       li.appendChild(el("span", "dot " + (x.state === "working" ? "dot-good" : x.state === "waiting" ? "dot-attn" : x.state === "failed" ? "dot-warn" : "dot-unknown")));
       li.appendChild(el("span", "lane-state", x.phrase));
       var what = el("span", "lane-what");
-      what.appendChild(el("span", "lane-title", x.title || "Lane " + x.number));
+      var laneTitle = state.identifiers ? x.title : "";
+      what.appendChild(el("span", "lane-title", laneTitle || "Lane " + x.number));
       // A recorded title is the person's own text: shown with identifiers only.
-      if (!x.title && x.titleEvidence === "withheld") what.appendChild(el("span", "sub", " · title withheld"));
+      if (!laneTitle && (x.titleEvidence === "withheld" || x.titleEvidence === "recorded" || (!state.identifiers && x.title))) what.appendChild(el("span", "sub", " \u00B7 title withheld"));
       if (x.loop) {
         what.appendChild(document.createTextNode(" · also a registered loop: "));
         what.appendChild(link("#/loop/" + x.loopKey, x.loop));
@@ -1134,6 +2493,24 @@
     var need = needFor(key);
     if (!need) pane.appendChild(el("p", "detail", l.detail));
     if (l.inactive) pane.appendChild(el("p", "sub build-line work-inactive-note", "Auto-folded from the active list after 3+ days without check activity. Archive moves it out of the way without deleting files."));
+    if (l.lineage && l.lineage.from) {
+      var linLine = el("p", "sub build-line");
+      linLine.appendChild(document.createTextNode("Continues earlier loop (" + l.lineage.count + " prior): "));
+      linLine.appendChild(link("#/loop/" + l.lineage.from, (loopByKey(l.lineage.from) && loopByKey(l.lineage.from).name) || l.lineage.from));
+      pane.appendChild(linLine);
+    }
+    if (l.archived && l.archived.continuedIn) {
+      var ci = l.archived.continuedIn;
+      var ciLine = el("p", "sub build-line");
+      ciLine.appendChild(document.createTextNode("Retired / archived \u2014 continued in "));
+      if (ci.key) ciLine.appendChild(link("#/loop/" + ci.key, ci.loop || ci.key));
+      else ciLine.appendChild(document.createTextNode(ci.loop || "successor loop"));
+      ciLine.appendChild(document.createTextNode(". Do not resume this retired loop."));
+      pane.appendChild(ciLine);
+    } else if (isLoopSuperseded(l)) {
+      pane.appendChild(el("p", "sub build-line", "Superseded \u2014 retired loop; do not resume."));
+    }
+    if (l.state === "recovering" || l.recovering) pane.appendChild(el("p", "sub build-line", "Recovering: scheduled checks are evaluating recovery according to policy."));
     var pageWaits = need ? null : waitsLine(l.waiting, d.readAt, true);
     if (pageWaits) { pageWaits.classList.add("sub"); pane.appendChild(el("p", "waits-line", null)).appendChild(pageWaits); }
     if (need) {
@@ -1155,6 +2532,8 @@
     // The standing wake policy, when status warns about it. Names no path.
     if (list(l.wakePolicy).length) pane.appendChild(el("p", "detail wake-policy", say(l.wakePolicy)));
     if (l.sessionpipeWake && l.sessionpipeWake.text) pane.appendChild(el("p", "detail sessionpipe-wake", "Wake: " + l.sessionpipeWake.text));
+    var bgOutcome = supersededOutcomeBanner(d);
+    if (bgOutcome) pane.appendChild(bgOutcome);
     var change = changeBox(l);
     if (change) pane.appendChild(change);
     if (l.migrationReview && l.migrationReview.availability === "available" && l.migrationReview.counts && l.migrationReview.counts.unfinished > 0) {
@@ -1513,24 +2892,35 @@
     }).then(function (d) { return allowanceReply(d, key, step); })
       .finally(function () { clearTimeout(timer); });
   }
-  function editAllowance(key) {
-    state.change = { key: key, action: "set_send_allowance", editing: true, draft: "" };
+  function editAllowance(key, issueFp, issueBaseFp, issueIdsMode) {
+    state.changeSerial = (state.changeSerial || 0) + 1;
+    state.change = { key: key, action: "set_send_allowance", editing: true, draft: "", issueFp: issueFp || "", issueBaseFp: issueBaseFp || "", issueIdsMode: issueIdsMode !== undefined ? !!issueIdsMode : !!(state.data && state.data.identifiers) };
     render(false, true);
     focusOn("allowance-input");
   }
-  function prepareChange(key, action, amount) {
+  function prepareChange(key, action, amount, issueFp, issueBaseFp, issueIdsMode) {
     if (!changesOn()) return;
-    state.change = { key: key, action: action, busy: true };
+    var curFp = issueFp || (state.change && state.change.key === key ? state.change.issueFp : "");
+    var curBaseFp = issueBaseFp != null ? issueBaseFp : (state.change && state.change.key === key ? (state.change.issueBaseFp || "") : "");
+    var curIdsMode = issueIdsMode !== undefined ? !!issueIdsMode : (state.change && state.change.key === key && state.change.issueIdsMode !== undefined ? !!state.change.issueIdsMode : !!(state.data && state.data.identifiers));
+    var seq = state.changeSerial = (state.changeSerial || 0) + 1;
+    state.change = { key: key, action: action, busy: true, issueFp: curFp, issueBaseFp: curBaseFp, issueIdsMode: curIdsMode };
     render(false, true);
     (action === "set_send_allowance" ? allowancePost(key, "prepare", state.server.form, amount) : post("api/v1/loops/" + key + "/prepare", state.server.form, { action: action }))
-      .then(function (d) { state.change = d.preview ? { key: key, action: action, preview: d.preview } : { key: key, action: action, result: d.result }; })
+      .then(function (d) {
+        if (seq !== state.changeSerial) return;
+        state.change = d.preview ? { key: key, action: action, preview: d.preview, issueFp: curFp, issueBaseFp: curBaseFp, issueIdsMode: curIdsMode } : { key: key, action: action, result: d.result, issueFp: curFp, issueBaseFp: curBaseFp, issueIdsMode: curIdsMode };
+      })
       .catch(function () {
-        state.change = { key: key, action: action, result: { outcome: "refused", retry: action !== "set_send_allowance", text: "The review could not be prepared: the panel did not answer. Nothing was changed." } };
+        if (seq !== state.changeSerial) return;
+        state.change = { key: key, action: action, issueFp: curFp, issueBaseFp: curBaseFp, issueIdsMode: curIdsMode, result: { outcome: "refused", retry: action !== "set_send_allowance", text: "The review could not be prepared: the panel did not answer. Nothing was changed." } };
       })
       .then(function () {
+        if (seq !== state.changeSerial) return;
         render(false, true);
+        if (!state.change) { focusOn("act-" + action); return; }
         if (state.change.preview) focusOn("change-cancel");
-        else { focusOn("change-result"); announce(state.change.result.text); }
+        else if (state.change.result) { focusOn("change-result"); announce(state.change.result.text); }
       });
   }
   // A stop's review may offer options (stop the lanes too, carry it out at
@@ -1538,7 +2928,28 @@
   function confirmChange(option) {
     var c = state.change, p = c && c.preview;
     if (!p || c.busy) return;
-    state.change = { key: c.key, action: c.action, preview: p, busy: true };
+    if (c.issueFp && state.data) {
+      if (state.failed || state.data.complete === false) {
+        state.issueStaleNotice = "Cannot confirm while reads are failing or incomplete. Wait for a complete read before confirming.";
+        render(false, true);
+        return;
+      }
+      var liveLoop = effectiveLoopByKey(state.data, c.key), liveNeed = needFor(c.key);
+      var liveFp = liveNeed ? issueFingerprint(liveNeed, liveLoop, true) : "";
+      var liveBaseFp = liveNeed ? issueFingerprint(liveNeed, liveLoop, false) : "";
+      var curIdsMode = !!state.data.identifiers;
+      var fpChanged = liveNeed && (c.issueIdsMode === curIdsMode ? liveFp !== c.issueFp : liveBaseFp !== (c.issueBaseFp || ""));
+      if (!liveNeed || liveNeed._retainedIncomplete || (liveLoop && (isLoopRetired(liveLoop) || isLoopSuperseded(liveLoop))) || fpChanged) {
+        state.changeSerial = (state.changeSerial || 0) + 1;
+        state.change = null;
+        state.issueStaleNotice = "Hold, target, or question state changed before confirming. Previous review was cancelled without submitting.";
+        render(false, true);
+        return;
+      }
+    }
+    var seq = state.changeSerial = (state.changeSerial || 0) + 1;
+    state.supersededChangeResult = null;
+    state.change = { key: c.key, action: c.action, preview: p, busy: true, issueFp: c.issueFp || "", issueBaseFp: c.issueBaseFp || "", issueIdsMode: !!c.issueIdsMode };
     render(false, true);
     var body = { action: p.action };
     if (option && p.stop) {
@@ -1547,14 +2958,29 @@
       if (p.stop.immediately) body.immediately = true;
     }
     (c.action === "set_send_allowance" ? allowancePost(c.key, "confirm", p.form) : post("api/v1/loops/" + c.key + "/confirm", p.form, body))
-      .then(function (d) { state.change = { key: c.key, action: c.action, result: d.result }; })
+      .then(function (d) {
+        if (seq !== state.changeSerial) {
+          state.supersededChangeResult = { key: c.key, action: c.action, result: d.result };
+          return;
+        }
+        state.change = { key: c.key, action: c.action, result: d.result };
+      })
       // A refusal (4xx) comes before anything is done. Anything else, or no
       // reply: whether it was saved is not known, and it is not sent again.
       .catch(function (err) {
         var refused = err && err.status >= 400 && err.status < 500;
-        state.change = { key: c.key, action: c.action, result: refused ? { outcome: "refused", retry: c.action !== "set_send_allowance", text: p.refused } : { outcome: "uncertain", text: p.lost } };
+        var res = refused ? { outcome: "refused", retry: c.action !== "set_send_allowance", text: p.refused } : { outcome: "uncertain", text: p.lost };
+        if (seq !== state.changeSerial) {
+          state.supersededChangeResult = { key: c.key, action: c.action, result: res };
+          return;
+        }
+        state.change = { key: c.key, action: c.action, result: res };
       })
       .then(function () {
+        if (seq !== state.changeSerial) {
+          render(false);
+          return;
+        }
         render(false, true);
         focusOn("change-result");
         announce(state.change.result.text);
@@ -1564,6 +2990,7 @@
   }
   function cancelChange() {
     var c = state.change;
+    state.changeSerial = (state.changeSerial || 0) + 1;
     state.change = null;
     render(false, true);
     if (c) focusOn("act-" + c.action);
@@ -1646,7 +3073,7 @@
       }
       var again = el("div", "change-buttons");
       if (c.result.retry && changesOn()) again.appendChild(button("Review again", "change-retry", "", function () { prepareChange(l.key, c.action); }));
-      again.appendChild(button("Close", "change-close", "", function () { state.change = null; render(false, true); focusOn("act-" + c.action); }));
+      again.appendChild(button("Close", "change-close", "", function () { state.changeSerial = (state.changeSerial || 0) + 1; state.change = null; render(false, true); focusOn("act-" + c.action); }));
       box.appendChild(again);
       if (inlineOnly || !changesOn()) return box;
     }
@@ -1914,13 +3341,62 @@
     return !!state.server.accountQuota && (Array.isArray(providers) ? providers.indexOf(c.provider) >= 0 : c.provider === "codex");
   }
   function accountQuotaSummary(c) {
+    if (!c || typeof c !== "object") return null;
     var s = c.quota && c.quota.summary;
-    if (!s || s.state !== "reported") return null;
-    function date(v) { return typeof v === "string" && isFinite(Date.parse(v)); }
-    if (c.provider === "codex" && s.source === "codex account/rateLimits/read" && date(s.observedAt) && !s.retrievedAt && (s.freshness === "fresh" || s.freshness === "stale")) return s;
-    if (c.provider === "claude-code" && s.source === "claude:get_usage" && date(s.retrievedAt) && !s.observedAt && s.freshness === "provider_unknown") return s;
-    if (c.provider === "antigravity" && s.source === "agy:/usage" && date(s.retrievedAt) && !s.observedAt && s.freshness === "provider_unknown") return s;
-    return null;
+    if (!s || typeof s !== "object" || Array.isArray(s) || s.state !== "reported") return null;
+    var hasOwn = Object.prototype.hasOwnProperty;
+    function parseRFC3339(v) {
+      if (typeof v !== "string" || v.length < 20 || v.length > 35) return null;
+      var m = /^([0-9]{4})-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])(?:\.([0-9]{1,9}))?(Z|([+-])([01][0-9]|2[0-3]):([0-5][0-9]))$/.exec(v);
+      if (!m) return null;
+      var yr = Number(m[1]), mo = Number(m[2]), dy = Number(m[3]), hr = Number(m[4]), mi = Number(m[5]), sc = Number(m[6]);
+      if (yr < 2000 || yr > 9999) return null;
+      var leap = (yr % 4 === 0 && yr % 100 !== 0) || (yr % 400 === 0);
+      var maxDay = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1];
+      if (dy > maxDay) return null;
+      var offsetSec = 0;
+      if (m[8] !== "Z") {
+        var offSecAbs = Number(m[10]) * 3600 + Number(m[11]) * 60;
+        offsetSec = m[9] === "+" ? -offSecAbs : offSecAbs;
+      }
+      var baseMs = Date.UTC(yr, mo - 1, dy, hr, mi, sc);
+      if (!isFinite(baseMs)) return null;
+      var epochSec = Math.floor(baseMs / 1000) + offsetSec;
+      if (!Number.isSafeInteger(epochSec)) return null;
+      var frac = m[7] || "";
+      var nanos = (frac + "000000000").slice(0, 9);
+      return { epochSec: epochSec, nanos: nanos };
+    }
+    var hasObs = hasOwn.call(s, "observedAt") && s.observedAt !== undefined;
+    var hasRet = hasOwn.call(s, "retrievedAt") && s.retrievedAt !== undefined;
+    var legacyAt = null;
+    if (c.provider === "codex" && s.source === "codex account/rateLimits/read" && hasObs && !hasRet && (s.freshness === "fresh" || s.freshness === "stale")) {
+      legacyAt = parseRFC3339(s.observedAt);
+    } else if (c.provider === "claude-code" && s.source === "claude:get_usage" && hasRet && !hasObs && s.freshness === "provider_unknown") {
+      legacyAt = parseRFC3339(s.retrievedAt);
+    } else if (c.provider === "antigravity" && s.source === "agy:/usage" && hasRet && !hasObs && s.freshness === "provider_unknown") {
+      legacyAt = parseRFC3339(s.retrievedAt);
+    }
+    if (!legacyAt) return null;
+    if (hasOwn.call(s, "provenance")) {
+      var p = s.provenance;
+      if (!p || typeof p !== "object" || Array.isArray(p)) return null;
+      var pKeys = Object.keys(p);
+      if (pKeys.length !== 3 || !hasOwn.call(p, "version") || !hasOwn.call(p, "retrievedAt") || !hasOwn.call(p, "providerObservedAt")) return null;
+      if (typeof p.version !== "number" || p.version !== 1 || p.providerObservedAt !== null) return null;
+      var provAt = parseRFC3339(p.retrievedAt);
+      if (!provAt || provAt.epochSec !== legacyAt.epochSec || provAt.nanos !== legacyAt.nanos) return null;
+    }
+    return s;
+  }
+  function accountQuotaRetrievedAt(saved) {
+    if (!saved) return "";
+    if (saved.provenance && typeof saved.provenance.retrievedAt === "string") return saved.provenance.retrievedAt;
+    return saved.retrievedAt || saved.observedAt || "";
+  }
+  function accountQuotaMalformedProvenance(c) {
+    var s = c && c.quota && c.quota.summary;
+    return !!(s && typeof s === "object" && !Array.isArray(s) && Object.prototype.hasOwnProperty.call(s, "provenance") && !accountQuotaSummary(c));
   }
   // Clock labels update independently of saved reads, without replacing a
   // focused disclosure/input or making a provider request. Wall time, rather
@@ -1942,8 +3418,8 @@
     if (seconds < 0) return "Time unavailable · device clock is before the reading";
     var age = span(seconds) + " ago";
     if (mode === "checked") return "Last checked " + age + (seconds >= 300 ? " · Older check" : "") + (checkAgain || seconds > 86400 ? " · check again to confirm" : "");
-    if (mode === "retrieved") return "Retrieved " + age + " · Provider freshness unknown";
-    return "Read " + age + (stale || seconds > 1800 ? " · Older reading" : " · Saved snapshot");
+    if (mode === "retrieved") return "Retrieved " + age + (stale || seconds > 1800 ? " · Older reading" : "") + " · Provider freshness unknown";
+    return "Local read " + age + (stale || seconds > 1800 ? " · Older reading" : " · Saved snapshot") + " · Provider freshness unknown";
   }
   function accountWindowEnded(at, ended, now) {
     return ended || (isFinite(Date.parse(at)) && Date.parse(at) <= now);
@@ -1953,7 +3429,8 @@
     var now = Date.now();
     document.querySelectorAll("[data-account-clock]").forEach(function (label) {
       label.textContent = accountClockText(label.dataset.accountClock, label.dataset.at, now, label.dataset.stale === "true", label.dataset.checkAgain === "true");
-      label.title = label.dataset.at + " · " + when({ at: label.dataset.at }) + " (local time)";
+      var localNote = (label.dataset.accountClock === "retrieved" || label.dataset.accountClock === "quota") ? " (local retrieval time)" : " (local time)";
+      label.title = label.dataset.at + " · " + when({ at: label.dataset.at }) + localNote;
     });
     document.querySelectorAll("[data-account-window]").forEach(function (row) {
       var ended = accountWindowEnded(row.dataset.reset, row.dataset.ended === "true", now);
@@ -1975,8 +3452,10 @@
     row.appendChild(label);
   }
   function accountQuotaStamp(saved, compact) {
-    var stamp = accountClock(compact ? "span" : "p", "quota-stamp", saved.retrievedAt ? "retrieved" : "quota", saved.retrievedAt || saved.observedAt);
-    stamp.dataset.stale = saved.freshness === "stale" ? "true" : "false";
+    var at = accountQuotaRetrievedAt(saved);
+    var mode = (saved && (saved.provenance || saved.retrievedAt)) ? "retrieved" : "quota";
+    var stamp = accountClock(compact ? "span" : "p", "quota-stamp", mode, at);
+    stamp.dataset.stale = saved && saved.freshness === "stale" ? "true" : "false";
     return stamp;
   }
   function accountQuotaRequest(c, confirm, recovery) {
@@ -2253,30 +3732,54 @@
     box.appendChild(accountUsageBox(c));
     box.appendChild(el("p", "sub", "Saved for this selection; separate from route readings. Live thread account binding is not verified."));
     var saved = accountQuotaSummary(c) || {};
+    var rejectedProv = accountQuotaMalformedProvenance(c);
     if (saved.state === "reported") {
       box.appendChild(accountQuotaStamp(saved));
-      if (saved.retrievedAt) box.appendChild(el("p", "sub", "Retrieval may return cached or seeded usage. The provider's observation time is unavailable."));
-      var rows = el("ul", "quota-windows");
-      list(saved.rows).forEach(function (w) {
-        var row = el("li", "quota-window" + (w.ended ? " is-ended" : ""));
-        row.appendChild(el("h4", null, w.name));
-        accountWindowValue(row, w, false);
-        if (typeof w.usedPercent === "number" && !w.ended) {
-          var meter = el("meter", "quota-meter"); meter.min = 0; meter.max = 100; meter.value = w.usedPercent;
-          meter.setAttribute("aria-label", w.name + ": " + w.text); meter.textContent = w.text; row.appendChild(meter);
-        }
-        if (w.resetsAt) {
-          row.appendChild(accountClock("p", "sub quota-countdown", "reset", w.resetsAt));
-          row.appendChild(el("p", "sub", "Reset: " + when({ at: w.resetsAt }) + " (local time)"));
-        }
-        else if (typeof w.usedPercent === "number" || typeof w.remainingPercent === "number") row.appendChild(el("p", "sub", "Reset time unavailable."));
-        rows.appendChild(row);
-      });
-      box.appendChild(rows);
+      if (saved.provenance) {
+        box.appendChild(el("p", "sub", c.provider === "codex"
+          ? "Provider observation time is unavailable (provenance v1; local retrieval time only). Collection time does not verify provider freshness."
+          : "Provider observation time is unavailable (provenance v1; local retrieval time only). Retrieval may return cached or seeded usage."));
+      } else {
+        box.appendChild(el("p", "sub", c.provider === "codex"
+          ? "Provider observation time is unavailable (legacy local read timestamp). Collection time does not verify provider freshness."
+          : "Provider observation time is unavailable (legacy retrieval timestamp). Retrieval may return cached or seeded usage."));
+      }
+      var savedRows = list(saved.rows), nowCheck = Date.now();
+      var allInitiallyEnded = savedRows.length > 0 && savedRows.every(function (w) { return accountWindowEnded(w.resetsAt, w.ended, nowCheck); });
+      function renderQuotaRowList(rowItems) {
+        var ulRows = el("ul", "quota-windows");
+        rowItems.forEach(function (w) {
+          var row = el("li", "quota-window" + (w.ended ? " is-ended" : ""));
+          row.appendChild(el("h4", null, w.name));
+          accountWindowValue(row, w, false);
+          if (typeof w.usedPercent === "number" && !w.ended) {
+            var meter = el("meter", "quota-meter"); meter.min = 0; meter.max = 100; meter.value = w.usedPercent;
+            meter.setAttribute("aria-label", w.name + ": " + w.text); meter.textContent = w.text; row.appendChild(meter);
+          }
+          if (w.resetsAt) {
+            row.appendChild(accountClock("p", "sub quota-countdown", "reset", w.resetsAt));
+            row.appendChild(el("p", "sub", "Reset: " + when({ at: w.resetsAt }) + " (local time)"));
+          }
+          else if (typeof w.usedPercent === "number" || typeof w.remainingPercent === "number") row.appendChild(el("p", "sub", "Reset time unavailable."));
+          ulRows.appendChild(row);
+        });
+        return ulRows;
+      }
+      if (allInitiallyEnded) {
+        box.appendChild(uiBadge("plain", "Window ended \u00B7 current quota unknown"));
+        var histFold = el("details", "acct-prev");
+        histFold.appendChild(el("summary", null, "Previous readings (window ended)"));
+        histFold.appendChild(renderQuotaRowList(savedRows));
+        box.appendChild(histFold);
+      } else {
+        box.appendChild(renderQuotaRowList(savedRows));
+      }
       if (saved.partial || saved.omitted) box.appendChild(el("p", "sub quota-incomplete", "Partial evidence: some quota detail is unavailable" + (saved.omitted ? "; " + saved.omitted + " additional buckets not shown" : "") + ". Missing values are not zero."));
       box.appendChild(el("p", "sub", "Source: " + saved.source));
+    } else if (rejectedProv) {
+      box.appendChild(el("p", "sub", "Quota provenance metadata was invalid or unsupported. No usage is assumed."));
     } else box.appendChild(el("p", "sub", (q.summary && q.summary.state !== "reported" && q.summary.text) || accountQuotaReason(q.reason || "schema_unavailable")));
-    if (saved.failedRefreshAt) box.appendChild(el("p", "sub", "Refresh failed " + when({ at: saved.failedRefreshAt }) + ". " + saved.failedRefreshText + " Any earlier reading retains its original time."));
+    if (!rejectedProv && saved.failedRefreshAt) box.appendChild(el("p", "sub", "Refresh failed " + when({ at: saved.failedRefreshAt }) + ". " + saved.failedRefreshText + " Any earlier reading retains its original time."));
     if (c.provider !== "codex" && c.provider !== "claude-code" && c.provider !== "antigravity") return box;
     var change = state.accountQuotaChange, current = change && change.id === c.id ? change : null;
     if (current) {
@@ -2450,7 +3953,79 @@
       pane.appendChild(addAccountBox(true));
       return;
     }
-    pane.appendChild(el("p", "account-count", cards.length + (cards.length === 1 ? " selected account" : " selected accounts")));
+    var acctCounts = { recentLocal: 0, olderLocal: 0, atLimit: 0, endedOrNone: 0, drift: 0 }, provCounts = Object.create(null), nowAc = Date.now();
+    function classifyAccountCard(cCard) {
+      var isDr = cCard.attention === "context_changed" || cCard.reason === "context_changed" || (cCard.quota && (cCard.quota.reason === "selection_review_required" || cCard.quota.reason === "context_changed"));
+      if (isDr) return "drift";
+      if (accountQuotaMalformedProvenance(cCard)) return "rejected";
+      var qSum = accountQuotaSummary(cCard);
+      if (!qSum || qSum.state !== "reported") return "endedOrNone";
+      var qRows = list(qSum.rows);
+      var allEnd = qRows.length > 0 && qRows.every(function (rw) { return accountWindowEnded(rw.resetsAt, rw.ended, nowAc); });
+      if (allEnd) return "endedOrNone";
+      if (qRows.some(function (rw) { return typeof rw.usedPercent === "number" && rw.usedPercent >= 100 && !accountWindowEnded(rw.resetsAt, rw.ended, nowAc); })) return "atLimit";
+      var atMs = Date.parse(accountQuotaRetrievedAt(qSum));
+      if (qSum.freshness === "stale" || !isFinite(atMs) || atMs > nowAc || (nowAc - atMs) > 1800000) return "olderLocal";
+      return "recentLocal";
+    }
+    cards.forEach(function (cCard) {
+      var kClass = classifyAccountCard(cCard);
+      acctCounts[kClass === "rejected" ? "endedOrNone" : kClass]++;
+      if (cCard.provider) provCounts[cCard.provider] = (provCounts[cCard.provider] || 0) + 1;
+    });
+    if (cards.length) {
+      var strip = el("section", "acct-summary-strip");
+      strip.setAttribute("aria-label", "Account evidence summary");
+      [
+        ["num-good", acctCounts.recentLocal, "Recent local read \u00B7 provider time unknown"],
+        ["", acctCounts.olderLocal, "Older local read \u00B7 provider time unknown"],
+        ["num-limit", acctCounts.atLimit, "At saved limit (100%)"],
+        ["", acctCounts.endedOrNone, "Window ended, unavailable, or rejected"],
+        ["num-attn", acctCounts.drift, "Context review needed"]
+      ].forEach(function (stRow) {
+        var stDiv = el("div", "acct-stat");
+        stDiv.appendChild(el("span", "num" + (stRow[0] ? " " + stRow[0] : ""), String(stRow[1])));
+        stDiv.appendChild(el("span", "lbl", stRow[2]));
+        strip.appendChild(stDiv);
+      });
+      pane.appendChild(strip);
+
+      var acctBar = el("div", "acct-toolbar");
+      var fGroup = el("div", "map-filters");
+      [
+        ["all", "All (" + cards.length + " selected)"],
+        ["drift", "Needs review (" + acctCounts.drift + ")"],
+        ["limit", "At saved limit (" + acctCounts.atLimit + ")"]
+      ].concat(Object.keys(provCounts).map(function (pName) {
+        return ["prov:" + pName, (pName === "claude-code" ? "Claude Code" : pName === "codex" ? "Codex" : pName === "antigravity" ? "Antigravity" : pName) + " (" + provCounts[pName] + ")"];
+      })).forEach(function (fPair) {
+        var fBtn = el("button", "chip-btn", fPair[1]);
+        fBtn.type = "button"; fBtn.dataset.focus = "acct-filter-" + fPair[0];
+        fBtn.setAttribute("aria-pressed", String(state.acctFilter === fPair[0]));
+        fBtn.addEventListener("click", function () { state.acctFilter = fPair[0]; render(false, true); });
+        fGroup.appendChild(fBtn);
+      });
+      acctBar.appendChild(fGroup);
+      var denSwitch = el("div", "view-switch");
+      denSwitch.setAttribute("role", "group"); denSwitch.setAttribute("aria-label", "Account card density");
+      [["detailed", "Detailed"], ["compact", "Compact"]].forEach(function (dPair) {
+        var dBtn = el("button", null, dPair[1]);
+        dBtn.type = "button"; dBtn.dataset.focus = "acct-density-" + dPair[0];
+        dBtn.setAttribute("aria-pressed", String(state.acctDensity === dPair[0]));
+        dBtn.addEventListener("click", function () { state.acctDensity = dPair[0]; render(false, true); });
+        denSwitch.appendChild(dBtn);
+      });
+      acctBar.appendChild(denSwitch);
+      pane.appendChild(acctBar);
+    }
+    var visibleAccts = cards.filter(function (cCard) {
+      if (route().key === cCard.id) return true;
+      if (state.acctFilter === "drift") return classifyAccountCard(cCard) === "drift";
+      if (state.acctFilter === "limit") return classifyAccountCard(cCard) === "atLimit";
+      if (state.acctFilter.indexOf("prov:") === 0) return cCard.provider === state.acctFilter.slice(5);
+      return true;
+    });
+    pane.appendChild(el("p", "account-count", visibleAccts.length + " of " + cards.length + (cards.length === 1 ? " selected account" : " selected accounts")));
     var templates = cards.filter(accountConnectSupported), eligibleChecks = accountCheckSupported() ? cards.filter(accountCheckEligible) : [];
     if (templates.length || eligibleChecks.length) {
       var add = el("div", "account-quota-actions");
@@ -2483,9 +4058,11 @@
       pane.appendChild(checkNotice);
     }
     if (!d.complete || (d.registry || {}).availability !== "available") pane.appendChild(el("p", "sub", "Not every loop could be read, so some routes may be missing here."));
-    var ul = el("ul", "accounts-list"), retained = Object.create(null);
-    cards.forEach(function (c) {
-      var li = el("li", "account-card" + (c.needsPerson ? " is-attention" : "")), details = el("details");
+    var ul = el("ul", "accounts-list acct-cards"), retained = Object.create(null);
+    ul.dataset.density = state.acctDensity;
+    visibleAccts.forEach(function (c) {
+      var bucketKind = classifyAccountCard(c);
+      var li = el("li", "account-card" + (c.needsPerson || bucketKind === "drift" || bucketKind === "rejected" ? " is-attention" : "")), details = el("details");
       details.open = Object.prototype.hasOwnProperty.call(state.accountOpen, c.id) ? !!state.accountOpen[c.id] : route().key === c.id; retained[c.id] = details.open;
       var summary = el("summary", "account-summary");
       summary.setAttribute("data-focus", "account-" + c.id);
@@ -2493,6 +4070,16 @@
       var provider = el("span", "sub", c.provider === "claude-code" ? "Claude Code" : c.provider === "codex" ? "Codex" : c.provider === "antigravity" ? "Antigravity" : c.provider);
       var identity = el("span", "account-title"); identity.appendChild(name); identity.appendChild(provider);
       identity.appendChild(el("span", "sub", c.selection === "inherited" ? "Inherited context" : c.selection === "explicit_directory" ? "Selected context" : "External context"));
+      var badgeWrap = el("span", "acct-badge-row");
+      if (bucketKind === "drift") badgeWrap.appendChild(uiBadge("attn", "Context review needed \u2014 not a quota limit"));
+      else if (bucketKind === "rejected") badgeWrap.appendChild(uiBadge("warn", "Quota provenance rejected"));
+      else if (bucketKind === "atLimit") {
+        badgeWrap.appendChild(uiBadge("limit", "At saved limit (100%)"));
+        badgeWrap.appendChild(uiBadge("plain", "Provider freshness unknown"));
+      } else if (bucketKind === "recentLocal" || bucketKind === "olderLocal") {
+        badgeWrap.appendChild(uiBadge("plain", "Provider freshness unknown"));
+      }
+      if (badgeWrap.childNodes.length) identity.appendChild(badgeWrap);
       summary.appendChild(identity);
       var status = el("span", "account-status");
       if (c.auth && c.auth.state === "unchecked" && c.localAuth) {
@@ -2529,39 +4116,54 @@
       summary.appendChild(plan);
       var qs = accountQuotaSummary(c);
       var compact = el("span", "quota-compact");
-      if (c.attention === "context_changed" && changesOn() && state.server && state.server.accountSelectionReview && (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity")) {
-        var reviewBtn = button("Review selection…", "selection-review-summary-" + c.id, "", function (event) {
+      if (qs && qs.state === "reported" && bucketKind !== "drift") {
+        var qsRows = list(qs.rows), nowSummary = Date.now();
+        var sumAllEnded = qsRows.length > 0 && qsRows.every(function (w) { return accountWindowEnded(w.resetsAt, w.ended, nowSummary); });
+        if (sumAllEnded) {
+          compact.appendChild(el("strong", null, "Window ended \u00B7 current quota unknown"));
+          compact.appendChild(accountQuotaStamp(qs, true));
+        } else {
+          qsRows.filter(function (w) { return typeof w.usedPercent === "number"; }).slice(0, 2).forEach(function (w) {
+            var item = el("span", "quota-chip"); item.appendChild(el("span", "sub", w.name));
+            accountWindowValue(item, w, true);
+            if (w.resetsAt) item.appendChild(accountClock("span", "sub quota-countdown", "reset", w.resetsAt));
+            else item.appendChild(el("span", "sub", "Reset time unavailable"));
+            compact.appendChild(item);
+          });
+          if (!compact.childNodes.length) compact.appendChild(el("span", "sub", qs.partial ? "Partial quota evidence" : "Quota details recorded"));
+          compact.appendChild(accountQuotaStamp(qs, true));
+          compact.title = "Saved account quota; expand for all recorded detail";
+        }
+      } else if (c.attention === "context_changed" && changesOn() && state.server && state.server.accountSelectionReview && (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity")) {
+        var reviewBtn = button("Review selection\u2026", "selection-review-summary-" + c.id, "", function (event) {
           event.preventDefault(); event.stopPropagation();
           state.accountOpen[c.id] = true;
           accountQuotaRequest(c, false, true);
         });
         reviewBtn.setAttribute("aria-label", "Review selection for " + c.label);
         compact.appendChild(reviewBtn);
-      } else if (qs && qs.state === "reported") {
-        list(qs.rows).filter(function (w) { return typeof w.usedPercent === "number"; }).slice(0, 2).forEach(function (w) {
-          var item = el("span", "quota-chip"); item.appendChild(el("span", "sub", w.name));
-          accountWindowValue(item, w, true);
-          if (w.resetsAt) item.appendChild(accountClock("span", "sub quota-countdown", "reset", w.resetsAt));
-          else item.appendChild(el("span", "sub", "Reset time unavailable"));
-          compact.appendChild(item);
-        });
-        if (!compact.childNodes.length) compact.appendChild(el("span", "sub", qs.partial ? "Partial quota evidence" : "Quota details recorded"));
-        compact.appendChild(accountQuotaStamp(qs, true));
-        compact.title = "Saved account quota; expand for all recorded detail";
+      } else if (bucketKind === "drift") {
+        compact.appendChild(el("strong", null, "Prior quota withheld"));
+        compact.appendChild(el("span", "sub", "Context validation changed \u2014 not a quota limit."));
       } else if ((c.provider === "codex" || c.provider === "claude-code") && accountSignInNeeded(c)) {
         compact.appendChild(el("span", "sub", "Account quota unavailable"));
         var connect = button("Connect " + connectProvider(c), "account-connect-" + c.id, "", function (event) { event.preventDefault(); event.stopPropagation(); accountConnectOpen(c); });
         connect.setAttribute("aria-label", "Connect " + connectProvider(c) + " for " + c.label);
         compact.appendChild(connect);
         if (c.auth && c.auth.state === "reported_absent") compact.appendChild(el("span", "sub", "Sign-in required"));
+      } else if (bucketKind === "rejected") {
+        compact.appendChild(el("strong", null, "Quota reading rejected"));
+        compact.appendChild(el("span", "sub", "Quota provenance metadata was invalid or unsupported. No usage is assumed."));
       } else {
-        compact.appendChild(el("strong", null, "Account quota unavailable"));
-        compact.appendChild(el("span", "sub", (c.quota && c.quota.summary && c.quota.summary.text) || accountQuotaReason(c.quota && c.quota.reason || "not_checked")));
+        compact.appendChild(el("strong", null, "No saved quota reading"));
+        compact.appendChild(el("span", "sub", (c.quota && c.quota.summary && c.quota.summary.state !== "reported" && c.quota.summary.text) || accountQuotaReason((c.quota && c.quota.summary && c.quota.summary.state === "reported" ? "schema_unavailable" : (c.quota && c.quota.reason)) || "not_checked")));
         compact.appendChild(el("span", "sub", "Expand for quota details and available actions"));
       }
       if (c.usageUpdating) {
-        var updatingLabel = ({ enabled: "Usage updates enabled", backoff: "Usage fetch failed · waiting to retry", waiting: "Updates paused · scheduler not running", paused: "Updates paused · selection changed", unavailable: "Update settings unavailable" })[c.usageUpdating.state];
+        var updatingLabel = ({ enabled: "Updates on", off: "Updates off", backoff: "Fetch failed \u00B7 retrying", waiting: "Updates paused \u00B7 scheduler not running", paused: "Updates paused \u00B7 selection changed", unavailable: "Update settings unavailable" })[c.usageUpdating.state];
         if (updatingLabel) compact.appendChild(el("span", "sub", updatingLabel));
+      } else {
+        compact.appendChild(el("span", "sub", "Updates not reported by this panel build"));
       }
       summary.appendChild(compact);
       details.appendChild(summary);
@@ -3108,7 +4710,7 @@
     // This is when the panel read its records, not how new they are: the
     // oldest usage reading shown is named when one is past stale-after.
     var old = state.data.oldestUsageAgeSeconds;
-    r.textContent = "Records read at " + fmt(secFmt, state.data.readAt) + (state.paused ? " · updates paused" : " · read again every " + (every >= 60 ? span(every) : every + " s")) +
+    r.textContent = "Saved records read at " + fmt(secFmt, state.data.readAt) + (state.paused ? " · updates paused" : " · read again every " + (every >= 60 ? span(every) : every + " s")) +
       (old != null ? " · oldest usage reading " + span(old) + " old" : "") +
       (state.failed ? " · the last read failed" : "");
     r.classList.toggle("is-stale", state.failedLong);
@@ -3163,10 +4765,13 @@
     state.pending = false;
     var r = route(), pane = $("pane");
     if (!navigated && !force && r.view === "routes" && pane.contains(document.activeElement) && document.activeElement.matches("input, select, textarea")) { state.pending = true; renderReadline(); return; }
+    if (!navigated && !force && r.view === "home" && pane.contains(document.activeElement) && document.activeElement.matches("input.map-search")) { state.pending = true; renderReadline(); return; }
     // Keep the live input (including caret and selection) while typing through
     // periodic reads. Explicit privacy/navigation/capability changes still win.
     if (!navigated && !force && editingAllowanceInput(r, pane)) { state.pending = true; renderReadline(); return; }
     var top = navigated ? 0 : window.scrollY;
+    if (state.mapObserver) { state.mapObserver.disconnect(); state.mapObserver = null; }
+    reconcileActiveIssue(d);
     var active = document.activeElement, inPane = pane.contains(active), inPicker = $("picker").contains(active);
     var key = inPane ? focusKey(active, pane) : inPicker ? focusKey(active, $("picker")) : null;
     retainedRouteEditor = !navigated && !force && r.view === "routes" && routeEdit.data && changesOn() && state.server.routeChanges === "person" ? pane.querySelector(".route-editor") : null;
@@ -3174,6 +4779,7 @@
     if (state.noticeRead !== d) { state.noticeRead = d; postBrowserNotices(noticeStep(d)); }
     try {
       $("layout").dataset.view = r.view;
+      renderBuildPill(d);
       renderPicker(d, r);
       pane.replaceChildren();
       pane.setAttribute("aria-labelledby", "pane-title");
@@ -3255,26 +4861,238 @@
     // server sends none.
     var v = typeof state.server.versionText === "string" ? state.server.versionText : "";
     m.textContent = v ? v + " " + base : base;
+    renderBuildPill(state.data);
   }
 
   // How long one read may take: a little under the refresh interval, from 4
   // to 30 seconds, so a read that never answers cannot stop the updates. A
   // read that runs out of time fails like any other failed read.
   function readTimeoutMs() { return Math.min(30, Math.max(4, refreshSeconds() - 2)) * 1000; }
+  // Validate raw dock/saved-accounts payloads before JSON.parse collapses duplicate
+  // or escaped-equivalent keys in accounts/cards/quota/summary/provenance.
+  function parseDockQuotaJSON(rawText) {
+    if (typeof rawText !== "string" || rawText.length > 16777216) throw new Error("schema");
+    var parsedObj = JSON.parse(rawText);
+    if (!parsedObj || typeof parsedObj !== "object" || Array.isArray(parsedObj)) return parsedObj;
+    var jLen = rawText.length, jPos = 0, MAX_JSON_DEPTH = 64;
+    var hasOwn = Object.prototype.hasOwnProperty;
+    var rootAcctDup = false, anyProvSeen = false, cardFlags = [], rootSeen = Object.create(null);
+    function jSkipWs() {
+      while (jPos < jLen) {
+        var cCode = rawText.charCodeAt(jPos);
+        if (cCode === 32 || cCode === 9 || cCode === 10 || cCode === 13) jPos++;
+        else break;
+      }
+    }
+    function jReadKey() {
+      var kStart = jPos;
+      jPos++;
+      while (jPos < jLen) {
+        var cCode = rawText.charCodeAt(jPos++);
+        if (cCode === 92) {
+          if (jPos < jLen) jPos++;
+        } else if (cCode === 34) {
+          return JSON.parse(rawText.slice(kStart, jPos));
+        }
+      }
+      throw new Error("schema");
+    }
+    function jSkipVal(jDepth) {
+      if (jDepth > MAX_JSON_DEPTH) throw new Error("schema");
+      jSkipWs();
+      if (jPos >= jLen) throw new Error("schema");
+      var chCode = rawText.charCodeAt(jPos);
+      if (chCode === 34) {
+        jReadKey();
+        return;
+      }
+      if (chCode === 123) {
+        jPos++; jSkipWs();
+        if (rawText.charCodeAt(jPos) === 125) { jPos++; return; }
+        while (jPos < jLen) {
+          jSkipWs();
+          jReadKey();
+          jSkipWs();
+          if (rawText.charCodeAt(jPos) !== 58) throw new Error("schema");
+          jPos++;
+          jSkipVal(jDepth + 1);
+          jSkipWs();
+          var objSep = rawText.charCodeAt(jPos);
+          if (objSep === 44) { jPos++; continue; }
+          if (objSep === 125) { jPos++; return; }
+          throw new Error("schema");
+        }
+        throw new Error("schema");
+      }
+      if (chCode === 91) {
+        jPos++; jSkipWs();
+        if (rawText.charCodeAt(jPos) === 93) { jPos++; return; }
+        while (jPos < jLen) {
+          jSkipVal(jDepth + 1);
+          jSkipWs();
+          var arrSep = rawText.charCodeAt(jPos);
+          if (arrSep === 44) { jPos++; continue; }
+          if (arrSep === 93) { jPos++; return; }
+          throw new Error("schema");
+        }
+        throw new Error("schema");
+      }
+      while (jPos < jLen) {
+        var pCode = rawText.charCodeAt(jPos);
+        if (pCode === 44 || pCode === 93 || pCode === 125 || pCode === 32 || pCode === 9 || pCode === 10 || pCode === 13) return;
+        jPos++;
+      }
+    }
+    function jScanObj(jDepth, onEntry) {
+      if (jDepth > MAX_JSON_DEPTH) throw new Error("schema");
+      jSkipWs();
+      if (rawText.charCodeAt(jPos) !== 123) { jSkipVal(jDepth); return; }
+      jPos++; jSkipWs();
+      if (rawText.charCodeAt(jPos) === 125) { jPos++; return; }
+      while (jPos < jLen) {
+        jSkipWs();
+        var kName = jReadKey();
+        jSkipWs();
+        if (rawText.charCodeAt(jPos) !== 58) throw new Error("schema");
+        jPos++; jSkipWs();
+        onEntry(kName, jDepth + 1);
+        jSkipWs();
+        var sepCode = rawText.charCodeAt(jPos);
+        if (sepCode === 44) { jPos++; continue; }
+        if (sepCode === 125) { jPos++; return; }
+        throw new Error("schema");
+      }
+      throw new Error("schema");
+    }
+    function jFlagCard(cIdx) {
+      if (!cardFlags[cIdx]) cardFlags[cIdx] = { dup: false, sawProv: false };
+      return cardFlags[cIdx];
+    }
+    function jScanProvenance(cIdx, jDepth) {
+      var st = jFlagCard(cIdx);
+      st.sawProv = true;
+      anyProvSeen = true;
+      var provKeys = Object.create(null);
+      jScanObj(jDepth, function (pKey, valDepth) {
+        if (hasOwn.call(provKeys, pKey)) st.dup = true;
+        provKeys[pKey] = true;
+        jSkipVal(valDepth);
+      });
+    }
+    function jScanSummary(cIdx, jDepth) {
+      var st = jFlagCard(cIdx);
+      var sumKeys = Object.create(null);
+      jScanObj(jDepth, function (sKey, valDepth) {
+        if (hasOwn.call(sumKeys, sKey)) st.dup = true;
+        sumKeys[sKey] = true;
+        if (sKey === "provenance") jScanProvenance(cIdx, valDepth);
+        else jSkipVal(valDepth);
+      });
+    }
+    function jScanQuota(cIdx, jDepth) {
+      var st = jFlagCard(cIdx);
+      var qKeys = Object.create(null);
+      jScanObj(jDepth, function (qKey, valDepth) {
+        if (hasOwn.call(qKeys, qKey)) st.dup = true;
+        qKeys[qKey] = true;
+        if (qKey === "summary") jScanSummary(cIdx, valDepth);
+        else jSkipVal(valDepth);
+      });
+    }
+    function jScanCard(cIdx, jDepth) {
+      var st = jFlagCard(cIdx);
+      var cKeys = Object.create(null);
+      jScanObj(jDepth, function (cKey, valDepth) {
+        if (hasOwn.call(cKeys, cKey)) st.dup = true;
+        cKeys[cKey] = true;
+        if (cKey === "quota") jScanQuota(cIdx, valDepth);
+        else jSkipVal(valDepth);
+      });
+    }
+    function jScanCardsArr(jDepth) {
+      if (jDepth > MAX_JSON_DEPTH) throw new Error("schema");
+      jSkipWs();
+      if (rawText.charCodeAt(jPos) !== 91) { jSkipVal(jDepth); return; }
+      jPos++; jSkipWs();
+      if (rawText.charCodeAt(jPos) === 93) { jPos++; return; }
+      var arrIdx = 0;
+      while (jPos < jLen) {
+        jSkipWs();
+        jScanCard(arrIdx, jDepth + 1);
+        arrIdx++;
+        jSkipWs();
+        var arrSep = rawText.charCodeAt(jPos);
+        if (arrSep === 44) { jPos++; continue; }
+        if (arrSep === 93) { jPos++; return; }
+        throw new Error("schema");
+      }
+      throw new Error("schema");
+    }
+    function jScanAccounts(jDepth) {
+      var acctKeys = Object.create(null);
+      jScanObj(jDepth, function (aKey, valDepth) {
+        if (aKey === "cards") {
+          if (hasOwn.call(acctKeys, aKey)) rootAcctDup = true;
+          acctKeys[aKey] = true;
+          jScanCardsArr(valDepth);
+        } else {
+          jSkipVal(valDepth);
+        }
+      });
+    }
+    jSkipWs();
+    jScanObj(0, function (rootKey, valDepth) {
+      if (rootKey === "accounts") {
+        if (hasOwn.call(rootSeen, "accounts")) rootAcctDup = true;
+        rootSeen["accounts"] = true;
+        jScanAccounts(valDepth);
+      } else {
+        jSkipVal(valDepth);
+      }
+    });
+    function jTaintCard(cardObj, asProv) {
+      if (!cardObj || typeof cardObj !== "object" || Array.isArray(cardObj)) return;
+      if (!cardObj.quota || typeof cardObj.quota !== "object" || Array.isArray(cardObj.quota)) cardObj.quota = {};
+      if (asProv) {
+        cardObj.quota.summary = { state: "unavailable", freshness: "unavailable", provenance: null, rows: [] };
+      } else {
+        cardObj.quota.summary = { state: "reported", source: "", freshness: "unavailable", rows: [] };
+      }
+      delete cardObj.quota.windows;
+      delete cardObj.quota.observedAt;
+      delete cardObj.quota.retrievedAt;
+    }
+    if (parsedObj.accounts && typeof parsedObj.accounts === "object" && Array.isArray(parsedObj.accounts.cards)) {
+      if (rootAcctDup) {
+        for (var kIdx = 0; kIdx < parsedObj.accounts.cards.length; kIdx++) {
+          jTaintCard(parsedObj.accounts.cards[kIdx], anyProvSeen);
+        }
+      } else {
+        for (var jIdx = 0; jIdx < cardFlags.length; jIdx++) {
+          if (cardFlags[jIdx] && cardFlags[jIdx].dup && jIdx < parsedObj.accounts.cards.length) {
+            jTaintCard(parsedObj.accounts.cards[jIdx], cardFlags[jIdx].sawProv);
+          }
+        }
+      }
+    }
+    return parsedObj;
+  }
+
   function getJSON(url) {
     var ctl = new AbortController();
     var timer = setTimeout(function () { ctl.abort(); }, readTimeoutMs());
     return fetch(url, { cache: "no-store", credentials: "same-origin", headers: { Accept: "application/json" }, signal: ctl.signal })
-      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
+      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.text(); })
+      .then(function (rawBody) { return parseDockQuotaJSON(rawBody); })
       .finally(function () { clearTimeout(timer); });
   }
 
-  // A bounded companion to the current main read, only on Accounts. No
+  // A bounded companion to the current main read on Accounts and Home. No
   // independent timer or provider refresh. A new snapshot or privacy view
   // invalidates both successful and delayed replies from the previous read.
   function loadSavedAccounts(retry) {
     var d = state.data;
-    if (!d || !d.accountsReference || route().view !== "accounts") return;
+    if (!d || !d.accountsReference || (route().view !== "accounts" && route().view !== "home")) return;
     var ref = d.accountsReference, asked = state.identifiers;
     if (savedAccounts.reference === ref && savedAccounts.status === "ready") { d.accounts = savedAccounts.data; return; }
     if (savedAccounts.reference === ref && (savedAccounts.status === "loading" || (!retry && savedAccounts.status === "failed"))) return;
@@ -3287,7 +5105,7 @@
       .then(function (r) { if (!r.ok) throw new Error("saved accounts unavailable"); return r.text(); })
       .then(function (text) {
         if (new TextEncoder().encode(text).length > 1048576) throw new Error("saved accounts bound");
-        var result = JSON.parse(text);
+        var result = parseDockQuotaJSON(text);
         if (!result || result.schemaVersion !== SCHEMA || result.reference !== ref || !result.accounts || !Array.isArray(result.accounts.cards) || result.accounts.cards.length > 64) throw new Error("saved accounts schema");
         if (!current()) return;
         savedAccounts.status = "ready"; savedAccounts.data = result.accounts; state.data.accounts = result.accounts;
@@ -3297,7 +5115,7 @@
         clearTimeout(timer);
         if (!current()) return;
         savedAccounts.abort = null;
-        if (route().view === "accounts") render(false, true);
+        if (route().view === "accounts" || route().view === "home") render(false, true);
       });
   }
 
@@ -3317,6 +5135,51 @@
     clearTimeout(state.timer);
     if (state.paused) return;
     state.timer = setTimeout(load, refreshSeconds() * 1000);
+  }
+
+  function findDirectBadge(container) {
+    for (var i = 0; i < container.children.length; i++) {
+      if (container.children[i].classList && container.children[i].classList.contains("unconfirmed-badge")) return container.children[i];
+    }
+    return null;
+  }
+  function syncTaskUnconfirmedDOM() {
+    var pane = $("pane");
+    if (!pane || !state.data) return;
+    Array.prototype.forEach.call(pane.querySelectorAll(".task-card[data-issue-key]"), function (card) {
+      var k = card.dataset.issueKey;
+      var txt = taskUnconfirmedText(state.data, needFor(k), effectiveLoopByKey(state.data, k));
+      var badge = findDirectBadge(card);
+      if (txt) {
+        card.dataset.unconfirmed = "1";
+        if (!badge) {
+          badge = el("span", "unconfirmed-badge", txt);
+          var topRow = card.querySelector(".task-top");
+          card.insertBefore(badge, topRow ? topRow.nextSibling : card.firstChild);
+        } else {
+          badge.textContent = txt;
+        }
+      } else if (badge) {
+        delete card.dataset.unconfirmed;
+        badge.remove();
+      }
+    });
+    Array.prototype.forEach.call(pane.querySelectorAll(".task-drawer[data-drawer-key]"), function (dr) {
+      var dk = dr.dataset.drawerKey;
+      var dtxt = taskUnconfirmedText(state.data, needFor(dk), effectiveLoopByKey(state.data, dk));
+      var dbadge = findDirectBadge(dr);
+      if (dtxt) {
+        if (!dbadge) {
+          dbadge = el("span", "unconfirmed-badge", dtxt);
+          var dHead = dr.querySelector(".task-drawer-head");
+          dr.insertBefore(dbadge, dHead ? dHead.nextSibling : dr.firstChild);
+        } else {
+          dbadge.textContent = dtxt;
+        }
+      } else if (dbadge) {
+        dbadge.remove();
+      }
+    });
   }
 
   function load(byHand) {
@@ -3341,6 +5204,35 @@
         if (asked !== state.identifiers) { state.again = true; return; }
         if (savedAccounts.reference !== d.accountsReference && savedAccounts.abort) { savedAccounts.abort.abort(); ++savedAccounts.serial; }
         if (d.accountsReference && savedAccounts.reference === d.accountsReference && savedAccounts.status === "ready") d.accounts = savedAccounts.data;
+        var prevData = state.data;
+        var prevNeeds = prevData ? effectiveNeeds(prevData) : [];
+        if (d.complete === false) {
+          var seenNeedKeys = Object.create(null);
+          list(d.needsYou).forEach(function (n) { seenNeedKeys[n.key] = true; });
+          var seenLoopMap = Object.create(null);
+          list(d.loops).forEach(function (l) { seenLoopMap[l.key] = l; });
+          var prevLoops = Object.create(null);
+          if (state.retainedLoops) Object.keys(state.retainedLoops).forEach(function (k) { prevLoops[k] = state.retainedLoops[k]; });
+          if (prevData) list(prevData.loops).forEach(function (l) { prevLoops[l.key] = l; });
+          var keptNeeds = [];
+          var keptLoops = Object.create(null);
+          var hideIds = !d.identifiers || !state.identifiers;
+          prevNeeds.forEach(function (pn) {
+            if (!seenNeedKeys[pn.key]) {
+              var cloneNeed = Object.assign({}, pn, { _retainedIncomplete: true });
+              if (hideIds) cloneNeed = scrubNeedForHiddenIds(cloneNeed);
+              keptNeeds.push(cloneNeed);
+              if (!seenLoopMap[pn.key] && prevLoops[pn.key]) {
+                keptLoops[pn.key] = hideIds ? scrubLoopForHiddenIds(prevLoops[pn.key]) : prevLoops[pn.key];
+              }
+            }
+          });
+          state.retainedNeeds = keptNeeds;
+          state.retainedLoops = keptLoops;
+        } else {
+          state.retainedNeeds = [];
+          state.retainedLoops = Object.create(null);
+        }
         state.data = d; state.lastOk = Date.now(); state.failed = false; state.failedSince = 0; state.failedLong = false;
         if (wantsUsage(route())) loadUsage();
         if (render(false) !== false) notice("cut", d.complete === false ? "This read was cut off before every loop was read. Loops that were not read are listed as could not be read; it reads again shortly." : "");
@@ -3363,6 +5255,9 @@
         if (!state.data) {
           $("picker").replaceChildren(el("p", "placeholder", "Nothing could be read."));
           $("pane").replaceChildren(paneHead("Could not read"), emptyBox("Nothing could be read from " + cmd + ".", "It may have stopped; " + again));
+        } else {
+          render(false);
+          syncTaskUnconfirmedDOM();
         }
         renderReadline();
       })
@@ -3385,6 +5280,7 @@
     $("identifiers").addEventListener("click", function () {
       state.identifiers = !state.identifiers;
       this.setAttribute("aria-pressed", String(state.identifiers));
+      if (!state.identifiers) scrubRetainedForHiddenIds();
       // Hide (or keep hidden) at once from the data in hand: identifiers and
       // unmasked notes never stay on screen waiting for a read that is slow or failing.
       render(false, true);
@@ -3402,7 +5298,11 @@
       if (wantsUsage(route())) loadUsage();
     });
     document.addEventListener("keydown", function (ev) {
-      if (ev.key === "Escape" && state.change && state.change.preview && !state.change.busy) { ev.preventDefault(); cancelChange(); }
+      if (ev.key === "Escape") {
+        if (state.change && state.change.preview && !state.change.busy) { ev.preventDefault(); cancelChange(); }
+        else if (state.activeDrawer) { ev.preventDefault(); state.activeDrawer = null; render(false, true); }
+        else if (state.mapSelected) { ev.preventDefault(); state.mapSelected = null; render(false, true); }
+      }
     });
     document.addEventListener("selectionchange", function () {
       if (state.pending && !selecting()) render(false);
