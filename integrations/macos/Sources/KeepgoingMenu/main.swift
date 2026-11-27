@@ -299,7 +299,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let column = stateColumn(model.rows)
         if MenuBuilder.sameShape(model.rows, shown), menu.items.count == model.rows.count {
             for (entry, row) in zip(menu.items, model.rows) where row.kind != .separator { fill(entry, row, column: column) }
-        } else if menuOpen, menu.highlightedItem != nil {
+        } else if MenuBuilder.deferStructuralUpdate(menuOpen: menuOpen, hasHighlightedItem: menu.highlightedItem != nil) {
             return // menuDidClose renders again
         } else {
             build(menu, model.rows, column: column)
