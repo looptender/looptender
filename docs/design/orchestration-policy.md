@@ -145,6 +145,20 @@ controlled comparison); unknown is a valid result. Do not invent numerical
 confidence, convert a heuristic into an attestation or silently promote an old
 finding to current state. Age, deduplicate and retire findings by identity/revision.
 
+Publish detector coverage and assessability **per loop and detector class**,
+bound to the snapshot/goal/source revisions and observation period. A missing
+work source, dependency observation or CI observation must display `cannot_assess`
+with the missing input, not healthy, no work or no finding. A detector that was
+not run is also unassessed. An assessable class with no finding says only that
+its specific predicate was not observed within the declared coverage.
+
+All recorded lanes terminal, an explicit declared wait and missing acceptance
+may support a suspicion of stalled useful work only with a complete, fresh,
+healthy structured snapshot of the relevant work, dependencies, claims and
+controls. Even then, these facts never prove abandonment, completion, wasted
+work or permission to dispatch. Partial or unhealthy coverage is `cannot_assess`,
+not a stronger suspicion. Do not infer a declared wait from prose or silence.
+
 A recommendation must name the affected action, evidence, expected useful-work
 benefit, uncertainty, prerequisites, authority needed and the check that would
 confirm improvement. Examples include reviewing an apparently stranded owner,
@@ -166,6 +180,35 @@ resource/measurement overhead. Show before/after periods, workload/quality chang
 and coverage; use controlled comparisons before causal savings claims. Throughput
 or rework improvements can remain unmeasured. Token volume, idle capacity and
 utilization are supporting observations, never the optimization target by themselves.
+
+### Planned retrospective missed-detection records
+
+A future local-first retrospective may record a suspected missed detection:
+detector class/version, loop and bound revision, expected assessability, the
+specific missing input or predicate gap, minimized structured evidence and a
+fictional replay describing the expected observable result. A replay is a
+reviewable hypothesis: the supervisor must not manufacture semantic truth for a
+fixture or treat a report as acceptance. Preserve unknowns and contradictory
+evidence, use local deduplication and explicit retention/size/rate limits, and
+avoid recurring paid lanes or new polling to populate the record. Never publish
+private evidence automatically; fictionalization and disclosure need review.
+
+An optional improvement proposal can enter the explicit authorized work-source
+workflow through an agent. The proposal identifies the gap, authority needed,
+minimized evidence, candidate acceptance and tests; a gap proposal itself is not
+authorization. Source progress edits remain separate actions. The supervisor
+never edits repositories, opens/merges PRs or installs fixes. An external agent
+may implement/review/merge only under the applicable repository and owner rules;
+this research introduces no blanket human-only merge requirement. In this
+repository, existing authorization for agent merge still requires exact-head/base
+checks and resolved review under the documented merge contract.
+
+This retrospective/proposal pipeline is follow-on planned work, not part of the
+current coverage-command and documentation scope. It adds no worker, automatic
+source edits, recurring paid review lane or automatic remediation. Focused future
+fixtures must distinguish missing input from healthy/no-work, deduplicate repeated
+gaps locally, enforce bounds/redaction, and reject a proposal or fictional replay
+as authority or completion evidence. No private transcript inference is allowed.
 
 ### Reconcile research with existing source
 
