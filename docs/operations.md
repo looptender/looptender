@@ -1820,6 +1820,53 @@ scheduler/writer retirement or compatible enforcement, and explicit preservation
 of unrelated holds. Releasing a future fence must not imply resume. No such
 recovery or installed upgrade acceptance is claimed here.
 
+
+## Daemon lifecycle and refused-check history (unreleased)
+
+Incident schema 15 records `daemon_start` when the daemon loop is entered and
+`daemon_stop` when it returns. The stop reason distinguishes `clean_exit`,
+`cancelled` (including authenticated supervisor shutdown), `signal` and
+`error_exit`; known signals are `SIGINT`, `SIGTERM` and `SIGHUP`. These are local
+lifecycle observations, not proof that a provider turn ended or that a service
+manager will not restart the process. A rejected daemon startup records no start.
+An abrupt kill, crash or successful in-place executable adoption cannot run the
+return handler and may leave a start without a stop.
+
+`tick` records `check_refused` when its check lock is held or unavailable,
+its ownership cannot be verified, or its loaded configuration sources changed.
+The daemon's stop-only path from its last configuration uses the same refusal
+records for these admission checks, including transfer/target validation and a
+restored or changed readable source; an unreachable BB stop is `safety_guard`.
+The supervisor's last-configuration safety guard also records a refusal if
+asked to perform anything except a stop. The reason codes are fixed; raw errors,
+owner/thread identities, configuration paths and signal text are excluded.
+A configuration that cannot be loaded at command entry has no verified loop
+state directory and records no event. Archived loops still skip checks without
+recording a refusal. Provider refusal/restriction observations remain ordinary
+checks with their existing policy; they are not admission refusals.
+
+These entries are activity-tier diagnostic evidence, bounded by the existing
+journal limits. Repeated refusals are not collapsed and cannot consume the key
+tier's reserved history. `timeline --kind daemon_start,daemon_stop,check_refused`
+shows them offline. Every entry retains `dryRun`: even a dry-run daemon really
+starts and stops, but these records assert no observation, decision, send,
+provider cancellation or counter change. Status, doctor and the panel keep their
+existing check/daemon diagnostics; an admission refusal does not replace the
+last completed check. A failed event write emits a fixed warning at the command
+boundary and does not change the refusal or daemon exit code; the internal safety
+guard returns the fixed history error alongside its original refusal if storage
+is unavailable.
+
+Schema 1–14 journals load without rewriting; the next append upgrades to 15.
+Older binaries refuse the newer journal. The executable-adoption state format
+rises to 8 for the combined goal-completion and incident schema, so a daemon
+cannot adopt an older reader and lose either record. Format 7 remains allocated
+to goal-completion metadata; the earlier incident-only format-7 branch build is
+also refused by the combined format-8 build.
+Before rollback, stop supervision and restore compatible state together with the
+binary as described under upgrading and rolling back. Offline fixtures verify
+these records; no installed daemon, live provider or release rollout is claimed.
+
 ## BB successor thread titles (unreleased)
 
 When an opted-in `bb.new_thread` handoff creates a coordinator, the BB adapter

@@ -193,3 +193,48 @@ final class SectionsTests: XCTestCase {
         for text in all(m.rows) { XCTAssertFalse(text.contains("bb-thr-") || text.contains("thr_") || text.contains("/Users/"), text) }
     }
 }
+
+extension SectionsTests {
+    func testLoopsUseMeaningfulActivityWithinExistingSections() {
+        var old = loop(1, "old", needs: true)
+        old.activityAt = "2020-01-01T00:00:00Z" // stale is known, not unknown
+        old.checkedAt = "2030-01-02T12:00:00Z" // polling must not lift it
+        var recent = loop(2, "recent", needs: true)
+        recent.activityAt = "2030-01-01T00:00:00Z"
+        var malformed = loop(3, "malformed", needs: true)
+        malformed.activityAt = "not-a-date"
+        var future = loop(4, "future", needs: true)
+        future.activityAt = "2099-01-01T00:00:00Z"
+        var tied = loop(5, "tied", needs: true)
+        tied.activityAt = "2030-01-01T01:00:00+01:00" // same instant
+        var working = loop(6, "working")
+        working.activityAt = "2030-01-02T00:00:00Z"
+        let unknown = loop(7, "unknown", needs: true)
+        var pausedOld = loop(8, "paused old", "paused", "Paused")
+        pausedOld.activityAt = old.activityAt
+        var pausedNew = loop(9, "paused new", "paused", "Paused")
+        pausedNew.activityAt = recent.activityAt
+        let input = [unknown, tied, pausedOld, future, working, malformed, old, pausedNew, recent]
+        let m = build(list(input))
+        XCTAssertEqual(m.rows.filter { $0.kind == .loop }.map(\.title), ["recent", "tied", "old", "malformed", "future", "unknown", "working"])
+        let other = m.rows.first { $0.title == "Other loops (2)" }!
+        XCTAssertEqual(other.submenu.map(\.title), ["paused new", "paused old"])
+        let later = MenuBuilder.build(.read(list(Array(input.reversed())), at: now.addingTimeInterval(600)), now: now.addingTimeInterval(600))
+        XCTAssertEqual(later.rows.filter { $0.kind == .loop }.map(\.title), m.rows.filter { $0.kind == .loop }.map(\.title))
+        XCTAssertTrue(m.rows.filter { $0.kind == .loop }.allSatisfy { !$0.title.contains("2030") && !$0.detail.contains("2030") })
+    }
+
+    func testActivityReorderIsStructuralAndWaitsForSafeRebuild() {
+        var a = loop(1, "first"), b = loop(2, "second")
+        a.activityAt = "2030-01-01T00:00:00Z"
+        b.activityAt = "2030-01-02T00:00:00Z"
+        let before = build(list([a, b]))
+        a.activityAt = "2030-01-03T00:00:00Z"
+        let after = build(list([a, b]))
+        XCTAssertFalse(MenuBuilder.sameShape(before.rows, after.rows), "same loops, different exact-key order cannot update tracked rows in place")
+        XCTAssertTrue(MenuBuilder.deferStructuralUpdate(menuOpen: true, hasHighlightedItem: true))
+        XCTAssertFalse(MenuBuilder.deferStructuralUpdate(menuOpen: true, hasHighlightedItem: false))
+        XCTAssertFalse(MenuBuilder.deferStructuralUpdate(menuOpen: false, hasHighlightedItem: true))
+        XCTAssertEqual(after.rows.filter { $0.kind == .loop }.map(\.title), ["first", "second"])
+    }
+}

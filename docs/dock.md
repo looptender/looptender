@@ -301,6 +301,16 @@ Every loop in the report and in `panel list` says what it waits for at the data 
 
 `by` is the role the incident journal records for whoever saved the control change, not proof of who: a person may drive the owning thread, and a client is any local program registered as one. A display should not print it as "you". `reason` is one sentence in fixed words; it never carries the hold's note, a scheduler's name or any other recorded text that can hold an identifier.
 
+Unreleased `activityAt` on client snapshots, Dock loops and `panel list` loops
+is separate from freshness: it is the latest saved send, handoff, explicit move
+or repository-fingerprint change (excluding the first baseline). It does not
+use `checkedAt`, the response's `readAt`, held-back nudges or adjusted stall
+clocks. Unknown or future-only evidence omits the field; old known evidence
+retains its date. The native menu sorts loops by this value within its existing
+status sections, newest first, unknown last, exact loop-key ties. It adds no
+activity date labels and retains the tracked-menu safe-rebuild guard. This does
+not change the web page's grouping/order or any supervision decision.
+
 A row's facts are as old as its loop's last check (`checkedAt`, and `lastCheck` with its age in the report). `supervisor` is what this read found:
 - `answering`: a daemon answered a fresh challenge;
 - `not_answering`: a daemon is recorded and did not answer when asked twice;

@@ -49,7 +49,35 @@ Whether a headless turn is running is decided by a lock, not a PID. The turn wra
 
 The unreleased stop-only path reuses the existing adapter stop contract; it adds no PID signalling or process discovery. Unix command fixtures use a fictional BB target and stand-in executable, isolated runtime storage, and cancellation of only their own daemon. They exercise a moved or unreadable source, no continue sent, the structured last-read timestamp in state and log, session-claim contention followed by release, a transferred target, readable invalid content, dry runs, a failed stop retried at the control poll, and the ordinary interval after a completed stop. Config tests distinguish unreadable sources from changed and oversized readable files, including a changed primary alongside a missing fallback. A deterministic command fixture restores an unchanged or retargeted source after the preliminary eligibility check and proves the check under the tick lock refuses the retained configuration. Supervisor tests refuse a last-configuration check unless it is stop-only, before observing or sending. Monitor assertions cover the retry and control-change early-return paths so a pass is completed rather than read as sleep.
 
+`TestLastConfigStopAdmissionRefusalEvents` additionally requires one redacted
+incident record for held/unavailable locks, changed ownership, restored unchanged
+or changed sources, transfer-target mismatch and an unreachable BB stop. Each
+case preserves the previous completed check, counters, controls, owner lease and
+prior history, with zero provider/probe/report work. Holding the incident lock
+instead requires unchanged runtime bytes and one fixed diagnostic warning.
+All fourteen cases failed without last-configuration admission journaling;
+the corrected cases pass under race detection.
+
 These are native fixture checks on macOS, not live BB/provider stop acceptance. The daemon command fixtures are Unix-only; cross-compilation does not establish Windows execution. No installed service restart, reboot, external scheduler or Linux/Windows native acceptance was run for this change. The existing process-identity contract and legacy/stale runner cases are unchanged. No UI action changes. Configuration-unavailable reporting and diagnostics have additional fixtures below. See the [operations limits](operations.md#when-the-configuration-file-is-unavailable). Record exact commands, source head, regression/mutation evidence and platform results in the review handoff.
+
+### Recovery smoke and combined adoption schemas
+
+The recovery smoke waits for completed held tick records, including collapsed
+checks, rather than any incident sequence allocation. Daemon lifecycle and
+refused-check records do not satisfy that wait. The synthetic Python regression
+holds check publication behind lifecycle records for both awaiting-user and
+completed holds, for one check and an additional ordinary interval, and requires
+both crash and orderly restart paths to reach their intended checks. CI runs it
+before the existing native recovery smoke; timeline, ownership, allowance,
+notification, privacy and no-provider assertions remain unchanged.
+
+Combined unreleased goal-completion and incident schema changes use adoption
+format 8. Format 7 and its goal-only fingerprint remain immutable. The combined
+fingerprint covers both roots; adoption refuses both goal-only and earlier
+incident-only format-7 candidates before validation/exec. Successful and invalid
+configuration adoption fixtures advertise format 8, so the format guard cannot
+hide a later validation regression. These are native local fixture checks and
+platform compilation, not installed build adoption or live-provider acceptance.
 
 ### Configuration-unavailable reports and diagnostics
 
@@ -1007,3 +1035,36 @@ lock-loss detection makes it fail. The ordinary panel-start/reuse fixture retain
 coverage of detached startup. This changes fixture ownership only, not panel
 shutdown or lock semantics. Native fixture evidence, CI and installed acceptance
 remain separate; no installed panel or provider was controlled for this repair.
+
+## Native loop activity ordering (unreleased)
+
+`TestLoopActivityUsesSavedWorkNotPolling` covers actual sends, handoffs, explicit
+moves and repository changes, excludes baseline/check/held-nudge/adjusted clocks,
+and rejects future evidence without refreshing stale work. The offline client to
+Dock/panel-list fixture preserves a seven-day-old activity timestamp across newer
+reads. These use fictional saved state and no provider calls.
+
+Native `SectionsTests` cover status-section preservation, recent/stale/unknown/
+malformed/future dates, equivalent instants, exact-key ties, reversed input order,
+and repeated reads. An activity-only reorder changes `sameShape`; the AppKit
+controller calls the same tested `deferStructuralUpdate` guard to defer rebuild
+while an open menu row is highlighted and permit it on a safe rebuild. Account
+quota ordering and all controls are unchanged. No activity dates are added to
+labels, tooltips or accessibility text.
+
+Local native Swift build and standalone production-model probes are distinct
+from XCTest and installed UI acceptance. This machine's SwiftPM test run cannot
+import XCTest. A standalone assertion harness executed the 14 SectionsTests
+methods, including the new fixtures, with lightweight assertion shims; that is
+not a full XCTest-suite pass. Disabling activity sorting fails the native probe's
+order assertion, and restoring it passes. Light/dark fixture drawings use only
+fictional loop names and show the expected order; real AppKit pointer tracking,
+VoiceOver and installed-menu acceptance remain unrun.
+
+Capability/documentation review covers README, native menu guide, Dock/client
+contracts and changelog fragment. Source-only: no package boundary, persistent
+state schema, supervision decision, installer, archive policy or runtime rollout
+changes. The additive activityAt contract reads existing structured state. Native
+macOS compilation/model execution, hosted platform tests and installed/live
+acceptance must be reported separately; no Linux/Windows native acceptance is
+claimed by the local fixture run.

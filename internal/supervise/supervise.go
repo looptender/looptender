@@ -458,7 +458,9 @@ func (t *tick) reportOnce(slot **state.OnceReport, key, typ, text string, data m
 // Tick performs one supervision pass. The caller holds the lock.
 func Tick(ctx context.Context, cfg *config.Config, opts Options) (Result, error) {
 	if !opts.LastConfigReadAt.IsZero() && !opts.StopOnly {
-		return Result{Loop: cfg.Loop.Name, Action: string(decide.None), Reason: "refused: only a stop may be carried out from the last configuration read"}, ErrLastConfigNotStop
+		// This guard runs before a tick exists; record no observation or decision.
+		journalErr := incident.Append(cfg.Loop.StateDir, incident.Record{Kind: "check_refused", Runtime: &incident.RuntimeEvent{Reason: "safety_guard"}, CheckStartedAt: time.Now().UTC(), Build: opts.Version, DryRun: opts.DryRun, Outcome: "failed"})
+		return Result{Loop: cfg.Loop.Name, Action: string(decide.None), Reason: "refused: only a stop may be carried out from the last configuration read"}, errors.Join(ErrLastConfigNotStop, journalErr)
 	}
 	if opts.Now.IsZero() {
 		opts.Now = time.Now()
