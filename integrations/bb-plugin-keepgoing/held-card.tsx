@@ -32,7 +32,7 @@ export function heldSentence(loop: LoopView): string | null {
       case "stop requested": return wakes
         ? `Stop requested (checking ends; session is left alone). Resume checking ${WHERE}.`
         : `Stop requested (checking ends; session is left alone). Resume checking (nothing is sent) ${WHERE}.`;
-      case "completed": return `Marked finished. Resume checking ${WHERE}.`;
+      case "completed": return `Completion declared for this loop. Project and current thread work are not verified; new messages do not clear this hold. Review the configured task, routes, limits and other holds before a person resumes checking ${WHERE}; resume clears other holds too.`;
       case "disabled": return "Switched off. Turn it on from the looptender panel (looptender panel), or from a terminal outside BB with looptender enable.";
       default: return wakes ? `Held. Resume checking ${WHERE}.` : `Held. Resume checking (nothing is sent) ${WHERE}.`;
     }
@@ -43,7 +43,7 @@ export function heldSentence(loop: LoopView): string | null {
     case "paused": return `Paused. Resume it ${WHERE}.`;
     // A stop is not resumed like a pause: it is carried out at the next check, and `resume` lifts it.
     case "stop requested": return `Stop requested. It stays stopped until a person resumes it ${WHERE}; resuming lifts the stop.`;
-    case "completed": return `Marked finished. Resuming it reopens it ${WHERE}.`;
+    case "completed": return `Completion declared for this loop. Project and current thread work are not verified; new messages do not clear this hold. Review the configured task, routes, limits and other holds before a person resumes it ${WHERE}; resume clears other holds too.`;
     case "disabled": return "Switched off. Turn it on from the looptender panel (looptender panel), or from a terminal outside BB with looptender enable.";
     default: return `Held. Resume it ${WHERE}.`;
   }

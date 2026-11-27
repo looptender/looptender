@@ -59,5 +59,14 @@
  "sessionpipeWake.held",
  "sessionpipeWake.outcome",
  "sessionpipeWake.code",
- "sessionpipeWake.until"
+ "sessionpipeWake.until",
+ "lineage",
+ "lineage.count",
+ "lineage.from",
+ "archived",
+ "archived.at",
+ "archived.hold",
+ "archived.continuedIn",
+ "archived.continuedIn.key",
+ "archived.continuedIn.loop"
 ]

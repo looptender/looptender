@@ -45,7 +45,9 @@ def digest(value):
 def private_read(path, limit=MAX_BYTES):
     path = Path(path)
     require(path.is_absolute(), "absolute_path_required")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    # A FIFO can replace the path before open; acquire without waiting for a
+    # writer, then reject nonregular descriptors before any read.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         s = os.fstat(fd)
         require(stat.S_ISREG(s.st_mode) and s.st_uid == os.getuid() and not s.st_mode & 0o077, "private_regular_file_required")
