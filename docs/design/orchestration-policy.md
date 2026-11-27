@@ -362,6 +362,77 @@ specific structured sources: backlog/occupancy for idle capacity, explicit work
 identity for duplicate assignments, and pinned repository/CI records for waits.
 They do not become assessable because this first analyzer exists.
 
+## Unified automation management and scheduling (planned)
+
+Looptender is planned as an operations layer for agent work and automations
+across tools, accounts and schedules; supervision is the current delivered
+foundation. Unified scheduling/management is one planned product capability.
+Architecture and differentiation must be evaluated against that direction rather
+than vetoed by the obsolete scheduler exclusion. Current daemons/services keep
+loop checks running; they do not implement general managed-job scheduling.
+Compare the following alternatives before choosing architecture or changing
+runtime boundaries:
+
+| Option | Execution owner and useful management | Trade-offs to evaluate |
+| --- | --- | --- |
+| Federated management | Existing configured Claude, BB, launchd or other supported schedulers execute jobs; one looptender UI exposes their schedules, history and supported scoped controls. Management need not transfer execution ownership. | Preserves existing jobs and scheduler semantics, but supported APIs may lack run identity, mutations, dependency or concurrency guarantees. Unsupported capabilities remain explicit rather than inferred. |
+| Looptender-owned scheduling | Looptender evaluates due occurrences and admits execution only for explicitly new/adopted jobs through reviewed executors. OS service liveness is separate from job execution ownership. | Can provide consistent occurrence/dependency/concurrency rules, but needs durable admission, calendar/clock, crash/cancellation, security and lifecycle contracts. No implicit migration or new conversation authority. |
+| Hybrid | Existing jobs stay federated unless explicitly transferred; new/adopted jobs may use looptender scheduling. Each job has one recorded execution owner. | Allows incremental adoption but must prove transfer, cross-owner dependencies and unknown-outcome handling without duplicate timers or false global guarantees. |
+
+Evaluate all three against the same acceptance cases; the old roadmap exclusion
+is not evidence that owned scheduling lacks value. This comparison selects no
+implementation and certifies no Claude/BB/OS scheduler API. A common UI should
+show schedule/time zone and next-fire basis, enabled versus observed state,
+bounded occurrence/attempt history, dependencies and concurrency, outcomes,
+source freshness/coverage, execution owner and available scoped controls.
+Missing history or unsupported control means unknown/unavailable, not healthy.
+
+A useful managed-job lifecycle needs explicit adoption and definition revisions,
+enable/disable, due/admission, execution, result reconciliation and outcome review.
+These are design obligations, not implemented state enums. Keep detected,
+attempted, executor-returned, effect-confirmed and accepted output separate.
+Disabling future fires does not cancel an active run; run-now, cancellation,
+removal and transfer need their own authorized effects. A successful exit, commit
+or CI result alone is not generic useful-work acceptance. Reuse work-source,
+goal and assignment bindings rather than introduce a competing task ledger.
+
+Required design invariants and focused fictional acceptance:
+
+- One execution owner/generation per adopted job, bound to stable source/job
+  identity and definition revision. Discovery, installation, matching names or
+  inactivity never infer adoption or takeover. Preview and verify a transfer;
+  active/untransferred or ambiguous obligations prevent activating a second owner.
+- Durable occurrence IDs before effects, distinct from physical attempt IDs and
+  read timestamps; deduplicate repeated triggers across restart. Native run IDs
+  require source evidence. A source lacking them cannot promise deduplicated
+  execution, though separately supported exact-definition controls may still work.
+- Persist/fence admission and charged concurrency before dispatch. Crash or lost
+  acknowledgement stays unknown until structured reconciliation; timeout does
+  not free charges, replay work or select another executor. Existing tick locks
+  and diagnostic run graphs alone do not prove general job deduplication.
+- Explicit dependency/acceptance revisions, complete occupancy where required,
+  time-zone/DST, clock rollback, sleep/reboot, overlap and missed-fire semantics.
+  No implicit catch-up burst. Test duplicate triggers, conflicting receipts,
+  partial history, transfer failure and stale target revisions with fake clocks
+  and executors before any runtime rollout. Numerical cadences, grant expiry,
+  retention and resource defaults need their own evidence/review.
+- Existing pause/stop/holds, refusal/account restrictions and configured scope,
+  permissions, spend/reserve/effort/concurrency limits survive every mode. No
+  credentials, accounts, devices or conversations are created by this design.
+  Repository edits/reviews/merges remain external agent work under repository
+  rules; the supervisor never edits, merges or installs fixes.
+
+First review the shared identity/occurrence/ownership/action contract and a
+capability matrix for explicitly selected sources. A bounded read-only projection
+can reuse supplied source snapshots, loop/service/run evidence and the draft
+coverage command without adding a discovery parser, collector or duplicate work
+ledger. Then evaluate a supported federated-control fixture and an owned-schedule
+admission fixture independently. Production execution, adoption/transfer controls
+and any engineering-boundary changes require dedicated design review and scoped
+implementation acceptance. Current docs authorize no timers, enabled schedules,
+job moves, recurring paid lanes or rollout; implementation, released/installed
+adoption, native/platform and live evidence remain separate.
+
 ## Account pools and lane distribution
 
 A catalog entry names an explicitly selected context. A route configures a model
@@ -622,5 +693,6 @@ Dependencies include [preferred routes and lanes](../roadmap.md#preferred-routes
 [bounds and portable goals](../roadmap.md#8-bounded-work-and-portable-goals),
 [run discovery](../run-discovery.md), [configured stages](../roadmap.md#9-independent-review-and-configured-stages-planned)
 and [account polling](../accounts.md#automatic-selected-context-usage-unreleased).
-This plan does not add a planner, review runner, approval oracle, automatic
-archive policy, provider request or second scheduler.
+This documentation/coverage work adds no runtime planner, review runner, approval
+oracle, automatic archive policy, provider request or job scheduler. General
+automation scheduling remains the separate planned design track above.

@@ -1,5 +1,9 @@
 # Roadmap
 
+Looptender's direction is an operations layer for agent work and automations.
+Supervision is the current delivered foundation; unified automation management
+and scheduling are planned capabilities within that broader direction.
+
 For current installation and command names, see the [README](../README.md#install). Release **v0.3.0** and BB plugin **v0.4.0** source are published from the same tag ([notes](releases/v0.3.0.md)), with [published package evidence](release-verification.md#v030-release-and-package-evidence). Tagged plugin installation, live walkthroughs and other unverified acceptance gates remain open. Unreleased source work is tracked separately below. Earlier milestone and verification records retain their original package labels. Documentation and packaging changes do not close live acceptance gaps.
 
 ## HIGH PRIORITY: conserve subscription usage
@@ -158,6 +162,7 @@ The next product work should make authorized work useful and understandable acro
 | Shared work intensity | Low / Medium / High / Unleashed profiles are planned, not CLI flags or existing settings. | Versioned explicit independent scope/hold/spend/reserve/effort/concurrency caps; preview effective policy and data age, stale-data refusal, restart/revision fencing. P7/B1/B6/P6 are dependencies for enforcement; no invented default budget or unlimited profile. |
 | Find inefficiencies | Core planned responsibility; current diagnostics are partial inputs, not a complete detector. | Cover idle configured capacity with authorized backlog, stranded loops, duplicates/overlap/repeated checks, status-only wakes/context reload, model mismatch/rework, review/CI waits and stale polling. Structured identity/age/coverage/confidence and observed-versus-suspected findings, per-loop/class assessability (`cannot_assess` for missing source/dependency/CI inputs), bounded measurement overhead and actionable recommendations; optimize useful outcomes/rework, not utilization. [Evidence and authority](design/orchestration-policy.md#find-inefficiencies-without-maximizing-activity). First independent slice: [pure findings over existing unchanged-wake and assignment-reconciliation records](design/orchestration-policy.md#next-independent-implementation-slice-read-only-efficiency-findings), reusing the durable catalog/assignment lifecycle. No reader, dispatcher, automatic supersession/archive or acceptance inference. |
 | Configurable work sources and bound coverage | Existing goal references are opaque metadata; assignment records already hold revision-bound claims and explicit outcomes. Source adapters and general coverage validation are planned. | Repo docs default; optional issue/project/structured/ledger adapters later. Coordinator selects prose work; supervisor validates explicit item/source revision, authority, dependencies, claims and acceptance evidence. [First slice: read-only bound inventory](design/orchestration-policy.md#configurable-work-sources-and-bound-coverage), no parser/discovery or new ledger. Shared global item identity/claim isolation precede admission. Drift, missing claimed items and exhausted backlog with unmet acceptance are findings, never automatic completion. [Planned documentation upkeep](design/orchestration-policy.md#planned-use-case-reusable-documentation-upkeep) reuses this coverage: explicit per-project adoption, per-change docs impact or justified no-change, release/version alignment and missing/stale verification findings; agents own edits, installation never implies adoption. Coordinator upkeep includes looptender.com product claims, feature availability, downloads/install guidance, versions/platforms, screenshots and links; verified site source/deployment ownership and release evidence are required for publication claims, with no deployment requested here. |
+| Unified automation management and scheduling | Existing loop-check daemon/services, routine/run diagnostics and named BB automation reads are partial foundations, not general job management. | Compare federated, Looptender-owned and hybrid execution; one UI for schedules/history/enabled state/dependencies/concurrency/outcomes/scoped controls. Explicit adoption, one execution owner, durable occurrence IDs and unknown-outcome reconciliation precede runtime implementation. [Design track](design/orchestration-policy.md#unified-automation-management-and-scheduling-planned); no automatic job moves or enabled schedules. |
 | Useful-work continuation | Coordinator guidance, goal/control records and partial delivery diagnostics exist; there is no general backlog planner. | A fictional workflow settles current assignments, covers remaining authorized roadmap work and continues an independent offline step while a live/publication action stays held. Unknown authorization is not inferred from titles, transcripts or idle lanes. |
 | Native product experience | The macOS source app is a menu-bar accessory with native menu interactions and a browser-panel opener. No Dock settings or native HOME window is implemented. | macOS native HOME/Accounts/settings first, with explicit process ownership, accessibility and lifecycle acceptance. Windows/Linux desktop equivalents are deferred; portable core, CLI, panel and platform correctness remain in scope. |
 
@@ -687,7 +692,25 @@ A pending merge approval must hold only that merge while independent, already-au
 
 #### Scheduled runs (planned)
 
-looptender does not keep time and will not become a scheduler: the operating system or another tool fires a run, and looptender supervises it from that moment. What exists today: an external scheduler can call `keepgoing tick -c <config> --routine <source>/<routine>` to record which entry fired ([run discovery](run-discovery.md)), [`service install`](services.md) keeps a loop's own checks running on macOS and Linux, [exit codes](operations.md#exit-codes-for-external-schedulers) are stable for schedulers, and a stopped scheduler is noticed with an opt-in `check_gap` report ([external schedulers can stop](operations.md#external-schedulers-can-stop-on-their-own)). The product is the supervised run command, which any scheduler on any operating system can call; nothing in that path will assume launchd or macOS, and registering with a scheduler is an optional helper on top. Everything below is planned, not built.
+Unified automation management and scheduling are planned product work, with
+supervision as today's foundation. Compare **federated management** (existing
+schedulers execute), **Looptender-owned scheduling** for explicitly new/adopted
+jobs, and **hybrid** ownership under the
+[shared design and acceptance track](design/orchestration-policy.md#unified-automation-management-and-scheduling-planned).
+One UI should cover schedules, history, enabled state, dependencies/concurrency,
+outcomes and supported scoped controls, with one execution owner, durable
+occurrence identities and unknown-outcome reconciliation. No duplicate timers,
+inferred takeover or automatic adoption of existing jobs.
+
+What exists today: an external scheduler can call
+`keepgoing tick -c <config> --routine <source>/<routine>` to record which entry
+fired ([run discovery](run-discovery.md)); [`service install`](services.md) keeps
+loop checks running on macOS/Linux; scheduler [exit codes](operations.md#exit-codes-for-external-schedulers)
+and opt-in [overdue reports](operations.md#external-schedulers-can-stop-on-their-own)
+remain available. These do not implement general job scheduling. The alternatives
+and managed-job lifecycle require dedicated design review before runtime changes.
+The items below remain planned; they authorize no fresh-session creation, schedule
+enabling, migration, replay or expansion of current engineering bounds.
 
 - [ ] **A bounded run.** One supervised run starts a fresh session, works within a time limit measured from its start, ends with a recorded result (outcome, duration, and usage where the adapter reports it) and exits; today the nearest thing is one check of an existing loop.
 - [ ] **A fresh session for every run, automatically.** Today [`session reset`](operations.md#starting-a-new-conversation-on-purpose) does this only as a manual command.
@@ -700,7 +723,7 @@ looptender does not keep time and will not become a scheduler: the operating sys
 - [ ] **A dry run.** A run that reads and decides but performs no outward action the adapter can withhold, building on `tick --dry-run`, which records decisions without acting; it can guarantee only that looptender itself sends, stops and moves nothing, not that an agent session already running does nothing.
 - [ ] **Scheduled runs in the panel.** The panel lists each scheduled run with its last result and its next expected fire.
 
-Not planned: priorities between runs or shared resource slots, a chat view, and looptender firing runs itself.
+Run priorities, shared resource admission and looptender firing adopted jobs are open design choices in the unified scheduling track, not categorical exclusions. A chat view remains outside this scheduled-run scope.
 
 ### 9. Independent review and configured stages (planned)
 
@@ -710,7 +733,7 @@ Not planned: priorities between runs or shared resource slots, a chat view, and 
 - [ ] Compare single review, independent samples, independent review plus synthesis, and bounded debate at comparable cost. Measure evidence quality, missed defects, false acceptance, retained dissent, latency and human review time. Agreement alone is not correctness.
 - [ ] **Review as a lane role.** A lane may carry a declared role, `work` or `review`, recorded with the loop and shown wherever lanes are shown. A review lane reads pinned inputs and reports; it may run on a different route or device from the work it reviews, so the reviewer does not share the author's model, allowance or context. The role is explicit metadata set by a person or by the agent that started the lane; keepgoing never infers it from a title or from text, and a review result still passes only a gate that was authorized beforehand. Depends on lanes as first-class members (P6) and on the route view (V2). Today this is done by hand: each change is read by an independent reviewer that sees the code and not the author's reasoning.
 
-Reviewer execution and interpretation belong in a BB workflow or other external coordinator. keepgoing never spawns reviewer threads or re-parents threads (the threads it can create are the opt-in [handoff to a new conversation](fallbacks.md#hand-off-to-a-new-conversation) and, at that handoff or on a person's command, bounded successors for child lanes blocked on another provider, and the only children it moves are those of the conversation a loop leaves at that handoff or at an explicit transfer, which would otherwise notify a conversation that no longer supervises them), never interprets review prose, or treats arbitrary model-produced JSON as provider status. Explicit control commands need validated provenance/authorization and revision checks; a JSON shape alone is insufficient. No general planner, recursive review system or second scheduler is part of this plan.
+Reviewer execution and interpretation belong in a BB workflow or other external coordinator. keepgoing never spawns reviewer threads or re-parents threads (the threads it can create are the opt-in [handoff to a new conversation](fallbacks.md#hand-off-to-a-new-conversation) and, at that handoff or on a person's command, bounded successors for child lanes blocked on another provider, and the only children it moves are those of the conversation a loop leaves at that handoff or at an explicit transfer, which would otherwise notify a conversation that no longer supervises them), never interprets review prose, or treats arbitrary model-produced JSON as provider status. Explicit control commands need validated provenance/authorization and revision checks; a JSON shape alone is insufficient. This configured-stage work adds no general planner, recursive review system or job scheduler. Unified scheduling is evaluated separately under [Scheduled runs](#scheduled-runs-planned); it does not expand this stage runner or its runtime authority.
 
 ### 10. Optional macOS menu-bar companion (planned)
 
