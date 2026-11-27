@@ -430,6 +430,15 @@ Required design invariants and focused fictional acceptance:
   Repository edits/reviews/merges remain external agent work under repository
   rules; the supervisor never edits, merges or installs fixes.
 
+Unreleased source includes an internal pure [`jobplan.Preview`](../../internal/jobplan/preview.go)
+for one explicitly selected BB-script-like observation. It compares caller-supplied
+identity/revision tuples, reports missing/contradictory evidence and independent
+restrictions, and labels all ownership, capability and relative-retrieval-recency
+claims unverified. Effects are always unavailable, even with complete claims.
+There is no reader, command, import write, adoption, batch deduplication, due-time
+calculation or scheduler, and no operational management or installed/live acceptance.
+Opaque evidence references and copied bindings remain private declarations.
+
 ### Bounded first scheduling journey and acceptance
 
 First review the shared identity/occurrence/ownership/action contract and source
