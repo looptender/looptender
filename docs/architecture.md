@@ -1,15 +1,18 @@
 # Architecture
 
-Looptender's product direction is an operations layer for agent work and
-automations across tools, accounts and schedules.
+Looptender is the operations layer for agent work and automations. Its product
+direction is to coordinate what runs next, when and where it runs, and which
+configured resources it uses, while keeping progress, problems and decisions
+visible. Local supervision is the current delivered foundation.
 Its current engine is a supervisor, not a repository-working agent: beside a
 running session, each tick decides whether anything should be sent, stopped,
 escalated or moved under the rules below. Earlier released v0.2.0 executables
 use the `keepgoing` name.
 
 [Unified automation management and scheduling](design/orchestration-policy.md#unified-automation-management-and-scheduling-planned)
-are planned. The design will compare federated execution by existing schedulers,
-Looptender-owned scheduling for explicitly new/adopted jobs, and a hybrid. Current
+are planned capabilities: management of supported external schedules and opt-in
+Looptender-owned schedules for explicitly new/adopted jobs. Federated and hybrid
+integration designs must preserve a single execution owner per job. Current
 loop-check timers and managed services are not a general job scheduler. This
 product direction changes no package boundary, execution ownership, job adoption,
 conversation-creation permission or runtime invariant here; those require a

@@ -364,14 +364,15 @@ They do not become assessable because this first analyzer exists.
 
 ## Unified automation management and scheduling (planned)
 
-Looptender is planned as an operations layer for agent work and automations
-across tools, accounts and schedules; supervision is the current delivered
-foundation. Unified scheduling/management is one planned product capability.
-Architecture and differentiation must be evaluated against that direction rather
-than vetoed by the obsolete scheduler exclusion. Current daemons/services keep
-loop checks running; they do not implement general managed-job scheduling.
-Compare the following alternatives before choosing architecture or changing
-runtime boundaries:
+Looptender is the operations layer for agent work and automations. Its product
+direction is to coordinate what runs next, when and where it runs, and which
+configured resources it uses, while keeping progress, problems and decisions
+visible. Local supervision is the delivered foundation. Unified scheduling is a
+concrete planned capability: Looptender will manage supported existing external
+schedules and offer opt-in owned schedules for explicitly new/adopted jobs.
+Current daemons/services keep loop checks running; they do not implement that
+managed-job scheduler. Evaluate integration/ownership designs against both
+requirements, rather than use the old exclusion to remove owned scheduling:
 
 | Option | Execution owner and useful management | Trade-offs to evaluate |
 | --- | --- | --- |
@@ -379,9 +380,9 @@ runtime boundaries:
 | Looptender-owned scheduling | Looptender evaluates due occurrences and admits execution only for explicitly new/adopted jobs through reviewed executors. OS service liveness is separate from job execution ownership. | Can provide consistent occurrence/dependency/concurrency rules, but needs durable admission, calendar/clock, crash/cancellation, security and lifecycle contracts. No implicit migration or new conversation authority. |
 | Hybrid | Existing jobs stay federated unless explicitly transferred; new/adopted jobs may use looptender scheduling. Each job has one recorded execution owner. | Allows incremental adoption but must prove transfer, cross-owner dependencies and unknown-outcome handling without duplicate timers or false global guarantees. |
 
-Evaluate all three against the same acceptance cases; the old roadmap exclusion
-is not evidence that owned scheduling lacks value. This comparison selects no
-implementation and certifies no Claude/BB/OS scheduler API. A common UI should
+Evaluate these designs against the same acceptance cases. This comparison selects
+no storage engine, PTY/process-suspension mechanism or new daemon architecture,
+and certifies no Claude/BB/OS scheduler API. A common UI should
 show schedule/time zone and next-fire basis, enabled versus observed state,
 bounded occurrence/attempt history, dependencies and concurrency, outcomes,
 source freshness/coverage, execution owner and available scoped controls.
@@ -412,26 +413,71 @@ Required design invariants and focused fictional acceptance:
   and diagnostic run graphs alone do not prove general job deduplication.
 - Explicit dependency/acceptance revisions, complete occupancy where required,
   time-zone/DST, clock rollback, sleep/reboot, overlap and missed-fire semantics.
-  No implicit catch-up burst. Test duplicate triggers, conflicting receipts,
+  Calendar triggers name a time zone and define DST gaps/repeated times; interval
+  triggers define their anchor and restart/clock behavior. Missed-run policy is
+  explicit: skip records missed occurrences without replay; coalesce admits at
+  most one occurrence representing a bounded missed range; bounded catch-up caps
+  both age/window and occurrence count and still requires fresh admission. No
+  implicit catch-up burst. Test duplicate triggers, conflicting receipts,
   partial history, transfer failure and stale target revisions with fake clocks
   and executors before any runtime rollout. Numerical cadences, grant expiry,
   retention and resource defaults need their own evidence/review.
 - Existing pause/stop/holds, refusal/account restrictions and configured scope,
-  permissions, spend/reserve/effort/concurrency limits survive every mode. No
+  permissions, spend/reserve/effort/concurrency limits survive every mode. Work
+  intensity never weakens those independent controls. Arbitrary commit/test
+  success cannot clear a hold or establish accepted output. No
   credentials, accounts, devices or conversations are created by this design.
   Repository edits/reviews/merges remain external agent work under repository
   rules; the supervisor never edits, merges or installs fixes.
 
-First review the shared identity/occurrence/ownership/action contract and a
-capability matrix for explicitly selected sources. A bounded read-only projection
-can reuse supplied source snapshots, loop/service/run evidence and the draft
-coverage command without adding a discovery parser, collector or duplicate work
-ledger. Then evaluate a supported federated-control fixture and an owned-schedule
-admission fixture independently. Production execution, adoption/transfer controls
-and any engineering-boundary changes require dedicated design review and scoped
-implementation acceptance. Current docs authorize no timers, enabled schedules,
-job moves, recurring paid lanes or rollout; implementation, released/installed
-adoption, native/platform and live evidence remain separate.
+### Bounded first scheduling journey and acceptance
+
+First review the shared identity/occurrence/ownership/action contract and source
+capability matrix. Then implement a narrowly scoped journey: one explicitly
+adopted job on one device, bound to one existing configured loop, with either a
+calendar trigger or an anchored interval. Preview definition, next-fire basis,
+missed-run policy, owner and effects before enabling. Show last occurrence,
+current outcome, next expected fire, unknowns and supported enable/disable,
+run-now and reconciliation actions in one management view. Each action binds the
+reviewed job/definition revision; disabling future fires does not imply active
+cancellation. No fresh sessions, automatic thread creation, inferred takeover or
+cross-device dispatch in this journey. Unsupported external-scheduler mutations
+stay unavailable; an external schedule remains its own execution owner until an
+explicit verified transfer, never alongside a second active timer.
+
+Start with supplied read-only source snapshots and pure due/admission fixtures,
+then separately review one supported external management binding and one owned
+executor binding. Storage and liveness implementation choices follow the durable
+contract; do not adopt research's SQLite, PTY/SIGSTOP or new-daemon prescriptions
+without an independent need and review. Reuse work-source, goal, assignment,
+account and control evidence where applicable; keep the visual setup map and
+existing account/adapter priorities independent of this bounded scheduling slice.
+
+Focused fictional acceptance before runtime rollout:
+
+1. Fake-clock calendar/time-zone/DST and anchored-interval cases prove next-fire
+   identity, rollback/sleep/reboot behavior and skip/coalesce/catch-up age/count
+   caps. Missing time-zone or incompatible definition stays unavailable.
+2. Repeated triggers, double run-now and restart before/after admission or dispatch
+   preserve one charged occurrence and distinct attempts. Lost acknowledgement,
+   contradictory receipts or an unknown outcome hold without replay, fallback or
+   release of charged reservations until explicit structured reconciliation.
+3. Stale definition/owner generations, partial occupancy, unmet dependencies and
+   failed transfer cannot enable a second executor. External jobs cannot silently
+   become owned jobs; current read timestamps cannot fabricate native run IDs.
+4. Pause/stop/independent holds, refusal, scope/account restrictions and configured
+   spend/reserve/effort/concurrency caps win over due work and every intensity.
+   Passing tests or a new commit cannot clear them. Disable and active cancellation
+   retain distinct effects; unsupported controls refuse without side effects.
+5. The management view exposes enabled versus observed state, execution owner,
+   missed/unknown outcomes and an actionable supported recovery path. Fixtures
+   prove controls bind exactly the previewed revision and never imply accepted
+   useful work from exit zero, CI success or a screenshot alone.
+
+This is planned work, not a giant next release or an implemented scheduler.
+Dedicated runtime contract/implementation review precedes enabling any schedules;
+these docs add no timers, job transfers, recurring paid lanes or rollout.
+Released/installed adoption, native/platform and live evidence stay separate.
 
 ## Account pools and lane distribution
 

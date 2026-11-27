@@ -162,7 +162,7 @@ The next product work should make authorized work useful and understandable acro
 | Shared work intensity | Low / Medium / High / Unleashed profiles are planned, not CLI flags or existing settings. | Versioned explicit independent scope/hold/spend/reserve/effort/concurrency caps; preview effective policy and data age, stale-data refusal, restart/revision fencing. P7/B1/B6/P6 are dependencies for enforcement; no invented default budget or unlimited profile. |
 | Find inefficiencies | Core planned responsibility; current diagnostics are partial inputs, not a complete detector. | Cover idle configured capacity with authorized backlog, stranded loops, duplicates/overlap/repeated checks, status-only wakes/context reload, model mismatch/rework, review/CI waits and stale polling. Structured identity/age/coverage/confidence and observed-versus-suspected findings, per-loop/class assessability (`cannot_assess` for missing source/dependency/CI inputs), bounded measurement overhead and actionable recommendations; optimize useful outcomes/rework, not utilization. [Evidence and authority](design/orchestration-policy.md#find-inefficiencies-without-maximizing-activity). First independent slice: [pure findings over existing unchanged-wake and assignment-reconciliation records](design/orchestration-policy.md#next-independent-implementation-slice-read-only-efficiency-findings), reusing the durable catalog/assignment lifecycle. No reader, dispatcher, automatic supersession/archive or acceptance inference. |
 | Configurable work sources and bound coverage | Existing goal references are opaque metadata; assignment records already hold revision-bound claims and explicit outcomes. Source adapters and general coverage validation are planned. | Repo docs default; optional issue/project/structured/ledger adapters later. Coordinator selects prose work; supervisor validates explicit item/source revision, authority, dependencies, claims and acceptance evidence. [First slice: read-only bound inventory](design/orchestration-policy.md#configurable-work-sources-and-bound-coverage), no parser/discovery or new ledger. Shared global item identity/claim isolation precede admission. Drift, missing claimed items and exhausted backlog with unmet acceptance are findings, never automatic completion. [Planned documentation upkeep](design/orchestration-policy.md#planned-use-case-reusable-documentation-upkeep) reuses this coverage: explicit per-project adoption, per-change docs impact or justified no-change, release/version alignment and missing/stale verification findings; agents own edits, installation never implies adoption. Coordinator upkeep includes looptender.com product claims, feature availability, downloads/install guidance, versions/platforms, screenshots and links; verified site source/deployment ownership and release evidence are required for publication claims, with no deployment requested here. |
-| Unified automation management and scheduling | Existing loop-check daemon/services, routine/run diagnostics and named BB automation reads are partial foundations, not general job management. | Compare federated, Looptender-owned and hybrid execution; one UI for schedules/history/enabled state/dependencies/concurrency/outcomes/scoped controls. Explicit adoption, one execution owner, durable occurrence IDs and unknown-outcome reconciliation precede runtime implementation. [Design track](design/orchestration-policy.md#unified-automation-management-and-scheduling-planned); no automatic job moves or enabled schedules. |
+| Unified automation management and scheduling | Existing loop-check daemon/services, routine/run diagnostics and named BB automation reads are partial foundations, not general job management. | Manage supported external schedules and opt-in owned schedules, comparing federated/hybrid integration architecture; one UI for schedules/history/enabled state/dependencies/concurrency/outcomes/scoped controls. Explicit adoption, one execution owner, durable occurrence IDs and unknown-outcome reconciliation precede runtime implementation. [Design track](design/orchestration-policy.md#unified-automation-management-and-scheduling-planned); no automatic job moves or enabled schedules. |
 | Useful-work continuation | Coordinator guidance, goal/control records and partial delivery diagnostics exist; there is no general backlog planner. | A fictional workflow settles current assignments, covers remaining authorized roadmap work and continues an independent offline step while a live/publication action stays held. Unknown authorization is not inferred from titles, transcripts or idle lanes. |
 | Native product experience | The macOS source app is a menu-bar accessory with native menu interactions and a browser-panel opener. No Dock settings or native HOME window is implemented. | macOS native HOME/Accounts/settings first, with explicit process ownership, accessibility and lifecycle acceptance. Windows/Linux desktop equivalents are deferred; portable core, CLI, panel and platform correctness remain in scope. |
 
@@ -692,23 +692,28 @@ A pending merge approval must hold only that merge while independent, already-au
 
 #### Scheduled runs (planned)
 
-Unified automation management and scheduling are planned product work, with
-supervision as today's foundation. Compare **federated management** (existing
-schedulers execute), **Looptender-owned scheduling** for explicitly new/adopted
-jobs, and **hybrid** ownership under the
-[shared design and acceptance track](design/orchestration-policy.md#unified-automation-management-and-scheduling-planned).
-One UI should cover schedules, history, enabled state, dependencies/concurrency,
-outcomes and supported scoped controls, with one execution owner, durable
-occurrence identities and unknown-outcome reconciliation. No duplicate timers,
-inferred takeover or automatic adoption of existing jobs.
+Looptender will handle unified management of supported existing external
+schedules and opt-in Looptender-owned scheduling for explicitly new/adopted jobs.
+These are concrete planned capabilities; supervision remains today's delivered
+foundation. Federated and hybrid integrations must preserve one execution owner
+per job, not duplicate timers or infer adoption. The
+[shared design and acceptance track](design/orchestration-policy.md#unified-automation-management-and-scheduling-planned)
+covers calendar/time-zone and interval triggers, explicit skip/coalesce/bounded
+catch-up, durable occurrence identity, restart reconciliation and actionable
+management of schedules/history/enabled state/dependencies/concurrency/outcomes.
+Unknown execution outcomes hold; intensity never weakens independent controls.
+The first journey is one explicitly adopted job on one device, bound to an
+existing loop, with definition preview and revision-bound management. Fake-clock,
+restart/lost-acknowledgement, transfer/duplicate-owner and hold/cap tests precede
+runtime rollout. It adds no automatic fresh-session or background thread creation.
 
 What exists today: an external scheduler can call
 `keepgoing tick -c <config> --routine <source>/<routine>` to record which entry
 fired ([run discovery](run-discovery.md)); [`service install`](services.md) keeps
 loop checks running on macOS/Linux; scheduler [exit codes](operations.md#exit-codes-for-external-schedulers)
 and opt-in [overdue reports](operations.md#external-schedulers-can-stop-on-their-own)
-remain available. These do not implement general job scheduling. The alternatives
-and managed-job lifecycle require dedicated design review before runtime changes.
+remain available. These do not implement general job scheduling. The managed-job lifecycle and integration architecture require dedicated design
+review before runtime changes.
 The items below remain planned; they authorize no fresh-session creation, schedule
 enabling, migration, replay or expansion of current engineering bounds.
 
@@ -723,7 +728,7 @@ enabling, migration, replay or expansion of current engineering bounds.
 - [ ] **A dry run.** A run that reads and decides but performs no outward action the adapter can withhold, building on `tick --dry-run`, which records decisions without acting; it can guarantee only that looptender itself sends, stops and moves nothing, not that an agent session already running does nothing.
 - [ ] **Scheduled runs in the panel.** The panel lists each scheduled run with its last result and its next expected fire.
 
-Run priorities, shared resource admission and looptender firing adopted jobs are open design choices in the unified scheduling track, not categorical exclusions. A chat view remains outside this scheduled-run scope.
+Run priorities and shared resource admission require their own reviewed contracts; owned execution is a planned scheduling capability, not merely an option to exclude. A chat view remains outside this scheduled-run scope.
 
 ### 9. Independent review and configured stages (planned)
 
