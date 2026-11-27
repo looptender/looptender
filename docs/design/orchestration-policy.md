@@ -94,6 +94,93 @@ and coverage; use controlled comparisons before causal savings claims. Throughpu
 or rework improvements can remain unmeasured. Token volume, idle capacity and
 utilization are supporting observations, never the optimization target by themselves.
 
+### Reconcile research with existing source
+
+External orchestration research is design input, not implementation evidence or
+authority. The research did not inspect these internals. Reuse the following
+source contracts rather than importing a replacement task store or state machine:
+
+| Research assumption/proposal | Source correction and retained boundary |
+| --- | --- |
+| No durable account inventory | [`internal/accounts`](../../internal/accounts/accounts.go) already stores a bounded private selected-context catalog with revisions and observations. This is not verified turn identity, an allowance reservation ledger or permission to pool. Automatic polling is source-implemented, not merely an unverified proposed collector. |
+| No assignment ledger or completion evidence | [`control/assignment.go`](../../internal/control/assignment.go) already records bindings, revisioned rows, scope/authorization references, lane inventory, handoffs and acknowledgements. [`assignment_wake.go`](../../internal/control/assignment_wake.go) records readiness/attempt/reconciliation; [`assignment_completion.go`](../../internal/control/assignment_completion.go) and the [command guard](../../cmd/looptender/assignment_completion.go) enforce explicit completion evidence. Reuse these records; they are not a general leased task queue or automatic acceptance oracle. |
+| Every wake has a complete outcome and measurable reload cost | [`state.IdleSpacing`](../../internal/state/state.go) records unchanged-wake evidence only where enabled; the [incident journal](../../internal/incident/record.go) has bounded retention and collapsed repeated checks. Existing usage fields have source/coverage limits. Missing history or cost stays unavailable; retained counts do not establish total tokens, idle-capacity hours or waste. |
+| A completed assignment can automatically become superseded; replacements can be retired or archived | Do not import these transitions. Existing explicit revision/owner-bound assignment and transfer operations retain their own contracts. A finding cannot change complete to superseded, infer acceptance, cancel/archive work or classify silence as terminal. |
+| Read-only findings can immediately unlock automatic dispatch | Initial findings are observation/recommendation only. No report action tier, intensity label or inferred efficiency creates thread/lane dispatch authority. Existing conversation creation remains limited to authorized opt-in paths and their bounds; no background creation or automatic backlog dispatcher is added. |
+
+Useful research requirements retained here are evidence-linked findings, explicit
+confidence and unknowns, one actionable recommendation, degraded-source gating,
+measured analysis overhead, and outcome/guard metrics. Do not import example
+lane-count defaults, numerical waste estimates, provider claims or full graph
+coverage without source and acceptance evidence. In particular, an unsuccessful
+assignment is not automatically wasted work, and no reserved-capacity denominator
+exists merely because a report proposes one.
+
+### Next independent implementation slice: read-only efficiency findings
+
+**Planned first slice:** a pure `internal/efficiency` analyzer, separate from
+`internal/poolplan`. It accepts caller-supplied bounded snapshots and returns
+findings; it has no reader, CLI, background worker, persistent findings store,
+provider/CI request, recommendation execution or control mutation. This can be
+implemented independently of pool reservations, native HOME and the Sessionpipe
+lane. It must not add another assignment/catalog store.
+
+Exact existing inputs and initial outputs:
+
+- **Recorded unchanged wakes:** the existing `state.IdleSpacing` fields
+  `LastWakeAt`, `Unchanged`, `Facts`, `WaitUntil` and `Wait`, with the containing
+  state's `CheckedAt`/`CheckFinishedAt`, target identity and an explicit current
+  caller-supplied binding/capture time. [`supervise/idlespacing.go`](../../internal/supervise/idlespacing.go)
+  defines the structured digest and when counts are recorded. At an explicitly
+  supplied threshold, report the recorded count and period/scope, with suspected
+  inefficiency rather than proven wasted work. Feature off, missing digest,
+  unavailable/future/stale timestamps or unverifiable binding means cannot
+  assess, not zero waste. Do not compare or expose private prompt text.
+- **Assignment attempt awaiting reconciliation:** reuse
+  `control.AssignmentSummaryOf` and `AssignmentWakeSummaryOf` projections from
+  already validated current-binding records: summary availability/revision,
+  inventory coverage/observed time, and coordination `State`, `AttemptedAt` and
+  `ReconciledAt`. `attempted_unreconciled` with a valid timestamp can establish
+  the age of a recorded attempt awaiting reconciliation, not that delivery
+  failed or a lane is stranded. Recommend the existing private assignment-review/
+  `reconcile-wake` flow; never consume a grant, resend, renew a claim or mark an
+  assignment complete/superseded. Direct-child coverage is not full occupancy.
+
+The caller supplies `now`, explicit age/count thresholds, an opaque subject key
+and binding/revision provenance; the library grants these no authority. Missing
+or contradictory provenance yields an explicit unavailable reason. Initial
+results contain deterministic finding identity, class, observed facts, suspected
+explanation/confidence basis, source times/revisions, coverage/unknowns, primary
+recommendation, verification metric and bounded analysis counters. Auto action
+is absent. Cost/throughput estimates remain absent unless compatible evidence
+actually supplies a denominator. Do not mint a second cost or acceptance model;
+use the [measurement contract](usage-measurement.md) where applicable.
+
+Proposed focused tests in `internal/efficiency/*_test.go`:
+
+1. Threshold and age boundaries with injected time; feature off, zero/missing/
+   future/rollback/stale evidence and changed owner/target/goal/revision return
+   cannot assess, never a claim of idle capacity or abandonment.
+2. Unchanged-wake observation reports only the recorded counter; differing
+   digest/revision cannot be merged into one finding. Missing counters do not
+   become zero, and context bytes never become estimated tokens or money.
+3. Unreconciled attempt reports its age; reconciled/changed revision suppresses
+   that exact finding. Partial/missing inventory and unknown availability retain
+   their unknowns; no assertion of failed dispatch, completion or available lane.
+4. Repeated identical input produces one stable finding; changed evidence makes
+   a distinct revision. Deterministic ordering, explicit bounds, input deep-copy
+   invariance and secret canaries prove no mutation or reference/text leakage.
+5. Negative controls that remove freshness/binding checks or treat missing data
+   as zero must fail the boundary fixtures. No IO/process/clock access belongs
+   in the pure package; no provider fixture or broad suite is needed initially.
+
+This first slice measures its own inspected-record/finding counts and keeps
+outcome improvement unmeasured. Later reader/UI wiring must prove snapshot
+binding, bounded overhead and privacy at that boundary. Additional classes need
+specific structured sources: backlog/occupancy for idle capacity, explicit work
+identity for duplicate assignments, and pinned repository/CI records for waits.
+They do not become assessable because this first analyzer exists.
+
 ## Account pools and lane distribution
 
 A catalog entry names an explicitly selected context. A route configures a model
