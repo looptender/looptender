@@ -75,7 +75,7 @@ export const detailsSchema = z.object({
   deadline: z.object({ at: z.string().max(64), reached: z.boolean().optional() }).optional(),
   sends: z.object({ max: z.number().int().nonnegative(), used: z.number().int().nonnegative().optional(), remaining: z.number().int().nonnegative().optional(), reached: z.boolean(), unavailable: z.boolean().optional() }).optional(),
   sendRecord: z.string().max(600).optional(),
-  disk: z.object({ level: z.enum(["low", "critical"]), message: z.string().max(400) }).optional(),
+  disk: z.object({ level: z.enum(["low", "critical", "unknown"]), message: z.string().max(400), measuredAt: z.string().max(40).optional(), source: z.literal("filesystem").optional() }).optional(),
   unreadable: z.array(z.object({ file: z.string().max(64), problem: z.string().max(40), offset: z.number().int().nonnegative().optional(), remedy: z.string().max(1200) })).max(8).optional(),
   // Names of the fields above that status sent in a form this plugin could not read.
   unparsed: z.array(z.string().max(32)).max(8).optional(),
@@ -257,7 +257,28 @@ const unparsedLine = (names: readonly string[]) => `Status could not be read for
  * word so nothing that matters is only in a tooltip. Empty for a loop with
  * nothing to say.
  */
-export function reasonLines(controlState: string, note: string | null, d: StatusDetails | undefined): string[] {
+
+/** Age is derived from the actual probe timestamp. A view read is never a sample. */
+export function diskEvidence(d: StatusDetails | undefined, refreshFailed = false, now = Date.now()): { state: string; age: string } {
+  const disk = d?.disk;
+  const at = disk?.measuredAt ? Date.parse(disk.measuredAt) : NaN;
+  if (!disk || disk.level === "unknown" || disk.source !== "filesystem" || !Number.isFinite(at) || at > now || at <= 0) return { state: "unavailable", age: "measurement time/provenance unavailable" };
+  const seconds = Math.floor((now - at) / 1000);
+  const age = seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : seconds < 86400 ? `${Math.floor(seconds / 3600)}h` : `${Math.floor(seconds / 86400)}d`;
+  return { state: refreshFailed || seconds > 90 ? "stale" : seconds > 25 ? "cached" : "recent", age: `${age} old; measured ${disk.measuredAt}` };
+}
+
+export function diskSummary(d: StatusDetails | undefined, refreshFailed = false, now = Date.now()): string {
+  const evidence = diskEvidence(d, refreshFailed, now);
+  if (d?.disk?.level === "unknown") return `State-volume disk: unavailable${refreshFailed ? " (stale; refresh failed)" : ""}`;
+  return `State-volume disk: ${d?.disk?.level ?? "unavailable"} (${refreshFailed ? "stale; refresh failed" : evidence.state === "unavailable" ? "measurement evidence unavailable" : evidence.state})`;
+}
+export function diskLine(d: StatusDetails, refreshFailed = false, now = Date.now()): string {
+  const evidence = diskEvidence(d, refreshFailed, now);
+  return `${diskSummary(d, refreshFailed, now)} · ${evidence.age} · ${d.disk?.source === "filesystem" ? "filesystem reading for the device volume holding loop state" : "source unavailable"}. ${d.disk?.message ?? ""}`;
+}
+
+export function reasonLines(controlState: string, note: string | null, d: StatusDetails | undefined, refreshFailed = false): string[] {
   const out: string[] = [];
   for (const u of d?.unreadable ?? []) out.push(`${unreadableHead(u)}. ${firstSentence(u.remedy)}`);
   if (recordsUnreadable(d) && !d?.unreadable?.length) out.push("status reported records it could not read, and their details could not be read");
@@ -265,7 +286,7 @@ export function reasonLines(controlState: string, note: string | null, d: Status
   if (d?.sendRecord) out.push(`Send record: ${firstSentence(d.sendRecord)}`);
   if (d?.deadline?.reached === true) out.push(`Deadline reached (${dateLabel(d.deadline.at)}); evaluated on the next check`);
   if (d?.sends?.reached) out.push(`Send limit reached: ${sendsText(d.sends)}`);
-  if (d?.disk) out.push(`Disk: ${d.disk.message}`);
+  if (d?.disk) out.push(diskLine(d, refreshFailed));
   const wait = d?.limitWait;
   if (wait && wait.state !== "none" && !wait.resetPassed) {
     out.push(wait.held
@@ -293,7 +314,7 @@ export function diagnosticLines(d: StatusDetails | undefined, target: string, su
   const lines = [
     `Status read: ${dateLabel(d.readAt)} (snapshot)`,
     goalLabel(d.goal, d.goalState),
-    `Task completion: ${d.completed ? "declared; not independently verified" : "not declared"}`,
+    `Loop completion: ${d.completed ? "declared for this loop; project and current thread work are not independently verified" : "not declared"}`,
     `Current target: ${targetName} (${target}); ${targetScope}${d.targetConfigured === false ? "; missing or disabled in config" : ""}`,
     ...(role ? [`Mode: ${role}`] : []),
     ...(d.sessionpipeWake?.text ? [`Wake: ${d.sessionpipeWake.text}`] : []),
