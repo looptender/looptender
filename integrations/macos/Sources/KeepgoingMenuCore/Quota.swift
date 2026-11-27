@@ -1,13 +1,20 @@
 import Foundation
 
-/// Saved selected-context evidence only. Menu polling never refreshes providers.
+/// Saved selected-context evidence only. Report reads never refresh providers.
 public struct AccountQuotaList: Decodable, Equatable {
+    public var workerEligible: Bool? = nil
     public let state: String
     public let complete: Bool
     public let accounts: [AccountQuota]
     public let omitted: Int
 }
+public struct UsageUpdating: Decodable, Equatable {
+    public let state: String
+    public let text: String
+    public let nextAttemptAt: String?
+}
 public struct AccountQuota: Decodable, Equatable {
+    public var usageUpdating: UsageUpdating? = nil
     public let id: String?
     public let label: String
     public let provider: String
@@ -43,6 +50,9 @@ extension Contract {
               value.omitted >= 0, value.omitted <= 64 else { return false }
         for a in value.accounts {
             let q = a.summary
+            if let u = a.usageUpdating {
+                guard ["off", "unavailable", "paused", "waiting", "enabled", "backoff"].contains(u.state), quotaText(u.text), u.nextAttemptAt == nil || date(u.nextAttemptAt) != nil else { return false }
+            }
             guard a.id == nil || (a.id!.count == 32 && a.id!.allSatisfy { "0123456789abcdef".contains($0) }), quotaText(a.label), ["codex", "claude-code", "antigravity"].contains(a.provider),
                   ["reported", "unavailable"].contains(q.state), quotaText(q.text),
                   ["fresh", "stale", "unavailable", "provider_unknown"].contains(q.freshness), q.rows.count <= 41,
@@ -122,7 +132,7 @@ extension MenuBuilder {
     }
     static func quotaAccountRow(_ a: AccountQuota, now: Date = Date()) -> MenuRow {
         let q = a.summary
-        let open = MenuRow(kind: .action, title: "Open Account in Panel…", detail: "", symbol: "macwindow", accessibilityLabel: "Open account \(a.label) in panel", accessibilityHelp: "Review quota refresh in Accounts; provider reads require their own review in a panel with changes allowed. Opening this page does not refresh usage or sign in.", toolTip: "", command: a.id.map { .openAccount(id: $0) } ?? .openPanel)
+        let open = MenuRow(kind: .action, title: "Open Account in Panel…", detail: "", symbol: "macwindow", accessibilityLabel: "Open account \(a.label) in panel", accessibilityHelp: "Review quota refresh or automatic usage settings in Accounts with changes allowed. Opening this page does not refresh usage or sign in.", toolTip: "", command: a.id.map { .openAccount(id: $0) } ?? .openPanel)
         var children = [open]
         if q.state == "reported" { children.append(quotaStatus(quotaAge(q, now: now))) }
         else { children.append(quotaStatus("Quota unavailable · \(q.text)")) }
@@ -148,12 +158,17 @@ extension MenuBuilder {
         }
         if q.rows.count > 8 { children.append(quotaStatus("\(q.rows.count - 8) more quota details in the panel.")) }
         if q.partial == true || (q.omitted ?? 0) > 0 { children.append(quotaStatus("Partial quota evidence; missing values are not zero.")) }
+        if let u = a.usageUpdating {
+            children.append(quotaStatus(u.text))
+            if let next = u.nextAttemptAt { children.append(quotaStatus("Next eligible fetch \(next)")) }
+        }
+        if let at = q.retrievedAt ?? q.observedAt { children.append(quotaStatus("Last successful fetch \(at)")) }
         if let at = q.retrievedAt ?? q.observedAt { children.append(quotaStatus("\(q.retrievedAt == nil ? "Read" : "Retrieved") \(at)")) }
         if q.retrievedAt != nil { children.append(quotaStatus("Provider freshness unknown; usage may be cached or seeded.")) }
         if let source = q.source { children.append(quotaStatus("Source: \(source)")) }
         if let failed = q.failedRefreshAt { children.append(quotaStatus("Refresh failed \(failed). \(q.failedRefreshText ?? "Earlier evidence retains its time.")")) }
         if q.state == "reported" { children.append(quotaStatus(q.text)) }
-        children.append(quotaStatus("Refresh usage: open this account in Accounts and review retrieval. No automatic provider refresh."))
+        children.append(quotaStatus("Refresh usage: open this account in Accounts to review retrieval or Keep usage updated settings."))
         let windows = q.rows.filter { quotaWindow($0) }
         let active = windows.filter { !quotaEnded($0, now: now) }
         // Compare only the supplied percentages. Complementing used here is
@@ -162,12 +177,17 @@ extension MenuBuilder {
             row.remainingPercent ?? row.usedPercent.map { 100 - $0 } ?? 101
         }
         let limiting = active.min { remainingRank($0) < remainingRank($1) }
-        let detail: String
+        var detail: String
         if q.state != "reported" { detail = "Quota unavailable" }
         else if let limiting {
             let value = limiting.remainingPercent.map { "\($0)% left" } ?? limiting.usedPercent.map { "\($0)% used" } ?? "Quota details recorded"
             detail = value + " · " + quotaReset(limiting, now: now)
         } else { detail = windows.isEmpty ? (q.partial == true ? "Partial quota evidence" : "Quota details recorded") : "Reset passed · refresh needed" }
+        if let state = a.usageUpdating?.state {
+            if ["waiting", "paused"].contains(state) { detail += " · updates paused" }
+            else if state == "backoff" { detail += " · fetch failed" }
+            else if state == "unavailable" { detail += " · update settings unavailable" }
+        }
         return MenuRow(kind: .action, title: shortened(a.label, to: maxName), detail: detail, symbol: "gauge.with.dots.needle.33percent", accessibilityLabel: "\(a.label), \(a.provider), \(detail). Selected account identity not verified.", accessibilityHelp: "Opens saved quota details; reads no provider.", toolTip: a.label, command: nil, submenu: children, semanticID: "quota-account:\(a.provider):\(a.id ?? a.label)")
     }
     private static func quotaStatus(_ full: String) -> MenuRow {

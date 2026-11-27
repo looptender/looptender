@@ -35,8 +35,8 @@ import (
 // rewrite: dockGuard decides which network requests are acceptable at all
 // (loopback host, same origin, read methods), dockAuth decides who may read
 // (here, an unguessable per-run token in the path), and dockReader builds the
-// report from the existing read paths. Nothing in this file writes, controls a
-// loop, or talks to a provider.
+// report from existing read paths. Loop inspection never controls a loop;
+// separately authorized usage polling may read model-free provider data.
 
 //go:embed dockui/index.html dockui/dock.css dockui/dock.js dockui/expired.js dockui/routes-help.html
 var dockUI embed.FS
@@ -71,7 +71,7 @@ func dockCommand(e env, args []string) int {
 	port := fs.Int("port", 0, "loopback port to listen on; 0 picks a free one")
 	refresh := fs.Duration("refresh", dockDefaultRefresh, "how often the page reads again (5s to 10m)")
 	staleAfter := fs.Duration("stale-after", defaultStaleAfter, "age at which a check or child listing is shown as stale")
-	offline := fs.Bool("offline", false, "do not ask each loop's local daemon for its next check")
+	offline := fs.Bool("offline", false, "read saved evidence without daemon or quota provider queries")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(e.stdout, "Usage: looptender dock [--port N] [--refresh 15s] [--stale-after 30m] [--directory private-registry] [--offline]")
@@ -110,6 +110,8 @@ func dockCommand(e env, args []string) int {
 	}
 	srv := newDockServer(ln.Addr().(*net.TCPAddr).Port, dockTokenAuth{token: token}, reader)
 	fmt.Fprintf(e.stdout, "The looptender panel is being served, read-only, for this computer only:\n\n  %s\n\nPress Ctrl-C to stop it. Stopping the page leaves supervision running.\n", srv.url(token))
+	stopUsage := startAccountUsageScheduler(e.ctx, reader.accountsDir, *offline)
+	defer stopUsage()
 	return srv.serve(e.ctx, ln, e.stderr)
 }
 
@@ -189,7 +191,8 @@ type dockServer struct {
 // dockServed is what the page is told about the command serving it. It holds
 // nothing about any loop.
 type dockServed struct {
-	SchemaVersion int `json:"schemaVersion"`
+	AccountUsageUpdating bool `json:"accountUsageUpdating,omitempty"`
+	SchemaVersion        int  `json:"schemaVersion"`
 	// ServedBy is dock (in the foreground, until interrupted) or panel (in
 	// the background, until idle or stopped).
 	ServedBy string `json:"servedBy"`
@@ -226,7 +229,7 @@ type dockServed struct {
 func newDockServer(port int, auth dockAuth, reader *dockReader) *dockServer {
 	return &dockServer{port: port, guard: newDockGuard(port), auth: auth, reader: reader, served: dockServed{SchemaVersion: 1, ServedBy: "dock",
 		Version: dockBuildLabel(version), VersionText: dockPanelVersionText(version),
-		ChangesText: txt("Read-only: this page cannot pause, resume, stop or start anything.")}}
+		ChangesText: txt("Read-only: this page cannot change loops or accounts. Separately authorized automatic usage reads may still run.")}}
 }
 
 func (s *dockServer) url(token string) string {
@@ -398,7 +401,8 @@ func (d *dockReader) json(identifiers bool) ([]byte, error) {
 
 // usageJSON returns the Usage page from the newest read of the last two
 // seconds, either view's, or from a new read. It is the same read as the
-// main report's: no check, probe, usage refresh or model call, no write.
+// main report's: saved files only, no provider IO. Background acquisition is
+// owned independently by the elected panel/dock worker.
 func (d *dockReader) usageJSON() ([]byte, error) {
 	d.mu.Lock()
 	for _, identifiers := range []bool{false, true} {
@@ -470,8 +474,8 @@ func (d *dockReader) bodies(identifiers bool) (dockCached, error) {
 	return out, nil
 }
 
-// read uses the same code paths as registry list, client status, status,
-// runs --registry-id and fallbacks list. It takes no lock and starts nothing.
+// read uses saved account evidence and the same loop-inspection paths as
+// registry/client status. It never starts or waits for provider acquisition.
 func (d *dockReader) read(ctx context.Context, identifiers bool) (result dockReport) {
 	defer func() {
 		view := accounts.View{State: "unavailable", Complete: false, Cards: []accounts.Card{}}
@@ -480,6 +484,7 @@ func (d *dockReader) read(ctx context.Context, identifiers bool) (result dockRep
 			if f, err := accounts.Load(dir); err == nil {
 				view, catalog = accounts.Project(f, d.clock()), &f
 				accounts.AttachQuota(&view, accounts.QuotaViews(dir, f, os.Environ(), d.clock()))
+				attachAccountUsageUpdating(&view, dir, os.Environ(), d.clock())
 				if logins, err := accounts.LoadLogins(dir); err == nil {
 					accounts.AttachLogins(&view, logins)
 				}
