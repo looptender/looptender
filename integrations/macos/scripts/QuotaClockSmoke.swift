@@ -2,6 +2,7 @@ import Foundation
 
 /// Synthetic native menu execution; no CLI, provider, GUI, or runtime files.
 @main struct QuotaClockSmoke {
+    static func windows(_ row: MenuRow) -> [MenuRow] { row.submenu.filter { $0.semanticID?.hasPrefix("quota-window:") == true } }
     static func main() {
         let now = Contract.date("2030-03-04T12:00:00Z")!
         let reset = "2030-03-04T13:00:00Z"
@@ -14,17 +15,17 @@ import Foundation
         let row = MenuBuilder.quotaAccountRow(a, now: now)
         precondition(row.detail.contains("0.0% left") && row.detail.contains("Resets in 1 h"))
         precondition(row.submenu.first?.command == .openAccount(id: a.id!))
-        precondition(row.submenu[2].submenu.contains { $0.accessibilityLabel.contains("Exhausted in the saved reading") })
-        precondition(row.submenu[2].submenu.contains { $0.accessibilityLabel.contains(reset) && $0.accessibilityLabel.contains("local time") })
+        precondition(windows(row)[0].submenu.contains { $0.accessibilityLabel.contains("Exhausted in the saved reading") })
+        precondition(windows(row)[0].submenu.contains { $0.accessibilityLabel.contains(reset) && $0.accessibilityLabel.contains("local time") })
         let later = now.addingTimeInterval(3600)
         precondition(MenuBuilder.quotaEnded(live, now: later))
         precondition(MenuBuilder.quotaReset(live, now: later).contains("refresh to confirm"))
         let ended = MenuBuilder.quotaAccountRow(account([live]), now: later)
-        precondition(ended.detail == "Reset passed · refresh needed")
-        precondition(ended.submenu[2].accessibilityLabel.contains("Last reading: 100% used"))
+        precondition(ended.detail == "Reading out of date · reset passed")
+        precondition(windows(ended)[0].accessibilityLabel.contains("Last reading: 100% used"))
         precondition(!ended.detail.contains("100.0% left"))
         let mixed = MenuBuilder.quotaAccountRow(a, now: later)
-        precondition(mixed.submenu[2].title == "Weekly" && mixed.detail.contains("90.0% left"))
+        precondition(windows(mixed)[0].title == "Weekly" && mixed.detail.contains("90.0% left"))
         precondition(MenuBuilder.quotaReset(missing, now: later) == "Reset time unavailable")
         precondition(MenuBuilder.quotaAge(a.summary, now: now.addingTimeInterval(1801)).contains("older reading"))
         precondition(MenuBuilder.quotaAge(a.summary, now: now.addingTimeInterval(-1)).contains("device clock"))
@@ -42,15 +43,15 @@ import Foundation
         let empty = account([], state: "unavailable")
         let menu = MenuBuilder.quotaRows(AccountQuotaList(state: "available", complete: true, accounts: [empty, account([live]), account([missing])], omitted: 0), now: later)
         precondition(menu[1].detail.contains("90.0% left"))
-        precondition(menu[2].detail.contains("Reset passed"))
+        precondition(menu[2].detail.contains("reset passed"))
         precondition(menu[3].detail == "Quota unavailable")
         // Supported individual limits can report remaining without usedPercent.
         let remainingOnly = AccountQuotaRow(name: "Individual limit", text: "87.5% remaining · provider units", usedPercent: nil, remainingPercent: 87.5, resetsAt: "2030-03-04T14:00:00Z", ended: nil)
         let mixedRemaining = MenuBuilder.quotaAccountRow(account([live, remainingOnly]), now: later)
-        precondition(mixedRemaining.detail.contains("87.5% left") && !mixedRemaining.detail.contains("Reset passed"))
-        precondition(mixedRemaining.submenu[2].title == "Individual limit")
+        precondition(mixedRemaining.detail.contains("87.5% left") && !mixedRemaining.detail.contains("reset passed"))
+        precondition(windows(mixedRemaining)[0].title == "Individual limit")
         let remainingOrder = MenuBuilder.quotaRows(AccountQuotaList(state: "available", complete: true, accounts: [account([live]), account([remainingOnly])], omitted: 0), now: later)
-        precondition(remainingOrder[1].detail.contains("87.5% left") && remainingOrder[2].detail.contains("Reset passed"))
+        precondition(remainingOrder[1].detail.contains("87.5% left") && remainingOrder[2].detail.contains("reset passed"))
         precondition(remainingOnly.usedPercent == nil)
         // Equal-shaped windows swap as the first reset passes. A tracked menu
         // must defer that structural change, while ordinary countdowns update.
@@ -61,8 +62,8 @@ import Foundation
         let afterSwap = MenuBuilder.quotaAccountRow(account([first, second]), now: later)
         precondition(MenuBuilder.sameShape([beforeSwap], [ticking]))
         precondition(!MenuBuilder.sameShape([beforeSwap], [afterSwap]))
-        precondition(beforeSwap.submenu[2].semanticID == afterSwap.submenu[3].semanticID)
-        precondition(beforeSwap.submenu[3].semanticID == afterSwap.submenu[2].semanticID)
+        precondition(windows(beforeSwap)[0].semanticID == windows(afterSwap)[1].semanticID)
+        precondition(windows(beforeSwap)[1].semanticID == windows(afterSwap)[0].semanticID)
         precondition(MenuBuilder.updateMode(shown: [beforeSwap], next: [afterSwap], itemCount: 1, menuOpen: true, hasHighlight: true) == .deferred)
         precondition(MenuBuilder.updateMode(shown: [beforeSwap], next: [ticking], itemCount: 1, menuOpen: true, hasHighlight: true) == .inPlace)
         precondition(MenuBuilder.updateMode(shown: [beforeSwap], next: [afterSwap], itemCount: 1, menuOpen: false, hasHighlight: false) == .rebuild)

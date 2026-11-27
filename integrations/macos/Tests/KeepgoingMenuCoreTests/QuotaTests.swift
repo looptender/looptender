@@ -9,6 +9,7 @@ extension MenuModel {
 }
 
 final class QuotaTests: XCTestCase {
+    func windows(_ row: MenuRow) -> [MenuRow] { row.submenu.filter { $0.semanticID?.hasPrefix("quota-window:") == true } }
     let quotaNow = Contract.date("2030-03-04T12:00:00Z")!
     let base = "\"schemaVersion\":1,\"registry\":\"available\",\"complete\":true,\"allClear\":true,\"needsYou\":0,\"unread\":0,\"omitted\":0,\"loops\":[]"
     let summary = #"{"state":"reported","text":"Saved selected context; identity not verified.","source":"codex account/rateLimits/read","observedAt":"2030-03-04T12:00:00Z","freshness":"stale","partial":true,"rows":[{"name":"Codex · 5-hour","text":"37% used · 63% remaining","usedPercent":37,"remainingPercent":63,"resetsAt":"2030-03-04T17:00:00Z"},{"name":"Codex · Credits","text":"Balance 12.75 provider units; currency not reported"}],"failedRefreshAt":"2030-03-04T13:00:00Z","failedRefreshText":"Timed out; earlier evidence retains its time."}"#
@@ -31,7 +32,7 @@ final class QuotaTests: XCTestCase {
         XCTAssertTrue(before.detail.contains("63.0% left"))
         XCTAssertTrue(before.detail.contains("Resets in 5 h"))
         let after = MenuBuilder.quotaAccountRow(account, now: quotaNow.addingTimeInterval(5 * 3600))
-        XCTAssertEqual(after.detail, "Reset passed · refresh needed")
+        XCTAssertEqual(after.detail, "Reading out of date · reset passed")
         XCTAssertTrue(after.submenu.flatMap(\.submenu).contains { $0.accessibilityLabel.contains("Last reading: 37% used") })
         XCTAssertTrue(after.submenu.contains { $0.accessibilityLabel.contains("older reading") })
         XCTAssertFalse(after.detail.contains("100%"))
@@ -47,8 +48,8 @@ final class QuotaTests: XCTestCase {
         }
         let mixed = MenuBuilder.quotaAccountRow(account([past, active], label: "Example mixed"), now: quotaNow)
         XCTAssertTrue(mixed.detail.contains("87.5% left"))
-        XCTAssertFalse(mixed.detail.contains("Reset passed"))
-        XCTAssertEqual(mixed.submenu[2].title, "Individual limit")
+        XCTAssertFalse(mixed.detail.contains("reset passed"))
+        XCTAssertEqual(windows(mixed)[0].title, "Individual limit")
         let list = AccountQuotaList(state: "available", complete: true, accounts: [account([past], label: "Example history"), account([active], label: "Example active")], omitted: 0)
         XCTAssertTrue(Contract.validQuotas(list))
         XCTAssertEqual(MenuBuilder.quotaRows(list, now: quotaNow)[1].title, "Example active")
@@ -63,11 +64,11 @@ final class QuotaTests: XCTestCase {
         let before = MenuBuilder.quotaAccountRow(account, now: quotaNow)
         let ticking = MenuBuilder.quotaAccountRow(account, now: quotaNow.addingTimeInterval(60))
         let after = MenuBuilder.quotaAccountRow(account, now: quotaNow.addingTimeInterval(3600))
-        XCTAssertEqual(before.submenu[2].title, "5-hour")
-        XCTAssertEqual(after.submenu[2].title, "7-day")
+        XCTAssertEqual(windows(before)[0].title, "5-hour")
+        XCTAssertEqual(windows(after)[0].title, "7-day")
         XCTAssertFalse(MenuBuilder.sameShape([before], [after]))
-        XCTAssertEqual(before.submenu[2].semanticID, after.submenu[3].semanticID)
-        XCTAssertEqual(before.submenu[3].semanticID, after.submenu[2].semanticID)
+        XCTAssertEqual(windows(before)[0].semanticID, windows(after)[1].semanticID)
+        XCTAssertEqual(windows(before)[1].semanticID, windows(after)[0].semanticID)
         XCTAssertEqual(MenuBuilder.updateMode(shown: [before], next: [after], itemCount: 1, menuOpen: true, hasHighlight: true), .deferred)
         XCTAssertEqual(MenuBuilder.updateMode(shown: [before], next: [ticking], itemCount: 1, menuOpen: true, hasHighlight: true), .inPlace)
         XCTAssertEqual(MenuBuilder.updateMode(shown: [before], next: [after], itemCount: 1, menuOpen: false, hasHighlight: false), .rebuild)

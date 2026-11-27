@@ -127,15 +127,27 @@ extension MenuBuilder {
         guard let at = Contract.date(summary.retrievedAt ?? summary.observedAt), at <= now else { return "Reading time unavailable · check device clock" }
         let age = now.timeIntervalSince(at)
         let stamp = age < 60 ? "just now" : "\(quotaDuration(age)) ago"
-        if retrieved { return "Retrieved \(stamp) · provider freshness unknown" }
-        return "Read \(stamp) · " + (summary.freshness == "stale" || age > 1800 ? "older reading" : "saved snapshot")
+        if retrieved { return "Last successful fetch \(stamp) · provider freshness unknown" }
+        return "Last successful fetch \(stamp) · " + (summary.freshness == "stale" || age > 1800 ? "older reading" : "saved snapshot")
     }
     static func quotaAccountRow(_ a: AccountQuota, now: Date = Date()) -> MenuRow {
         let q = a.summary
         let open = MenuRow(kind: .action, title: "Open Account in Panel…", detail: "", symbol: "macwindow", accessibilityLabel: "Open account \(a.label) in panel", accessibilityHelp: "Review quota refresh or automatic usage settings in Accounts with changes allowed. Opening this page does not refresh usage or sign in.", toolTip: "", command: a.id.map { .openAccount(id: $0) } ?? .openPanel)
         var children = [open]
+        // Collection facts precede quota history, without granting new authority.
+        if let u = a.usageUpdating {
+            children.append(quotaStatus(u.text))
+            if let next = u.nextAttemptAt, let at = Contract.date(next) {
+                let remaining = at.timeIntervalSince(now)
+                let text = remaining > 0 ? "Next eligible fetch in \(quotaDuration(remaining))" : "Fetch eligible now · waiting for scheduler"
+                children.append(quotaStatus(text))
+                children.append(quotaStatus("Next eligible: \(DateFormatter.localizedString(from: at, dateStyle: .medium, timeStyle: .short)) (local time) · \(next)"))
+            }
+        } else { children.append(quotaStatus("Automatic update status unavailable from this CLI")) }
         if q.state == "reported" { children.append(quotaStatus(quotaAge(q, now: now))) }
-        else { children.append(quotaStatus("Quota unavailable · \(q.text)")) }
+        else { children.append(quotaStatus("No successful quota reading · \(q.text)")) }
+        if let at = q.retrievedAt ?? q.observedAt { children.append(quotaStatus("Last successful fetch \(at)")) }
+        if let failed = q.failedRefreshAt { children.append(quotaStatus("Refresh failed \(failed). \(q.failedRefreshText ?? "Earlier evidence retains its time.")")) }
         // Active windows precede expired history, retaining provider order within each group.
         let indexed = Array(q.rows.enumerated())
         let ordered = indexed.filter { !quotaEnded($0.element, now: now) } + indexed.filter { quotaEnded($0.element, now: now) }
@@ -158,15 +170,8 @@ extension MenuBuilder {
         }
         if q.rows.count > 8 { children.append(quotaStatus("\(q.rows.count - 8) more quota details in the panel.")) }
         if q.partial == true || (q.omitted ?? 0) > 0 { children.append(quotaStatus("Partial quota evidence; missing values are not zero.")) }
-        if let u = a.usageUpdating {
-            children.append(quotaStatus(u.text))
-            if let next = u.nextAttemptAt { children.append(quotaStatus("Next eligible fetch \(next)")) }
-        }
-        if let at = q.retrievedAt ?? q.observedAt { children.append(quotaStatus("Last successful fetch \(at)")) }
-        if let at = q.retrievedAt ?? q.observedAt { children.append(quotaStatus("\(q.retrievedAt == nil ? "Read" : "Retrieved") \(at)")) }
         if q.retrievedAt != nil { children.append(quotaStatus("Provider freshness unknown; usage may be cached or seeded.")) }
         if let source = q.source { children.append(quotaStatus("Source: \(source)")) }
-        if let failed = q.failedRefreshAt { children.append(quotaStatus("Refresh failed \(failed). \(q.failedRefreshText ?? "Earlier evidence retains its time.")")) }
         if q.state == "reported" { children.append(quotaStatus(q.text)) }
         children.append(quotaStatus("Refresh usage: open this account in Accounts to review retrieval or Keep usage updated settings."))
         let windows = q.rows.filter { quotaWindow($0) }
@@ -182,9 +187,10 @@ extension MenuBuilder {
         else if let limiting {
             let value = limiting.remainingPercent.map { "\($0)% left" } ?? limiting.usedPercent.map { "\($0)% used" } ?? "Quota details recorded"
             detail = value + " · " + quotaReset(limiting, now: now)
-        } else { detail = windows.isEmpty ? (q.partial == true ? "Partial quota evidence" : "Quota details recorded") : "Reset passed · refresh needed" }
+        } else { detail = windows.isEmpty ? (q.partial == true ? "Partial quota evidence" : "Quota details recorded") : "Reading out of date · reset passed" }
         if let state = a.usageUpdating?.state {
-            if ["waiting", "paused"].contains(state) { detail += " · updates paused" }
+            if state == "off" { detail += " · updates off" }
+            else if ["waiting", "paused"].contains(state) { detail += " · updates paused" }
             else if state == "backoff" { detail += " · fetch failed" }
             else if state == "unavailable" { detail += " · update settings unavailable" }
         }
