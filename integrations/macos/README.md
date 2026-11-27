@@ -76,8 +76,9 @@ values sort after known dates; equal instants use the exact loop key, independen
 of display names and incoming registry order. Older CLIs omit the field, so
 all their loops use the deterministic key tie-break within each group. This is
 recorded loop activity, not a complete feed of agent or lane events. No activity
-dates are added to loop labels, tooltips or accessibility text. The account
-submenu keeps its existing supplied order and quota behavior.
+dates are added to loop labels, tooltips or accessibility text. This loop
+activity ordering does not sort accounts; quota summaries use the active/ended
+ordering described below.
 
 **While the menu is open** it is never rebuilt under the pointer: when a read finishes and the rows are the same rows, their text is updated in place; when the rows or their exact loop-key order change, the change waits until nothing is highlighted or the menu has closed. Activity sorting uses this same structural guard; a refresh cannot reorder a highlighted choice. The count beside the icon is always updated.
 
@@ -162,6 +163,9 @@ These bounds apply to the directly invoked CLI and its output. An arbitrary repl
 ```sh
 swift build --package-path integrations/macos
 swift test --package-path integrations/macos
+# Provider-free native model execution without XCTest:
+swiftc -o /tmp/quota-clock-smoke integrations/macos/Sources/KeepgoingMenuCore/*.swift integrations/macos/scripts/QuotaClockSmoke.swift
+/tmp/quota-clock-smoke
 # Pass an already-built current Go executable:
 python3 integrations/macos/scripts/smoke-contract.py /path/to/keepgoing
 ```
@@ -200,7 +204,27 @@ keeps the old loop menu. Each account's `id` there is a handle, not the catalog 
 passes it back to `panel --account` unchanged, and its shape is the one the
 menu already validates (32 lowercase hex). New data is validated before rendering (16 projected
 accounts, 41 rows per account, bounded inert text/percent/date/state values);
-menus show six accounts and eight details each with explicit counts for more.
+menus show six accounts and eight quota entries each with explicit counts for more.
+In unreleased source, each account first offers **Open Account in Panel…**;
+remaining quota and the reset countdown of its most-used active window appear
+beside its name. Accounts with active window readings precede historical-only and unavailable
+accounts; active quota entries precede passed windows. Each entry opens
+its last reading, countdown and exact reset timestamp (local time plus the
+original timestamp). A passed reset stays historical and never assumes a new
+allowance. Accounts with no quota say **Quota unavailable** and still open
+details; missing usage is not a sign-in diagnosis. Read/retrieval age, older
+readings, unknown provider freshness, source and refresh failures stay visible
+in account details. Provider freshness remains unknown for Claude/Antigravity.
+Ages and countdowns recompute on menu opening and ordinary saved-evidence
+reads; they do not add provider polling. Existing menu tracking rules can defer
+structural changes until a highlighted menu closes. Window identities include
+the full window name and its original source ordinal, so active/history
+reordering cannot replace a highlighted window in place; countdown changes for
+the same window still update in place. Active remaining-only individual limits
+participate in summaries and active-before-history account ordering without
+inventing a used percentage. Review usage retrieval in
+the account page using a panel with changes allowed; opening it from the menu
+does not refresh quota or begin sign-in.
 Long menu text is shortened visibly, with complete accessible labels/tooltips.
 The existing 180-character generic and 1024-byte authority bounds are unchanged.
 Saved quota does not alter loop badges or grant controls. By default list reads
@@ -211,8 +235,8 @@ selections, including while closed and with the panel process stopped; list/rend
 paths never wait for provider IO. Quota details show
 enabled/backoff/paused state and the next eligible fetch, separately from the
 last successful fetch and provider freshness. Panel idle shutdown stops its worker.
-Choose Open Panel, then Accounts for full details and an explicit reviewed provider
-refresh. Unsupported or corrupt data never becomes zero quota. Native menu
+Choose **Open Account in Panel…** for full details, reviewed manual retrieval or
+**Keep usage updated…** settings. Unsupported or corrupt data never becomes zero quota. Native menu
 polling remains saved-evidence only without those explicit grants; rebuilding does not replace or restart a
 running menu. See [quota capability limits](../../docs/accounts.md#read-selected-context-subscription-quota).
 
