@@ -897,13 +897,63 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
   const chkChip = w.document.querySelector('[data-focus="filter-checks"]')?.textContent;
   if (decChip !== "Decisions & bounds (2)" || chkChip !== "Checks stopped (1)") errs.push(`filter chips mismatch: ${decChip} | ${chkChip}`);
 
+  // Stub map column/card boxes so drawSetupEdges renders badges and arrowheads in JSDOM.
+  const origGetRect = w.HTMLElement.prototype.getBoundingClientRect;
+  let tightRouteCards = false;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    const mkRect = (x, y, wPx, hPx) => ({ x, y, left: x, top: y, right: x + wPx, bottom: y + hPx, width: wPx, height: hPx });
+    if (this.id === "graph-canvas") return mkRect(0, 0, 1040, 800);
+    if (this.id === "col-loops") return mkRect(0, 0, 300, 700);
+    if (this.id === "col-routes") return mkRect(390, 0, 275, 700);
+    if (this.id === "col-accounts") return mkRect(755, 0, 285, 700);
+    if (this.classList?.contains("map-card")) {
+      const col = this.closest("#col-loops, #col-routes, #col-accounts");
+      const idx = col ? [...col.querySelectorAll(".map-card")].indexOf(this) : 0;
+      const x = col?.id === "col-routes" ? 390 : col?.id === "col-accounts" ? 755 : 0;
+      const wPx = col?.id === "col-routes" ? 275 : col?.id === "col-accounts" ? 285 : 300;
+      const pitch = tightRouteCards && col?.id === "col-routes" ? 10 : 96;
+      const hPx = tightRouteCards && col?.id === "col-routes" ? 10 : 76;
+      return mkRect(x, 40 + idx * pitch, wPx, hPx);
+    }
+    return origGetRect.call(this);
+  };
+  const checkGraphBadges = (label) => {
+    const bgs = [...w.document.querySelectorAll("#graph-svg .edge-badge-bg")];
+    const txts = [...w.document.querySelectorAll("#graph-svg .edge-badge-text")];
+    const polys = [...w.document.querySelectorAll("#graph-svg polygon")];
+    if (!bgs.length || bgs.length !== txts.length) errs.push(`${label}: expected matching badge rects (${bgs.length}) and labels (${txts.length})`);
+    if (polys.some((p) => !p.getAttribute("class")?.split(/\s+/).includes("edge-arrow"))) errs.push(`${label}: arrowhead polygon missing edge-arrow class`);
+    const boxes = bgs.map((r) => ({ x: parseFloat(r.getAttribute("x")), y: parseFloat(r.getAttribute("y")), w: parseFloat(r.getAttribute("width")), h: parseFloat(r.getAttribute("height")) }));
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i], b = boxes[j];
+        if (Math.abs((a.x + a.w / 2) - (b.x + b.w / 2)) < (a.w + b.w) / 2 + 1 && Math.abs((a.y + a.h / 2) - (b.y + b.h / 2)) < (a.h + b.h) / 2 + 1) {
+          errs.push(`${label}: overlapping edge badges at (${a.x},${a.y}) and (${b.x},${b.y})`);
+        }
+      }
+    }
+  };
+
   // Select card in Setup Map -> highlight + inspector + Esc clear
-  w.document.querySelector('[data-focus="map-loop-' + kQ + '"]').click(); await tick();
+  w.document.querySelector('[data-focus="map-loop-' + kQ + '"]').click(); await settle();
   if (!w.document.getElementById("map-inspector")?.textContent.includes("BB unverified") || !w.document.querySelector('[data-focus="map-loop-' + kSup + '"]')?.classList.contains("is-dimmed")) {
     errs.push("selecting loop in Setup Map did not highlight/inspector/dim properly");
   }
-  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await tick();
+  checkGraphBadges("loop-selected");
+  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await settle();
   if (w.document.querySelector('[data-focus="map-loop-' + kQ + '"]')?.classList.contains("is-selected")) errs.push("Escape did not clear map selection");
+
+  // Exercise badgeCollides stepping when arrival ports sit closer than badge height
+  tightRouteCards = true;
+  w.document.querySelector('[data-focus="map-loop-' + kQ + '"]').click(); await settle();
+  checkGraphBadges("tight-arrival-collision-avoided");
+  tightRouteCards = false;
+  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await settle();
+
+  // Select shared route in Setup Map -> converging multi-loop badges stay non-overlapping
+  w.document.querySelector('[data-focus="map-route-' + r1 + '"]').click(); await settle();
+  checkGraphBadges("shared-route-selected");
+  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await settle();
 
   // Task flow 1: Question -> Open question drawer with honest G9 copy
   const qCard = w.document.querySelector(`#attention-section [data-issue-key="${kQ}"]`);

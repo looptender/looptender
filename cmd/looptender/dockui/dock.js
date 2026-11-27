@@ -1637,7 +1637,12 @@
       return { x: (side === "right" ? rBox.right : rBox.left) - cBox.left, y: (rBox.top + rBox.height / 2 + (dy || 0)) - cBox.top };
     }
     var placedBadges = [];
-    function ortho(p1, p2, channelX, clsStr, markerId, badgeLabel, portCls, isLimitBadge) {
+    function badgeCollides(cx, cy, w) {
+      return placedBadges.some(function (b) {
+        return Math.abs(b.x - cx) < (b.w + w) / 2 + 2 && Math.abs(b.y - cy) < 18;
+      });
+    }
+    function ortho(p1, p2, channelX, clsStr, markerId, badgeLabel, portCls, isLimitBadge, badgeSide) {
       if (!p1 || !p2) return;
       var x1 = p1.x, y1 = p1.y, x2 = p2.x - 1, y2 = p2.y;
       var endX = x2 - 6;
@@ -1662,6 +1667,7 @@
         var arrowEl = document.createElementNS(ns, "polygon");
         arrowEl.setAttribute("points", (endX - 1).toFixed(1) + "," + (y2 - 3.5).toFixed(1) + " " + x2.toFixed(1) + "," + y2.toFixed(1) + " " + (endX - 1).toFixed(1) + "," + (y2 + 3.5).toFixed(1));
         arrowEl.setAttribute("fill", markerColors[markerId]);
+        arrowEl.setAttribute("class", "edge-arrow" + (markerId === "arr-good" || markerId === "arr-limit" ? " is-accent" : ""));
         svgEl.appendChild(arrowEl);
       }
 
@@ -1671,12 +1677,24 @@
       svgEl.appendChild(dotEl);
 
       if (badgeLabel) {
-        var bx = Math.max(channelX + 14, endX - 18), by = y2;
-        if (placedBadges.some(function (b) { return Math.abs(b.x - bx) < 24 && Math.abs(b.y - by) < 18; })) by -= 18;
-        placedBadges.push({ x: bx, y: by });
+        var bw = Math.max(22, Math.ceil(badgeLabel.length * 6.5 + 8));
+        var bx = badgeSide === "start"
+          ? Math.max(x1 + bw / 2 + 6, Math.min(channelX - bw / 2 - 4, x1 + bw / 2 + 7))
+          : Math.max(channelX + bw / 2 + 3, endX - bw / 2 - 7);
+        var baseBy = badgeSide === "start" ? y1 : y2;
+        var by = baseBy;
+        if (badgeCollides(bx, by, bw)) {
+          for (var step = 1; step <= 16; step++) {
+            var upY = baseBy - step * 18;
+            if (upY >= 9 && !badgeCollides(bx, upY, bw)) { by = upY; break; }
+            var dnY = baseBy + step * 18;
+            if (!badgeCollides(bx, dnY, bw)) { by = dnY; break; }
+          }
+        }
+        placedBadges.push({ x: bx, y: by, w: bw });
         var bg = document.createElementNS(ns, "rect");
-        bg.setAttribute("x", (bx - 11).toFixed(1)); bg.setAttribute("y", (by - 8).toFixed(1));
-        bg.setAttribute("width", "22"); bg.setAttribute("height", "16"); bg.setAttribute("rx", "3");
+        bg.setAttribute("x", (bx - bw / 2).toFixed(1)); bg.setAttribute("y", (by - 8).toFixed(1));
+        bg.setAttribute("width", String(bw)); bg.setAttribute("height", "16"); bg.setAttribute("rx", "3");
         bg.setAttribute("class", "edge-badge-bg" + (isLimitBadge ? " is-limit" : ""));
         var txt = document.createElementNS(ns, "text");
         txt.setAttribute("x", bx.toFixed(1)); txt.setAttribute("y", by.toFixed(1));
@@ -1690,7 +1708,7 @@
     var c1R = col1.getBoundingClientRect().right - cBox.left, c2L = col2.getBoundingClientRect().left - cBox.left;
     var c2R = col2.getBoundingClientRect().right - cBox.left, c3L = col3.getBoundingClientRect().left - cBox.left;
 
-    var lrList = [], inCountByRoute = Object.create(null);
+    var lrList = [], inCountByRoute = Object.create(null), outCountByLoop = Object.create(null);
     topo.loops.forEach(function (vItem) {
       var lKey = vItem.loop.key;
       vItem.edges.forEach(function (ed, idx) {
@@ -1700,21 +1718,24 @@
           if (!ed.current && !(idx === 0 && !vItem.edges.some(function (e2) { return e2.current; }))) return;
         }
         inCountByRoute[ed.routeKey] = (inCountByRoute[ed.routeKey] || 0) + 1;
+        outCountByLoop[lKey] = (outCountByLoop[lKey] || 0) + 1;
         lrList.push({ loopKey: lKey, edge: ed, seq: inCountByRoute[ed.routeKey] });
       });
     });
+    var useStartBadges = Boolean(topo.sel && topo.sel.kind !== "loop" && lrList.some(function (it) { return (inCountByRoute[it.edge.routeKey] || 0) > 1; }) && lrList.every(function (it) { return (outCountByLoop[it.loopKey] || 0) === 1; }));
     lrList.forEach(function (item, i) {
       var ed = item.edge, totalIn = inCountByRoute[ed.routeKey] || 1;
       var tgtDy = totalIn > 1 ? (item.seq - (totalIn + 1) / 2) * 8 : 0;
       var srcDy = topo.sel && vEdgesCount(topo, item.loopKey) > 1 ? (ed.pos - 1.5) * 6 : 0;
       var p1 = anchorPt("loop-" + item.loopKey, "right", srcDy), p2 = anchorPt("route-" + ed.routeKey, "left", tgtDy);
-      var chLeft = c1R + 12, chRight = Math.max(chLeft + 4, c2L - 46);
+      var chLeft = useStartBadges ? (c1R + 38) : (c1R + 12);
+      var chRight = Math.max(chLeft + 4, useStartBadges ? (c2L - 18) : (c2L - 46));
       var spanW = Math.max(4, chRight - chLeft);
       var chX = chLeft + (lrList.length <= 1 ? spanW / 2 : (i / (lrList.length - 1)) * spanW);
       var eCls = ed.departedLimit ? "edge-limit" : ed.inUse ? "edge-inuse" : ed.current ? "edge-current" : "edge-fallback";
       var mkId = ed.departedLimit ? "arr-limit" : (ed.inUse || !ed.current) ? "arr-good" : "arr-neutral";
       var pCls = ed.departedLimit ? "is-limit" : ed.current && !ed.inUse ? "is-neutral" : "";
-      ortho(p1, p2, chX, eCls, mkId, topo.sel ? "#" + ed.pos : "", pCls, ed.departedLimit);
+      ortho(p1, p2, chX, eCls, mkId, topo.sel ? "#" + ed.pos : "", pCls, ed.departedLimit, useStartBadges ? "start" : "end");
     });
 
     var raList = [], inCountByAcct = Object.create(null);

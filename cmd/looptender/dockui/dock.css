@@ -564,8 +564,10 @@ html:not(.has-script) .needs-script { visibility: hidden; }
   .map-card.is-related { border: 2px solid Highlight; }
   .edge { stroke: CanvasText; }
   .edge-inuse, .edge-fallback { stroke: Highlight; }
-  .edge-badge-bg { fill: Canvas; stroke: Highlight; }
-  .edge-badge-text { fill: CanvasText; }
+  .edge-arrow { fill: CanvasText; stroke: none; stroke-width: 0; }
+  .edge-arrow.is-accent { fill: Highlight; }
+  .edge-badge-bg { fill: Canvas; stroke: Highlight; stroke-width: 1; }
+  .edge-badge-text { fill: CanvasText; stroke: none; stroke-width: 0; }
 }
 
 /* The page shown for a used or expired link. It has no session and no script. */
@@ -822,7 +824,7 @@ details[open] > .how-summary::before { transform: rotate(45deg); }
 .path-inspector-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem 0.85rem; }
 
 .graph-canvas { position: relative; min-width: 0; }
-.graph-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; overflow: visible; }
+.graph-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; overflow: visible; stroke: none; stroke-width: 0; }
 .graph-cols { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.05fr) minmax(0, 1.1fr); gap: 5.6rem; align-items: start; }
 .graph-col { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.48rem; min-width: 0; }
 .col-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.4rem; padding-bottom: 0.22rem; border-bottom: 1px solid var(--line); min-width: 0; }
@@ -863,9 +865,10 @@ details[open] > .how-summary::before { transform: rotate(45deg); }
 .edge-port.is-neutral { stroke: var(--border-ui); }
 .edge-port.is-limit { stroke: var(--limit); }
 .edge-port.is-attn { stroke: var(--attn); }
+.edge-arrow { stroke: none; stroke-width: 0; }
 .edge-badge-bg { fill: var(--surface); stroke: var(--good-line); stroke-width: 1; }
 .edge-badge-bg.is-limit { stroke: var(--limit-line); }
-.edge-badge-text { fill: var(--ink); font: 700 10px var(--mono); text-anchor: middle; dominant-baseline: central; }
+.edge-badge-text { fill: var(--ink); stroke: none; stroke-width: 0; font: 700 10px var(--mono); text-anchor: middle; dominant-baseline: central; }
 
 .map-legend-fold { margin-top: 0.6rem; padding: 0.42rem 0.65rem; background: var(--sunk); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 0.75rem; color: var(--ink-2); }
 .map-legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 1rem; }
