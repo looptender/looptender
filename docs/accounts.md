@@ -750,7 +750,19 @@ by the offline fixture evidence.
 
 The Accounts page shows compact named windows before expansion. Expanded rows
 show used and remaining values, independent reset timestamps, source, read age,
-partial evidence and failed refreshes. The native menu shows the same saved
+partial evidence and failed refreshes. In unreleased source, compact rows also
+show remaining percentages, reset countdowns and reading age. While Accounts is
+visible, labels update every 15 seconds and on returning to the tab, including
+when saved-page reads are paused or fail. Reset timestamps use local time; hover
+a time label for its exact timestamp. Passing a reset marks the window ended
+and hides its meter; it never replenishes quota or establishes access. A new
+reviewed provider reading is needed to confirm availability. Codex readings
+older than 30 minutes are labelled older; Claude and Antigravity provider
+freshness stays unknown. Login/plan check ages advance independently, with an
+older-check label after five minutes and a check-again reminder after 24 hours.
+Missing quota is labelled unavailable and does not itself imply sign-in is
+needed. **Read now** reads saved evidence, **Check login now** checks login/plan,
+and the separate reviewed quota action retrieves usage. The native menu shows the same saved
 summary in account submenus, capped at six accounts/eight details per submenu
 with explicit omitted counts; the panel lists the remaining details. Neither
 page polling nor native menu polling contacts providers. Native output
