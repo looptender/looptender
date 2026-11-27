@@ -14,9 +14,10 @@ import Foundation
             root["accountQuotas"] = quotas
             return try JSONSerialization.data(withJSONObject: root)
         }
+        let fixtureNow = Contract.date("2030-03-04T12:00:00Z")!
         for state in ["off", "unavailable", "waiting", "paused", "enabled", "backoff"] {
             let list = try Contract.panelList(payload(["state": state, "text": "Fixture \(state)", "nextAttemptAt": "2030-03-04T14:00:00Z"]), exit: 0)
-            let model = MenuBuilder.build(.read(list, at: Date()), now: Date())
+            let model = MenuBuilder.build(.read(list, at: fixtureNow), now: fixtureNow)
             guard let row = (model.rows + model.rows.flatMap(\.submenu)).first(where: { $0.title == "Example updates" }),
                   row.submenu.contains(where: { $0.accessibilityLabel == "Fixture \(state)" }),
                   row.submenu.contains(where: { $0.accessibilityLabel.contains("Last successful fetch 2030-03-04T12:00:00Z") }),
@@ -24,6 +25,25 @@ import Foundation
                   row.submenu.compactMap(\.command) == [.openPanel],
                   (!["waiting", "paused"].contains(state) || row.detail.contains("updates paused")),
                   (state != "backoff" || row.detail.contains("fetch failed")) else { fatalError("Scheduler evidence hid saved time or introduced authority") }
+        }
+        // Provider retrieval is a successful fetch, never evidence of a fresh
+        // provider observation. Match the same user-visible contract as XCTest.
+        for (provider, source) in [("claude-code", "claude:get_usage"), ("antigravity", "agy:/usage")] {
+            var root = base
+            var retrieved = summary
+            retrieved.removeValue(forKey: "observedAt")
+            retrieved["retrievedAt"] = "2030-03-04T12:00:00Z"
+            retrieved["freshness"] = "provider_unknown"
+            retrieved["source"] = source
+            root["accountQuotas"] = ["state": "available", "complete": true, "omitted": 0,
+                "accounts": [["label": "Example retrieval", "provider": provider, "summary": retrieved]]]
+            let list = try Contract.panelList(JSONSerialization.data(withJSONObject: root), exit: 0)
+            let model = MenuBuilder.build(.read(list, at: fixtureNow), now: fixtureNow)
+            guard let row = (model.rows + model.rows.flatMap(\.submenu)).first(where: { $0.title == "Example retrieval" }),
+                  row.submenu.contains(where: { $0.accessibilityLabel.contains("Last successful fetch 2030-03-04T12:00:00Z") }),
+                  row.submenu.contains(where: { $0.accessibilityLabel.contains("provider freshness unknown") }),
+                  row.submenu.contains(where: { $0.accessibilityLabel.contains("cached or seeded") }),
+                  !row.submenu.contains(where: { $0.accessibilityLabel.contains("saved snapshot") || $0.accessibilityLabel.hasPrefix("Read ") }) else { fatalError("Retrieval timestamp lost its successful-fetch/unknown-freshness contract") }
         }
         for bad: [String: Any] in [["state": "invented", "text": "invalid"], ["state": "enabled", "text": "valid", "nextAttemptAt": "invalid"]] {
             do { _ = try Contract.panelList(payload(bad), exit: 0); fatalError("Invalid scheduler evidence accepted") } catch {}
