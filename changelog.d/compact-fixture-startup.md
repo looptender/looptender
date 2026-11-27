@@ -1,0 +1,1 @@
+- Prepare the compaction journey's newly written stand-in before its bounded command checks, and report structured refusal reasons when a fixture subprocess fails. A slow-first-start regression keeps production timeouts and no-replay assertions intact.

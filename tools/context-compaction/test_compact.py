@@ -287,21 +287,29 @@ class Journey(unittest.TestCase):
         for k in ('bb', 'effectiveBB', 'keepgoing'): self.g[k] = pin
         self.g.pop('context'); self.grant.write_text(json.dumps(self.g))
         world = self.root / 'world.json'
-        w = {'status': self.commands.s, 'parent': self.commands.parent, 'inventory': self.commands.inventory, 'usage': self.commands.usage, 'rows': [], 'lostReply': True}
+        w = {'status': self.commands.s, 'parent': self.commands.parent, 'inventory': self.commands.inventory, 'usage': self.commands.usage, 'rows': [], 'lostReply': True, 'startupDelaySeconds': 2.2}
         world.write_text(json.dumps(w))
         args = [sys.executable, '-B', str(SCRIPTS / 'compact.py'), '--grant', str(self.grant), '--journal', str(self.journal.path), '--execute']
         env = dict(os.environ, COMPACT_FIXTURE=str(world))
+        # Pay the host's first-execution assessment before exercising the real
+        # two-second command deadline. This is only the isolated stand-in, not
+        # a retry or warm-up of an installed BB/provider command.
+        warm = subprocess.run([str(executable), 'status', '--json'], env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(warm.returncode, 0, warm.stderr or warm.stdout)
+        self.assertEqual(json.loads(warm.stdout), w['status'])
+        self.assertEqual(json.loads(world.read_text())['calls'], [['status', '--json']])
         first = subprocess.run(args, env=env, capture_output=True, text=True, timeout=30)
-        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(first.returncode, 0, first.stderr or first.stdout)
         self.assertEqual(json.loads(first.stdout)['state'], 'unknown')
         second = subprocess.run(args, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(second.returncode, 0, second.stderr or second.stdout)
         self.assertEqual(json.loads(second.stdout)['action'], 'hold_pending_attempt')
         w = json.loads(world.read_text())
         self.assertEqual(sum(a[:2] == ['thread', 'compact'] for a in w['calls']), 1)
         self.commands.completion(); w['rows'] = self.commands.rows; w['lostReply'] = False; world.write_text(json.dumps(w))
         receipt = self.root / 'receipt.json'; receipt.write_text(json.dumps(self.receipt())); receipt.chmod(0o600)
         result = subprocess.run(args + ['--receipt', str(receipt)], env=env, capture_output=True, text=True, timeout=30)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
         self.assertEqual(json.loads(result.stdout)['action'], 'completion_and_receipt_recorded')
         self.assertEqual(sum(a[:2] == ['thread', 'compact'] for a in json.loads(world.read_text())['calls']), 1)
         self.assertNotIn('PRIVATE', result.stdout + self.journal.path.read_text())
