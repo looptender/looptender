@@ -67,6 +67,7 @@ Transfer planning:
   transfer supersede       Permanently hold an obsolete BB loop after a manual move
 
 Local client discovery:
+  usage-rank               Rank explicit local usage evidence as JSON (unreleased; usage-rank --help)
   client status            Read a registered loop snapshot without controlling it
   client pause|stop        Save a restrictive hold for a registered loop
   client prepare-resume    Prepare a short-lived snapshot/ticket for review
@@ -267,6 +268,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return startChild(e, rest)
 	case "model-step":
 		return modelStepCommand(e, rest)
+	case "usage-rank":
+		return usageRankCommand(e, rest)
 	case "usage-watch":
 		return usageWatchCommand(e, rest)
 	case "timeline":
