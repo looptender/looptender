@@ -67,6 +67,7 @@ Transfer planning:
   transfer supersede       Permanently hold an obsolete BB loop after a manual move
 
 Local client discovery:
+  usage-rank               Rank explicit local usage evidence as JSON (unreleased; usage-rank --help)
   client status            Read a registered loop snapshot without controlling it
   client pause|stop        Save a restrictive hold for a registered loop
   client prepare-resume    Prepare a short-lived snapshot/ticket for review
@@ -134,6 +135,7 @@ Reporting:
 Tools (no config needed):
   init                     Guide setup of a disabled loop outside the checkout
   pr-backlog               Check configured GitHub PR WIP policy (read-only)
+  pr-ready                 Check exact head/base readiness (read-only)
   ci-wait                  Wait for every CI workflow on a PR head or exact commit
   net-retry -- cmd...      Rerun a network command only while the network is down
   version                  Print the version
@@ -267,6 +269,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return startChild(e, rest)
 	case "model-step":
 		return modelStepCommand(e, rest)
+	case "usage-rank":
+		return usageRankCommand(e, rest)
 	case "usage-watch":
 		return usageWatchCommand(e, rest)
 	case "timeline":
@@ -292,6 +296,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitOK
 	case "pr-backlog":
 		return prBacklogCommand(e, rest, nil)
+	case "pr-ready":
+		return prReady(e, rest, nil)
 	case "ci-wait":
 		return ciWait(e, rest)
 	case "net-retry":

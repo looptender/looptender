@@ -127,6 +127,11 @@ type usageAccum struct {
 var usageMetricNames = []string{"input", "cached input", "output", "reasoning output", "uncached input"}
 
 func parseUsageEvidence(raw []byte, loop string, now time.Time) usageMeasurement {
+	return projectUsageEvidence(raw, loop, now, nil)
+}
+
+// Capture runs only after the complete export passes validation and display bounds.
+func projectUsageEvidence(raw []byte, loop string, now time.Time, capture func(usageExport, map[string]*usageAccum, map[string][]usageSample)) usageMeasurement {
 	bad := unavailableUsage("Usage evidence unavailable; invalid, conflicting or unsupported export.")
 	if len(raw) > usageEvidenceLimit || !usageEvidenceFields(raw) {
 		return bad
@@ -329,6 +334,9 @@ func parseUsageEvidence(raw []byte, loop string, now time.Time) usageMeasurement
 	encoded, _ := json.Marshal(out)
 	if len(encoded) > 6<<10 {
 		return unavailableUsage("Usage evidence unavailable; projected details exceed the 6 KiB display bound. Export a narrower period.")
+	}
+	if capture != nil {
+		capture(x, totals, streams)
 	}
 	return out
 }

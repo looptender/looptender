@@ -543,8 +543,9 @@ const (
 )
 
 type Card struct {
-	Quota *QuotaView `json:"quota,omitempty"`
-	ID    string     `json:"id"`
+	UsageUpdating *UsageUpdating `json:"usageUpdating,omitempty"`
+	Quota         *QuotaView     `json:"quota,omitempty"`
+	ID            string         `json:"id"`
 	// Handle names the account in read-only native output (panel list)
 	// instead of its catalog ID: a keyed digest of the ID under the
 	// catalog's salt, so it is stable for this catalog, reveals nothing of

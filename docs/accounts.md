@@ -18,8 +18,10 @@ reads only the existing recorded projection; it does not invoke BB usage APIs
 or refresh provider measurements, including APIs whose refresh:false option
 may still contact a provider.
 
-Page refresh reads retained catalog and quota evidence only and executes no provider
-command. In a panel started with `--allow-changes`, an explicit reviewed
+By default, page refresh reads retained catalog and quota evidence only and
+executes no provider command. Unreleased source can service explicitly enabled
+[automatic usage](#automatic-selected-context-usage-unreleased) through the running updated menu or a non-offline panel/dock process, including a read-only panel; the prior per-selection authorization permits
+only these model-free reads and does not enable any account or loop controls. In a panel started with `--allow-changes`, an explicit reviewed
 **Refresh subscription quota** action contacts the selected Codex CLI without a
 model request. Supported Darwin arm64 panels also offer **Retrieve usage** for the inspected native Claude image, with provider freshness always unknown. Same-selection recovery for either provider is a separate local revision review, never a provider read. The read-only panel offers no such action. The `accounts` commands below do not start
 a loop, enroll a route, sign in or copy credentials. Complete provider sign-in in
@@ -651,7 +653,9 @@ exactly its configured executable, working directory and account-directory
 selection. Inherited contexts must still match the retained environment
 fingerprint. A panel started with `--allow-changes` offers the same read after
 an inline review and confirmation on that Accounts card. Ordinary page refresh,
-`accounts list`, the read-only panel and route observations never trigger it.
+`accounts list` and route observations never trigger it. A read-only panel
+starts no manual retrieval; in unreleased source it may service separately
+authorized automatic usage reads as described below.
 
 The [official Codex app-server protocol](https://learn.chatgpt.com/docs/app-server)
 exchange is `initialize`, `initialized`, then
@@ -727,7 +731,8 @@ retrieval only on Darwin arm64, where the inspected native image can run. This
 is a platform prerequisite, not admission of the selected executable: wrappers,
 unreviewed images, preload injection or unavailable isolation still refuse.
 Other platforms can show saved evidence but offer no Claude refresh action.
-There is no automatic refresh, login, account switch or model call. Do not claim
+By default there is no automatic refresh, login, account switch or model call.
+Separately enabled background usage is described below. Do not claim
 installed-panel acceptance from a source-only change.
 
 **Antigravity selected-context reads** run the selected `agy` CLI with
@@ -756,7 +761,7 @@ visible, labels update every 15 seconds and on returning to the tab, including
 when saved-page reads are paused or fail. Reset timestamps use local time; hover
 a time label for its exact timestamp. Passing a reset marks the window ended
 and hides its meter; it never replenishes quota or establishes access. A new
-reviewed provider reading is needed to confirm availability. Codex readings
+provider reading is needed to confirm availability; manual retrieval is reviewed, while separately enabled automatic reads use the existing per-selection grant. Codex readings
 older than 30 minutes are labelled older; Claude and Antigravity provider
 freshness stays unknown. Login/plan check ages advance independently, with an
 older-check label after five minutes and a check-again reminder after 24 hours.
@@ -765,7 +770,9 @@ needed. **Read now** reads saved evidence, **Check login now** checks login/plan
 and the separate reviewed quota action retrieves usage. The native menu shows the same saved
 summary in account submenus, capped at six accounts/eight details per submenu
 with explicit omitted counts; the panel lists the remaining details. Neither
-page polling nor native menu polling contacts providers. Native output
+page polling nor native menu polling contacts providers by default. Unreleased
+source can service separately authorized [automatic usage](#automatic-selected-context-usage-unreleased)
+in an independent running menu-owned child or panel/dock worker. Native output
 (`panel list --json`, key `accountQuotas`) carries, per account, an `id` that
 is the account's handle and not its catalog ID: a keyed digest of the ID under
 the catalog's own salt, the same shape (32 lowercase hex characters), stable
@@ -787,7 +794,8 @@ unchanged. Stored data includes opaque catalog ID/revision/context bindings,
 bounded meter keys and typed quota detail, successful read time and attempt
 failure evidence; it never stores executable/account paths or raw payloads.
 The native additive `panel list` contract is optional for older CLIs, strictly
-bounded and reads saved evidence only. This source change does not establish
+bounded and reads saved evidence by default; explicit automatic-usage grants
+permit bounded background acquisition independently of projection. This source change does not establish
 installed or live provider acceptance.
 
 Reads run outside the catalog writer lock. Checks and quota reads for one
@@ -829,7 +837,8 @@ a registry read, queries a provider or writes anything. It keeps at most the
 latest snapshot for each of the two identifier views, for 30 seconds, with a
 1 MiB response cap. Superseded, expired or unknown references return a conflict;
 the page says the saved read failed and offers the existing Read now action.
-There is no additional polling timer or automatic provider refresh.
+The companion adds no polling timer or provider refresh. Explicit automatic-usage
+grants are serviced by a separate worker owned by a running menu/panel/dock process; collection never waits for provider IO.
 
 A new main report invalidates delayed replies for earlier references; changing
 the identifier view also prevents applying a reply for the previous view.
@@ -1002,3 +1011,105 @@ publication even if the provider already finished. Existing quota evidence
 keeps its old revision and is never reassigned to the new login. This is a
 panel/CLI capability requiring a coordinated build upgrade, not a background
 supervisor login or an account identity assertion.
+
+
+## Automatic selected-context usage (unreleased)
+
+On Accounts in a panel started with `--allow-changes`, choose **Keep usage
+updated…**, review the exact selection and confirm once. Subsequent polls need
+no confirmation. **Pause usage updates…** revokes authorization; an already
+reserved read may finish, but its completion cannot restore the grant. The CLI
+also supports explicit enable, JSON status and revoke:
+
+```sh
+looptender accounts usage-polling --id ACCOUNT_ID --enable
+looptender accounts usage-polling --id ACCOUNT_ID --json
+looptender accounts usage-polling --id ACCOUNT_ID --disable
+```
+
+Existing selections stay off until enabled. Enabling itself contacts no provider.
+A private grant binds the current revision, effective authentication context,
+executable metadata/file identity and selected directory identities. Changed
+selections/environments, replaced directories and updated/replaced executables
+invalidate it. Review/update the selection using its existing rules, then enable
+again. Revocation works even after change/removal. Status output omits private
+grants and fingerprints. `--directory` selects an existing private catalog for
+CLI settings; it does not redirect panel/menu clients from their default catalog.
+
+### Scheduler ownership and lifecycle
+
+An **updated macOS menu, or a non-offline panel/dock process, must remain
+running**. Each uses the same scheduler and caches. The menu reads saved state
+at startup and on its existing schedule even while closed. An additive
+`accountQuotas.workerEligible` flag says only that unchanged supported selections
+have explicit grants, including selections beyond the native display cap. It
+contains no account identity or new authority. Only a successful eligible read
+can start the menu's one child; old CLIs without the flag start none. The child
+revalidates all grants before startup and on every tick, and exits when none
+remain valid. Collection/rendering never starts or waits for provider IO.
+
+The menu's child runs foreground `accounts usage-worker --owner-stdin` with the
+existing scrubbed native-client environment. A fixed bounded handshake and
+private stdin pipe bind it to the app's lifetime: closing the pipe, extra input
+or EOF after abrupt app death cancels its context and provider work. Normal
+exit, sleep and Low Power Mode stop the child; revocation stops the selected
+reads and ends the child once no valid grants remain. The native owner can
+escalate termination only for that owned Process after three/five seconds. A
+worker has a 24-hour maximum lifetime and may be renewed on a subsequent ordinary
+saved read. Refused/crashed launches are attempted at most once per five minutes.
+No daemon, service, login item, detached process or panel is installed/started.
+Dock-only acquisition therefore continues with the menu closed **and the panel
+process stopped**, subject to the existing sleep/Low Power Mode rules.
+
+Workers check due work on startup and every 15 seconds, independently of HTTP
+reads, menu openings, Accounts navigation and tab visibility. A catalog-wide OS
+lock elects one owner; other menu/panel/dock workers stand by and can take over
+after exit/crash without resetting persisted cadence/backoff. The owner checks
+its lock-file identity and refuses replacement. A separate batch lock, durable
+reservation and existing per-selection check guard also fence cross-process
+automatic/manual work. Hidden tabs still stop HTTP reads; a panel worker
+continues until its existing idle timeout (30 minutes by default, maximum 24
+hours) or process shutdown. Polling does not reset idle. A live menu child can
+take over after panel shutdown, and vice versa. Sleep prevents timer execution;
+wake never invents missing reads or replays a catch-up burst. Menu Low Power
+Mode pauses its child; a separately running panel/dock worker is independent.
+
+Accounts and native quota details distinguish off, enabled, failure backoff,
+selection-changed pause, unavailable settings and waiting for a running scheduler.
+A recent owner heartbeat is scheduler evidence only, never a successful fetch.
+Successful fetch time, provider freshness and failed/stale evidence remain in
+the quota section. Unknown Claude/Antigravity provider freshness stays unknown.
+If an owner crashes, its heartbeat ages out within one minute; graceful shutdown
+clears it. Until then scheduler status may briefly show the last known owner.
+
+### Acquisition and retained evidence
+
+The worker uses the same selected, model-free adapters as manual retrieval:
+Codex `account/rateLimits/read`, Antigravity `/usage`, and the inspected isolated
+native Claude usage exchange on supported Darwin arm64. Existing executable
+admission, authentication context revalidation, environment scrubbing and
+output/timeout bounds apply. There is no login, account switch, ordinary model
+turn, route probe, direct OAuth token extraction or supervision authority.
+
+Automatic attempts are at least five minutes apart, persisted across processes.
+Failures back off through 10, 20, 40 and at most 60 minutes; success restores five
+minutes. Each worker batch services at most two oldest-due selections within
+12 seconds; larger catalogs/slow providers can update later. A reservation is
+written before external work so a crash cannot immediately replay an attempt.
+Re-enabling an unchanged selection preserves cadence and backoff. Corrupt storage
+or unknown identity refuses acquisition without provider fallback.
+
+Failed reads preserve the prior successful observation/retrieval timestamp and
+record separate failed-read evidence. Missing quota/reset values stay absent.
+**Read now** only reads saved evidence; it does not run or force a provider poll.
+The existing two-second report cache may satisfy it. Independently reviewed
+manual retrieval remains available. Offline panels/docks own no worker;
+`panel list`, control reviews, catalog reads and supervision ticks never acquire
+usage. The worker writes the same provider caches consumed by panel and menu.
+The separate strict bounded `usage-polling.json` does not promote catalog schemas.
+
+Fixture checks cover worker acquisition without any view requests, clock-driven
+cadence, blocked-provider/nonblocking collection, real panel idle shutdown,
+cross-process ownership, shared native evidence, menu-owned EOF/crash cancellation, failures/backoff, revocation,
+selection/file replacement and strict storage. Live enabling/provider acceptance,
+sleep/reboot and native Windows execution remain separate unrun acceptance.

@@ -18,7 +18,7 @@ A manually created successor with separate loop state has no inferred relationsh
 ## Packages
 
 ```
-cmd/looptender               CLI: start, service, tick, daemon, status, context, timeline, goal, assignment, registry, client status/pause/stop/prepare-resume/resume/review/apply, dock, panel, telegram, transfer, control, fallbacks, report, adapter check, pr-backlog, ci-wait, net-retry
+cmd/looptender               CLI: start, service, tick, daemon, status, context, timeline, goal, assignment, registry, client status/pause/stop/prepare-resume/resume/review/apply, dock, panel, telegram, transfer, control, fallbacks, report, adapter check, pr-backlog, pr-ready, ci-wait, net-retry
 internal/legacyretire       explicit manual legacy retirement: private attempt journal, application guards and Darwin native observer; no replacement launch
 internal/config             a loop's configuration file (looptender.yaml, or keepgoing.yaml) and fallbacks.yaml: loading, defaults, validation
 internal/envvar             the environment variables' two names: LOOPTENDER_X, and the earlier KEEPGOING_X
@@ -56,6 +56,7 @@ internal/scenario           test-only scenario suite that drives the built binar
 internal/daemoninfo         private loopback diagnostics and authenticated shutdown transport for a running daemon
 internal/netretry           retry only while the network is down
 internal/ciwait             wait for CI on an exact commit
+internal/prready            bounded read-only head/base/check/review evidence; conservative readiness subset
 internal/router/route       the account router's decision, pure: which subscription serves a request of a conversation; nothing uses it yet (design/router.md)
 internal/router/front       the account router's forwarding front: one fixed upstream, a bounded wait for a decision, unchanged pass-through on any failure; what it knows of a provider is a Profile (Claude Code, and Codex on paper); standard library only, reads and writes no file; nothing starts it yet
 internal/router/limits      a provider's limit headers, as the front reports them, read into the routing decision's windows; pure
@@ -377,7 +378,25 @@ Configuration validates optional ordered same-allowance steps after loading the 
 
 ## Selected account metadata
 
-The internal/accounts package stores one bounded private device-local catalog with revision-bound minimized observations. It imports existing private-file, lock and atomic-write primitives, never a provider adapter or transcript reader. The command layer owns fixed bounded status execution outside the writer lock and revalidates the selection before committing. The dock projection reads snapshots only. Selected-context subscription quota uses a separate bounded private cache, never catalog promotion or routing authority. The command layer performs an explicit bounded model-free RPC outside the catalog writer lock, then revalidates catalog revision, effective environment and executable/directory snapshots under that lock before atomic publication. Claude experimental quota uses its own strict private file with retrieval timestamps and fixed unknown provider freshness, leaving the Codex cache and catalog schemas unchanged. Native artifact admission and a parked control-only transport belong to the command layer; no provider session adapter is reused. Same-selection checks share a single-flight guard; unsuccessful refreshes retain the successful reading with its original time. Legacy-compatible writes retain private catalog schema 1; new plan metadata/tiers promote it to schema 2, which older strict readers refuse in full. Promotion is retained on later writes; reads do not migrate data. Catalog metadata and caller provenance grant no loop authority; route changes and panel startup authorization retain their existing boundaries. See [Accounts](accounts.md).
+The internal/accounts package stores one bounded private device-local catalog with revision-bound minimized observations. It imports existing private-file, lock and atomic-write primitives, never a provider adapter or transcript reader. The command layer owns fixed bounded status execution outside the writer lock and revalidates the selection before committing. The dock projection consumes saved snapshots; a separately authorized background worker acquires usage independently of projection. Selected-context subscription quota uses a separate bounded private cache, never catalog promotion or routing authority. The command layer performs an explicit bounded model-free RPC outside the catalog writer lock, then revalidates catalog revision, effective environment and executable/directory snapshots under that lock before atomic publication. Claude experimental quota uses its own strict private file with retrieval timestamps and fixed unknown provider freshness, leaving the Codex cache and catalog schemas unchanged. Native artifact admission and a parked control-only transport belong to the command layer; no provider session adapter is reused. Same-selection checks share a single-flight guard; unsuccessful refreshes retain the successful reading with its original time. Legacy-compatible writes retain private catalog schema 1; new plan metadata/tiers promote it to schema 2, which older strict readers refuse in full. Promotion is retained on later writes; reads do not migrate data. Catalog metadata and caller provenance grant no loop authority; route changes and panel startup authorization retain their existing boundaries. See [Accounts](accounts.md).
+
+Explicit per-selection `usage-polling` grants live in a separate strict private
+record owned by `internal/accounts`; storage never invokes providers. Only the
+long-lived menu-owned or panel/dock command-layer worker services them, reusing the existing quota
+adapters, binding validation and cache publication. Grants bind revision,
+effective authentication context and executable/directory identities. A
+catalog-wide owner lock elects one worker; a nonwaiting batch guard and durable next-attempt reservation bound
+acquisition across processes; failures retain prior success timestamps and back
+off. No grant means no automatic provider work or polling-record writes.
+Offline reads, control review and supervision never service grants. No daemon,
+provider pooling, transcript reading or routing authority is introduced. See
+[automatic usage](accounts.md#automatic-selected-context-usage-unreleased).
+The native menu starts at most one foreground CLI child only after a successful
+saved list advertises explicit valid grants. The child revalidates before every
+tick and shares the same owner election. Its private stdin lease ends on app
+exit/crash; revocation, sleep and Low Power Mode stop it. No service registration
+or detached worker is added, and report collection remains provider-free.
+
 
 ## Explicit migration review (unreleased)
 

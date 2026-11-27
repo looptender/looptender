@@ -3,9 +3,12 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 p = Path(os.environ['COMPACT_FIXTURE'])
 w = json.loads(p.read_text())
+# Model a new executable's one-time host startup cost, before it can answer.
+time.sleep(w.pop('startupDelaySeconds', 0))
 a = sys.argv[1:]
 w.setdefault('calls', []).append(a)
 p.write_text(json.dumps(w))
