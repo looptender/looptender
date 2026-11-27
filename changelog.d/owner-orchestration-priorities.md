@@ -1,0 +1,1 @@
+- Reconcile roadmap and Accounts/README status with implemented opt-in usage polling, and specify planned account pooling, allowance-aware lane distribution, HOME, configurable Accounts and bounded shared intensity. Prioritize native macOS while preserving portable core/panel support; no runtime or release behavior changes.
