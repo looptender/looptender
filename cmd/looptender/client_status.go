@@ -28,6 +28,8 @@ type clientStatusReport struct {
 	Snapshot       *clientSnapshot `json:"snapshot,omitempty"`
 }
 type clientSnapshot struct {
+	// ActivityAt is saved loop work/movement evidence, never a read/check time.
+	ActivityAt         *time.Time      `json:"activityAt,omitempty"`
 	Loop               string          `json:"loop"`
 	Controls           *clientControls `json:"controls,omitempty"`
 	ControlState       string          `json:"controlState,omitempty"`
@@ -313,6 +315,7 @@ func readClientStatus(ctx context.Context, directory, id string, private, offlin
 	if !stateOK {
 		issue("state_unavailable")
 	} else {
+		s.ActivityAt = loopActivityAt(st, now)
 		var agent config.Agent
 		configured := false
 		if st.Target() == state.Primary {

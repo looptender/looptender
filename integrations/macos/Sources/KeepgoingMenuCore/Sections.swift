@@ -176,6 +176,24 @@ extension MenuBuilder {
         }.count
     }
 
+    /// Newest recorded work first within each existing group. Missing,
+    /// malformed and future timestamps sort last; ties use the exact loop key,
+    /// never a displayed/shortened name or incoming registration order.
+    static func loopsByActivity(_ loops: [PanelLoop], now: Date) -> [PanelLoop] {
+        let ranked = loops.map { loop -> (PanelLoop, Date?) in
+            let at = Contract.date(loop.activityAt).flatMap { $0 <= now ? $0 : nil }
+            return (loop, at)
+        }
+        return ranked.sorted { lhs, rhs in
+            switch (lhs.1, rhs.1) {
+            case let (a?, b?) where a != b: return a > b
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return lhs.0.key < rhs.0.key
+            }
+        }.map { $0.0 }
+    }
+
     /// The accounts that matter now (at or near a limit), as top-level rows; at most two.
     /// Ranks by each account's highest active usage window descending, with list-order tie-breaking.
     static func accountsThatMatter(_ quota: AccountQuotaList) -> [MenuRow] {

@@ -1,0 +1,1 @@
+- The macOS menu orders loops newest saved meaningful activity first within Needs you, Working and Other loops, with unknown dates last and exact loop-key ties. New optional activityAt metadata excludes polling/check times, baseline fingerprints and held nudges; loop date labels and account ordering are unchanged. Reorders retain the existing tracked-menu safe-rebuild guard.
