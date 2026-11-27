@@ -417,6 +417,8 @@ keepgoing complete -c keepgoing.yaml --note "Example task verified"
 
 This sets `control.completed` in `control.json` and records a control event in `runs.jsonl`. Status shows `completed` unless a higher-priority disabled, stop, pause, or awaiting-user hold is also set; JSON always exposes the completion flag. No model output or transcript text is inspected to decide completion. In v0.1.3 or newer, a new completion declaration also attempts a subscribed `complete` webhook event after saving control and appending the control log.
 
+Unreleased source also saves the goal ID/revision for each new declaration and, with assignment completion, the successful review’s assignment ID/revision. Repeated completion retains the original binding; a goal edit never clears its hold. See [completion declarations](goals.md#completion-declarations-unreleased) for legacy records, unavailable goals and status comparison.
+
 The standard-format event is `keepgoing.complete`, with `basis: explicit_declaration` and `verification: not_recorded`. Both standard and text formats say that completion was declared and looptender has not independently verified success. This does not contradict verification performed by the operator or agent; looptender has no independent acceptance evidence in this version. The private control note, task/prompt text and evidence descriptions are omitted from this notification.
 
 Deduplication uses the persisted `completed` flag under the control lock. Only a false-to-true transition submits a report. Repeated `complete` commands, changed notes, enable, other holds, ticks and restarts do not replay it. An explicit `resume` clears completion, permitting a later declaration to submit a new report. Legacy completed records and declarations made without a subscription are not backfilled when reporting is enabled. A report describes the declaration at its recorded time; concurrent resume/stop or network delays may mean it no longer describes current controls.
@@ -1817,6 +1819,53 @@ recovery protocol needs separate complete authority/evidence review, proven old
 scheduler/writer retirement or compatible enforcement, and explicit preservation
 of unrelated holds. Releasing a future fence must not imply resume. No such
 recovery or installed upgrade acceptance is claimed here.
+
+
+## Daemon lifecycle and refused-check history (unreleased)
+
+Incident schema 15 records `daemon_start` when the daemon loop is entered and
+`daemon_stop` when it returns. The stop reason distinguishes `clean_exit`,
+`cancelled` (including authenticated supervisor shutdown), `signal` and
+`error_exit`; known signals are `SIGINT`, `SIGTERM` and `SIGHUP`. These are local
+lifecycle observations, not proof that a provider turn ended or that a service
+manager will not restart the process. A rejected daemon startup records no start.
+An abrupt kill, crash or successful in-place executable adoption cannot run the
+return handler and may leave a start without a stop.
+
+`tick` records `check_refused` when its check lock is held or unavailable,
+its ownership cannot be verified, or its loaded configuration sources changed.
+The daemon's stop-only path from its last configuration uses the same refusal
+records for these admission checks, including transfer/target validation and a
+restored or changed readable source; an unreachable BB stop is `safety_guard`.
+The supervisor's last-configuration safety guard also records a refusal if
+asked to perform anything except a stop. The reason codes are fixed; raw errors,
+owner/thread identities, configuration paths and signal text are excluded.
+A configuration that cannot be loaded at command entry has no verified loop
+state directory and records no event. Archived loops still skip checks without
+recording a refusal. Provider refusal/restriction observations remain ordinary
+checks with their existing policy; they are not admission refusals.
+
+These entries are activity-tier diagnostic evidence, bounded by the existing
+journal limits. Repeated refusals are not collapsed and cannot consume the key
+tier's reserved history. `timeline --kind daemon_start,daemon_stop,check_refused`
+shows them offline. Every entry retains `dryRun`: even a dry-run daemon really
+starts and stops, but these records assert no observation, decision, send,
+provider cancellation or counter change. Status, doctor and the panel keep their
+existing check/daemon diagnostics; an admission refusal does not replace the
+last completed check. A failed event write emits a fixed warning at the command
+boundary and does not change the refusal or daemon exit code; the internal safety
+guard returns the fixed history error alongside its original refusal if storage
+is unavailable.
+
+Schema 1–14 journals load without rewriting; the next append upgrades to 15.
+Older binaries refuse the newer journal. The executable-adoption state format
+rises to 8 for the combined goal-completion and incident schema, so a daemon
+cannot adopt an older reader and lose either record. Format 7 remains allocated
+to goal-completion metadata; the earlier incident-only format-7 branch build is
+also refused by the combined format-8 build.
+Before rollback, stop supervision and restore compatible state together with the
+binary as described under upgrading and rolling back. Offline fixtures verify
+these records; no installed daemon, live provider or release rollout is claimed.
 
 ## BB successor thread titles (unreleased)
 

@@ -185,7 +185,7 @@ looptender stop -c /private/example-loop/looptender.yaml
 looptender complete -c /private/example-loop/looptender.yaml --note "Task verified"
 ```
 
-`stop` stops the supervised conversation at the next check (`--lanes` also stops the conversations it started); `complete` records a declaration, not a verification; `resume` clears the holds a person or looptender set. The [setup guide](docs/setup.md) covers scripted setup, accounts, limits and Windows; [operations](docs/operations.md) covers every control.
+`stop` stops the supervised conversation at the next check (`--lanes` also stops the conversations it started); `complete` records a declaration, not a verification (unreleased source [binds it to the current goal revision](docs/goals.md#completion-declarations-unreleased)); `resume` clears the holds a person or looptender set. The [setup guide](docs/setup.md) covers scripted setup, accounts, limits and Windows; [operations](docs/operations.md) covers every control.
 
 ## Where it stands
 

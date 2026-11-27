@@ -190,7 +190,7 @@ func TestSchemaFourteenAddsContextBytes(t *testing.T) {
 	r.ContextBytes = 2600
 	mustAppend(t, dir, r)
 	b, err := os.ReadFile(filepath.Join(dir, FileName))
-	if err != nil || SchemaVersion != 14 || !strings.Contains(string(b), current) || !strings.Contains(string(b), `"contextBytes":2600`) {
+	if err != nil || SchemaVersion < 14 || !strings.Contains(string(b), current) || !strings.Contains(string(b), `"contextBytes":2600`) {
 		t.Fatalf("%s %v", b, err)
 	}
 	if j := loadAccounted(t, dir); j.Records[0].ContextBytes != 2600 {

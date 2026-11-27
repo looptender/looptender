@@ -55,7 +55,7 @@ func TestBackgroundDaemonAdoptsTheInstalledBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Speaks the handover but refuses this loop's configuration.
-	if err := os.WriteFile(bad, []byte("#!/bin/sh\nif [ \"$1\" = __adopt-build ] && [ \"$2\" = --probe ]; then echo '{\"protocol\":1,\"stateFormat\":6,\"version\":\"fixture-bad\"}'; exit 0; fi\nexit 2\n"), 0o700); err != nil {
+	if err := os.WriteFile(bad, []byte("#!/bin/sh\nif [ \"$1\" = __adopt-build ] && [ \"$2\" = --probe ]; then echo '{\"protocol\":1,\"stateFormat\":8,\"version\":\"fixture-bad\"}'; exit 0; fi\nexit 2\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	install := func(label string) {
