@@ -743,3 +743,11 @@ The endpoint defaults to `https://api.pushover.net/1/messages.json`. `LOOPTENDER
 Only cleaned loop/device labels and an allowlisted event are sent. Free-form event text/data is excluded. Normal priority and default recipient settings apply; no emergency retries, callbacks, attachments, HTML, supplementary URLs or device overrides are supplied. This is not an end-to-end encrypted payload.
 
 Every selected event makes one POST without redirects. Attempted failures and accepted POSTs whose history cannot be saved retain no-retry evidence across subsequent checks; setup failures retain their existing semantics. A crash before episode-state publication remains outside the durable guarantee. Unlike the API's optional retry advice for temporary errors, this preset does not automatically repeat uncertain sends. Acknowledgement requires HTTP200 and a bounded complete JSON object with one exact non-null numeric `status: 1`; unknown fields are not retained. API acknowledgement means queued, not phone or human receipt. No live delivery is verified. See the [official Pushover API contract](https://pushover.net/api).
+
+## Usage collection (unreleased)
+
+`loop.usage_collection: true` opts existing primary BB checks into bounded Codex
+token metadata collection. Default: false. Requires the matching BB plugin's
+`usage-events` bridge; an older/missing plugin records unavailable, with no log
+fallback. See [scope, limits and freshness](design/usage-measurement.md#automatic-collection-unreleased-opt-in).
+It does not change routes, models, controls, Accounts polling or subscription quota.

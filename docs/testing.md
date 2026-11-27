@@ -49,7 +49,35 @@ Whether a headless turn is running is decided by a lock, not a PID. The turn wra
 
 The unreleased stop-only path reuses the existing adapter stop contract; it adds no PID signalling or process discovery. Unix command fixtures use a fictional BB target and stand-in executable, isolated runtime storage, and cancellation of only their own daemon. They exercise a moved or unreadable source, no continue sent, the structured last-read timestamp in state and log, session-claim contention followed by release, a transferred target, readable invalid content, dry runs, a failed stop retried at the control poll, and the ordinary interval after a completed stop. Config tests distinguish unreadable sources from changed and oversized readable files, including a changed primary alongside a missing fallback. A deterministic command fixture restores an unchanged or retargeted source after the preliminary eligibility check and proves the check under the tick lock refuses the retained configuration. Supervisor tests refuse a last-configuration check unless it is stop-only, before observing or sending. Monitor assertions cover the retry and control-change early-return paths so a pass is completed rather than read as sleep.
 
+`TestLastConfigStopAdmissionRefusalEvents` additionally requires one redacted
+incident record for held/unavailable locks, changed ownership, restored unchanged
+or changed sources, transfer-target mismatch and an unreachable BB stop. Each
+case preserves the previous completed check, counters, controls, owner lease and
+prior history, with zero provider/probe/report work. Holding the incident lock
+instead requires unchanged runtime bytes and one fixed diagnostic warning.
+All fourteen cases failed without last-configuration admission journaling;
+the corrected cases pass under race detection.
+
 These are native fixture checks on macOS, not live BB/provider stop acceptance. The daemon command fixtures are Unix-only; cross-compilation does not establish Windows execution. No installed service restart, reboot, external scheduler or Linux/Windows native acceptance was run for this change. The existing process-identity contract and legacy/stale runner cases are unchanged. No UI action changes. Configuration-unavailable reporting and diagnostics have additional fixtures below. See the [operations limits](operations.md#when-the-configuration-file-is-unavailable). Record exact commands, source head, regression/mutation evidence and platform results in the review handoff.
+
+### Recovery smoke and combined adoption schemas
+
+The recovery smoke waits for completed held tick records, including collapsed
+checks, rather than any incident sequence allocation. Daemon lifecycle and
+refused-check records do not satisfy that wait. The synthetic Python regression
+holds check publication behind lifecycle records for both awaiting-user and
+completed holds, for one check and an additional ordinary interval, and requires
+both crash and orderly restart paths to reach their intended checks. CI runs it
+before the existing native recovery smoke; timeline, ownership, allowance,
+notification, privacy and no-provider assertions remain unchanged.
+
+Combined unreleased goal-completion and incident schema changes use adoption
+format 8. Format 7 and its goal-only fingerprint remain immutable. The combined
+fingerprint covers both roots; adoption refuses both goal-only and earlier
+incident-only format-7 candidates before validation/exec. Successful and invalid
+configuration adoption fixtures advertise format 8, so the format guard cannot
+hide a later validation regression. These are native local fixture checks and
+platform compilation, not installed build adoption or live-provider acceptance.
 
 ### Configuration-unavailable reports and diagnostics
 
@@ -848,6 +876,19 @@ and directory durability remain unimplemented; its explicit refusal fixture must
 run natively before claiming Windows behavior. README, operations and roadmap
 retain these limitations. No repair/release protocol or control UI changed.
 
+### Working-agent conformance staging
+
+The one-turn stand-in's active stage waits for its exact staging prompt receipt,
+not only a process-start marker. A detached ACP worker can be running while its
+agent is still initializing; sampling prompts after a fixed delay could count a
+late staging prompt as a second send. `TestAntigravityWorkingStageWaitsForPromptReceipt`
+holds delivery behind a fixture gate, proves staging stays pending, then verifies
+one staging receipt and refusal of a second send without another delivery. The
+shared send-while-working contract and its refusal assertions are unchanged.
+This is a fixture synchronization correction, with no provider or runner behavior
+change. Native fixture execution and platform compilation are separate evidence;
+neither establishes installed or live-provider acceptance.
+
 ## Explicit coordinator compaction helper (unreleased source)
 
 `python3 -B -m unittest discover -s tools/context-compaction -v` exercises the
@@ -881,3 +922,127 @@ manual exact-target compact trials do not certify the new helper. Automatic
 context policy, provider freshness/trigger discovery, quota savings and successor
 creation remain separate open acceptance. See the
 [contract and limits](design/context-efficiency.md).
+
+### Usage measurement export slice (unreleased)
+
+The [measurement contract](design/usage-measurement.md) is a diagnostic-only local
+export boundary; it does not collect BB/runner usage or instrument action suppression.
+`TestUsageEvidence*` verifies cumulative identity deduplication, missing fields,
+resets, component arithmetic, comparable-work gates, negative differences, malformed
+scope/time/action records, size bounds and the documented fictional example.
+`TestDockUsagePageStaysUnderItsBound` includes measurement payloads at the largest
+registry size. The required jsdom rendering test checks measured/estimated labels,
+observed actions and text-only rendering of untrusted source labels. Focused native
+macOS race tests and vet passed; offline Chrome desktop/390px captures showed no
+horizontal overflow. Modern Web Guidance `html` and `responsive-table` were reviewed;
+the UI reuses existing lists/disclosures rather than introducing a new web feature.
+
+Not verified: independent review, real export ingestion, automatic collector coverage,
+controlled live savings, independent quality/continuity acceptance, subscription-quota
+attribution or native Linux/Windows execution. Fictional captures do not close these
+acceptance cases. No runtime installation, Accounts acquisition change or rollout.
+
+
+Usage ingestion review regressions additionally cover a deterministic file-to-FIFO
+replacement in an owned subprocess with a two-second deadline, regular-file identity
+replacement, symlinks, oversized opened files, conflicting/escaped duplicate JSON
+keys, case aliases and path/URL-shaped display labels. The FIFO, duplicate-attestation
+and path-disclosure regressions failed before the fixes. macOS/Linux use a native
+no-follow/nonblocking open plus descriptor validation; other platforms return
+unavailable until a native reader is implemented. Linux/amd64 and Windows/amd64 test binaries cross-compiled after the fixes.
+Cross-compilation is not native fixture execution or live acceptance.
+
+### Automatic usage collection (unreleased)
+
+The collector fixtures exercise durable restart/cursor replay, failed writes before
+query, failed sources, source changes, cooldown, retention gaps, counter resets,
+future/reordered pages and bounded state. Native disposable CLI fixtures verify
+fixed exact-target argv, stdout limits, deadlines, stderr privacy, admission gates
+and zero-query report reads. The SDK bridge fixtures require server-side usage
+filtering and cursor bounds, null unknown counters, opaque session aliases, and
+refusal of other providers/malformed/wrong-target/oversized responses. No provider
+model call, production configuration, installed service or live compaction is part
+of these checks. The optional screenshot fixture accepts
+`KEEPGOING_DOCK_AUTOMATIC_USAGE=1` to render fictional automatic evidence.
+
+Negative controls remove cooldown and durable cursor advancement independently;
+the restart/replay test must fail for each. macOS native fixtures and browser
+captures are separate from Linux/Windows cross-compilation. Native Linux, installed
+BB bridge integration, wider provider attribution and actual subscription savings
+remain unverified. No roadmap acceptance is closed by these fixtures.
+
+## BB successor title fixtures (unreleased)
+
+`TestContinuationTitleMetadata` and `TestContinuationTitleBoundsAndInvalidSource`
+exercise only fictional structured `thread show` metadata: explicit and fallback
+names, continuation scaffolding, inherited titles, missing fields, wrong identity,
+malformed JSON, typed errors, command failures, source model labels and Unicode
+bounds. `TestSpawnPreservesExplicitCustomTitle` requires one unchanged spawn and
+no naming mutation. The decoded-field allowlist pins `title` and `titleFallback`
+to their creation-time display use as well as the existing panel display sites.
+
+`TestUsefulContinuationTitleSurvivesUncertainCreation` verifies the title is saved
+before spawn and recovery uses that exact title even after source metadata changes.
+`TestLaneSuccessorCarriesSourceTitleOnce` verifies existing blocked-lane replacement
+names its explicitly selected source once. Disabling the two naming call sites
+makes both fixtures fail on their title assertions; restoring them passes.
+
+Capability/documentation review covers README, setup, operations, adapter reference,
+fallbacks, architecture and changelog. Naming is source-only, uses supported BB
+`thread show` display fields and `thread spawn --title`, and adds no configuration,
+package boundary, installer, model call or supervision decision. The generated
+adapter capability matrix and roadmap claims remain unchanged: this adds display
+metadata to existing creation paths, not a new supervision capability. Native
+macOS offline fixtures are separate from live BB creation, installed acceptance
+and Linux/Windows execution, which remain unverified. Existing-thread continuation
+and manual retarget do not rename threads; no broad repair sweep is provided.
+
+## Automatic BB display-name refresh (unreleased)
+
+The shared naming contract follows the latest saved title only for the current
+BB target and known automatic provenance, preserving title suffixes such as
+`(Codex)`. `TestDisplayNameRuleAndStoredName` replaces the old first-title freeze
+assertion with a rename and target-identity regression. State fixtures verify
+observations update the title cache without rewriting custom or automatic
+provenance. `TestAutoInheritedNameFollowsSuccessorTitle` distinguishes a temporary
+auto-inherited task name from the successor's own title; existing succession
+fixtures continue to pin explicit and ambiguous legacy inherited names.
+
+`TestOfflineHeldSnapshotsUseLatestCachedBBTitle` checks paused, off, awaiting,
+stopped and completed controls plus custom/legacy names through client, Dock,
+panel-list and display-name command contracts. It requires offline diagnostics,
+uses a nonexistent provider CLI, and compares control/naming/cache bytes before
+and after reads. Disabling the matching-cache preference makes the rename and
+held/offline fixtures fail; restoring it passes.
+
+Capability/documentation review covers README, setup, operations' shared naming
+contract, architecture, changelog fragment and the macOS/BB consumers of the
+shared displayName/shortName fields. Source-only: Go fixtures, race checks and
+native compilation do not establish installed-menu or live-provider acceptance.
+No frontend markup, archive policy, control, creation, package boundary or
+installer mechanism changes. Legacy inherited provenance remains pinned because
+its original human/automatic source cannot be established safely. Held loops do
+not observe BB; a rename made during a hold waits for a permitted observation.
+
+
+The inheritance-order review adds
+`TestAutoInheritanceStripsQualifiersBeforeDisplayBound`: complete bracketed and
+separated route qualifiers crossing the 80-character display bound are stripped
+before bounding automatic successor names. It covers absent display metadata,
+all automatic sources, explicit/custom and legacy pinned sources, and a task
+that itself requires bounding. Current observed-title display remains bounded
+as written. The bracketed/separated fixtures fail on the pre-fix implementation
+with a clipped predecessor model label; the corrected exact-target cache path
+passes. This does not expand the existing 120-character title-cache bound.
+
+The panel lock-loss fixture owns and waits for its first server process before
+checking the replacement's socket, record and page. Process-list disappearance
+followed by `signal(0)` is not an exit receipt: an exited detached process can
+remain a zombie, for which that signal still succeeds. A controlled native
+fixture reproduced that false positive while the replacement answered and the
+first process subsequently returned a successful exit. The lock-loss assertion
+still requires the first server to exit within 15 seconds; disabling production
+lock-loss detection makes it fail. The ordinary panel-start/reuse fixture retains
+coverage of detached startup. This changes fixture ownership only, not panel
+shutdown or lock semantics. Native fixture evidence, CI and installed acceptance
+remain separate; no installed panel or provider was controlled for this repair.

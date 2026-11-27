@@ -220,9 +220,11 @@ func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, l
 		// Best effort, so the overdue rule can tell a hung check from a
 		// stopped scheduler: this check was started and turned away.
 		_ = state.NoteTurnedAway(cfg.Loop.StateDir, time.Now())
+		recordRuntimeEvent(e, cfg.Loop.StateDir, "check_refused", "lock_held", "", dryRun, "failed")
 		return exitSkipped
 	}
 	if err != nil {
+		recordRuntimeEvent(e, cfg.Loop.StateDir, "check_refused", "lock_unavailable", "", dryRun, "failed")
 		e.errf("lock: %v", err)
 		return exitFailed
 	}
@@ -231,9 +233,11 @@ func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, l
 	// person's: it inherits the marker that keeps it from clearing a hold.
 	defer markSupervised(cfg.Loop.StateDir)()
 	if err := checkSupervision(cfg.Loop.StateDir, firstLease(leases)); err != nil {
+		recordRuntimeEvent(e, cfg.Loop.StateDir, "check_refused", "ownership_unverified", "", dryRun, "failed")
 		return ownershipError(e, err)
 	}
 	if err := checkTransferSources(cfg, true); err != nil {
+		recordRuntimeEvent(e, cfg.Loop.StateDir, "check_refused", "sources_unverified", "", dryRun, "failed")
 		e.errf("%v; no tick performed; reload and retry", err)
 		return exitSkipped
 	}
@@ -242,6 +246,7 @@ func tickOnce(e env, cfg *config.Config, now time.Time, dryRun, fixedNow bool, l
 		opts.Now = now
 	}
 	res, err := supervise.Tick(e.ctx, cfg, opts)
+	collectUsageAfterTick(e.ctx, cfg, res, dryRun)
 	if res.Recorded && !dryRun {
 		clearStartRefused(cfg.Loop.StateDir) // a check ran: something supervises the loop
 		completeSuccession(e, cfg, time.Now())
@@ -315,12 +320,15 @@ func daemonAs(e env, cfg *config.Config, cfgPath string, dryRun, takeOver bool, 
 // The caller owns daemon.lock and the diagnostic endpoint for this entire loop.
 // adopter, nil for none, may replace the process with the installed build
 // after a check (adopt_build.go).
-func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *ownerLease, monitor *daemoninfo.Server, adopter *buildAdopter) int {
+func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *ownerLease, monitor *daemoninfo.Server, adopter *buildAdopter) (exitCode int) {
+	// A panic that unwinds the deferred diagnostics is not a clean return.
+	exitCode = exitFailed
 	ctx, cancel := context.WithCancel(e.ctx)
 	e.ctx = ctx
 	defer cancel()
 	defer recordLaunchJob(cfg.Loop.StateDir)() // removed after the stopped record below
 	defer enableDaemonShutdown(monitor, cfg, cfgPath, lease, cancel)()
+	recordRuntimeEvent(e, cfg.Loop.StateDir, "daemon_start", "started", "", dryRun, "succeeded")
 	started := state.Event{Loop: cfg.Loop.Name, Event: "daemon", Reason: "started"}
 	if j := readLaunchJobRecord(cfg.Loop.StateDir); j != nil {
 		started.Extra = map[string]any{"launch": j.Kind}
@@ -339,6 +347,15 @@ func daemonLoop(e env, cfg *config.Config, cfgPath string, dryRun bool, lease *o
 		if s := stopSignal(); s != "" {
 			stopped.Extra = map[string]any{"signal": s}
 		}
+		reason, outcome := "clean_exit", "succeeded"
+		if exitCode != exitOK {
+			reason, outcome = "error_exit", "failed"
+		} else if stopSignal() != "" {
+			reason = "signal"
+		} else if e.ctx.Err() != nil {
+			reason = "cancelled"
+		}
+		recordRuntimeEvent(e, cfg.Loop.StateDir, "daemon_stop", reason, stopSignal(), dryRun, outcome)
 		state.Append(cfg.Loop.StateDir, stopped)
 	}()
 	var disk *diskWatch
@@ -659,25 +676,27 @@ type statusOut struct {
 	ContextWindowReset contextWindowWould `json:"contextWindowReset"`
 	// TurnUsage is the token counts the active target's agent reported for
 	// its finished turns.
-	TurnUsage turnUsageStatus `json:"turnUsage"`
+	TurnUsage        turnUsageStatus  `json:"turnUsage"`
+	UsageMeasurement usageMeasurement `json:"usageMeasurement"`
 	// Savings is the loop's measured savings figures over the last seven UTC
 	// days, and one labelled estimate.
 	Savings savingsStatus `json:"savings"`
 	// IdleSpacing is loop.progress.idle_spacing and its history.
 	IdleSpacing idleSpacingStatus `json:"idleSpacing"`
 	// Refusals is the refusal gauge in words and counts.
-	Refusals          refusalStatus            `json:"refusals"`
-	Lanes             lanesStatus              `json:"laneRecovery"`
-	ChildErrorReport  childReportStatus        `json:"childErrorReport"`
-	NewThreads        newThreadStatus          `json:"newThreads"`
-	ChildMove         *childMoveStatus         `json:"childMove,omitempty"`
-	Successors        *successorStatus         `json:"childSuccessors,omitempty"`
-	SuccessorPlans    []successorPlan          `json:"successorPlans,omitempty"`
-	Goal              *control.GoalSummary     `json:"goal,omitempty"`
-	GoalError         string                   `json:"goalError,omitempty"`
-	Notifications     report.DeliveryStatus    `json:"notifications"`
-	ProgressAllowance *progressAllowanceStatus `json:"progressAllowance,omitempty"`
-	SendAllowance     *sendAllowanceStatus     `json:"sendAllowance,omitempty"`
+	Refusals                 refusalStatus            `json:"refusals"`
+	Lanes                    lanesStatus              `json:"laneRecovery"`
+	ChildErrorReport         childReportStatus        `json:"childErrorReport"`
+	NewThreads               newThreadStatus          `json:"newThreads"`
+	ChildMove                *childMoveStatus         `json:"childMove,omitempty"`
+	Successors               *successorStatus         `json:"childSuccessors,omitempty"`
+	SuccessorPlans           []successorPlan          `json:"successorPlans,omitempty"`
+	Goal                     *control.GoalSummary     `json:"goal,omitempty"`
+	GoalError                string                   `json:"goalError,omitempty"`
+	CompletionGoalComparison string                   `json:"completionGoalComparison,omitempty"`
+	Notifications            report.DeliveryStatus    `json:"notifications"`
+	ProgressAllowance        *progressAllowanceStatus `json:"progressAllowance,omitempty"`
+	SendAllowance            *sendAllowanceStatus     `json:"sendAllowance,omitempty"`
 	// SendRecord is set when sends.json, the record every send is made
 	// through, cannot be read: nothing is sent until it is restored.
 	SendRecord   string       `json:"sendRecord,omitempty"`
@@ -1000,6 +1019,13 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 	if out.Goal != nil {
 		printGoal(e, *out.Goal, false)
 	}
+	if c := out.Control.Completion; c != nil {
+		if c.GoalID != "" {
+			fmt.Fprintf(w, "completion declaration: %s revision %d (%s; not independent verification)\n", c.GoalID, c.GoalRevision, c.CompareGoal(out.Goal))
+		} else {
+			fmt.Fprintln(w, "completion declaration: no goal bound (not independent verification)")
+		}
+	}
 	if out.GoalError != "" {
 		fmt.Fprintf(w, "goal: unavailable (%s)\n", out.GoalError)
 	}
@@ -1168,8 +1194,8 @@ func status(e env, cfg *config.Config, now time.Time, asJSON bool, staleAfter ti
 		case state.DisplayNameSet:
 			line += " (set by a person)"
 		case state.DisplayNameThreadTitle:
-			line += " (the BB thread's title when it was first read)"
-		case state.DisplayNameInherited:
+			line += " (the last recorded BB thread title)"
+		case state.DisplayNameInherited, state.DisplayNameInheritedTitle:
 			line += " (from the loop this one continues)"
 		}
 		if n.Project != "" {
@@ -1472,6 +1498,9 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 		summary := g.Summary()
 		out.Goal = &summary
 	}
+	if out.Control.Completion != nil {
+		out.CompletionGoalComparison = out.Control.Completion.CompareGoal(out.Goal)
+	}
 	if review, err := control.LoadMigrationReview(l.StateDir); err != nil {
 		out.MigrationReviewError = "unavailable"
 		if errors.Is(err, control.ErrMigrationBinding) {
@@ -1501,6 +1530,11 @@ func readStatus(ctx context.Context, cfg *config.Config, now time.Time, staleAft
 	out.ContextWindow = describeContext(st.Context, st.Target(), activeBB(cfg, st.Target()) != nil, now)
 	out.ContextWindowReset = contextWindowWouldOf(cfg, st, ctl, out.controlUnreadable, graph, now)
 	out.TurnUsage = describeTurnUsage(st.TurnUsage, st.Target(), targetReportsTurnUsage(cfg, st), now)
+	if l.UsageCollection {
+		out.UsageMeasurement = automaticUsageMeasurement(cfg, now)
+	} else {
+		out.UsageMeasurement = loadUsageEvidence(l.StateDir, l.Name, now)
+	}
 	out.Savings = describeSavings(journal, loadSavingsSpaced(l.StateDir), st.Context, out.ContextWindow, now)
 	out.Refusals = describeRefusals(st.Refusals, ctl.Question, now)
 	out.Lanes = describeLanes(st.Lanes, activeBB(cfg, st.Target()))
@@ -1879,7 +1913,7 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 		},
 		"complete": func(f *control.File) {
 			if !f.Completed {
-				completionDeclaredAt = time.Now().UTC()
+				completionDeclaredAt = f.Completion.DeclaredAt
 			}
 			f.Completed = true
 			// The task is done, so the loop is shown as completed and not as
@@ -1957,6 +1991,17 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 			if err := completionReview.check(cfg, *f); err != nil {
 				return err
 			}
+		}
+		if cmd == "complete" && !f.Completed {
+			completion, err := control.RecordCompletion(cfg.Loop.StateDir, cfg.Loop.Name, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			if completionReview != nil {
+				completion.Assignments = completionReview.declaration.Assignments
+				completion.AssignmentRevision = completionReview.declaration.AssignmentRevision
+			}
+			f.Completion = completion
 		}
 		wasAwaiting := f.AwaitingUser
 		if !transfer {

@@ -33,6 +33,17 @@ type ThreadCreator interface {
 
 func bbThreads(cli string) ThreadCreator { return bb.New(config.BB{CLI: cli}) }
 
+// continuationTitle is display metadata only. Older/custom makers keep their
+// generated title; the BB adapter optionally carries the source's task name.
+func continuationTitle(ctx context.Context, maker any, source, fallback string) string {
+	if namer, ok := maker.(interface {
+		ContinuationTitle(context.Context, string, string) string
+	}); ok && source != "" {
+		return namer.ContinuationTitle(ctx, source, fallback)
+	}
+	return fallback
+}
+
 // newThreadTitle is what a created thread is called, so a person can tell
 // keepgoing started it. The token makes the title unique, which is how a
 // creation interrupted before it was recorded is found again.
@@ -50,7 +61,7 @@ func newThreadTitle(loop string) (string, error) {
 // unsettled creation at the start of a check comes out of the observation's
 // time instead.
 const (
-	newThreadPlaceTime = 10 * time.Second // read the project and environment
+	newThreadPlaceTime = 10 * time.Second // read place and optional source title metadata
 	newThreadSpawnTime = 30 * time.Second // bb thread spawn
 	newThreadFindTime  = 20 * time.Second // look the thread up by its title
 )
@@ -120,13 +131,13 @@ func (t *tick) createThread(from string, fromAgent config.Agent, c config.Candid
 	if fromAgent.Adapter == "bb" && fromAgent.BB != nil {
 		continues = fromAgent.BB.Thread
 	}
+	metadataCtx, metadataCancel := context.WithTimeout(t.ctx, newThreadPlaceTime)
+	defer metadataCancel()
 	if place.Project == "" || place.Environment == "" {
 		if continues == "" {
 			return "", errors.New("no BB conversation to continue: set bb.project and bb.environment on this candidate")
 		}
-		ctx, cancel := context.WithTimeout(t.ctx, newThreadPlaceTime)
-		seen, err := creator.PlaceOf(ctx, continues)
-		cancel()
+		seen, err := creator.PlaceOf(metadataCtx, continues)
 		if err != nil {
 			return "", errors.New("could not read the project and environment of the conversation being continued")
 		}
@@ -141,6 +152,8 @@ func (t *tick) createThread(from string, fromAgent config.Agent, c config.Candid
 	if err != nil {
 		return "", errors.New("could not generate a title")
 	}
+	title = continuationTitle(metadataCtx, creator, continues, title)
+	metadataCancel()
 	previous := t.st.LastNewThreadAt
 	intent := &state.NewThreadIntent{Candidate: c.ID, Title: title, Project: place.Project, Environment: place.Environment,
 		From: from, Continues: continues, Reason: reason, RequestedAt: t.now}

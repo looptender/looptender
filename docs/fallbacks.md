@@ -426,7 +426,7 @@ This is the only case in which looptender creates a conversation. It is opt-in p
 - the project and environment of the conversation being continued, read with `bb thread show` (or `bb.project` and `bb.environment` when you set them; they are required when the loop is leaving a target that is not a BB thread);
 - the candidate's `provider`, `model` and `reasoning`;
 - an explicit `--permission-mode` (see below), so the new thread never takes a project default;
-- the title `keepgoing: <loop name> (continued, <token>)`, so you can tell looptender started it;
+- the title `keepgoing: <loop name> (continued, <token>)`, so you can tell looptender started it; unreleased source prefixes a useful source title when available, as described in [successor thread titles](operations.md#bb-successor-thread-titles-unreleased);
 - the handoff brief as the first prompt, on stdin, followed by the line `Continue from @thread:<id>.` naming the earlier conversation, and a fixed paragraph on loop ownership (see below).
 
 The new thread then becomes the active target and is supervised like any other. Each handoff to such a candidate creates a fresh thread; an earlier one is left where it is.

@@ -33,6 +33,20 @@ func transferApplyFixture(t *testing.T) (string, string) {
 	if _, err := control.WriteGoal(dir, "fixture", "thr_source", control.GoalSpec{Title: "PRIVATE-GOAL", ObjectiveRefs: []string{"x"}, AcceptanceRefs: []string{"y"}}, "", 0); err != nil {
 		t.Fatal(err)
 	}
+	g, err := control.LoadGoal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := control.WriteGoal(dir, "fixture", "thr_source", g.Revisions[0].Spec, g.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	completion, err := control.RecordCompletion(dir, "fixture", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := control.Update(dir, func(f *control.File) { f.Completion = completion }); err != nil {
+		t.Fatal(err)
+	}
 	// A real send ledger: a check reads it before any send, limit or not.
 	// The other two are placeholders the transfer must leave alone.
 	if err := os.WriteFile(filepath.Join(dir, "sends.json"), []byte(`{"version":1,"used":7}`), 0600); err != nil {
@@ -116,7 +130,7 @@ func TestTransferApplyAndRecoveryBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if c.PendingTransfer != nil || c.BBTarget != "thr_destination" || c.Ownership.ThreadID != "thr_destination" || c.Ownership.Generation != 8 || c.Note != beforeCtl.Note || c.Gate() != beforeCtl.Gate() {
+			if c.PendingTransfer != nil || c.BBTarget != "thr_destination" || c.Ownership.ThreadID != "thr_destination" || c.Ownership.Generation != 8 || c.Note != beforeCtl.Note || c.Gate() != beforeCtl.Gate() || c.Completion == nil || *c.Completion != *beforeCtl.Completion {
 				t.Fatalf("holds or ownership wrong: %+v", c)
 			}
 			if fresh.Loop.BB.Thread != "thr_destination" || checkTransferSources(fresh, false) != nil {

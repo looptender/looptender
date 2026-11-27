@@ -417,6 +417,8 @@ keepgoing complete -c keepgoing.yaml --note "Example task verified"
 
 This sets `control.completed` in `control.json` and records a control event in `runs.jsonl`. Status shows `completed` unless a higher-priority disabled, stop, pause, or awaiting-user hold is also set; JSON always exposes the completion flag. No model output or transcript text is inspected to decide completion. In v0.1.3 or newer, a new completion declaration also attempts a subscribed `complete` webhook event after saving control and appending the control log.
 
+Unreleased source also saves the goal ID/revision for each new declaration and, with assignment completion, the successful review’s assignment ID/revision. Repeated completion retains the original binding; a goal edit never clears its hold. See [completion declarations](goals.md#completion-declarations-unreleased) for legacy records, unavailable goals and status comparison.
+
 The standard-format event is `keepgoing.complete`, with `basis: explicit_declaration` and `verification: not_recorded`. Both standard and text formats say that completion was declared and looptender has not independently verified success. This does not contradict verification performed by the operator or agent; looptender has no independent acceptance evidence in this version. The private control note, task/prompt text and evidence descriptions are omitted from this notification.
 
 Deduplication uses the persisted `completed` flag under the control lock. Only a false-to-true transition submits a report. Repeated `complete` commands, changed notes, enable, other holds, ticks and restarts do not replay it. An explicit `resume` clears completion, permitting a later declaration to submit a new report. Legacy completed records and declarations made without a subscription are not backfilled when reporting is enabled. A report describes the declaration at its recorded time; concurrent resume/stop or network delays may mean it no longer describes current controls.
@@ -447,7 +449,7 @@ While a loop is archived:
 
 ### When work moves to a new loop
 
-A line of work that moves to a new loop keeps one name and one row. The new loop records the loop it continues (`continued-from.json` in its state directory) and takes its display name at once (`nameSource: inherited`, unless a person set one); the earlier loop is archived by the new loop's first check that completes after that, if the earlier loop is held then, with a note naming its successor (`archived.continuedIn`: loop, thread, key). Until that check, and while the earlier loop still supervises, nothing is archived and `status` says what it waits for, so a successor that never runs leaves both loops as they are. Until then both loops show the same display name; list text adds each one's slug.
+A line of work that moves to a new loop keeps one name and one row. The new loop records the loop it continues (`continued-from.json` in its state directory) and takes its display name at once (`nameSource: inherited`, unless a person set one; unreleased auto-derived inheritance uses `inherited_title` until its own title is observed); the earlier loop is archived by the new loop's first check that completes after that, if the earlier loop is held then, with a note naming its successor (`archived.continuedIn`: loop, thread, key). Until that check, and while the earlier loop still supervises, nothing is archived and `status` says what it waits for, so a successor that never runs leaves both loops as they are. Until then both loops show the same display name; list text adds each one's slug.
 
 The archive needs the authority the declaration had, judged under the earlier loop's control lock: the declaration also writes a mark in the earlier loop's own state directory (`succeeded-by.json`), and the earlier loop is archived only while that mark names this successor and this declaration, and its owner and generation are those recorded when it was declared. A record without the mark, an owner that changed, or an earlier loop held at the declaration whose control record changed since (it was resumed, or held again later for another reason) cancels the succession: nothing is archived, `status` says `cancelled` and why, and a new declaration is needed. A succession still waiting 14 days after it was declared is cancelled too. A declaration is refused when the new loop is already among the earlier loop's own predecessors (a cycle), and a loop already continued in one loop is never claimed by another.
 
@@ -460,7 +462,26 @@ A succession is never guessed from a repository or a name. It is declared:
 
 ### One name per line of work
 
-Every surface shows a loop by one display name, made in one place: the stored name in `display-name.json`, else the loop's registered name (its slug). A person sets it with `looptender display-name -c CONFIG NAME` or `init --display-name`, and it is used as written. When none is set, the first check that reads the loop's BB thread title records a name from it, once: the title, without trailing qualifiers that consist entirely of route words and name a provider, model or plan (or are a generation count). A qualifier is a bracketed group at the end or the part after the last " · ", " - ", " – ", " — " or " | ", and route words are a maintained list of provider and model names, effort and version words, and the loop's own route labels. So "Coordinator · Sonnet medium", "Coordinator (Claude 4)" and "Coordinator (Antigravity, Neon high)" all give "Coordinator", while running text such as "Draft release notes with Grok" or "Write code" is never cut, and brackets are kept whole; a title that is nothing but such a qualifier is kept as it is. A later title or a new thread does not change it. Identifier-shaped tokens in it are shown as `[hidden]`, as hold notes are. The JSON carries `naming` on `status` and `client status`: `displayName`, `nameSource` (`set`; `thread_title` for a title used as it was; `thread_title_trimmed` for one with a route qualifier dropped; `inherited`; or `slug` when nothing is stored), `shortName` (the display name cut at the end to 32 characters, backing up to a separator when that loses at most 8, with "…"; absent when the display name fits), `slug`, `project` (the directory name of the first repository), `titleDiffers` (the BB thread's current title is not the display name), and, where private text is carried, `threadTitle` and `threadTitleReadAt`. Every `panel list` loop and dock loop carries the same `naming` without `slug`, which is the loop's `name` there, and without the unmasked title; it is absent when the display name is the loop's name and there is nothing more to say, so a reader shows `name`. Those responses hold up to 64 loops inside a fixed bound, so a field that repeats `name` is left out. No surface composes a name of its own. The thread's title is cached in `thread-title.json` from the `bb thread show` a check already runs; a list never asks BB, and a failed write changes nothing.
+Every surface shows one display name through the shared naming contract. A person
+sets a pinned name with `looptender display-name -c CONFIG NAME` or
+`init --display-name`; it is used as written. **In unreleased source, automatic
+names follow the latest saved BB title for the current target thread**, including
+suffixes such as `(Codex)`. Older `thread_title_trimmed` records are still recognized
+as automatic: the current matching title cache repairs the view without rewriting
+the stored display-name record. Recurring observations update only the title cache,
+so an automatic refresh cannot overwrite a later custom-name write.
+
+New succession records distinguish automatic inheritance (`inherited_title`) from
+explicit or ambiguous legacy inheritance (`inherited`). An auto-inherited task name
+is shown until the successor's title is observed; trailing route/model qualifiers
+are removed from the complete matching cached title before applying the display
+length bound, and only for that temporary predecessor-derived fallback, avoiding an old
+model label on a successor whose route has changed. The successor's own title then
+wins. Explicit custom names, legacy inherited names and unknown provenance remain
+pinned. A title cached for another target thread is never used as the current
+automatic name; without a usable title the registered slug is shown.
+
+Identifier-shaped tokens in it are shown as `[hidden]`, as hold notes are. The JSON carries `naming` on `status` and `client status`: `displayName`, `nameSource` (`set`; `thread_title` for a title used as it was; `thread_title_trimmed` for legacy automatic provenance; `inherited` for pinned inheritance; `inherited_title` for temporary automatic inheritance; or `slug` when nothing is stored), `shortName` (the display name cut at the end to 32 characters, backing up to a separator when that loses at most 8, with "…"; absent when the display name fits), `slug`, `project` (the directory name of the first repository), `titleDiffers` (the BB thread's current title is not the display name), and, where private text is carried, `threadTitle` and `threadTitleReadAt`. Every `panel list` loop and dock loop carries the same `naming` without `slug`, which is the loop's `name` there, and without the unmasked title; it is absent when the display name is the loop's name and there is nothing more to say, so a reader shows `name`. Those responses hold up to 64 loops inside a fixed bound, so a field that repeats `name` is left out. No surface composes a name of its own. The thread's title is cached in `thread-title.json` from the `bb thread show` a check already runs; a list never asks BB, and a failed write changes nothing. Held/offline views use that last verified snapshot and its recorded read time. A BB rename made while observation is held is visible after the next permitted successful observation, not through a background title poll. The displayed suffix is saved title metadata; actual route/model fields remain separate. This source-only change does not update an installed supervisor or menu app.
 
 ## Bounds on repeated work
 
@@ -1587,7 +1608,6 @@ The [BB plugin](../integrations/bb-plugin-keepgoing/README.md) does not resume a
 
 **Mixed versions.** Only a supervisor on this build sets `LOOPTENDER_SUPERVISED_LOOP`. A `daemon` or service started from an older build keeps running without it until it is restarted on this build, and the headless turns it starts meanwhile are not refused by the marker. The target-thread refusal does not depend on the supervisor: it applies from the first `resume` run with this build. Restart a running supervisor after upgrading. Turns it already started keep the environment they were started with.
 
-
 ### What a supervised session inherits
 
 Unreleased source; a security fix. A headless Claude Code, Codex, Cursor or ACP turn, and every command of the process adapter, runs with the supervisor's environment minus an exact list of names. The names describe the session the supervisor itself was started from:
@@ -1799,3 +1819,86 @@ recovery protocol needs separate complete authority/evidence review, proven old
 scheduler/writer retirement or compatible enforcement, and explicit preservation
 of unrelated holds. Releasing a future fence must not imply resume. No such
 recovery or installed upgrade acceptance is claimed here.
+
+
+## Daemon lifecycle and refused-check history (unreleased)
+
+Incident schema 15 records `daemon_start` when the daemon loop is entered and
+`daemon_stop` when it returns. The stop reason distinguishes `clean_exit`,
+`cancelled` (including authenticated supervisor shutdown), `signal` and
+`error_exit`; known signals are `SIGINT`, `SIGTERM` and `SIGHUP`. These are local
+lifecycle observations, not proof that a provider turn ended or that a service
+manager will not restart the process. A rejected daemon startup records no start.
+An abrupt kill, crash or successful in-place executable adoption cannot run the
+return handler and may leave a start without a stop.
+
+`tick` records `check_refused` when its check lock is held or unavailable,
+its ownership cannot be verified, or its loaded configuration sources changed.
+The daemon's stop-only path from its last configuration uses the same refusal
+records for these admission checks, including transfer/target validation and a
+restored or changed readable source; an unreachable BB stop is `safety_guard`.
+The supervisor's last-configuration safety guard also records a refusal if
+asked to perform anything except a stop. The reason codes are fixed; raw errors,
+owner/thread identities, configuration paths and signal text are excluded.
+A configuration that cannot be loaded at command entry has no verified loop
+state directory and records no event. Archived loops still skip checks without
+recording a refusal. Provider refusal/restriction observations remain ordinary
+checks with their existing policy; they are not admission refusals.
+
+These entries are activity-tier diagnostic evidence, bounded by the existing
+journal limits. Repeated refusals are not collapsed and cannot consume the key
+tier's reserved history. `timeline --kind daemon_start,daemon_stop,check_refused`
+shows them offline. Every entry retains `dryRun`: even a dry-run daemon really
+starts and stops, but these records assert no observation, decision, send,
+provider cancellation or counter change. Status, doctor and the panel keep their
+existing check/daemon diagnostics; an admission refusal does not replace the
+last completed check. A failed event write emits a fixed warning at the command
+boundary and does not change the refusal or daemon exit code; the internal safety
+guard returns the fixed history error alongside its original refusal if storage
+is unavailable.
+
+Schema 1–14 journals load without rewriting; the next append upgrades to 15.
+Older binaries refuse the newer journal. The executable-adoption state format
+rises to 8 for the combined goal-completion and incident schema, so a daemon
+cannot adopt an older reader and lose either record. Format 7 remains allocated
+to goal-completion metadata; the earlier incident-only format-7 branch build is
+also refused by the combined format-8 build.
+Before rollback, stop supervision and restore compatible state together with the
+binary as described under upgrading and rolling back. Offline fixtures verify
+these records; no installed daemon, live provider or release rollout is claimed.
+
+## BB successor thread titles (unreleased)
+
+When an opted-in `bb.new_thread` handoff creates a coordinator, the BB adapter
+reads only that coordinator's explicitly continued source with `bb thread show
+<source> --json`. Existing blocked-lane replacement uses the same naming step
+for each eligible lane it is already about to replace. No naming pass discovers
+or creates additional conversations.
+
+A useful `thread.title` becomes `From “<source title>” · keepgoing: <loop>
+(continued, <token>)`; lane successors retain `lane` in the loop-based suffix.
+If the title is absent or generic continuation scaffolding, the adapter tries
+`thread.titleFallback`. Empty, malformed, mismatched or unavailable metadata
+keeps the loop-based title. Only these structured display fields are read for
+naming: no messages, transcript text, task files or title-generation service.
+A display title never decides whether to wake, hold, retry or hand off.
+
+The quoted name describes the source, including any model label someone put
+there. The successor's provider, model, effort and permissions still come from
+the configured route, not from its title. Source names are bounded to 120 Unicode
+characters and control characters are rejected. A later handoff carries the
+quoted task name forward without nesting the generated wrapper.
+
+The exact final title and random recovery token are saved in the existing
+creation intent before spawn. Uncertain creation continues to use that saved
+title, without recomputing it. A rename before creation is settled can still
+prevent recovery by title and require a person, as with the original title
+scheme. Naming errors do not retry creation or widen its bounds.
+
+Naming happens only at creation. Custom titles supplied directly to the adapter's
+spawn API remain unchanged. Later checks, retries, model activation, manual
+retarget and transfers of existing threads never rename them. A person can
+rename a settled successor in BB and looptender will not overwrite it. Existing
+threads titled `Continue from ...` are not swept or renamed by this change.
+This is source-only fixture evidence, not a change to an installed supervisor
+or released BB plugin; live BB creation acceptance remains unverified.

@@ -575,3 +575,17 @@ What this means for looptender: the dated review found no documented way to supe
 `adapter: sessionpipe` is an [observed target](sessionpipe.md#observed-sessions-in-unreleased): the column above. It observes one session from a tier-0 sessionpipe file sink and implements Observe only. Send and Stop return unsupported, and the decision engine never asks for either: every rule that would wake, nudge, re-prompt, stop or move the loop records why it did not, and a gone session holds for a person. No activation, retry, lane, context, usage or remote control capability is exposed, and `adapter check` refuses it because a read saves the reader's position.
 
 [Sessionpipe reporting](sessionpipe.md) is separate: an OUT report format, not an adapter. A persistent POST-401 report pause and explicit `report resume` affect future reports only; they grant no agent or loop resume capability. IN starts with the observed target above; BACK is held by #233.
+
+## BB creation titles (unreleased)
+
+`internal/adapter/bb/titles.go` reads only the explicitly continued thread's
+`id`, `title` and `titleFallback` from `bb thread show --json`. The optional
+`ContinuationTitle` method supplies display metadata before the coordinator or
+existing blocked-lane creation intent is saved. It does not inspect transcripts
+or affect supervision decisions. Direct `SpawnRequest.Title` values are passed
+unchanged; no `thread update --title` or `regenerate-title` is issued.
+See [successor title semantics and recovery limits](operations.md#bb-successor-thread-titles-unreleased).
+`TestContinuationTitleMetadata`, `TestContinuationTitleBoundsAndInvalidSource`
+and `TestUsefulContinuationTitleSurvivesUncertainCreation` cover synthetic
+metadata, conservative failures and persisted-title recovery. These are offline
+fixtures, not live provider acceptance.

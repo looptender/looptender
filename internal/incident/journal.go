@@ -31,7 +31,8 @@ const FileName = "incidents.json"
 // tick records and the probe records of a manual `fallbacks check`.
 // Version 14 (supervision context in sends) adds the length of the
 // supervision context a check's sends carried on tick records.
-const SchemaVersion = 14
+// Version 15 adds daemon lifecycle and refused-check records.
+const SchemaVersion = 15
 
 // Retention bounds the journal at MaxRecords and MaxBytes. Each tier has
 // reserved room, and MaxRecords is the sum of the reservations. A tier may
@@ -197,6 +198,12 @@ func Load(dir string) (Journal, error) {
 		}
 		if j.SchemaVersion < 10 {
 			r.Lanes = LaneWork{}
+		}
+		if j.SchemaVersion < 15 {
+			r.Runtime = nil
+			if r.Kind == "daemon_start" || r.Kind == "daemon_stop" || r.Kind == "check_refused" {
+				return Journal{}, ErrUnavailable
+			}
 		}
 		if j.SchemaVersion < 14 {
 			// Older writers sent no supervision context.
