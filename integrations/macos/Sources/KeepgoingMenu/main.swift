@@ -259,6 +259,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     func menuWillOpen(_ menu: NSMenu) {
         menuOpen = true
+        render() // Recompute saved ages even if the next CLI read fails.
         refresh()
     }
     func menuDidClose(_ menu: NSMenu) {
@@ -297,11 +298,12 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.setAccessibilityLabel(model.iconAccessibilityLabel + (mark.isEmpty ? "" : ", menu update available"))
         }
         let column = stateColumn(model.rows)
-        if MenuBuilder.sameShape(model.rows, shown), menu.items.count == model.rows.count {
+        switch MenuBuilder.updateMode(shown: shown, next: model.rows, itemCount: menu.items.count, menuOpen: menuOpen, hasHighlight: menu.highlightedItem != nil) {
+        case .inPlace:
             for (entry, row) in zip(menu.items, model.rows) where row.kind != .separator { fill(entry, row, column: column) }
-        } else if MenuBuilder.deferStructuralUpdate(menuOpen: menuOpen, hasHighlightedItem: menu.highlightedItem != nil) {
-            return // menuDidClose renders again
-        } else {
+        case .deferred:
+            return // menuDidClose renders again; preserve the highlighted target
+        case .rebuild:
             build(menu, model.rows, column: column)
         }
         shown = model.rows
