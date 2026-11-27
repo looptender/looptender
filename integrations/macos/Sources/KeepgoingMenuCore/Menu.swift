@@ -47,6 +47,8 @@ public struct PanelLoop: Decodable, Equatable {
     /// When the loop's last check ran, and what it waits for in the page's
     /// fixed words (never the hold's note).
     public var checkedAt: String? = nil
+    /// Saved meaningful loop work/movement; never the list/check read time.
+    public var activityAt: String? = nil
     public var reason: String? = nil
     /// What it waits for, by kind: asked, held, limit, checks or unknown.
     public var waiting: PanelWaiting? = nil
@@ -62,10 +64,11 @@ public struct PanelLoop: Decodable, Equatable {
     /// Set when the loop has had no check activity for at least 3 days (72h).
     public var inactive: Bool? = nil
 
-    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil, naming: PanelNaming? = nil, archived: PanelArchived? = nil, checkedAt: String? = nil, reason: String? = nil, waiting: PanelWaiting? = nil, superseded: Bool? = nil, observed: Bool? = nil, observedWakes: Bool? = nil, inactive: Bool? = nil) {
+    public init(key: String, name: String, state: String, phrase: String, needsYou: Bool, noProgress: String? = nil, can: [String]? = nil, overdueSince: String? = nil, recordedBuild: String? = nil, buildDiffers: Bool? = nil, provider: String? = nil, model: String? = nil, buildFreshness: PanelFreshness? = nil, naming: PanelNaming? = nil, archived: PanelArchived? = nil, checkedAt: String? = nil, reason: String? = nil, waiting: PanelWaiting? = nil, superseded: Bool? = nil, observed: Bool? = nil, observedWakes: Bool? = nil, inactive: Bool? = nil, activityAt: String? = nil) {
         self.observed = observed
         self.observedWakes = observedWakes
         self.inactive = inactive
+        self.activityAt = activityAt
         self.superseded = superseded
         self.waiting = waiting
         self.naming = naming
@@ -505,8 +508,9 @@ public enum MenuBuilder {
                 iconLabel = list.registry == "available" ? "looptender, not every loop was read" : "looptender, the list of loops can't be read"
             }
             let installed = list.installedBuild.map(Contract.text)
-            let groups: [(String, [PanelLoop])] = [("Needs you", list.loops.filter { group($0) == .needsYou }), ("Working", list.loops.filter { group($0) == .working })]
-            let others = list.loops.filter { group($0) == .other }
+            let ordered = loopsByActivity(list.loops, now: now)
+            let groups: [(String, [PanelLoop])] = [("Needs you", ordered.filter { group($0) == .needsYou }), ("Working", ordered.filter { group($0) == .working })]
+            let others = ordered.filter { group($0) == .other }
             let listedLoops = groups.flatMap { $0.1.prefix(maxLoops) } + others.prefix(maxLoops * 2)
             let names = disambiguatedTitles(listedLoops)
             if !list.loops.isEmpty { rows.append(separator) }
@@ -679,6 +683,12 @@ public enum MenuBuilder {
         case .notifyHeartbeat(let notifying, let pid): return pid > 0 ? ["panel", "notify", "heartbeat", "--notifying=" + (notifying ? "true" : "false"), "--pid=" + String(pid)] : nil
         case .quit, .relaunchMenu, .toggleAutoUpdate, .toggleNoticeKind: return nil
         }
+    }
+
+    /// Structural changes wait while a tracked menu row is highlighted.
+    /// Keep this separate from in-place same-shape text refreshes.
+    public static func deferStructuralUpdate(menuOpen: Bool, hasHighlightedItem: Bool) -> Bool {
+        menuOpen && hasHighlightedItem
     }
 
     /// Two models have the same shape when their rows are the same kinds
