@@ -97,18 +97,25 @@ func accountQuotaRead(ctx context.Context, provider, cli string, env []string, w
 // accountQuotaRefresh never runs a route probe. CheckGuard prevents parallel
 // same-selection reads; publication independently fences edits during the RPC.
 func accountQuotaRefresh(ctx context.Context, dir, id string, expected *accountQuotaSelection, run accountQuotaRun, env []string, now func() time.Time) (accounts.QuotaView, error) {
+	result, err := accountQuotaRefreshReceipt(ctx, dir, id, expected, run, env, now, nil)
+	return result.view, err
+}
+
+// The detailed result retains an in-memory receipt only. Existing callers keep
+// their public view/return contract; no receipt is persisted or used for pooling.
+func accountQuotaRefreshReceipt(ctx context.Context, dir, id string, expected *accountQuotaSelection, run accountQuotaRun, env []string, now func() time.Time, clock quotaReceiptClock) (accountQuotaRefreshResult, error) {
 	unavailable := accounts.QuotaView{State: "unavailable", Reason: "selection_unavailable", Freshness: "unavailable", Windows: []accounts.QuotaWindow{}}
 	g, err := accounts.CheckGuard(dir, id)
 	if err != nil {
-		return unavailable, err
+		return accountQuotaRefreshResult{view: unavailable}, err
 	}
 	defer g.Release()
 	s, err := accountQuotaCapture(dir, id, env)
 	if err != nil {
-		return unavailable, err
+		return accountQuotaRefreshResult{view: unavailable}, err
 	}
 	if expected != nil && !expected.same(s) {
-		return unavailable, accounts.ErrChanged
+		return accountQuotaRefreshResult{view: unavailable}, accounts.ErrChanged
 	}
 	load, publish := accounts.LoadQuota, accounts.PublishQuota
 	switch s.Entry.Provider {
@@ -118,9 +125,15 @@ func accountQuotaRefresh(ctx context.Context, dir, id string, expected *accountQ
 		load, publish = accounts.LoadAntigravityQuota, accounts.PublishAntigravityQuota
 	}
 	if _, err := load(dir); err != nil {
-		return unavailable, err
+		return accountQuotaRefreshResult{view: unavailable}, err
 	}
 	a := accounts.QuotaAttempt{}
+	executionEnv := accountQuotaExecutionEnvironment(s.Entry, env)
+	var trace *quotaReceiptTrace
+	if s.Entry.Provider == "codex" {
+		trace = newQuotaReceiptTrace(clock)
+		trace.expected = &quotaReceiptExecution{cli: s.Entry.CLI, workdir: s.Entry.Workdir, environment: append([]string(nil), executionEnv...)}
+	}
 	if s.Entry.Provider != "codex" && s.Entry.Provider != "claude-code" && s.Entry.Provider != "antigravity" {
 		a.Reason = "unsupported_provider"
 	} else {
@@ -129,7 +142,10 @@ func accountQuotaRefresh(ctx context.Context, dir, id string, expected *accountQ
 			timeout = 10 * time.Second
 		}
 		c, cancel := context.WithTimeout(ctx, timeout)
-		raw, err := run(c, s.Entry.Provider, s.Entry.CLI, accountQuotaExecutionEnvironment(s.Entry, env), s.Entry.Workdir)
+		if trace != nil {
+			c = context.WithValue(c, quotaReceiptContextKey{}, trace)
+		}
+		raw, err := run(c, s.Entry.Provider, s.Entry.CLI, executionEnv, s.Entry.Workdir)
 		cancel()
 		switch s.Entry.Provider {
 		case "claude-code":
@@ -140,6 +156,9 @@ func accountQuotaRefresh(ctx context.Context, dir, id string, expected *accountQ
 			a.Details, a.Reason = accountQuotaDetailsParse(raw, err)
 			if a.Reason == "" {
 				a.Windows, _ = accountQuotaParse(raw, nil)
+			}
+			if trace != nil {
+				trace.parsedReply(raw, a.Details, a.Reason)
 			}
 		}
 	}
@@ -152,17 +171,21 @@ func accountQuotaRefresh(ctx context.Context, dir, id string, expected *accountQ
 		return nil
 	}
 	if err := publish(dir, s.Entry, s.Bound, a, env, verify); err != nil {
-		return unavailable, err
+		return accountQuotaRefreshResult{view: unavailable}, err
 	}
 	f, err := accounts.Load(dir)
 	if err != nil {
-		return unavailable, err
+		return accountQuotaRefreshResult{view: unavailable}, err
 	}
 	fresh, err := accountQuotaCapture(dir, id, env)
 	if err != nil || !s.same(fresh) {
-		return unavailable, accounts.ErrChanged
+		return accountQuotaRefreshResult{view: unavailable}, accounts.ErrChanged
 	}
-	return accounts.QuotaViews(dir, f, env, now())[id], nil
+	result := accountQuotaRefreshResult{view: accounts.QuotaViews(dir, f, env, now())[id], receiptReason: "source_unsupported"}
+	if trace != nil {
+		result.receipt, result.receiptReason = trace.publish(dir, s, a, env)
+	}
+	return result, nil
 }
 
 func accountQuotaParse(raw []byte, err error) ([]accounts.QuotaWindow, string) {
