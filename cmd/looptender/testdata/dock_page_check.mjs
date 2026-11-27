@@ -795,7 +795,7 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
     buildFreshness: { text: "Panel v0.3.0 · 1 daemon older", onIt: 4, notOnIt: 1 },
     versions: { newest: "v0.3.0", reference: "this_panel", summary: "1 place differs", behind: 1, lede: "Lede", rows: [], unrecorded: [], clients: "none" },
     needsYou: [
-      { kind: "held", waiting: "asked", by: "check", key: kQ, loop: "atlas-question", questionId: "q-rev-1", targetRevision: "t-1", reason: "Lane 1 is waiting for an answer.", note: "Approve schema change in docs/api.md", waited: "Waiting 12 min", action: "Answer in Lane 1.", resume: "looptender resume -c CONFIG" },
+      { kind: "held", waiting: "asked", by: "check", key: kQ, loop: "atlas-question", since: "2026-11-27T11:00:00Z", sinceEvidence: "hold_recorded", reason: "Lane 1 is waiting for an answer.", note: "Approve schema change in docs/api.md", noteMasked: true, maskedNote: "Approve schema change in docs/api.md", waited: "Waiting 12 min", action: "Answer in Lane 1.", resume: "looptender resume -c CONFIG" },
       { kind: "held", waiting: "limit", by: "check", key: kDl, loop: "atlas-deadline", reason: "It reached its deadline.", waited: "Waiting 2 h", action: "Review deadline or mark finished.", resume: "looptender resume -c CONFIG" },
       { kind: "overdue", waiting: "checks", by: "check", key: kSup, loop: "drift-stale", reason: "Its checks have stopped: no check ran in awake window 1h 40m.", waited: "Waiting 2 d 10 h", action: "Inspect scheduler status." }
     ],
@@ -809,7 +809,7 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
       { context: true, selection: "bb_thread", routes: [{ route: r3, title: "BB default", loops: [kLim] }] }
     ],
     loops: [
-      { ...clone(baseDoc.loops[0]), key: kQ, name: "atlas-question", state: "waiting_for_you", phrase: "Waiting for you", can: ["pause", "stop", "resume"], hold: { state: "held", phrase: "Held" }, lineage: { count: 1, from: kRet }, device: { text: "workstation-alpha" }, lastCheck: { availability: "recent", text: "Checked 2 min ago" }, lanes: { availability: "current", summary: "1 waiting · 1 working", lanes: [{ number: 1, state: "waiting", phrase: "Waiting for answer", title: "Schema bump" }] }, chain: { availability: "known", handoffOn: ["usage_limit"], how: "auto", brief: "1 ready", entries: [{ position: 0, route: r1, title: "gpt-5.2-codex", current: true, inUse: false, readiness: "current", meta: ["Codex CLI"], usage: { availability: "unavailable", readLine: "No reading" }, catalogAccount: { assigned: "by_you", card: acctCardsFixture[0].id, label: "Core Codex", check: "consistent" } }, { position: 1, route: r2, title: "claude-sonnet-4-6", current: false, inUse: false, readiness: "ready", meta: ["BB thread"], usage: { availability: "unavailable", readLine: "No reading" }, catalogAccount: { assigned: "by_you", card: acctCardsFixture[1].id, label: "Studio Claude", check: "not_verified" } }] } },
+      { ...clone(baseDoc.loops[0]), key: kQ, name: "atlas-question", state: "waiting_for_you", phrase: "Waiting for you", can: ["pause", "stop", "resume"], hold: { state: "held", phrase: "Held" }, currentRoute: { availability: "known", role: "main", name: "codex-a", tool: "codex", provider: "codex", model: "gpt-5.2-codex" }, identifiers: { registrationId: "reg_atlas_1", thread: "thr_alpha_1" }, lineage: { count: 1, from: kRet }, device: { text: "workstation-alpha" }, lastCheck: { availability: "recent", text: "Checked 2 min ago" }, lanes: { availability: "current", summary: "1 waiting · 1 working", lanes: [{ number: 1, state: "waiting", phrase: "Waiting for answer", title: "Schema bump" }] }, chain: { availability: "known", handoffOn: ["usage_limit"], how: "auto", brief: "1 ready", entries: [{ position: 0, route: r1, title: "gpt-5.2-codex", current: true, inUse: false, readiness: "current", meta: ["Codex CLI"], usage: { availability: "unavailable", readLine: "No reading" }, catalogAccount: { assigned: "by_you", card: acctCardsFixture[0].id, label: "Core Codex", check: "consistent" } }, { position: 1, route: r2, title: "claude-sonnet-4-6", current: false, inUse: false, readiness: "ready", meta: ["BB thread"], usage: { availability: "unavailable", readLine: "No reading" }, catalogAccount: { assigned: "by_you", card: acctCardsFixture[1].id, label: "Studio Claude", check: "not_verified" } }] } },
       { ...clone(baseDoc.loops[0]), key: kDl, name: "atlas-deadline", state: "waiting_for_you", phrase: "Deadline reached", can: ["archive", "stop", "resume"], hold: { state: "held", phrase: "Held" }, limits: [{ label: "Deadline", phrase: "Reached", reached: true, text: [{ t: "2026-11-25 14:00" }], effect: "Loop held at deadline" }], device: { text: "workstation-alpha" }, lastCheck: { availability: "recent", text: "Checked 5 min ago" }, chain: { availability: "known", entries: [{ position: 0, route: r1, title: "gpt-5.2-codex", current: true, inUse: false, meta: ["Codex CLI"], usage: { availability: "unavailable", readLine: "No reading" } }] } },
       { ...clone(baseDoc.loops[0]), key: kSup, name: "drift-stale", state: "not_checked_recently", phrase: "Checks stopped", supervisor: "not_answering", checkedBy: { kind: "ticks", text: "Checked by ticks" }, device: { text: "workstation-alpha" }, lastCheck: { availability: "stale", text: "Checked 2 d 10 h ago" }, chain: { availability: "known", entries: [{ position: 0, route: r3, title: "BB default", current: true, inUse: false, meta: ["BB thread"], usage: { availability: "unavailable", readLine: "No reading" }, catalogAccount: { assigned: "none" } }] } },
       { ...clone(baseDoc.loops[0]), key: kLim, name: "cedar-limit", state: "waiting_on_limit", phrase: "Waiting on limit", device: { text: "workstation-alpha" }, lastCheck: { availability: "recent", text: "Checked 1 min ago" }, chain: { availability: "known", entries: [{ position: 0, route: r3, title: "BB default", current: true, inUse: false, meta: ["BB thread"], usage: { availability: "unavailable", readLine: "No reading" }, catalogAccount: { assigned: "none" } }] } },
@@ -817,11 +817,18 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
     ]
   };
   const posts = [];
+  let failDock = false;
+  let deferredPrepare = Object.create(null);
   const srv = { ...clone(fixture.server), servedBy: "panel", version: "v0.3.0", changes: "on", sendAllowanceEdit: true, accountSelectionReview: true, accountQuota: true, accountQuotaProviders: ["codex", "claude-code", "antigravity"], form: "a".repeat(64) };
   w.fetch = async (url, opts) => {
-    const path = String(url).split("?")[0].replace(/^.*\/s\/[^/]+\//, "");
+    const rawUrl = String(url);
+    const withIds = rawUrl.includes("identifiers=1");
+    const path = rawUrl.split("?")[0].replace(/^.*\/s\/[^/]+\//, "");
     if (opts && opts.method === "POST") {
       posts.push(path);
+      if (deferredPrepare[path]) {
+        return deferredPrepare[path]();
+      }
       if (path === `api/v1/loops/${kQ}/prepare`) {
         return { ok: true, status: 200, json: async () => ({ schemaVersion: 1, preview: { action: "resume", key: kQ, title: "Resume?", confirm: "Confirm resume", form: "c".repeat(64), expiresAt: "2035-01-01T00:00:00Z", lines: [[{ t: "Confirm parent resume." }]], lost: "lost", refused: "refused" } }) };
       }
@@ -834,7 +841,19 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
       const p = { schemaVersion: 1, reference: currentDock.accountsReference, accounts: { state: "available", complete: true, cards: clone(acctCardsFixture) } };
       return { ok: true, status: 200, json: async () => p, text: async () => JSON.stringify(p) };
     }
-    const found = { "api/v1/dock": currentDock, "api/v1/server": srv, "api/v1/usage": fixture.usage }[path];
+    if (path === "api/v1/dock") {
+      if (failDock) return Promise.reject(new Error("simulated fetch failure"));
+      const snap = clone(currentDock);
+      snap.identifiers = withIds;
+      if (!withIds) {
+        for (const lp of snap.loops) {
+          delete lp.identifiers;
+          if (lp.currentRoute) delete lp.currentRoute.name;
+        }
+      }
+      return { ok: true, status: 200, json: async () => snap, text: async () => JSON.stringify(snap) };
+    }
+    const found = { "api/v1/server": srv, "api/v1/usage": fixture.usage }[path];
     return { ok: found !== undefined, status: found !== undefined ? 200 : 404, json: async () => clone(found), text: async () => JSON.stringify(found) };
   };
   w.TextEncoder = TextEncoder; w.scrollTo = () => {}; w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} }); w.Element.prototype.scrollIntoView = () => {};
@@ -871,57 +890,133 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
   w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await tick();
   if (w.document.querySelector('[data-focus="map-loop-' + kQ + '"]')?.classList.contains("is-selected")) errs.push("Escape did not clear map selection");
 
-  // Task flow 1: Question -> Open question drawer (no raw CONFIG primary CTA), Review parent resume prepared, then externally resolved/changed
+  // Task flow 1: Question -> Open question drawer with honest G9 copy
   const qCard = w.document.querySelector(`#attention-section [data-issue-key="${kQ}"]`);
   const qPrim = qCard?.querySelector(".task-actions .btn.is-primary")?.textContent;
   if (qPrim !== "Open question") errs.push("question primary action wrong: " + qPrim);
   qCard?.querySelector(`[data-focus="open-question-${kQ}"]`)?.click(); await tick();
-  if (!w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"][data-drawer-mode="question"]`)) errs.push("Open question did not open question drawer");
+  const qDrawer = w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"][data-drawer-mode="question"]`);
+  if (!qDrawer || !qDrawer.textContent.includes("not yet emitted") || !qDrawer.textContent.includes("contract gap G9")) errs.push("Open question drawer missing honest G9 disclosure");
 
-  // Prepare parent resume inside drawer, then mutate questionId on next read -> Confirm must NOT fire against replacement issue
+  // Adversarial Test A: Emitted currentRoute changes ONLY (reason, note, since unchanged) -> invalidates open drawer + pending Confirm
   w.document.querySelector(`[data-focus="act-resume-${kQ}"]`)?.click(); await settle();
   if (!w.document.querySelector('[data-focus="change-confirm"]')) errs.push("expected Confirm resume button after prepare");
-  currentDock.needsYou[0].questionId = "q-rev-2";
-  currentDock.needsYou[0].targetRevision = "t-2";
-  currentDock.needsYou[0].reason = "Updated replacement question in Lane 2.";
+  currentDock.loops[0].currentRoute = { availability: "known", role: "fallback", name: "claude-b", tool: "claude-code", provider: "claude-code", model: "claude-sonnet-4-6" };
   w.document.getElementById("refresh").click(); await settle();
-  if (w.document.querySelector('[data-focus="change-confirm"]')) errs.push("stale confirm dialog stayed open after questionId changed");
-  if (!w.document.querySelector(".issue-stale-banner")?.textContent.includes("updated")) errs.push("missing stale-issue invalidation banner when question changed");
+  if (w.document.querySelector('[data-focus="change-confirm"]') || w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"]`)) {
+    errs.push("stale confirm/drawer stayed open after emitted currentRoute changed");
+  }
+  if (!w.document.querySelector(".issue-stale-banner")?.textContent.includes("updated")) errs.push("missing stale-issue banner when currentRoute changed");
+
+  // Adversarial Test B: Emitted identifiers.thread changes ONLY -> invalidates open drawer + pending Confirm
+  w.document.getElementById("identifiers").click(); await settle();
+  w.document.querySelector(`[data-focus="open-question-${kQ}"]`)?.click(); await tick();
+  if (!w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"]`)?.textContent.includes("bb thread open thr_alpha_1")) {
+    errs.push("expected bb thread open thr_alpha_1 in question drawer with identifiers on");
+  }
+  w.document.querySelector(`[data-focus="act-resume-${kQ}"]`)?.click(); await settle();
+  currentDock.loops[0].identifiers.thread = "thr_beta_2";
+  w.document.getElementById("refresh").click(); await settle();
+  if (w.document.querySelector('[data-focus="change-confirm"]') || w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"]`)) {
+    errs.push("stale confirm/drawer stayed open after emitted identifiers.thread changed");
+  }
+  w.document.getElementById("identifiers").click(); await settle();
+
+  // Adversarial Test C: Failed refresh immediately marks retained cards & open drawer Unconfirmed without any extra click/render
+  w.document.querySelector(`[data-focus="open-question-${kQ}"]`)?.click(); await tick();
+  failDock = true;
+  w.document.getElementById("refresh").click(); await settle();
+  const failedBadge = w.document.querySelector(`#attention-section [data-issue-key="${kQ}"] .unconfirmed-badge`);
+  const failedDrawerBadge = w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"] .unconfirmed-badge`);
+  const failedResumeBtn = w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"] [data-focus="act-resume-${kQ}"]`);
+  if (!failedBadge || !failedBadge.textContent.includes("last read failed") || !failedDrawerBadge || !failedResumeBtn?.disabled) {
+    errs.push("failed refresh must immediately show Unconfirmed on retained card/drawer and disable writes");
+  }
+  failDock = false;
+  w.document.getElementById("refresh").click(); await settle();
+
+  // Adversarial Test D: complete=true + loop.evidence="partial" immediately renders Unconfirmed
+  currentDock.loops[0].evidence = "partial";
+  w.document.getElementById("refresh").click(); await settle();
+  const partialBadge = w.document.querySelector(`#attention-section [data-issue-key="${kQ}"] .unconfirmed-badge`);
+  if (!partialBadge || !partialBadge.textContent.includes("partial")) errs.push("partial loop evidence lacked immediate Unconfirmed badge");
+  currentDock.loops[0].evidence = "available";
+  w.document.getElementById("refresh").click(); await settle();
+
+  // Adversarial Test E: complete=false omitting an active need must retain it as Unconfirmed and fail-close pending confirm (never falsely resolve), then clear on complete=true
+  if (!w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"]`)) {
+    w.document.querySelector(`[data-focus="open-question-${kQ}"]`)?.click(); await tick();
+  }
+  w.document.querySelector(`[data-focus="act-resume-${kQ}"]`)?.click(); await settle();
+  if (!w.document.querySelector('[data-focus="change-confirm"]')) errs.push("expected prepared confirm before incomplete test");
+  const savedQNeed = clone(currentDock.needsYou[0]);
+  const savedQLoop = clone(currentDock.loops[0]);
+  currentDock.needsYou = currentDock.needsYou.filter((x) => x.key !== kQ);
+  currentDock.loops = currentDock.loops.filter((x) => x.key !== kQ);
+  currentDock.complete = false;
+  w.document.getElementById("refresh").click(); await settle();
+  const incCardBadge = w.document.querySelector(`#attention-section [data-issue-key="${kQ}"] .unconfirmed-badge`);
+  const incResumeBtn = w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"] [data-focus="act-resume-${kQ}"]`);
+  if (!incCardBadge || !incCardBadge.textContent.includes("omitted from incomplete read") || !incResumeBtn?.disabled || w.document.querySelector('[data-focus="change-confirm"]')) {
+    errs.push("complete=false omitting need must retain Unconfirmed card/drawer, disable writes, and cancel prepared confirm");
+  }
+  // Once complete=true confirms kQ is gone, it clears cleanly
+  currentDock.complete = true;
+  w.document.getElementById("refresh").click(); await settle();
+  if (w.document.querySelector(`#attention-section [data-issue-key="${kQ}"]`)) errs.push("need omitted on complete=true read stayed stuck after complete read");
+  currentDock.needsYou.unshift(savedQNeed);
+  currentDock.loops.unshift(savedQLoop);
+  w.document.getElementById("refresh").click(); await settle();
+
+  // Adversarial Test F: Out-of-order deferred prepare race — slow A must not overwrite newer B
+  let resA, resB;
+  deferredPrepare[`api/v1/loops/${kQ}/prepare`] = () => new Promise((r) => { resA = r; });
+  deferredPrepare[`api/v1/loops/${kDl}/prepare`] = () => new Promise((r) => { resB = r; });
+  w.document.querySelector(`[data-focus="open-question-${kQ}"]`)?.click(); await tick();
+  w.document.querySelector(`.task-drawer[data-drawer-key="${kQ}"] [data-focus="act-resume-${kQ}"]`)?.click(); await tick();
+  w.document.querySelector(`[data-focus="review-deadline-${kDl}"]`)?.click(); await tick();
+  w.document.querySelector(`.task-drawer[data-drawer-key="${kDl}"] [data-focus="act-archive-${kDl}"]`)?.click(); await tick();
+  resB({ ok: true, status: 200, json: async () => ({ schemaVersion: 1, preview: { action: "archive", key: kDl, title: "Archive deadline loop?", confirm: "Confirm archive B", form: "b".repeat(64), expiresAt: "2035-01-01T00:00:00Z", lines: [[{ t: "Archive B." }]], lost: "lost", refused: "refused" } }) });
+  await settle();
+  resA({ ok: true, status: 200, json: async () => ({ schemaVersion: 1, preview: { action: "resume", key: kQ, title: "Late stale A", confirm: "Stale confirm A", form: "c".repeat(64), expiresAt: "2035-01-01T00:00:00Z", lines: [[{ t: "Stale A." }]], lost: "lost", refused: "refused" } }) });
+  await settle();
+  if (w.document.querySelector('[data-focus="change-confirm"]')?.textContent !== "Confirm archive B") {
+    errs.push("out-of-order deferred prepare A overwrote newer review B: " + w.document.querySelector('[data-focus="change-confirm"]')?.textContent);
+  }
+  deferredPrepare = Object.create(null);
+  w.document.querySelector('[data-focus="change-cancel"]')?.click(); await tick();
+  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" })); await tick();
 
   // Transition 1b: Original question resolved while loop stays held for a separate bound reason (send allowance)
-  currentDock.needsYou[0] = { kind: "held", waiting: "limit", by: "check", key: kQ, loop: "atlas-question", targetRevision: "t-3", ownerRevision: "o-2", reason: "It reached its limit on messages sent.", waited: "Waiting 1 min", action: "Review send allowance." };
+  currentDock.needsYou[0] = { kind: "held", waiting: "limit", by: "check", key: kQ, loop: "atlas-question", reason: "It reached its limit on messages sent.", waited: "Waiting 1 min", action: "Review send allowance." };
   currentDock.loops[0].limits = [{ label: "Send allowance", phrase: "50 / 50", reached: true, text: [{ t: "50 / 50 sends" }] }];
   w.document.getElementById("refresh").click(); await settle();
   if (!w.document.querySelector(`[data-focus="act-set_send_allowance-${kQ}"]`)) errs.push("separate remaining hold did not render Review send allowance action");
 
-  // Transition 1c: Direct lane loopKey target on Open question, and read-only allowance disabled blocker
-  currentDock.needsYou[0] = { kind: "held", waiting: "asked", by: "check", key: kQ, loop: "atlas-question", questionId: "q-lane-loop", reason: "Waiting on sub-loop.", waited: "Waiting 2 min", action: "Answer in sub-loop." };
+  // Transition 1c: Direct lane loopKey target on Open question
+  currentDock.needsYou[0] = { kind: "held", waiting: "asked", by: "check", key: kQ, loop: "atlas-question", reason: "Waiting on sub-loop.", waited: "Waiting 2 min", action: "Answer in sub-loop." };
   currentDock.loops[0].lanes = { availability: "current", summary: "1 waiting", lanes: [{ number: 1, state: "waiting", phrase: "Waiting for answer", loop: "cedar-limit", loopKey: kLim }] };
   w.document.getElementById("refresh").click(); await settle();
   const qDirect = w.document.querySelector(`[data-focus="open-question-${kQ}"]`);
   if (!qDirect || qDirect.tagName !== "A" || !qDirect.getAttribute("href")?.endsWith("#/loop/" + kLim)) errs.push("Open question did not link directly to registered waiting lane loop");
 
-  // Transition 2: Superseded loop clears pending actions & shows non-resumable guidance
+  // Transition 2: Superseded loop clears pending actions & shows non-resumable guidance on complete read
   currentDock.needsYou = currentDock.needsYou.filter((x) => x.key !== kQ);
   currentDock.loops[0].state = "off"; currentDock.loops[0].phrase = "Superseded";
   currentDock.loops[0].hold = { state: "superseded", phrase: "Superseded" };
   currentDock.loops[0].archived = { at: "2030-03-04T12:05:00Z", continuedIn: { key: kRet, loop: "fable-legacy" } };
   w.document.getElementById("refresh").click(); await settle();
-  if (w.document.querySelector(`#attention-section [data-issue-key="${kQ}"]`)) errs.push("externally resolved/superseded question remained after authoritative read");
+  if (w.document.querySelector(`#attention-section [data-issue-key="${kQ}"]`)) errs.push("externally resolved/superseded question remained after complete read");
   w.document.querySelector('[data-focus="filter-retired"]')?.click(); await tick();
   if (!w.document.querySelector(`[data-focus="map-loop-${kQ}"]`)?.textContent.includes("Superseded — do not resume")) errs.push("superseded loop lacked Superseded — do not resume guidance");
 
-  // Transition 3: Deadline card Review deadline + Stale supervision Inspect supervision + Delayed/Incomplete unconfirmed indicator
+  // Transition 3: Deadline card Review deadline + Stale supervision Inspect supervision
   w.document.querySelector(`[data-focus="review-deadline-${kDl}"]`)?.click(); await tick();
   const dlDr = w.document.querySelector(`.task-drawer[data-drawer-key="${kDl}"][data-drawer-mode="deadline"]`);
   if (!dlDr || !dlDr.textContent.includes("2026-11-25 14:00") || !dlDr.textContent.includes("G11")) errs.push("deadline drawer missing deadline value or G11 gap note");
   w.document.querySelector(`[data-focus="inspect-supervision-${kSup}"]`)?.click(); await tick();
   const supDr = w.document.querySelector(`.task-drawer[data-drawer-key="${kSup}"][data-drawer-mode="supervision"]`);
   if (!supDr || !supDr.textContent.includes("Supervisor did not answer")) errs.push("supervision drawer missing verified cause");
-
-  currentDock.complete = false;
-  w.document.getElementById("refresh").click(); await settle();
-  if (!w.document.querySelector(".unconfirmed-badge")?.textContent.includes("Unconfirmed")) errs.push("incomplete read lacked Unconfirmed badge on active issue");
 
   // Transition 4: Recovering structured state renders calmly without fabricated controls
   currentDock.complete = true;

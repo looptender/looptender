@@ -23,7 +23,7 @@
   // What looptender did: worded by the same read as API, served on its own
   // for its size, and read only for the Usage page and a loop's page.
   var USAGE = "api/v1/usage";
-  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false, accountRemove: null, mapMode: "map", mapQuery: "", mapFilter: "all", mapShowRetired: false, mapSelected: null, activeDrawer: null, issueStaleNotice: "", acctFilter: "all", acctDensity: "detailed" };
+  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false, accountRemove: null, mapMode: "map", mapQuery: "", mapFilter: "all", mapShowRetired: false, mapSelected: null, activeDrawer: null, issueStaleNotice: "", changeSerial: 0, retainedNeeds: [], retainedLoops: Object.create(null), acctFilter: "all", acctDensity: "detailed" };
 
   var TONES = {
     supervising: "good", waiting_for_you: "attn", waiting_on_limit: "limit", waiting_on_network: "limit", checks_failing: "warn",
@@ -143,8 +143,20 @@
     if (m) return { view: "loop", key: m[1] };
     return { view: "home" };
   }
+  function effectiveNeeds(d) {
+    var cur = list(d && d.needsYou);
+    if (!state.retainedNeeds || !state.retainedNeeds.length) return cur;
+    var seen = Object.create(null);
+    cur.forEach(function (n) { seen[n.key] = true; });
+    var out = cur.slice();
+    state.retainedNeeds.forEach(function (n) { if (!seen[n.key]) out.push(n); });
+    return out;
+  }
+  function effectiveLoopByKey(d, key) {
+    return list(d && d.loops).filter(function (l) { return l.key === key; })[0] || (state.retainedLoops && state.retainedLoops[key]) || null;
+  }
   function loopByKey(key) { return list(state.data.loops).filter(function (l) { return l.key === key; })[0]; }
-  function needFor(key) { return list(state.data.needsYou).filter(function (n) { return n.key === key; })[0]; }
+  function needFor(key) { return effectiveNeeds(state.data).filter(function (n) { return n.key === key; })[0]; }
 
   // ---- Small pieces shared by the views ----
 
@@ -408,7 +420,7 @@
     return src.filter(function (cItem) { return cItem.attention === "context_changed" || cItem.reason === "context_changed"; });
   }
   function categorizeNeeds(d) {
-    var items = list(d && d.needsYou), dec = [], chk = [], unr = [];
+    var items = effectiveNeeds(d), dec = [], chk = [], unr = [];
     items.forEach(function (nItem) {
       var kindStr = nItem.waiting || "";
       if (kindStr === "checks" || (!kindStr && (nItem.kind === "overdue" || nItem.kind === "build_replaced"))) chk.push(nItem);
@@ -436,61 +448,108 @@
   function waitingLanesOf(loopObj) {
     return list(loopObj && loopObj.lanes && loopObj.lanes.lanes).filter(function (laneRow) { return laneRow.state === "waiting"; });
   }
-  function structuredOpenUrl(rawUrl) {
-    if (typeof rawUrl !== "string" || !rawUrl) return "";
-    try {
-      var parsed = new URL(rawUrl, location.href);
-      if (parsed.protocol === "https:" || parsed.protocol === "bb:") return parsed.href;
-    } catch (e) { return ""; }
-    return "";
+  function currentChainRouteKey(loopObj) {
+    var entries = list(loopObj && loopObj.chain && loopObj.chain.entries);
+    var cur = entries.filter(function (e) { return !!e.current; })[0] || entries[0] || null;
+    return cur && cur.route ? cur.route : "";
   }
-  function issueFingerprint(nItem, loopObj) {
+  function issueFingerprint(nItem, loopObj, includeIdentifiers) {
     if (!nItem) return "";
-    var laneIds = waitingLanesOf(loopObj).map(function (ln) { return (ln.key || ln.number) + ":" + (ln.questionId || ln.phrase || ""); }).sort().join(",");
+    var includeIds = includeIdentifiers !== false;
+    var cr = loopObj && loopObj.currentRoute;
+    var crParts = cr ? [cr.availability || "", cr.role || "", includeIds ? (cr.name || "") : "", cr.tool || "", cr.provider || "", cr.model || ""].join(":") : "";
+    var ids = loopObj && loopObj.identifiers;
+    var idParts = includeIds && ids ? [ids.registrationId || "", ids.thread || ""].join(":") : "";
+    var laneIds = waitingLanesOf(loopObj).map(function (ln) {
+      return [ln.number || "", ln.loopKey || "", ln.state || "", ln.phrase || "", ln.titleEvidence || "", includeIds ? (ln.key || "") : "", includeIds ? (ln.title || "") : ""].join(":");
+    }).sort().join(",");
+    var limIds = list(loopObj && loopObj.limits).filter(function (lm) { return !!lm.reached; }).map(function (lm) {
+      return [lm.label || "", lm.phrase || "", lm.effect || ""].join(":");
+    }).sort().join(",");
     return [
       nItem.key || "",
       nItem.kind || "",
       nItem.waiting || "",
       nItem.by || "",
-      nItem.questionId || "",
-      nItem.targetRevision || "",
-      nItem.ownerRevision || "",
       nItem.since || "",
+      nItem.sinceEvidence || "",
       nItem.reason || "",
-      nItem.note || "",
+      nItem.maskedNote || "",
+      includeIds ? (nItem.note || "") : "",
       loopObj ? (loopObj.state || "") : "",
-      loopObj && loopObj.hold ? (loopObj.hold.state || "") : "",
-      laneIds
+      loopObj ? (loopObj.evidence || "") : "",
+      loopObj && loopObj.hold ? [loopObj.hold.state || "", loopObj.hold.since || "", loopObj.hold.sinceEvidence || ""].join(":") : "",
+      loopObj && loopObj.waiting ? [loopObj.waiting.kind || "", loopObj.waiting.by || "", loopObj.waiting.since || ""].join(":") : "",
+      crParts,
+      currentChainRouteKey(loopObj),
+      loopObj ? (loopObj.provider || "") : "",
+      loopObj ? (loopObj.model || "") : "",
+      loopObj && loopObj.moved ? String(!!loopObj.moved.held) : "",
+      loopObj && loopObj.archived ? (loopObj.archived.at || "") : "",
+      loopObj && loopObj.lineage ? [loopObj.lineage.count || 0, loopObj.lineage.from || ""].join(":") : "",
+      loopObj && loopObj.lanes ? (loopObj.lanes.availability || "") : "",
+      idParts,
+      laneIds,
+      limIds
     ].join("|");
   }
+  function taskUnconfirmedText(d, nItem, loopObj) {
+    if (state.failed) return "Unconfirmed \u2014 last read failed; showing retained snapshot";
+    if (nItem && nItem._retainedIncomplete) return "Unconfirmed \u2014 omitted from incomplete read; not confirmed resolved";
+    if (d && d.complete === false) return "Unconfirmed \u2014 read was incomplete";
+    if (loopObj && loopObj.evidence === "partial") return "Unconfirmed \u2014 loop evidence is partial";
+    if (loopObj && loopObj.evidence === "unavailable") return "Unconfirmed \u2014 loop evidence is unavailable";
+    return "";
+  }
   function reconcileActiveIssue(d) {
-    if (!d) return;
+    if (!d || state.failed) return;
+    var curIdsMode = !!d.identifiers;
     if (state.activeDrawer) {
       var drKey = state.activeDrawer.key;
-      var curNeed = list(d.needsYou).filter(function (x) { return x.key === drKey; })[0] || null;
-      var curLoop = list(d.loops).filter(function (x) { return x.key === drKey; })[0] || null;
+      var curNeed = effectiveNeeds(d).filter(function (x) { return x.key === drKey; })[0] || null;
+      var curLoop = effectiveLoopByKey(d, drKey);
       if (!curNeed) {
         if (curLoop && isLoopSuperseded(curLoop)) state.issueStaleNotice = curLoop.name + " is now superseded; previous task flow was cleared.";
         else state.issueStaleNotice = "";
         state.activeDrawer = null;
-      } else {
-        var nextFp = issueFingerprint(curNeed, curLoop);
-        if (nextFp !== state.activeDrawer.fp) {
+      } else if (!curNeed._retainedIncomplete) {
+        var nextFullFp = issueFingerprint(curNeed, curLoop, true);
+        var nextBaseFp = issueFingerprint(curNeed, curLoop, false);
+        var fpMismatch = curIdsMode === state.activeDrawer.idsMode ? nextFullFp !== state.activeDrawer.fp : nextBaseFp !== state.activeDrawer.baseFp;
+        if (fpMismatch) {
           state.activeDrawer = null;
-          state.issueStaleNotice = "Issue details updated for " + curNeed.loop + " (question, target, or hold changed). Review current state before acting.";
+          state.issueStaleNotice = "Issue details updated for " + curNeed.loop + " (target, route, thread, or hold changed). Review current state before acting.";
+        } else if (curIdsMode !== state.activeDrawer.idsMode) {
+          state.activeDrawer.idsMode = curIdsMode;
+          state.activeDrawer.fp = nextFullFp;
+          state.activeDrawer.baseFp = nextBaseFp;
         }
       }
     }
     if (state.change && state.change.issueFp) {
       var chKey = state.change.key;
-      var chNeed = list(d.needsYou).filter(function (x) { return x.key === chKey; })[0] || null;
-      var chLoop = list(d.loops).filter(function (x) { return x.key === chKey; })[0] || null;
-      var changedOut = !chNeed || (chLoop && (isLoopRetired(chLoop) || isLoopSuperseded(chLoop))) || issueFingerprint(chNeed, chLoop) !== state.change.issueFp;
-      if (changedOut) {
-        state.issueStaleNotice = chLoop && isLoopSuperseded(chLoop)
-          ? chLoop.name + " was superseded on the latest read. Previous pending review was cancelled."
-          : "Issue or hold state updated before confirming" + (chNeed ? " for " + chNeed.loop : "") + ". Previous pending review was cancelled.";
+      var chNeed = effectiveNeeds(d).filter(function (x) { return x.key === chKey; })[0] || null;
+      var chLoop = effectiveLoopByKey(d, chKey);
+      if (d.complete === false && (!chNeed || chNeed._retainedIncomplete || (chLoop && chLoop.evidence !== "available"))) {
+        state.changeSerial = (state.changeSerial || 0) + 1;
         state.change = null;
+        state.issueStaleNotice = "Read was incomplete; previous pending review was cancelled until a complete read confirms current state.";
+      } else {
+        var chNextFp = chNeed ? issueFingerprint(chNeed, chLoop, true) : "";
+        var chNextBaseFp = chNeed ? issueFingerprint(chNeed, chLoop, false) : "";
+        var chFpMismatch = chNeed && (curIdsMode === state.change.issueIdsMode ? chNextFp !== state.change.issueFp : chNextBaseFp !== state.change.issueBaseFp);
+        var changedOut = !chNeed || chNeed._retainedIncomplete || (chLoop && (isLoopRetired(chLoop) || isLoopSuperseded(chLoop))) || chFpMismatch;
+        if (changedOut) {
+          state.changeSerial = (state.changeSerial || 0) + 1;
+          state.issueStaleNotice = chLoop && isLoopSuperseded(chLoop)
+            ? chLoop.name + " was superseded on the latest read. Previous pending review was cancelled."
+            : "Issue, target, or hold state updated before confirming" + (chNeed ? " for " + chNeed.loop : "") + ". Previous pending review was cancelled.";
+          state.change = null;
+        } else if (curIdsMode !== state.change.issueIdsMode) {
+          state.change.issueIdsMode = curIdsMode;
+          state.change.issueFp = chNextFp;
+          state.change.issueBaseFp = chNextBaseFp;
+        }
       }
     }
   }
@@ -539,10 +598,16 @@
     boxEl.dataset.drawerKey = nItem.key;
     boxEl.dataset.drawerMode = dr.mode;
     var head = el("div", "task-drawer-head");
+    var uncText = taskUnconfirmedText(state.data, nItem, loopObj);
+    var readPaused = !!(state.failed || (nItem && nItem._retainedIncomplete));
+    var fpFull = issueFingerprint(nItem, loopObj, true);
+    var fpBase = issueFingerprint(nItem, loopObj, false);
+    var idsMode = !!(state.data && state.data.identifiers);
     if (dr.mode === "question") {
       head.appendChild(el("span", null, "Question details"));
       head.appendChild(uiBadge("attn", "Wait: resolves externally when answered"));
       boxEl.appendChild(head);
+      if (uncText) boxEl.appendChild(el("span", "unconfirmed-badge", uncText));
       var kv = el("dl", "drawer-kv");
       var waitLanes = waitingLanesOf(loopObj);
       kv.appendChild(el("dt", null, "Waiting lanes"));
@@ -558,13 +623,11 @@
         lanesCell.textContent = "Not enumerated separately in this snapshot";
       }
       kv.appendChild(lanesCell);
-      var openHref = structuredOpenUrl(nItem.openUrl);
       var firstLaneLink = waitLanes.filter(function (ln) { return !!ln.loopKey; })[0];
       var thId = loopObj && loopObj.identifiers && loopObj.identifiers.thread;
       kv.appendChild(el("dt", null, "Target thread"));
       var tgtCell = el("dd");
-      if (openHref) tgtCell.appendChild(link(openHref, "Open target conversation"));
-      else if (firstLaneLink) tgtCell.appendChild(link("#/loop/" + firstLaneLink.loopKey, "Open " + (firstLaneLink.loop || firstLaneLink.title || "lane loop")));
+      if (firstLaneLink) tgtCell.appendChild(link("#/loop/" + firstLaneLink.loopKey, "Open " + (firstLaneLink.loop || firstLaneLink.title || "lane loop")));
       else if (state.identifiers && thId) tgtCell.appendChild(copyCommand("div", "bb thread open " + thId, "copy-qthread-" + nItem.key));
       else {
         tgtCell.appendChild(document.createTextNode("Thread identifier hidden or unavailable. "));
@@ -573,20 +636,20 @@
       kv.appendChild(tgtCell);
       boxEl.appendChild(kv);
       if (changesOn() && loopObj && list(loopObj.can).indexOf("resume") >= 0 && loopObj.hold && loopObj.hold.state === "held") {
-        var fpVal = issueFingerprint(nItem, loopObj);
         var optRow = el("div", "task-actions");
         optRow.appendChild(button("Review parent resume…", "act-resume-" + nItem.key, "", function () {
-          prepareChange(nItem.key, "resume", undefined, fpVal);
-        }));
-        optRow.appendChild(el("span", "sub", "Only if a separate parent hold remains after answering."));
+          prepareChange(nItem.key, "resume", undefined, fpFull, fpBase, idsMode);
+        }, readPaused));
+        optRow.appendChild(el("span", "sub", readPaused ? "Actions paused until a complete read confirms current state." : "Only if a separate parent hold remains after answering."));
         boxEl.appendChild(optRow);
       }
-      if (!openHref) boxEl.appendChild(el("p", "gap-note", "Direct conversation URL and question ID are not yet included in the panel feed (contract gap G9). Answer in BB/IDE above; supervision updates on the next authoritative check."));
+      boxEl.appendChild(el("p", "gap-note", "Direct conversation URLs and backend question, target, or owner revisions are not yet emitted by the panel feed (contract gap G9). This panel conservatively guards against observed route, thread, hold, and lane changes in saved snapshots and relies on backend prepare/confirm checks; same-snapshot replacements without a changed field are not verified separately here. Answer in BB/IDE above; supervision updates on the next saved check."));
     } else if (dr.mode === "deadline") {
       var dlLim = currentDeadlineLimit(loopObj);
       head.appendChild(el("span", null, "Configured deadline details"));
       head.appendChild(uiBadge("attn", dlLim && dlLim.reached ? "Deadline reached" : "Bound reached"));
       boxEl.appendChild(head);
+      if (uncText) boxEl.appendChild(el("span", "unconfirmed-badge", uncText));
       var dkv = el("dl", "drawer-kv");
       dkv.appendChild(el("dt", null, "Deadline"));
       dkv.appendChild(el("dd", null, dlLim ? say(dlLim.text) : "Configured deadline reached"));
@@ -594,9 +657,10 @@
       dkv.appendChild(el("dd", null, (dlLim && dlLim.effect) || (loopObj && loopObj.limitWait && loopObj.limitWait.afterDeadline ? "Limit reset falls after deadline; held until deadline is extended or marked finished." : "Loop held until finished or deadline extended.")));
       boxEl.appendChild(dkv);
       if (changesOn() && loopObj) {
-        var actRow = el("div", "task-actions"), fpDl = issueFingerprint(nItem, loopObj);
-        if (list(loopObj.can).indexOf("archive") >= 0) actRow.appendChild(button("Archive loop…", "act-archive-" + nItem.key, "", function () { prepareChange(nItem.key, "archive", undefined, fpDl); }));
-        if (list(loopObj.can).indexOf("stop") >= 0) actRow.appendChild(button("Stop…", "act-stop-" + nItem.key, "", function () { prepareChange(nItem.key, "stop", undefined, fpDl); }));
+        var actRow = el("div", "task-actions");
+        if (list(loopObj.can).indexOf("archive") >= 0) actRow.appendChild(button("Archive loop…", "act-archive-" + nItem.key, "", function () { prepareChange(nItem.key, "archive", undefined, fpFull, fpBase, idsMode); }, readPaused));
+        if (list(loopObj.can).indexOf("stop") >= 0) actRow.appendChild(button("Stop…", "act-stop-" + nItem.key, "", function () { prepareChange(nItem.key, "stop", undefined, fpFull, fpBase, idsMode); }, readPaused));
+        if (readPaused && actRow.childNodes.length) actRow.appendChild(el("span", "sub", "Actions paused until a complete read confirms current state."));
         if (actRow.childNodes.length) boxEl.appendChild(actRow);
       }
       boxEl.appendChild(el("p", "gap-note", "Extending loop.limits.deadline or marking finished directly from the panel is not supported yet (contract gap G11). Archive above if done, update the loop's configuration, or run looptender complete in Terminal."));
@@ -605,6 +669,7 @@
       head.appendChild(el("span", null, "Supervision diagnostics"));
       head.appendChild(uiBadge("plain", causeInfo.label));
       boxEl.appendChild(head);
+      if (uncText) boxEl.appendChild(el("span", "unconfirmed-badge", uncText));
       var skv = el("dl", "drawer-kv");
       skv.appendChild(el("dt", null, "Verified cause"));
       skv.appendChild(el("dd", null, causeInfo.detail));
@@ -619,10 +684,10 @@
       boxEl.appendChild(skv);
       var sAct = el("div", "task-actions");
       if (changesOn() && loopObj && loopObj.buildChange && loopObj.buildChange.action) {
-        var fpSup = issueFingerprint(nItem, loopObj);
         sAct.appendChild(button(loopObj.buildChange.label + "\u2026", "act-" + loopObj.buildChange.action + "-" + nItem.key, "", function () {
-          prepareChange(nItem.key, loopObj.buildChange.action, undefined, fpSup);
-        }));
+          prepareChange(nItem.key, loopObj.buildChange.action, undefined, fpFull, fpBase, idsMode);
+        }, readPaused));
+        if (readPaused) sAct.appendChild(el("span", "sub", "Actions paused until a complete read confirms current state."));
       }
       sAct.appendChild(link("#/versions", "Inspect Versions \u2192", "overview-jump"));
       boxEl.appendChild(sAct);
@@ -646,8 +711,11 @@
     }
     head.appendChild(el("span", "waited", nItem.waited || "Waiting time unknown"));
     li.appendChild(head);
-    var unconfirmed = state.failed || (state.data && state.data.complete === false) || (loopObj && loopObj.evidence === "unavailable");
-    if (unconfirmed) li.appendChild(el("span", "unconfirmed-badge", "Unconfirmed \u2014 observation stale or incomplete"));
+    var uncText = taskUnconfirmedText(state.data, nItem, loopObj);
+    if (uncText) {
+      li.dataset.unconfirmed = "1";
+      li.appendChild(el("span", "unconfirmed-badge", uncText));
+    }
     if (loopObj && loopObj.lineage && loopObj.lineage.from) {
       var lin = el("p", "sub");
       lin.appendChild(uiBadge("plain", "Continues earlier loop (" + loopObj.lineage.count + " prior)"));
@@ -679,23 +747,21 @@
     li.appendChild(todoEl);
 
     var actRow = el("div", "task-actions");
-    var fpNow = issueFingerprint(nItem, loopObj);
+    var fpFull = issueFingerprint(nItem, loopObj, true);
+    var fpBase = issueFingerprint(nItem, loopObj, false);
+    var idsMode = !!(state.data && state.data.identifiers);
+    var readPaused = !!(state.failed || (nItem && nItem._retainedIncomplete));
     var isQ = nItem.waiting === "asked";
     var isDl = !isQ && isDeadlineNeed(nItem, loopObj);
     var isAllow = !isQ && !isDl && isSendAllowanceNeed(nItem, loopObj);
     function toggleDrawer(modeName) {
       if (state.activeDrawer && state.activeDrawer.key === nItem.key && state.activeDrawer.mode === modeName) state.activeDrawer = null;
-      else state.activeDrawer = { key: nItem.key, mode: modeName, fp: fpNow };
+      else state.activeDrawer = { key: nItem.key, mode: modeName, fp: fpFull, baseFp: fpBase, idsMode: idsMode };
       render(false, true);
     }
     if (isQ) {
-      var openHref = structuredOpenUrl(nItem.openUrl);
       var laneTargets = waitingLanesOf(loopObj).filter(function (ln) { return !!ln.loopKey; });
-      if (openHref) {
-        var qExt = link(openHref, "Open question", "btn is-primary");
-        qExt.dataset.focus = "open-question-" + nItem.key;
-        actRow.appendChild(qExt);
-      } else if (laneTargets.length === 1) {
+      if (laneTargets.length === 1) {
         var qLane = link("#/loop/" + laneTargets[0].loopKey, "Open question", "btn is-primary");
         qLane.dataset.focus = "open-question-" + nItem.key;
         actRow.appendChild(qLane);
@@ -709,14 +775,14 @@
       dlBtn.setAttribute("aria-pressed", String(!!(state.activeDrawer && state.activeDrawer.key === nItem.key && state.activeDrawer.mode === "deadline")));
       actRow.appendChild(dlBtn);
     } else if (isAllow) {
-      var canAllow = changesOn() && !!(state.server && state.server.sendAllowanceEdit === true);
+      var canAllow = !readPaused && changesOn() && !!(state.server && state.server.sendAllowanceEdit === true);
       var allowBtn = button("Review send allowance\u2026", "act-set_send_allowance-" + nItem.key, "is-primary", function () {
         if (onOverview) window.location.hash = "#/loop/" + nItem.key;
-        editAllowance(nItem.key, fpNow);
+        editAllowance(nItem.key, fpFull, fpBase, idsMode);
       }, !canAllow);
-      if (!canAllow) allowBtn.title = "Requires panel started with --allow-changes outside a supervised thread.";
+      if (!canAllow) allowBtn.title = readPaused ? "Paused until a complete read confirms current state." : "Requires panel started with --allow-changes outside a supervised thread.";
       actRow.appendChild(allowBtn);
-      if (!canAllow) actRow.appendChild(el("span", "sub", "Read-only or in-thread: editAllowance unavailable here."));
+      if (!canAllow) actRow.appendChild(el("span", "sub", readPaused ? "Actions paused until a complete read confirms current state." : "Read-only or in-thread: editAllowance unavailable here."));
     } else if (cat === "checks") {
       var supBtn = button("Inspect supervision", "inspect-supervision-" + nItem.key, "", function () { toggleDrawer("supervision"); });
       supBtn.setAttribute("aria-pressed", String(!!(state.activeDrawer && state.activeDrawer.key === nItem.key && state.activeDrawer.mode === "supervision")));
@@ -724,8 +790,8 @@
     } else if (cat === "decisions" && changesOn() && loopObj && list(loopObj.can).indexOf("resume") >= 0) {
       actRow.appendChild(button("Review resume\u2026", "act-resume-" + nItem.key, "", function () {
         if (onOverview) window.location.hash = "#/loop/" + nItem.key;
-        prepareChange(nItem.key, "resume", undefined, fpNow);
-      }));
+        prepareChange(nItem.key, "resume", undefined, fpFull, fpBase, idsMode);
+      }, readPaused));
     }
     if (onOverview) actRow.appendChild(link("#/loop/" + nItem.key, cat === "checks" ? "Loop diagnostics \u2192" : "Inspect loop \u2192", "overview-jump"));
     li.appendChild(actRow);
@@ -740,7 +806,7 @@
     return li;
   }
   function needCard(n, onOverview) {
-    return taskCard(n, onOverview, state.data ? loopByKey(n.key) : null);
+    return taskCard(n, onOverview, state.data ? effectiveLoopByKey(state.data, n.key) : null);
   }
 
   // ---- Level 1: the picker ----
@@ -1842,7 +1908,7 @@
     sec.setAttribute("aria-labelledby", "attn-section-title");
     var hd = el("h2", null, "Needs attention");
     hd.id = "attn-section-title";
-    hd.appendChild(el("span", "sub", "Resolves automatically on next authoritative observation when answered externally"));
+    hd.appendChild(el("span", "sub", "Clears on the next complete saved read once resolved externally; failed or incomplete reads retain items as Unconfirmed."));
     sec.appendChild(hd);
 
     if (state.issueStaleNotice) {
@@ -1854,6 +1920,7 @@
     }
 
     var loopLookup = Object.create(null);
+    if (state.retainedLoops) Object.keys(state.retainedLoops).forEach(function (k) { loopLookup[k] = state.retainedLoops[k]; });
     list(d.loops).forEach(function (loopObj) { loopLookup[loopObj.key] = loopObj; });
     var hasAny = cats.decisions.length || cats.checks.length || cats.unreadable.length || cats.driftCards.length;
     if (!hasAny) {
@@ -1924,7 +1991,7 @@
     }
     if (d.lede) pane.appendChild(el("p", "lede", d.lede));
     var cats = categorizeNeeds(d);
-    if (!list(d.loops).length) {
+    if (!list(d.loops).length && !cats.all.length) {
       var gEmpty = groupBox(d);
       if (gEmpty) pane.appendChild(gEmpty);
       var rEmpty = routerBox(d.router);
@@ -2665,22 +2732,31 @@
     }).then(function (d) { return allowanceReply(d, key, step); })
       .finally(function () { clearTimeout(timer); });
   }
-  function editAllowance(key, issueFp) {
-    state.change = { key: key, action: "set_send_allowance", editing: true, draft: "", issueFp: issueFp || "" };
+  function editAllowance(key, issueFp, issueBaseFp, issueIdsMode) {
+    state.changeSerial = (state.changeSerial || 0) + 1;
+    state.change = { key: key, action: "set_send_allowance", editing: true, draft: "", issueFp: issueFp || "", issueBaseFp: issueBaseFp || "", issueIdsMode: issueIdsMode !== undefined ? !!issueIdsMode : !!(state.data && state.data.identifiers) };
     render(false, true);
     focusOn("allowance-input");
   }
-  function prepareChange(key, action, amount, issueFp) {
+  function prepareChange(key, action, amount, issueFp, issueBaseFp, issueIdsMode) {
     if (!changesOn()) return;
     var curFp = issueFp || (state.change && state.change.key === key ? state.change.issueFp : "");
-    state.change = { key: key, action: action, busy: true, issueFp: curFp };
+    var curBaseFp = issueBaseFp != null ? issueBaseFp : (state.change && state.change.key === key ? (state.change.issueBaseFp || "") : "");
+    var curIdsMode = issueIdsMode !== undefined ? !!issueIdsMode : (state.change && state.change.key === key && state.change.issueIdsMode !== undefined ? !!state.change.issueIdsMode : !!(state.data && state.data.identifiers));
+    var seq = state.changeSerial = (state.changeSerial || 0) + 1;
+    state.change = { key: key, action: action, busy: true, issueFp: curFp, issueBaseFp: curBaseFp, issueIdsMode: curIdsMode };
     render(false, true);
     (action === "set_send_allowance" ? allowancePost(key, "prepare", state.server.form, amount) : post("api/v1/loops/" + key + "/prepare", state.server.form, { action: action }))
-      .then(function (d) { state.change = d.preview ? { key: key, action: action, preview: d.preview, issueFp: curFp } : { key: key, action: action, result: d.result, issueFp: curFp }; })
+      .then(function (d) {
+        if (seq !== state.changeSerial) return;
+        state.change = d.preview ? { key: key, action: action, preview: d.preview, issueFp: curFp, issueBaseFp: curBaseFp, issueIdsMode: curIdsMode } : { key: key, action: action, result: d.result, issueFp: curFp, issueBaseFp: curBaseFp, issueIdsMode: curIdsMode };
+      })
       .catch(function () {
-        state.change = { key: key, action: action, issueFp: curFp, result: { outcome: "refused", retry: action !== "set_send_allowance", text: "The review could not be prepared: the panel did not answer. Nothing was changed." } };
+        if (seq !== state.changeSerial) return;
+        state.change = { key: key, action: action, issueFp: curFp, issueBaseFp: curBaseFp, issueIdsMode: curIdsMode, result: { outcome: "refused", retry: action !== "set_send_allowance", text: "The review could not be prepared: the panel did not answer. Nothing was changed." } };
       })
       .then(function () {
+        if (seq !== state.changeSerial) return;
         render(false, true);
         if (!state.change) { focusOn("act-" + action); return; }
         if (state.change.preview) focusOn("change-cancel");
@@ -2693,15 +2769,26 @@
     var c = state.change, p = c && c.preview;
     if (!p || c.busy) return;
     if (c.issueFp && state.data) {
-      var liveLoop = loopByKey(c.key), liveNeed = needFor(c.key);
-      if (!liveNeed || (liveLoop && (isLoopRetired(liveLoop) || isLoopSuperseded(liveLoop))) || issueFingerprint(liveNeed, liveLoop) !== c.issueFp) {
+      if (state.failed || state.data.complete === false) {
+        state.issueStaleNotice = "Cannot confirm while reads are failing or incomplete. Wait for a complete read before confirming.";
+        render(false, true);
+        return;
+      }
+      var liveLoop = effectiveLoopByKey(state.data, c.key), liveNeed = needFor(c.key);
+      var liveFp = liveNeed ? issueFingerprint(liveNeed, liveLoop, true) : "";
+      var liveBaseFp = liveNeed ? issueFingerprint(liveNeed, liveLoop, false) : "";
+      var curIdsMode = !!state.data.identifiers;
+      var fpChanged = liveNeed && (c.issueIdsMode === curIdsMode ? liveFp !== c.issueFp : liveBaseFp !== (c.issueBaseFp || ""));
+      if (!liveNeed || liveNeed._retainedIncomplete || (liveLoop && (isLoopRetired(liveLoop) || isLoopSuperseded(liveLoop))) || fpChanged) {
+        state.changeSerial = (state.changeSerial || 0) + 1;
         state.change = null;
-        state.issueStaleNotice = "Hold or question state changed before confirming. Previous review was cancelled without submitting.";
+        state.issueStaleNotice = "Hold, target, or question state changed before confirming. Previous review was cancelled without submitting.";
         render(false, true);
         return;
       }
     }
-    state.change = { key: c.key, action: c.action, preview: p, busy: true, issueFp: c.issueFp || "" };
+    state.changeSerial = (state.changeSerial || 0) + 1;
+    state.change = { key: c.key, action: c.action, preview: p, busy: true, issueFp: c.issueFp || "", issueBaseFp: c.issueBaseFp || "", issueIdsMode: !!c.issueIdsMode };
     render(false, true);
     var body = { action: p.action };
     if (option && p.stop) {
@@ -2727,6 +2814,7 @@
   }
   function cancelChange() {
     var c = state.change;
+    state.changeSerial = (state.changeSerial || 0) + 1;
     state.change = null;
     render(false, true);
     if (c) focusOn("act-" + c.action);
@@ -4588,6 +4676,51 @@
     state.timer = setTimeout(load, refreshSeconds() * 1000);
   }
 
+  function findDirectBadge(container) {
+    for (var i = 0; i < container.children.length; i++) {
+      if (container.children[i].classList && container.children[i].classList.contains("unconfirmed-badge")) return container.children[i];
+    }
+    return null;
+  }
+  function syncTaskUnconfirmedDOM() {
+    var pane = $("pane");
+    if (!pane || !state.data) return;
+    Array.prototype.forEach.call(pane.querySelectorAll(".task-card[data-issue-key]"), function (card) {
+      var k = card.dataset.issueKey;
+      var txt = taskUnconfirmedText(state.data, needFor(k), effectiveLoopByKey(state.data, k));
+      var badge = findDirectBadge(card);
+      if (txt) {
+        card.dataset.unconfirmed = "1";
+        if (!badge) {
+          badge = el("span", "unconfirmed-badge", txt);
+          var topRow = card.querySelector(".task-top");
+          card.insertBefore(badge, topRow ? topRow.nextSibling : card.firstChild);
+        } else {
+          badge.textContent = txt;
+        }
+      } else if (badge) {
+        delete card.dataset.unconfirmed;
+        badge.remove();
+      }
+    });
+    Array.prototype.forEach.call(pane.querySelectorAll(".task-drawer[data-drawer-key]"), function (dr) {
+      var dk = dr.dataset.drawerKey;
+      var dtxt = taskUnconfirmedText(state.data, needFor(dk), effectiveLoopByKey(state.data, dk));
+      var dbadge = findDirectBadge(dr);
+      if (dtxt) {
+        if (!dbadge) {
+          dbadge = el("span", "unconfirmed-badge", dtxt);
+          var dHead = dr.querySelector(".task-drawer-head");
+          dr.insertBefore(dbadge, dHead ? dHead.nextSibling : dr.firstChild);
+        } else {
+          dbadge.textContent = dtxt;
+        }
+      } else if (dbadge) {
+        dbadge.remove();
+      }
+    });
+  }
+
   function load(byHand) {
     if (state.busy) { state.again = true; return; }
     // A hidden tab reads nothing, not even what serves the page: any read
@@ -4610,6 +4743,32 @@
         if (asked !== state.identifiers) { state.again = true; return; }
         if (savedAccounts.reference !== d.accountsReference && savedAccounts.abort) { savedAccounts.abort.abort(); ++savedAccounts.serial; }
         if (d.accountsReference && savedAccounts.reference === d.accountsReference && savedAccounts.status === "ready") d.accounts = savedAccounts.data;
+        var prevData = state.data;
+        var prevNeeds = prevData ? effectiveNeeds(prevData) : [];
+        if (d.complete === false) {
+          var seenNeedKeys = Object.create(null);
+          list(d.needsYou).forEach(function (n) { seenNeedKeys[n.key] = true; });
+          var seenLoopMap = Object.create(null);
+          list(d.loops).forEach(function (l) { seenLoopMap[l.key] = l; });
+          var prevLoops = Object.create(null);
+          if (state.retainedLoops) Object.keys(state.retainedLoops).forEach(function (k) { prevLoops[k] = state.retainedLoops[k]; });
+          if (prevData) list(prevData.loops).forEach(function (l) { prevLoops[l.key] = l; });
+          var keptNeeds = [];
+          var keptLoops = Object.create(null);
+          prevNeeds.forEach(function (pn) {
+            if (!seenNeedKeys[pn.key]) {
+              var cloneNeed = Object.assign({}, pn, { _retainedIncomplete: true });
+              if (!d.identifiers && cloneNeed.noteMasked && cloneNeed.maskedNote) cloneNeed.note = cloneNeed.maskedNote;
+              keptNeeds.push(cloneNeed);
+              if (!seenLoopMap[pn.key] && prevLoops[pn.key]) keptLoops[pn.key] = prevLoops[pn.key];
+            }
+          });
+          state.retainedNeeds = keptNeeds;
+          state.retainedLoops = keptLoops;
+        } else {
+          state.retainedNeeds = [];
+          state.retainedLoops = Object.create(null);
+        }
         state.data = d; state.lastOk = Date.now(); state.failed = false; state.failedSince = 0; state.failedLong = false;
         if (wantsUsage(route())) loadUsage();
         if (render(false) !== false) notice("cut", d.complete === false ? "This read was cut off before every loop was read. Loops that were not read are listed as could not be read; it reads again shortly." : "");
@@ -4632,6 +4791,9 @@
         if (!state.data) {
           $("picker").replaceChildren(el("p", "placeholder", "Nothing could be read."));
           $("pane").replaceChildren(paneHead("Could not read"), emptyBox("Nothing could be read from " + cmd + ".", "It may have stopped; " + again));
+        } else {
+          render(false);
+          syncTaskUnconfirmedDOM();
         }
         renderReadline();
       })

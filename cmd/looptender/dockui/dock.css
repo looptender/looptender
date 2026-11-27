@@ -918,7 +918,7 @@ details[open] > .how-summary::before { transform: rotate(45deg); }
 .drawer-kv dt { color: var(--ink-2); }
 .drawer-kv dd { margin: 0; overflow-wrap: anywhere; }
 .gap-note { margin: 0; padding: 0.38rem 0.56rem; background: var(--surface); border: 1px dashed var(--border-ui); border-radius: var(--radius-sm); font-size: 0.78rem; color: var(--ink-2); overflow-wrap: anywhere; }
-.unconfirmed-badge { display: inline-flex; align-items: center; padding: 0.08rem 0.42rem; border-radius: var(--radius-sm); font-size: 0.73rem; font-weight: 650; border: 1px solid var(--warn-line); background: var(--warn-soft); color: var(--warn); }
+.unconfirmed-badge { display: inline-flex; align-items: center; justify-self: start; width: fit-content; padding: 0.08rem 0.42rem; border-radius: var(--radius-sm); font-size: 0.73rem; font-weight: 650; border: 1px solid var(--warn-line); background: var(--warn-soft); color: var(--warn); }
 .issue-stale-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 0.75rem; padding: 0.52rem 0.75rem; background: var(--attn-soft); border: 1px solid var(--attn-line); border-radius: var(--radius-sm); font-size: 0.81rem; }
 .cli-fold { font-size: 0.78rem; color: var(--ink-2); }
 .cli-fold summary { cursor: pointer; }

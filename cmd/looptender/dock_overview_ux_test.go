@@ -57,6 +57,31 @@ func TestDockOverviewGlossaryAndBoundaryInvariants(t *testing.T) {
 		}
 	}
 
+	// Guard against unemitted backend fields and enforce emitted target + partial/failed invariants.
+	for _, unemitted := range []string{"questionId", "targetRevision", "ownerRevision", "openUrl", "structuredOpenUrl"} {
+		if strings.Contains(js, unemitted) {
+			t.Errorf("dock.js references unemitted field or helper %q", unemitted)
+		}
+	}
+	fpBody := jsFunction(t, js, "function issueFingerprint(nItem, loopObj, includeIdentifiers) {")
+	for _, want := range []string{"currentRoute", "identifiers", "currentChainRouteKey"} {
+		if !strings.Contains(fpBody, want) {
+			t.Errorf("issueFingerprint must include backend-emitted field %q", want)
+		}
+	}
+	uncBody := jsFunction(t, js, "function taskUnconfirmedText(d, nItem, loopObj) {")
+	for _, want := range []string{"state.failed", "d.complete === false", `loopObj.evidence === "partial"`, `loopObj.evidence === "unavailable"`} {
+		if !strings.Contains(uncBody, want) {
+			t.Errorf("taskUnconfirmedText lacks %q", want)
+		}
+	}
+	if !strings.Contains(jsFunction(t, js, "function load(byHand) {"), "syncTaskUnconfirmedDOM(") {
+		t.Errorf("load(byHand) must update retained task DOM badges on failed refresh via syncTaskUnconfirmedDOM()")
+	}
+	if !strings.Contains(jsFunction(t, js, "function prepareChange(key, action, amount, issueFp, issueBaseFp, issueIdsMode) {"), "changeSerial") {
+		t.Errorf("prepareChange must guard out-of-order responses with changeSerial")
+	}
+
 	// Home view and Setup Map must never initiate account auto-checks or quota POSTs.
 	for _, fnHead := range []string{
 		"function renderHome(d, pane) {",
