@@ -881,10 +881,12 @@ registry/route-list plus 64 detailed quota fixture requires the existing main
 As of 2026-11-27, the additive producer
 [#588](https://github.com/looptender/looptender/pull/588) has landed on main in
 [`1c38291e`](https://github.com/looptender/looptender/commit/1c38291ec47b4d01bf01b90dabc834034986b0c5).
-The strict native consumer [#589](https://github.com/looptender/looptender/pull/589)
-and strict web consumer [#590](https://github.com/looptender/looptender/pull/590)
-remain pending integrations. Landed source does not establish released or
-installed capability. This reference preserves the reviewed evidence pins for
+The strict native/CLI consumer [#589](https://github.com/looptender/looptender/pull/589)
+has landed in [`3282d990`](https://github.com/looptender/looptender/commit/3282d9905b1ab0362ffa2c864f12bbc7e6447442),
+and the strict web consumer [#590](https://github.com/looptender/looptender/pull/590)
+has landed in [`9dcf7948`](https://github.com/looptender/looptender/commit/9dcf79487ffa5ee6f24a43cbce1077fb1588de16).
+These are landed source changes, not evidence of released or installed
+capability. This reference preserves the historical reviewed evidence pins for
 producer [`0f5c60a9`](https://github.com/looptender/looptender/blob/0f5c60a99cc230dfd1f17f4230f98e381e6c211f/internal/accounts/quota_details.go),
 native [`b2feafc4`](https://github.com/looptender/looptender/blob/b2feafc412f320cd13c94c51cd55bc388d85f45d/integrations/macos/Sources/KeepgoingMenuCore/Quota.swift)
 and web [`719e5bfb`](https://github.com/looptender/looptender/blob/719e5bfb2db2e37357378c3e6ea0ccde22e98407/cmd/looptender/dockui/dock.js)
@@ -931,10 +933,10 @@ quota-summary/provenance path, including escaped-equivalent keys. Existing
 source/provider/timestamp consistency checks still apply. Older consumers do
 not thereby gain the new strict validation or corrected labels.
 
-The pending CLI text in #589 says **Last successful fetch … (local retrieval
-time); provider observation time and freshness unknown**. The pending native
+The source CLI text from #589 says **Last successful fetch … (local retrieval
+time); provider observation time and freshness unknown**. The source native
 menu distinguishes local successful-fetch time from unavailable provider
-observation time; the pending web consumer uses **Retrieved** (or legacy
+observation time; the source web consumer uses **Retrieved** (or legacy
 **Local read**) with **Provider freshness unknown**. JSON retains the historical
 fields. See the [native saved-quota contract](../integrations/macos/README.md#saved-account-quota-unreleased)
 for the separately versioned companion behavior.

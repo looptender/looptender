@@ -546,10 +546,10 @@ provider measurement timestamp, and a recent retrieval does not prove provider
 freshness. Here, fresh bound evidence means evidence satisfying its explicitly
 stated age/provenance policy; it must not silently promote that local timestamp
 to provider attestation. The landed
-[quota summary provenance v1 producer and pending consumers](../accounts.md#quota-summary-provenance-v1-source-contract)
+[quota summary provenance v1 producer and consumers](../accounts.md#quota-summary-provenance-v1-source-contract)
 retain local successful retrieval time and explicit null provider measurement
 time; their source contract does not establish provider freshness, a runtime
-evidence assembler or operational pooling. Pending source is not installed
+evidence assembler or operational pooling. Source support is not installed
 consumer support.
 
 Preview capacity is measured in managed-work concurrency slots, charged against
