@@ -7,7 +7,7 @@
 // this kind of target (config.ObservedOnly). A loop that opts in with
 // sessionpipe.send: wake_only lets the engine wake an idle session; Send then
 // delivers the wake through `sessionpipe ask` (send.go). Stop stays
-// unsupported: sessionpipe has no local cancel.
+// unsupported: observation grants no stop authority.
 //
 // Only an allowlist of event types and data keys is used, and each value
 // must be one of the words the protocol defines. Everything else in a line,
@@ -109,7 +109,7 @@ func (a *Adapter) Name() string { return config.SessionpipeAdapter }
 // ConversationKey is the session as sessionpipe names it.
 func (a *Adapter) ConversationKey() (string, bool) { return a.harness + ":" + a.id, a.id != "" }
 
-// Stop is never possible: looptender does not stop a session it observes.
+// Stop is unsupported: looptender does not stop a session it observes.
 func (a *Adapter) Stop(context.Context) error {
 	return adapter.ErrUnsupported{Op: "stopping an observed sessionpipe session"}
 }
@@ -372,6 +372,13 @@ func (a *Adapter) apply(line []byte, s *readState) error {
 		return ErrNotTierZero
 	}
 	if e.Harness.Name != a.harness || e.Session.ID != a.id {
+		return nil
+	}
+	// Protocol v1 requires a nonnegative sequence, representable exactly as a
+	// JSON integer. Missing/invalid sequences cannot establish fresh visibility
+	// or bypass the cursor's replay guard. Check tier/protocol first above.
+	if e.Session.Seq == nil || *e.Session.Seq < 0 || *e.Session.Seq > (1<<53)-1 {
+		s.Skipped++
 		return nil
 	}
 	at, err := time.Parse(time.RFC3339Nano, e.Time)

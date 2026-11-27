@@ -266,3 +266,32 @@ owned-worker cancellation during provider IO and menu takeover after panel exit.
 The contract smoke runs these alongside native decoding and real CLI fixtures.
 Physical sleep/reboot, installed-app update and real provider acceptance remain
 unrun; local XCTest availability is reported separately.
+
+### Running menu identity and collection detail (unreleased)
+
+The menu keeps its running version/source build near the top, separate from a
+transient action receipt. Packaging embeds `LooptenderSourceRevision` (full Git
+revision, or `unknown`) and `LooptenderSourceModified` (Boolean) in Info.plist;
+the app captures them once at startup. A moved install link never renames the
+already-running source stamp. Missing metadata displays **build unknown**.
+The CLI line is its build label from the last saved read, not a claim that it
+shares the menu's source revision; failed reads say **CLI build unavailable**.
+An installed-menu mismatch is shown separately using the existing local update
+comparison. These labels never restart or update anything.
+
+Accounts puts automatic collection state, next eligible fetch, last successful
+fetch age/exact time and failed-attempt evidence before quota history. A passed
+reset says **Reading out of date**, not that quota replenished. Active structured
+remaining/reset values keep their existing semantics and ordering. Provider
+freshness unknown remains distinct from retrieval age. Settings absent in older
+CLI replies say status unavailable; they do not imply a grant. Actions still
+open the scoped Accounts page for reviewed retrieval/settings. A menu redraw
+only advances clocks; it never fetches provider data. The deployment and explicit
+opt-in prerequisites above remain required.
+
+`MenuIdentitySmoke.swift` exercises startup capture, missing metadata, action
+receipt separation, failed CLI and installed mismatch/tracking behavior without
+XCTest or runtime state. `QuotaClockSmoke.swift` and `UsageUpdatingSmoke.swift`
+cover advancing quota/collection clocks and ordering with fictional evidence.
+Swift compilation, standalone fixture execution, hosted XCTest and physical
+menu acceptance are separate checks; a rendered fixture is not live acceptance.

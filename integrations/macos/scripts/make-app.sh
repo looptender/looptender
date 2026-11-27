@@ -19,6 +19,21 @@ menu_version=$(cat "$package/VERSION")
 case "$menu_version" in
   *[!0-9.]* | "" | .* | *. | *..*) echo "VERSION must be a plain version such as 0.1.0, not '$menu_version'" >&2; exit 1 ;;
 esac
+# Source provenance belongs to the packaged app, not the mutable install link.
+# Missing git metadata stays unknown; no paths or repository URLs are embedded.
+source_revision=unknown
+source_modified=false
+if source_head=$(git -C "$package" rev-parse --verify HEAD 2>/dev/null); then
+  case "$source_head" in
+    *[!0-9a-f]* | "") ;;
+    *) case ${#source_head} in 40|64) source_revision=$source_head ;; esac ;;
+  esac
+  if source_status=$(git -C "$package" status --porcelain --untracked-files=normal 2>/dev/null); then
+    if [ -n "$source_status" ]; then source_modified=true; fi
+  else
+    source_revision=unknown
+  fi
+fi
 swift build --package-path "$package" -c release
 app="$package/.build/LooptenderMenu.app"
 earlier="$package/.build/KeepgoingMenu.app"
@@ -41,6 +56,10 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$menu_version</string>
+	<key>LooptenderSourceRevision</key>
+	<string>$source_revision</string>
+	<key>LooptenderSourceModified</key>
+	<$source_modified/>
 	<key>CFBundleVersion</key>
 	<string>0</string>
 	<key>LSMinimumSystemVersion</key>

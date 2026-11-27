@@ -26,6 +26,21 @@ import Foundation
                   (!["waiting", "paused"].contains(state) || row.detail.contains("updates paused")),
                   (state != "backoff" || row.detail.contains("fetch failed")) else { fatalError("Scheduler evidence hid saved time or introduced authority") }
         }
+        // Collection/failure facts must be above quota history, including when
+        // a reset passes; countdowns advance without rewriting successful time.
+        let pending = try Contract.panelList(payload(["state": "off", "text": "Keep usage updated: off", "nextAttemptAt": "2030-03-04T14:00:00Z"]), exit: 0)
+        let account = pending.accountQuotas!.accounts[0]
+        let first = MenuBuilder.quotaAccountRow(account, now: fixtureNow)
+        let later = MenuBuilder.quotaAccountRow(account, now: fixtureNow.addingTimeInterval(7200))
+        let windowIndex = first.submenu.firstIndex { $0.semanticID?.hasPrefix("quota-window:") == true }!
+        for prefix in ["Keep usage updated: off", "Last successful fetch", "Refresh failed"] {
+            precondition(first.submenu.firstIndex { $0.accessibilityLabel.hasPrefix(prefix) }! < windowIndex)
+        }
+        precondition(first.submenu.contains { $0.title == "Next eligible fetch in 2 h" })
+        precondition(later.submenu.contains { $0.title == "Fetch eligible now · waiting for scheduler" })
+        precondition(first.submenu.filter { $0.accessibilityLabel == "Last successful fetch 2030-03-04T12:00:00Z" }.count == 1)
+        precondition(later.submenu.contains { $0.accessibilityLabel == "Last successful fetch 2030-03-04T12:00:00Z" })
+        precondition(first.detail.contains("updates off"))
         // Provider retrieval is a successful fetch, never evidence of a fresh
         // provider observation. Match the same user-visible contract as XCTest.
         for (provider, source) in [("claude-code", "claude:get_usage"), ("antigravity", "agy:/usage")] {
