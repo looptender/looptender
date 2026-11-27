@@ -309,3 +309,28 @@ func TestExecOutputBound(t *testing.T) {
 		t.Fatal("overflow not refused")
 	}
 }
+
+func TestLegacyProtectionAndReviewPolicy(t *testing.T) {
+	s := fixture()
+	s.Rules = []Rule{}
+	if err := json.Unmarshal([]byte(`{"requiresStatusChecks":true,"requiredStatusChecks":[{"context":"test","app":{"databaseId":10}}]}`), &s.PR.BaseRef.BranchProtectionRule); err != nil {
+		t.Fatal(err)
+	}
+	if r := evaluate(s); !r.Ready {
+		t.Fatal(r)
+	}
+	s.PR.ReviewDecision = nil
+	if r := evaluate(s); r.Reason != "unknown_review_policy" {
+		t.Fatal(r)
+	}
+	s = fixture()
+	s.Rules = append(s.Rules, Rule{Type: "pull_request", Parameters: json.RawMessage(`{"required_approving_review_count":1}`)})
+	s.PR.ReviewDecision = nil
+	if r := evaluate(s); r.Reason != "unknown_review_policy" {
+		t.Fatal(r)
+	}
+	s.Rules[1].Parameters = json.RawMessage(`{}`)
+	if r := evaluate(s); r.Reason != "unknown_review_policy" {
+		t.Fatal(r)
+	}
+}
