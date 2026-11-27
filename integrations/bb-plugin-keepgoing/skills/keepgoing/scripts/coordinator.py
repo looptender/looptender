@@ -26,7 +26,9 @@ def text(value, maximum=4096):
 
 def file_hash(path, maximum=LIMIT, collect=False):
     require(Path(path).is_absolute(), "absolute_path_required")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    # A FIFO can replace the path before open; acquire without waiting for a
+    # writer, then reject nonregular descriptors before any read.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(fd)
         require(stat.S_ISREG(info.st_mode) and info.st_size <= maximum, "source_bound")
