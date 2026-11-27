@@ -7,6 +7,7 @@
 // jsdom comes from DOCK_JSDOM_DIR, the directory of the jsdom package.
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
+import http from "node:http";
 
 const require = createRequire(import.meta.url);
 const { JSDOM, VirtualConsole } = require(process.env.DOCK_JSDOM_DIR);
@@ -1283,6 +1284,78 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
   if (w.__renderError) errs.push(String(w.__renderError));
   dom.window.close();
   for (const e of errs) failures.push("quota-provenance: " + e);
+}
+
+// End-to-end real HTTP + fetch/Response raw duplicate/escaped-equivalent provenance keys
+// across both api/v1/dock (inline accounts) and api/v1/saved-accounts (reference fetch).
+{
+  const errs = [];
+  const cards588 = JSON.parse(readFileSync(new URL("./quota_provenance_588_cards.json", import.meta.url), "utf8"));
+  const baseCard = clone(cards588.accounts.cards[0]);
+  baseCard.label = "Fictional HTTP Provenance Check";
+  baseCard.quota.summary.rows = [{ name: "Fictional window", text: "77% used · 23% remaining", usedPercent: 77, remainingPercent: 23, resetsAt: "2030-03-17T17:46:40Z" }];
+  const goodProv = JSON.stringify(baseCard.quota.summary.provenance);
+  const ts = baseCard.quota.summary.provenance.retrievedAt;
+  const legacyCard = clone(baseCard);
+  delete legacyCard.quota.summary.provenance;
+  const rawCases = [
+    ["valid", true, false, JSON.stringify(baseCard)],
+    ["legacy_absent", true, false, JSON.stringify(legacyCard)],
+    ["invalid_version", false, true, JSON.stringify(baseCard).replace('"version":1', '"version":2')],
+    ["dup_version_2_1", false, true, JSON.stringify(baseCard).replace('"version":1', '"version":2,"version":1')],
+    ["dup_version_1_2", false, true, JSON.stringify(baseCard).replace('"version":1', '"version":1,"version":2')],
+    ["dup_version_equal", false, true, JSON.stringify(baseCard).replace('"version":1', '"version":1,"version":1')],
+    ["dup_provider_ts_null", false, true, JSON.stringify(baseCard).replace('"providerObservedAt":null', '"providerObservedAt":"2030-03-04T12:00:00Z","providerObservedAt":null')],
+    ["dup_provider_null_ts", false, true, JSON.stringify(baseCard).replace('"providerObservedAt":null', '"providerObservedAt":null,"providerObservedAt":"2030-03-04T12:00:00Z"')],
+    ["dup_provider_null_null", false, true, JSON.stringify(baseCard).replace('"providerObservedAt":null', '"providerObservedAt":null,"providerObservedAt":null')],
+    ["escaped_dup_retrieval_conflict", false, true, JSON.stringify(baseCard).replace('"retrievedAt":"' + ts + '"', '"retrievedAt":"2030-03-04T12:00:01Z","retrieved\\u0041t":"' + ts + '"')],
+    ["escaped_dup_retrieval_equal", false, true, JSON.stringify(baseCard).replace('"retrievedAt":"' + ts + '"', '"retrievedAt":"' + ts + '","retrieved\\u0041t":"' + ts + '"')],
+    ["dup_provenance_null_good", false, true, JSON.stringify(baseCard).replace('"provenance":' + goodProv, '"provenance":null,"provenance":' + goodProv)],
+    ["dup_summary_bad_good", false, true, JSON.stringify(baseCard).replace('"summary":{', '"summary":{"state":"reported","provenance":{"version":2}},"summary":{')],
+  ];
+  for (const endpoint of ["dock", "saved-accounts"]) {
+    for (const [kind, wantQuota, wantRejected, rawCard] of rawCases) {
+      const accountsRaw = '{"state":"available","complete":true,"cards":[' + rawCard + ']}';
+      const unrelatedDock = {
+        schemaVersion: 1, complete: true, readAt: "2030-03-04T12:00:00Z", refreshSeconds: 3600,
+        registry: { availability: "available" }, loops: [{ key: "lu1", name: "unrelated-loop", state: "supervising", phrase: "Supervising", currentRoute: { availability: "known", tool: "BB thread" }, can: [] }], needsYou: []
+      };
+      if (endpoint === "saved-accounts") unrelatedDock.accountsReference = "fictional-ref";
+      let rawDock = JSON.stringify(unrelatedDock).replace('"name":"unrelated-loop"', '"name":"x","name":"unrelated-loop","note":"\\"version\\":2,\\"version\\":1"');
+      rawDock = rawDock.replace(/}$/, endpoint === "dock" ? ',"accounts":' + accountsRaw + '}' : '}');
+      const rawSaved = '{"schemaVersion":1,"reference":"fictional-ref","accounts":' + accountsRaw + '}';
+      const server = http.createServer((req, res) => {
+        res.setHeader("Content-Type", "application/json");
+        res.setHeader("Connection", "close");
+        if (req.url.includes("api/v1/dock")) res.end(rawDock);
+        else if (req.url.includes("api/v1/saved-accounts")) res.end(rawSaved);
+        else if (req.url.includes("api/v1/server")) res.end(JSON.stringify({ schemaVersion: 1, servedBy: "panel", changes: "off", accountQuota: true, accountQuotaProviders: ["codex"] }));
+        else { res.statusCode = 404; res.end("{}"); }
+      });
+      await new Promise((r) => server.listen(0, "127.0.0.1", r));
+      const origin = "http://127.0.0.1:" + server.address().port;
+      const vc = new VirtualConsole(); vc.on("jsdomError", (e) => errs.push(`${endpoint}/${kind}: ` + String(e.message || e)));
+      const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: origin + "/s/fictional/#/accounts", virtualConsole: vc });
+      const w = dom.window;
+      w.fetch = (url, opts) => fetch(new URL(url, w.location.href), opts);
+      w.TextEncoder = TextEncoder;
+      w.Date = class extends Date { constructor(...a) { super(...(a.length ? a : ["2030-03-04T12:00:00Z"])); } static now() { return Date.parse("2030-03-04T12:00:00Z"); } };
+      w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      w.scrollTo = () => {}; w.Element.prototype.scrollIntoView = () => {};
+      w.eval(js);
+      await new Promise((r) => setTimeout(r, 180));
+      const txt = w.document.body.textContent || "";
+      const cardsN = w.document.querySelectorAll(".account-card").length;
+      if (cardsN !== 1) errs.push(`${endpoint}/${kind}: expected 1 card, got ${cardsN}`);
+      if (txt.includes("77% used") !== wantQuota) errs.push(`${endpoint}/${kind}: quotaDisplayed=${txt.includes("77% used")} want ${wantQuota}`);
+      if (txt.includes("Quota provenance rejected") !== wantRejected) errs.push(`${endpoint}/${kind}: rejected=${txt.includes("Quota provenance rejected")} want ${wantRejected}`);
+      if (w.__renderError) errs.push(`${endpoint}/${kind}: ` + String(w.__renderError));
+      dom.window.close();
+      if (server.closeAllConnections) server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    }
+  }
+  for (const e of errs) failures.push("raw-http-provenance: " + e);
 }
 
 if (failures.length) {

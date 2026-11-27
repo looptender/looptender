@@ -36,7 +36,7 @@ func TestDockOverviewGlossaryAndBoundaryInvariants(t *testing.T) {
 		}
 	}
 
-	// Quota provenance v1 parser + fail-closed invariants.
+	// Quota provenance v1 parser + raw ingestion boundary + fail-closed invariants.
 	quotaBody := jsFunction(t, js, "function accountQuotaSummary(c) {")
 	for _, want := range []string{"provenance", "providerObservedAt !== null", "parseRFC3339", "epochSec", "nanos"} {
 		if !strings.Contains(quotaBody, want) {
@@ -45,6 +45,11 @@ func TestDockOverviewGlossaryAndBoundaryInvariants(t *testing.T) {
 	}
 	if !strings.Contains(js, "accountQuotaMalformedProvenance(") {
 		t.Errorf("dock.js lacks accountQuotaMalformedProvenance fail-closed helper")
+	}
+	for _, fnHead := range []string{"function getJSON(url) {", "function loadSavedAccounts(retry) {"} {
+		if !strings.Contains(jsFunction(t, js, fnHead), "parseDockQuotaJSON(") {
+			t.Errorf("%s must route raw text through parseDockQuotaJSON before JSON duplicate collapse", fnHead)
+		}
 	}
 
 	// Header & build identity honesty invariants.

@@ -4805,11 +4805,222 @@
   // to 30 seconds, so a read that never answers cannot stop the updates. A
   // read that runs out of time fails like any other failed read.
   function readTimeoutMs() { return Math.min(30, Math.max(4, refreshSeconds() - 2)) * 1000; }
+  // Validate raw dock/saved-accounts payloads before JSON.parse collapses duplicate
+  // or escaped-equivalent keys in accounts/cards/quota/summary/provenance.
+  function parseDockQuotaJSON(rawText) {
+    if (typeof rawText !== "string" || rawText.length > 16777216) throw new Error("schema");
+    var parsedObj = JSON.parse(rawText);
+    if (!parsedObj || typeof parsedObj !== "object" || Array.isArray(parsedObj)) return parsedObj;
+    var jLen = rawText.length, jPos = 0, MAX_JSON_DEPTH = 64;
+    var hasOwn = Object.prototype.hasOwnProperty;
+    var rootAcctDup = false, anyProvSeen = false, cardFlags = [], rootSeen = Object.create(null);
+    function jSkipWs() {
+      while (jPos < jLen) {
+        var cCode = rawText.charCodeAt(jPos);
+        if (cCode === 32 || cCode === 9 || cCode === 10 || cCode === 13) jPos++;
+        else break;
+      }
+    }
+    function jReadKey() {
+      var kStart = jPos;
+      jPos++;
+      while (jPos < jLen) {
+        var cCode = rawText.charCodeAt(jPos++);
+        if (cCode === 92) {
+          if (jPos < jLen) jPos++;
+        } else if (cCode === 34) {
+          return JSON.parse(rawText.slice(kStart, jPos));
+        }
+      }
+      throw new Error("schema");
+    }
+    function jSkipVal(jDepth) {
+      if (jDepth > MAX_JSON_DEPTH) throw new Error("schema");
+      jSkipWs();
+      if (jPos >= jLen) throw new Error("schema");
+      var chCode = rawText.charCodeAt(jPos);
+      if (chCode === 34) {
+        jReadKey();
+        return;
+      }
+      if (chCode === 123) {
+        jPos++; jSkipWs();
+        if (rawText.charCodeAt(jPos) === 125) { jPos++; return; }
+        while (jPos < jLen) {
+          jSkipWs();
+          jReadKey();
+          jSkipWs();
+          if (rawText.charCodeAt(jPos) !== 58) throw new Error("schema");
+          jPos++;
+          jSkipVal(jDepth + 1);
+          jSkipWs();
+          var objSep = rawText.charCodeAt(jPos);
+          if (objSep === 44) { jPos++; continue; }
+          if (objSep === 125) { jPos++; return; }
+          throw new Error("schema");
+        }
+        throw new Error("schema");
+      }
+      if (chCode === 91) {
+        jPos++; jSkipWs();
+        if (rawText.charCodeAt(jPos) === 93) { jPos++; return; }
+        while (jPos < jLen) {
+          jSkipVal(jDepth + 1);
+          jSkipWs();
+          var arrSep = rawText.charCodeAt(jPos);
+          if (arrSep === 44) { jPos++; continue; }
+          if (arrSep === 93) { jPos++; return; }
+          throw new Error("schema");
+        }
+        throw new Error("schema");
+      }
+      while (jPos < jLen) {
+        var pCode = rawText.charCodeAt(jPos);
+        if (pCode === 44 || pCode === 93 || pCode === 125 || pCode === 32 || pCode === 9 || pCode === 10 || pCode === 13) return;
+        jPos++;
+      }
+    }
+    function jScanObj(jDepth, onEntry) {
+      if (jDepth > MAX_JSON_DEPTH) throw new Error("schema");
+      jSkipWs();
+      if (rawText.charCodeAt(jPos) !== 123) { jSkipVal(jDepth); return; }
+      jPos++; jSkipWs();
+      if (rawText.charCodeAt(jPos) === 125) { jPos++; return; }
+      while (jPos < jLen) {
+        jSkipWs();
+        var kName = jReadKey();
+        jSkipWs();
+        if (rawText.charCodeAt(jPos) !== 58) throw new Error("schema");
+        jPos++; jSkipWs();
+        onEntry(kName, jDepth + 1);
+        jSkipWs();
+        var sepCode = rawText.charCodeAt(jPos);
+        if (sepCode === 44) { jPos++; continue; }
+        if (sepCode === 125) { jPos++; return; }
+        throw new Error("schema");
+      }
+      throw new Error("schema");
+    }
+    function jFlagCard(cIdx) {
+      if (!cardFlags[cIdx]) cardFlags[cIdx] = { dup: false, sawProv: false };
+      return cardFlags[cIdx];
+    }
+    function jScanProvenance(cIdx, jDepth) {
+      var st = jFlagCard(cIdx);
+      st.sawProv = true;
+      anyProvSeen = true;
+      var provKeys = Object.create(null);
+      jScanObj(jDepth, function (pKey, valDepth) {
+        if (hasOwn.call(provKeys, pKey)) st.dup = true;
+        provKeys[pKey] = true;
+        jSkipVal(valDepth);
+      });
+    }
+    function jScanSummary(cIdx, jDepth) {
+      var st = jFlagCard(cIdx);
+      var sumKeys = Object.create(null);
+      jScanObj(jDepth, function (sKey, valDepth) {
+        if (hasOwn.call(sumKeys, sKey)) st.dup = true;
+        sumKeys[sKey] = true;
+        if (sKey === "provenance") jScanProvenance(cIdx, valDepth);
+        else jSkipVal(valDepth);
+      });
+    }
+    function jScanQuota(cIdx, jDepth) {
+      var st = jFlagCard(cIdx);
+      var qKeys = Object.create(null);
+      jScanObj(jDepth, function (qKey, valDepth) {
+        if (hasOwn.call(qKeys, qKey)) st.dup = true;
+        qKeys[qKey] = true;
+        if (qKey === "summary") jScanSummary(cIdx, valDepth);
+        else jSkipVal(valDepth);
+      });
+    }
+    function jScanCard(cIdx, jDepth) {
+      var st = jFlagCard(cIdx);
+      var cKeys = Object.create(null);
+      jScanObj(jDepth, function (cKey, valDepth) {
+        if (hasOwn.call(cKeys, cKey)) st.dup = true;
+        cKeys[cKey] = true;
+        if (cKey === "quota") jScanQuota(cIdx, valDepth);
+        else jSkipVal(valDepth);
+      });
+    }
+    function jScanCardsArr(jDepth) {
+      if (jDepth > MAX_JSON_DEPTH) throw new Error("schema");
+      jSkipWs();
+      if (rawText.charCodeAt(jPos) !== 91) { jSkipVal(jDepth); return; }
+      jPos++; jSkipWs();
+      if (rawText.charCodeAt(jPos) === 93) { jPos++; return; }
+      var arrIdx = 0;
+      while (jPos < jLen) {
+        jSkipWs();
+        jScanCard(arrIdx, jDepth + 1);
+        arrIdx++;
+        jSkipWs();
+        var arrSep = rawText.charCodeAt(jPos);
+        if (arrSep === 44) { jPos++; continue; }
+        if (arrSep === 93) { jPos++; return; }
+        throw new Error("schema");
+      }
+      throw new Error("schema");
+    }
+    function jScanAccounts(jDepth) {
+      var acctKeys = Object.create(null);
+      jScanObj(jDepth, function (aKey, valDepth) {
+        if (aKey === "cards") {
+          if (hasOwn.call(acctKeys, aKey)) rootAcctDup = true;
+          acctKeys[aKey] = true;
+          jScanCardsArr(valDepth);
+        } else {
+          jSkipVal(valDepth);
+        }
+      });
+    }
+    jSkipWs();
+    jScanObj(0, function (rootKey, valDepth) {
+      if (rootKey === "accounts") {
+        if (hasOwn.call(rootSeen, "accounts")) rootAcctDup = true;
+        rootSeen["accounts"] = true;
+        jScanAccounts(valDepth);
+      } else {
+        jSkipVal(valDepth);
+      }
+    });
+    function jTaintCard(cardObj, asProv) {
+      if (!cardObj || typeof cardObj !== "object" || Array.isArray(cardObj)) return;
+      if (!cardObj.quota || typeof cardObj.quota !== "object" || Array.isArray(cardObj.quota)) cardObj.quota = {};
+      if (asProv) {
+        cardObj.quota.summary = { state: "unavailable", freshness: "unavailable", provenance: null, rows: [] };
+      } else {
+        cardObj.quota.summary = { state: "reported", source: "", freshness: "unavailable", rows: [] };
+      }
+      delete cardObj.quota.windows;
+      delete cardObj.quota.observedAt;
+      delete cardObj.quota.retrievedAt;
+    }
+    if (parsedObj.accounts && typeof parsedObj.accounts === "object" && Array.isArray(parsedObj.accounts.cards)) {
+      if (rootAcctDup) {
+        for (var kIdx = 0; kIdx < parsedObj.accounts.cards.length; kIdx++) {
+          jTaintCard(parsedObj.accounts.cards[kIdx], anyProvSeen);
+        }
+      } else {
+        for (var jIdx = 0; jIdx < cardFlags.length; jIdx++) {
+          if (cardFlags[jIdx] && cardFlags[jIdx].dup && jIdx < parsedObj.accounts.cards.length) {
+            jTaintCard(parsedObj.accounts.cards[jIdx], cardFlags[jIdx].sawProv);
+          }
+        }
+      }
+    }
+    return parsedObj;
+  }
+
   function getJSON(url) {
     var ctl = new AbortController();
     var timer = setTimeout(function () { ctl.abort(); }, readTimeoutMs());
     return fetch(url, { cache: "no-store", credentials: "same-origin", headers: { Accept: "application/json" }, signal: ctl.signal })
-      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
+      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.text(); })
+      .then(function (rawBody) { return parseDockQuotaJSON(rawBody); })
       .finally(function () { clearTimeout(timer); });
   }
 
@@ -4831,7 +5042,7 @@
       .then(function (r) { if (!r.ok) throw new Error("saved accounts unavailable"); return r.text(); })
       .then(function (text) {
         if (new TextEncoder().encode(text).length > 1048576) throw new Error("saved accounts bound");
-        var result = JSON.parse(text);
+        var result = parseDockQuotaJSON(text);
         if (!result || result.schemaVersion !== SCHEMA || result.reference !== ref || !result.accounts || !Array.isArray(result.accounts.cards) || result.accounts.cards.length > 64) throw new Error("saved accounts schema");
         if (!current()) return;
         savedAccounts.status = "ready"; savedAccounts.data = result.accounts; state.data.accounts = result.accounts;
