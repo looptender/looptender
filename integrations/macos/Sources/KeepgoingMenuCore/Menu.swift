@@ -472,9 +472,10 @@ public enum MenuBuilder {
     /// in place and the status line says a read is under way. `panel` is the
     /// panel server's status when it was read; the row that stops it is there
     /// only while it is running.
-    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil, notices: NoticeView? = nil) -> MenuModel {
+    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil, notices: NoticeView? = nil, buildStamp: MenuBuildStamp? = nil) -> MenuModel {
         // The first row is always there and always tries, whatever was read.
         var rows = [action("Open looptender Panel", .openPanel, symbol: "macwindow", help: "Opens the looptender panel in your browser, where you can pause, stop and resume loops, each after a review.")]
+        if let buildStamp { rows.append(contentsOf: identityRows(buildStamp, reading: reading, update: update)) }
         var badge = ""
         var iconLabel = "looptender"
         var line: String
