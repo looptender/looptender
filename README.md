@@ -156,7 +156,7 @@ Supervision runs on the same machine as the agent tool. None of these adapters a
 | **Codex** | Released in v0.2.0 | Headless sessions started and resumed by exact session ID, with wakes, bounded re-prompts, fallbacks, limits and reports (no lane support). |
 | **Cursor CLI** | Released in v0.2.0 | Primary-only standalone runner with exact session resume; failures stay unclassified and it cannot be a fallback. |
 | **Antigravity CLI** | Released in v0.3.0 | Primary-only ACP adapter with exact session resume and model-free `/usage` quota reads; cannot be a fallback. [Details](docs/antigravity.md). |
-| **sessionpipe** | Released in v0.3.0 (nudges, re-prompts, stop & takeover: Planned) | Reports tier-0 loop state to a sessionpipe receiver; observes a tier-0 session file with opt-in idle waking (`wake_only`), surfaced in the panel, macOS menu and BB plugin. [Details](docs/sessionpipe.md). |
+| **sessionpipe** | Released in v0.3.0 (nudges, re-prompts, stop & takeover: Planned) | Reports tier-0 loop state to a configured receiver; observes a tier-0 session file without sending by default, with separate explicit idle waking (`wake_only`), surfaced in the panel, macOS menu and BB plugin. Unreleased input validation rejects malformed sequences; current receiver/GUI/phone acceptance remains open. [Details](docs/sessionpipe.md). |
 | **Agents defined in configuration** | Released in v0.2.0 | Describe another command-line agent (`adapter: custom`) by its status and resume commands; tested with stand-ins only. |
 | **Remote alerts** | Released in v0.3.0 (`TG5` chat steering: Planned) | Telegram bot pairing/topics/reviewed controls (`TG1`–`TG4`), plus Slack, Discord, ntfy and Pushover presets; local fixtures only. [Telegram](docs/telegram.md). |
 | **Loops across devices** | Planned | Cross-device fleet coordination and remote panel access; design-only and not built. [Roadmap](docs/roadmap.md). |
@@ -207,7 +207,9 @@ looptender stop -c /private/example-loop/looptender.yaml
 looptender complete -c /private/example-loop/looptender.yaml --note "Task verified"
 ```
 
-`stop` stops the supervised conversation at the next check (`--lanes` also stops the conversations it started); `complete` records a declaration, not a verification (unreleased source [binds it to the current goal revision](docs/goals.md#completion-declarations-unreleased)); `resume` clears the holds a person or looptender set. The [setup guide](docs/setup.md) covers scripted setup, accounts, limits and Windows; [operations](docs/operations.md) covers every control.
+`stop` stops the supervised conversation at the next check (`--lanes` also stops the conversations it started); `complete` records a declaration, not a verification (unreleased source [binds it to the current goal revision](docs/goals.md#completion-declarations-unreleased)); `resume` clears the holds a person or looptender set. Unreleased BB diagnostics label completion as a declaration for that loop, not verification of current project or thread work; new messages do not clear its hold. Enabled registrations still block duplicate attachment while held or archived. Disk warnings show their own severity and measurement evidence; see [diagnostics](docs/operations.md#bb-loop-and-disk-diagnostics-unreleased). The [setup guide](docs/setup.md) covers scripted setup, accounts, limits and Windows; [operations](docs/operations.md) covers every control.
+
+Unreleased source includes a read-only [`pr-ready` helper](docs/pr-ready.md) beside `ci-wait`. It prints a commit to pin only for its conservative supported evidence subset; queue policy and head-only CI evidence remain unsupported.
 
 ## Where it stands
 

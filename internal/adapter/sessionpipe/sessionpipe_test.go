@@ -220,10 +220,11 @@ func TestObserveEndedIsGone(t *testing.T) {
 
 func TestObserveRefusesAboveTierZero(t *testing.T) {
 	for name, bad := range map[string]string{
-		"tier 1":         lineFor(other, 1, "tool.ended", 1, t0, map[string]any{"tool": "Bash"}),
-		"tier 2":         lineFor(session, 2, "turn.transcript", 1, t0, map[string]any{"user": secret}),
-		"no tier":        strings.Replace(line("turn.started", 1, t0, nil), `"tier":0,`, "", 1),
-		"other protocol": strings.Replace(line("turn.started", 1, t0, nil), `"protocol":1`, `"protocol":2`, 1),
+		"tier 1":                  lineFor(other, 1, "tool.ended", 1, t0, map[string]any{"tool": "Bash"}),
+		"tier 1 invalid sequence": strings.Replace(lineFor(other, 1, "tool.ended", 1, t0, nil), `"seq":1`, `"seq":null`, 1),
+		"tier 2":                  lineFor(session, 2, "turn.transcript", 1, t0, map[string]any{"user": secret}),
+		"no tier":                 strings.Replace(line("turn.started", 1, t0, nil), `"tier":0,`, "", 1),
+		"other protocol":          strings.Replace(line("turn.started", 1, t0, nil), `"protocol":1`, `"protocol":2`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
@@ -393,3 +394,77 @@ func TestSendAndStopAreUnsupported(t *testing.T) {
 }
 
 func isUnix() bool { return runtime.GOOS != "windows" }
+
+// Protocol v1 requires a JSON-safe, nonnegative session sequence. A malformed
+// envelope must not invent a fresh session state or bypass replay suppression.
+func TestObserveInvalidSequenceDoesNotEstablishVisibility(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		seq  any
+		omit bool
+	}{
+		{"missing", nil, true}, {"null", nil, false}, {"negative", -1, false},
+		{"outside-json-integer-range", int64(1 << 53), false},
+		{"fraction", 1.5, false}, {"string", "2", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, prior := range []bool{false, true} {
+				f := newFixture(t)
+				if prior {
+					f.append(line("turn.started", 10, t0, nil))
+					f.observe(t0)
+				}
+				var e map[string]any
+				if err := json.Unmarshal([]byte(line("turn.ended", 11, t0.Add(9*time.Minute), map[string]any{"reason": "stop", "message": secret})), &e); err != nil {
+					t.Fatal(err)
+				}
+				session := e["session"].(map[string]any)
+				if tc.omit {
+					delete(session, "seq")
+				} else {
+					session["seq"] = tc.seq
+				}
+				b, err := json.Marshal(e)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.append(string(b) + "\n")
+				want := decide.Unknown
+				if prior {
+					want = decide.Active
+				}
+				if o := f.observe(t0.Add(9 * time.Minute)); o.State != want {
+					t.Fatalf("prior=%v: malformed input overwrote the retained state: %+v", prior, o)
+				}
+				if o := f.observe(t0.Add(11 * time.Minute)); o.State != decide.Unknown || o.AwaitingInput || o.Gone {
+					t.Fatalf("prior=%v: invalid sequence established visibility: %+v", prior, o)
+				}
+				s := f.a.load()
+				if s.Skipped != 1 || (!prior && (s.Seen || s.HasSeq)) || (prior && (s.LastSeq != 10 || !s.LastAt.Equal(t0))) {
+					t.Fatalf("prior=%v: malformed sequence changed evidence: %+v", prior, s)
+				}
+				if b, _ := os.ReadFile(f.a.statePath()); strings.Contains(string(b), secret) {
+					t.Fatal("event text leaked into reader state")
+				}
+			}
+		})
+	}
+}
+
+func TestObserveSequenceZeroGapsAndJSONSafeMaximum(t *testing.T) {
+	f := newFixture(t)
+	f.append(line("session.started", 0, t0, nil))
+	if o := f.observe(t0); o.State != decide.Idle {
+		t.Fatalf("sequence zero rejected: %+v", o)
+	}
+	// Use the wire integer as JSON so the fixture also compiles on 32-bit targets.
+	wire := strings.Replace(line("turn.started", 1, t0.Add(time.Second), nil), `"seq":1`, `"seq":9007199254740991`, 1)
+	f.append(wire)
+	if o := f.observe(t0.Add(time.Second)); o.State != decide.Active {
+		t.Fatalf("valid sequence gap/maximum rejected: %+v", o)
+	}
+	f.append(line("turn.ended", 1, t0.Add(2*time.Second), map[string]any{"reason": "stop"}))
+	if o := f.observe(t0.Add(2 * time.Second)); o.State != decide.Active {
+		t.Fatalf("lower sequence replay changed state: %+v", o)
+	}
+}

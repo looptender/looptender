@@ -96,7 +96,7 @@ const noProgressShape = z.object({ availability: z.string(), text: z.string() })
 const archivedShape = z.object({ at: z.string().optional(), hold: z.string().optional(), unreadable: z.boolean().optional() }).passthrough();
 const freshnessShape = z.object({ state: z.string(), text: z.string(), detail: z.string().optional(), command: z.string().optional(), action: z.string().optional() });
 const waitShape = z.object({ until: z.string(), untilTime: z.string().optional(), expiresAt: z.string().optional() });
-const diskShape = z.object({ level: z.string(), message: z.string().optional() });
+const diskShape = z.object({ level: z.string(), message: z.string().optional(), measuredAt: z.unknown().optional(), source: z.unknown().optional() });
 const sessionpipeWakeShape = z.object({
   since: z.string().optional(),
   forSeconds: z.number().int().nonnegative().optional(),
@@ -321,7 +321,10 @@ export default async function plugin(bb: BbPluginApi) {
       ...(f.deadline ? { deadline: { at: f.deadline.slice(0, 64), ...(f.deadlineReached !== undefined ? { reached: f.deadlineReached } : {}) } } : {}),
       ...(sa ? { sends: { max: sa.max, ...(sa.used !== undefined ? { used: sa.used } : {}), ...(sa.remaining !== undefined ? { remaining: sa.remaining } : {}), reached: sa.reached, ...(sa.error ? { unavailable: true } : {}) } } : {}),
       ...(f.sendRecord ? { sendRecord: f.sendRecord.slice(0, 600) } : {}),
-      ...((f.disk?.level === "low" || f.disk?.level === "critical") && f.disk.message ? { disk: { level: f.disk.level, message: f.disk.message.slice(0, 400) } } : {}),
+      ...((f.disk?.level === "low" || f.disk?.level === "critical" || f.disk?.level === "unknown") && (f.disk.message || f.disk.level === "unknown") ? { disk: { level: f.disk.level, message: (f.disk.message || "The filesystem reading is unavailable.").slice(0, 400),
+        ...(typeof f.disk.measuredAt === "string" && f.disk.measuredAt.length <= 40 && Number.isFinite(Date.parse(f.disk.measuredAt)) && !f.disk.measuredAt.startsWith("0001-") ? { measuredAt: f.disk.measuredAt } : {}),
+        ...(f.disk.source === "filesystem" ? { source: "filesystem" as const } : {}),
+      } } : {}),
       ...(f.unreadable.length ? { unreadable: f.unreadable.slice(0, 8).map(u => ({ file: u.file.slice(0, 64), problem: u.problem.slice(0, 40), ...(u.offset !== undefined ? { offset: u.offset } : {}), remedy: u.remedy.slice(0, 1200) })) } : {}),
       ...(f.unparsed.length ? { unparsed: f.unparsed.slice(0, 8) } : {}),
       ...(f.noProgress?.availability === "flagged" ? { noProgress: { text: f.noProgress.text.slice(0, 400) } } : {}),

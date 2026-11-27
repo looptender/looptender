@@ -297,7 +297,7 @@ test("setup waits for the first turn, one pass at a time, and a deleted thread f
 test("an existing loop, an unverified status, a missing program and a full plugin are explained, never silent", async () => {
   const supervised = fixture(); supervised.w.supervision = "supervised";
   supervised.c.dispatched(supervised.dispatch(await supervised.arm())); await supervised.c.advance("thr_new");
-  assert.equal(supervised.w.setups.length, 0); assert.match((await supervised.outcome()).message, /already supervises this thread/);
+  assert.equal(supervised.w.setups.length, 0); assert.match((await supervised.outcome()).message, /already registered for this thread; this does not establish current activity/);
 
   const unverified = fixture(); unverified.w.supervision = "unverified";
   unverified.c.dispatched(unverified.dispatch(await unverified.arm())); await unverified.c.advance("thr_new");

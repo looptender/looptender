@@ -121,6 +121,7 @@ final class Backdrop: NSView {
 
 final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let client: LocalClient
+    let buildStamp = MenuBuildStamp.capture(Bundle.main.infoDictionary ?? [:])
     let notifier: Notifier
     let renderPath: String?
     let renderDark: Bool
@@ -167,7 +168,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // colours the real menu uses, and quit. It never opens the menu or looks
     // at the screen, so it is a drawing of the rows and not a screen capture.
     func renderMenu(to path: String) {
-        let model = MenuBuilder.build(reading, now: Date(), panel: panel)
+        let model = MenuBuilder.build(reading, now: Date(), panel: panel, buildStamp: buildStamp)
         let appearance = NSAppearance(named: renderDark ? .darkAqua : .aqua)!
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -294,7 +295,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func render() {
         let offer = updater.map { UpdateOffer(availableLabel: flow?.installed?.label, automatic: $0.automatic, failure: $0.lastFailure, noMenuLabel: flow?.noMenuLabel) }
         let model = MenuBuilder.build(reading, now: Date(), notice: notice, refreshing: loading, panel: panel, update: renderPath == nil ? offer : nil,
-                                       notices: renderPath == nil ? NoticeView(recent: tracker.recent, on: NoticeSettings.map(notify)) : nil)
+                                       notices: renderPath == nil ? NoticeView(recent: tracker.recent, on: NoticeSettings.map(notify)) : nil, buildStamp: buildStamp)
         if let button = item.button {
             // A dot after the count marks an update that is waiting; the label says so in words.
             let mark = flow?.installed != nil && renderPath == nil ? "\u{2022}" : ""
