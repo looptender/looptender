@@ -107,6 +107,7 @@ final class QuotaTests: XCTestCase {
         let list = try Contract.panelList(claude(q), exit: 0)
         let row = try XCTUnwrap(MenuBuilder.build(.read(list, at: quotaNow), now: quotaNow).accountRow("Example Claude"))
         XCTAssertTrue(row.detail.contains("100.0% left")) // Explicit zero only.
+        XCTAssertTrue(row.submenu.contains { $0.accessibilityLabel.contains("Last successful fetch 2030-03-04T12:00:00Z") })
         XCTAssertTrue(row.submenu.contains { $0.accessibilityLabel.contains("provider freshness unknown") })
         XCTAssertTrue(row.submenu.contains { $0.accessibilityLabel.contains("cached or seeded") })
         XCTAssertFalse(row.submenu.contains { $0.accessibilityLabel.contains("saved snapshot") })
@@ -145,6 +146,7 @@ final class QuotaTests: XCTestCase {
         let list = try Contract.panelList(antigravity(q), exit: 0)
         let row = try XCTUnwrap(MenuBuilder.build(.read(list, at: quotaNow), now: quotaNow).accountRow("Example Antigravity"))
         XCTAssertTrue(row.detail.contains("100.0% left"))
+        XCTAssertTrue(row.submenu.contains { $0.accessibilityLabel.contains("Last successful fetch 2030-03-04T12:00:00Z") })
         XCTAssertTrue(row.submenu.contains { $0.accessibilityLabel.contains("provider freshness unknown") })
         XCTAssertTrue(row.submenu.contains { $0.accessibilityLabel.contains("cached or seeded") })
         XCTAssertFalse(row.submenu.contains { $0.accessibilityLabel.contains("saved snapshot") })
