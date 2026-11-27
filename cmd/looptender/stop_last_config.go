@@ -22,28 +22,34 @@ import (
 func stopFromLastConfig(e env, cfg *config.Config, lease *ownerLease) int {
 	l, err := lock.Acquire(cfg.Loop.StateDir)
 	if errors.Is(err, lock.ErrHeld) {
+		recordRuntimeEvent(e, cfg.Loop.StateDir, "check_refused", "lock_held", "", false, "failed")
 		e.errf("another tick holds the lock; skipping")
 		return exitSkipped
 	}
 	if err != nil {
+		recordRuntimeEvent(e, cfg.Loop.StateDir, "check_refused", "lock_unavailable", "", false, "failed")
 		e.errf("lock: %v", err)
 		return exitFailed
 	}
 	defer l.Release()
 	if err := checkOwnership(cfg.Loop.StateDir, lease); err != nil {
+		recordRuntimeEvent(e, cfg.Loop.StateDir, "check_refused", "ownership_unverified", "", false, "failed")
 		return ownershipError(e, err)
 	}
 	if err := checkTransferRecord(cfg, true); err != nil {
+		recordRuntimeEvent(e, cfg.Loop.StateDir, "check_refused", "sources_unverified", "", false, "failed")
 		e.errf("%v; no stop performed", err)
 		return exitSkipped
 	}
 	if !supervise.StopReachable(cfg) {
+		recordRuntimeEvent(e, cfg.Loop.StateDir, "check_refused", "safety_guard", "", false, "failed")
 		e.errf("the stop cannot reach bb from the last configuration read; no stop performed")
 		return exitSkipped
 	}
 	// Eligibility may have changed while this pass waited for the tick lock.
 	// Recheck here, under that lock, before any last-configuration check.
 	if !cfg.SourcesUnavailable() {
+		recordRuntimeEvent(e, cfg.Loop.StateDir, "check_refused", "sources_unverified", "", false, "failed")
 		e.errf("configuration sources are readable or changed; no stop performed; reload and retry")
 		return exitSkipped
 	}

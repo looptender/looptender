@@ -352,7 +352,7 @@ keepgoing timeline --state-dir /private/example-loop --json
 
 The text view first shows current saved flags, then retained evidence summaries and chronological events. It answers what was last **recorded**: a check, an active observation (which may include retries), a send-related action, a transition into a hold, held checks, and failed/unconfirmed notifications. An action/outcome is not proof that a message was sent or work succeeded. A last historical hold is deliberately not attributed as the cause of current flags: intervening changes, missing records, retargeting or reused directories can break that link. The hold event includes recorded cause and decision inputs where available, such as spent re-prompts and configured thresholds. It does not rerun the decision engine or invent missing reasons.
 
-JSON schema 9 (v0.2.0 prints schema 6; schema 7 added the route-list kinds and schema 9 the `return` kind; v0.1.3–v0.1.5 print schema 1 without `filter`, `retention`, event `kinds`, the `target_moves` layer or the target-move and limit-wait summaries) includes:
+JSON schema 10 (v0.2.0 prints schema 6; schema 7 added the route-list kinds, schema 9 the `return` kind and schema 10 daemon lifecycle/refused-check kinds; v0.1.3–v0.1.5 print schema 1 without `filter`, `retention`, event `kinds`, the `target_moves` layer or the target-move and limit-wait summaries) includes:
 
 - `control`: current flag availability/state, flags and available save timestamp, excluding notes and ownership identities. Missing control is explicitly `not_recorded`, with the supervisor's disabled default. Unreadable, non-regular, symlinked, oversized (over 64 KiB) or invalid control is `unavailable`.
 - `retention`: for `incidents.json`, the total record and byte bounds, each tier's reservation, retained count (which can exceed the reservation while the journal has spare room), pruned count and `prunedThrough` time, `collapsedChecks` (folded into retained records), `collapsedPruned` (folded into records since pruned) and `untieredPruned` (dropped by an older build). See [what the view shows about missing history](#collapsed-and-pruned-history).
@@ -451,3 +451,18 @@ Unreleased source adds optional `configUnavailableSince` to the authenticated li
 Opt in with `looptender doctor --telegram --offline -c example.yaml`. `--telegram-dir /private/example/telegram` selects the same private pairing directory as `telegram status --dir`; without it, the user state directory is used. `--telegram-dir` requires `--telegram`. This local check also runs when the selected loop configuration is unavailable; ordinary configuration diagnostics still determine the command exit status.
 
 The `telegram.pairing` check distinguishes absent, locally valid and unreadable/invalid saved pairing. `telegram.token_file` checks only whether a regular saved token file exists: it does not open that file, read environment credentials, validate a token or certify permissions. `telegram.delivery` remains unavailable because no network request or poller inspection takes place. Pairing identities, paths and raw parser errors are withheld. No directory, token, pairing, hold or loop is changed. Local evidence does not establish remote authorization or successful alert receipt.
+
+
+### Daemon lifecycle and refused checks
+
+Unreleased schema 15 adds `daemon_start`, `daemon_stop` and `check_refused`
+records. `runtime.reason` is a fixed local reason code; `runtime.signal` retains
+only a known shutdown signal or `unavailable`. Timeline exposes those same
+three filter kinds, with `dry_run` additionally labelling dry-run entries. Their
+`timeBasis` is `runtime_observed_at`, using the local `checkStartedAt` timestamp
+as the operation observation time rather than asserting a completed check.
+They have no session observation, decision inputs or send/counter evidence.
+They use the activity retention tier and do not collapse. Loading older journals
+remains read-only; the next append upgrades them, and older binaries refuse the
+new schema. See [operational limits and rollback](operations.md#daemon-lifecycle-and-refused-check-history-unreleased)
+for missing-stop cases, refused startup/config-load limits and write failures.
