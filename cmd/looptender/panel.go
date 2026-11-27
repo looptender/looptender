@@ -1106,6 +1106,8 @@ type panelWaiting struct {
 }
 
 type panelListLoop struct {
+	// ActivityAt orders clients by saved work, not observation freshness.
+	ActivityAt *time.Time `json:"activityAt,omitempty"`
 	// Key is the loop's key on the page; panel --loop accepts it.
 	Key string `json:"key"`
 	// DiskSpace is low or critical when the volume that holds the loop's
@@ -1229,6 +1231,7 @@ func buildPanelList(r dockReport) panelList {
 			row.UsageBurn = u.Words
 		}
 		row.Reason, row.CheckedAt, row.Supervisor = l.Detail, l.LastCheck.At, l.Supervisor
+		row.ActivityAt = l.ActivityAt
 		row.UsageLimit = l.UsageLimit.compact()
 		if row.UsageLimit != nil && out.UsageLimitWords == nil {
 			out.UsageLimitWords = usageLimitGlossary()

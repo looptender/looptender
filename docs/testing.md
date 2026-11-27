@@ -1046,3 +1046,36 @@ lock-loss detection makes it fail. The ordinary panel-start/reuse fixture retain
 coverage of detached startup. This changes fixture ownership only, not panel
 shutdown or lock semantics. Native fixture evidence, CI and installed acceptance
 remain separate; no installed panel or provider was controlled for this repair.
+
+## Native loop activity ordering (unreleased)
+
+`TestLoopActivityUsesSavedWorkNotPolling` covers actual sends, handoffs, explicit
+moves and repository changes, excludes baseline/check/held-nudge/adjusted clocks,
+and rejects future evidence without refreshing stale work. The offline client to
+Dock/panel-list fixture preserves a seven-day-old activity timestamp across newer
+reads. These use fictional saved state and no provider calls.
+
+Native `SectionsTests` cover status-section preservation, recent/stale/unknown/
+malformed/future dates, equivalent instants, exact-key ties, reversed input order,
+and repeated reads. An activity-only reorder changes `sameShape`; the AppKit
+controller calls the same tested `deferStructuralUpdate` guard to defer rebuild
+while an open menu row is highlighted and permit it on a safe rebuild. Account
+quota ordering and all controls are unchanged. No activity dates are added to
+labels, tooltips or accessibility text.
+
+Local native Swift build and standalone production-model probes are distinct
+from XCTest and installed UI acceptance. This machine's SwiftPM test run cannot
+import XCTest. A standalone assertion harness executed the 14 SectionsTests
+methods, including the new fixtures, with lightweight assertion shims; that is
+not a full XCTest-suite pass. Disabling activity sorting fails the native probe's
+order assertion, and restoring it passes. Light/dark fixture drawings use only
+fictional loop names and show the expected order; real AppKit pointer tracking,
+VoiceOver and installed-menu acceptance remain unrun.
+
+Capability/documentation review covers README, native menu guide, Dock/client
+contracts and changelog fragment. Source-only: no package boundary, persistent
+state schema, supervision decision, installer, archive policy or runtime rollout
+changes. The additive activityAt contract reads existing structured state. Native
+macOS compilation/model execution, hosted platform tests and installed/live
+acceptance must be reported separately; no Linux/Windows native acceptance is
+claimed by the local fixture run.

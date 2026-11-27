@@ -236,8 +236,10 @@ type dockNeed struct {
 }
 
 type dockLoop struct {
-	Key  string `json:"key"`
-	Name string `json:"name"`
+	// ActivityAt is latest saved meaningful loop activity; sorting metadata only.
+	ActivityAt *time.Time `json:"activityAt,omitempty"`
+	Key        string     `json:"key"`
+	Name       string     `json:"name"`
 	// DiskSpace is set when the volume that holds the loop's state is
 	// filling or nearly full (the reading status gives).
 	DiskSpace *dockDiskSpace `json:"diskSpace,omitempty"`
@@ -1950,6 +1952,7 @@ func projectDockLoop(in dockInput, now time.Time, staleAfter time.Duration, iden
 			l.Provider, l.Model = snap.Target.Provider, snap.Target.Model
 		}
 		l.Moved = snap.Moved
+		l.ActivityAt = snap.ActivityAt
 	}
 	if snap != nil {
 		l.UsageLimit = snap.UsageLimit.compact()
