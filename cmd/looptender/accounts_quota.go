@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -280,12 +281,7 @@ func accountsUsage(e env, dir, id string, asJSON bool) int {
 			fmt.Fprintf(e.stdout, " (%s)", v.Reason)
 		}
 		fmt.Fprintln(e.stdout)
-		if v.ObservedAt != nil {
-			fmt.Fprintf(e.stdout, "Read %s (%s); source: %s\n", v.ObservedAt.Format(time.RFC3339), v.Freshness, v.Source)
-		}
-		if v.RetrievedAt != nil {
-			fmt.Fprintf(e.stdout, "Retrieved %s; provider freshness unknown (may be cached or seeded); source: %s\n", v.RetrievedAt.Format(time.RFC3339), v.Source)
-		}
+		writeAccountQuotaRetrieval(e.stdout, v)
 		summary := accounts.SummarizeQuota(v, time.Now())
 		for _, row := range summary.Rows {
 			fmt.Fprintf(e.stdout, "%s: %s", row.Name, row.Text)
@@ -308,4 +304,20 @@ func accountsUsage(e env, dir, id string, asJSON bool) int {
 		return exitFailed
 	}
 	return exitOK
+}
+
+// Historical ObservedAt and RetrievedAt both retain local read completion.
+// Neither field attests to when the provider measured its quota.
+func writeAccountQuotaRetrieval(w io.Writer, v accounts.QuotaView) {
+	at := v.RetrievedAt
+	if at == nil {
+		at = v.ObservedAt
+	}
+	if at == nil {
+		return
+	}
+	fmt.Fprintf(w, "Last successful fetch %s (local retrieval time); provider observation time and freshness unknown; source: %s\n", at.Format(time.RFC3339), v.Source)
+	if v.RetrievedAt != nil {
+		fmt.Fprintln(w, "Usage may be cached or seeded.")
+	}
 }

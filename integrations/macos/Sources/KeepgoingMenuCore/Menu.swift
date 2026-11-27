@@ -211,7 +211,10 @@ extension Contract {
     public static func panelList(_ data: Data, exit: Int32) throws -> PanelList {
         guard data.count <= 1_048_576 else { throw ClientFailure.outputLimit }
         let result: PanelList
-        do { result = try JSONDecoder().decode(PanelList.self, from: data) }
+        do {
+            try QuotaJSON.validateProvenanceKeys(data)
+            result = try JSONDecoder().decode(PanelList.self, from: data)
+        }
         catch { throw ClientFailure.invalidResponse }
         guard result.schemaVersion == 1 else { throw ClientFailure.unsupported }
         // An unreadable registry exits 1 and still says so in a valid reply.

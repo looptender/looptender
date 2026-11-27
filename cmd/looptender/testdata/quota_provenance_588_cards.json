@@ -1,0 +1,340 @@
+{
+  "readAt": "2030-03-04T12:00:00Z",
+  "accounts": {
+    "state": "available",
+    "complete": true,
+    "cards": [
+      {
+        "usageUpdating": {
+          "state": "off",
+          "text": "Keep usage updated: off"
+        },
+        "quota": {
+          "summary": {
+            "provenance": {
+              "version": 1,
+              "retrievedAt": "2030-03-04T11:59:00Z",
+              "providerObservedAt": null
+            },
+            "state": "reported",
+            "text": "Saved selected-context quota; provider observation time is unavailable. Collection time does not verify provider freshness. Account identity and live thread binding are not verified.",
+            "source": "codex account/rateLimits/read",
+            "observedAt": "2030-03-04T11:59:00Z",
+            "freshness": "fresh",
+            "rows": [
+              {
+                "name": "Codex \u00b7 5-hour",
+                "text": "0% used \u00b7 100% remaining",
+                "usedPercent": 0,
+                "remainingPercent": 100,
+                "resetsAt": "2030-03-17T17:46:40Z"
+              },
+              {
+                "name": "Codex \u00b7 secondary window",
+                "text": "42% used \u00b7 58% remaining",
+                "usedPercent": 42,
+                "remainingPercent": 58
+              },
+              {
+                "name": "Provider availability",
+                "text": "Unknown; percentages and reset times do not establish access."
+              }
+            ],
+            "partial": true
+          },
+          "state": "reported",
+          "source": "codex account/rateLimits/read",
+          "observedAt": "2030-03-04T11:59:00Z",
+          "ageSeconds": 60,
+          "freshness": "fresh",
+          "windows": [
+            {
+              "name": "primary",
+              "usedPercent": 0,
+              "durationMinutes": 300,
+              "resetsAt": "2030-03-17T17:46:40Z"
+            },
+            {
+              "name": "secondary",
+              "usedPercent": 42
+            }
+          ]
+        },
+        "id": "8f0595b0f0c92d11cf1c9a45af80cbe9",
+        "label": "Example studio",
+        "provider": "codex",
+        "selection": "inherited",
+        "auth": {
+          "text": "Selected CLI reports login",
+          "state": "reported_present",
+          "source": "codex status",
+          "observedAt": "2030-03-04T12:00:00Z",
+          "freshness": "fresh",
+          "ageSeconds": 0
+        },
+        "plan": {
+          "text": "Plus",
+          "state": "reported",
+          "value": "plus",
+          "source": "codex account/read",
+          "observedAt": "2030-03-04T12:00:00Z",
+          "freshness": "fresh",
+          "ageSeconds": 0
+        },
+        "configuredModel": {
+          "text": "Not recorded",
+          "state": "unavailable",
+          "freshness": "unavailable",
+          "missing": "not_recorded"
+        },
+        "observedModel": {
+          "text": "Not recorded",
+          "state": "unavailable",
+          "freshness": "unavailable",
+          "missing": "not_recorded"
+        },
+        "uses": "unavailable",
+        "identity": "selected_context_only",
+        "needsPerson": false,
+        "routes": "none"
+      },
+      {
+        "usageUpdating": {
+          "state": "off",
+          "text": "Keep usage updated: off"
+        },
+        "quota": {
+          "summary": {
+            "provenance": {
+              "version": 1,
+              "retrievedAt": "2030-03-04T10:00:00Z",
+              "providerObservedAt": null
+            },
+            "state": "reported",
+            "text": "Saved selected-context quota; provider observation time is unavailable. Collection time does not verify provider freshness. Account identity and live thread binding are not verified.",
+            "source": "codex account/rateLimits/read",
+            "observedAt": "2030-03-04T10:00:00Z",
+            "freshness": "stale",
+            "rows": [
+              {
+                "name": "Codex \u00b7 5-hour",
+                "text": "Window ended; refresh needed. Last reading: 0% used \u00b7 100% remaining",
+                "usedPercent": 0,
+                "remainingPercent": 100,
+                "resetsAt": "2030-03-04T11:00:00Z",
+                "ended": true
+              },
+              {
+                "name": "Codex \u00b7 secondary window",
+                "text": "42% used \u00b7 58% remaining",
+                "usedPercent": 42,
+                "remainingPercent": 58
+              },
+              {
+                "name": "Provider availability",
+                "text": "Unknown; percentages and reset times do not establish access."
+              }
+            ],
+            "partial": true,
+            "failedRefreshAt": "2030-03-04T12:00:00Z",
+            "failedRefreshText": "The quota read timed out."
+          },
+          "state": "reported",
+          "source": "codex account/rateLimits/read",
+          "observedAt": "2030-03-04T10:00:00Z",
+          "ageSeconds": 7200,
+          "freshness": "stale",
+          "windows": [
+            {
+              "name": "primary",
+              "usedPercent": 0,
+              "durationMinutes": 300,
+              "resetsAt": "2030-03-04T11:00:00Z"
+            },
+            {
+              "name": "secondary",
+              "usedPercent": 42
+            }
+          ],
+          "failedRefreshAt": "2030-03-04T12:00:00Z",
+          "failedRefreshReason": "timeout"
+        },
+        "id": "25f2b574005725c9556c31ce668c59fc",
+        "label": "Example older reading",
+        "provider": "codex",
+        "selection": "inherited",
+        "auth": {
+          "text": "Not checked",
+          "state": "unchecked",
+          "freshness": "unavailable"
+        },
+        "plan": {
+          "text": "Not checked",
+          "state": "unavailable",
+          "freshness": "unavailable",
+          "missing": "not_checked"
+        },
+        "configuredModel": {
+          "text": "Not recorded",
+          "state": "unavailable",
+          "freshness": "unavailable",
+          "missing": "not_recorded"
+        },
+        "observedModel": {
+          "text": "Not recorded",
+          "state": "unavailable",
+          "freshness": "unavailable",
+          "missing": "not_recorded"
+        },
+        "uses": "unavailable",
+        "identity": "selected_context_only",
+        "localAuth": "file_expired",
+        "needsPerson": false,
+        "routes": "none"
+      },
+      {
+        "usageUpdating": {
+          "state": "off",
+          "text": "Keep usage updated: off"
+        },
+        "quota": {
+          "summary": {
+            "state": "unavailable",
+            "text": "The provider reported no supported quota detail.",
+            "freshness": "unavailable",
+            "rows": [],
+            "failedRefreshAt": "2030-03-04T11:59:00Z",
+            "failedRefreshText": "The provider reported no supported quota detail."
+          },
+          "state": "unavailable",
+          "reason": "no_windows",
+          "freshness": "unavailable",
+          "windows": [],
+          "failedRefreshAt": "2030-03-04T11:59:00Z",
+          "failedRefreshReason": "no_windows"
+        },
+        "id": "f550043369ebf5255bf32e3915feca71",
+        "label": "Example unavailable",
+        "provider": "codex",
+        "selection": "inherited",
+        "auth": {
+          "text": "Not checked",
+          "state": "unchecked",
+          "freshness": "unavailable"
+        },
+        "plan": {
+          "text": "Not checked",
+          "state": "unavailable",
+          "freshness": "unavailable",
+          "missing": "not_checked"
+        },
+        "configuredModel": {
+          "text": "Not recorded",
+          "state": "unavailable",
+          "freshness": "unavailable",
+          "missing": "not_recorded"
+        },
+        "observedModel": {
+          "text": "Not recorded",
+          "state": "unavailable",
+          "freshness": "unavailable",
+          "missing": "not_recorded"
+        },
+        "uses": "unavailable",
+        "identity": "selected_context_only",
+        "localAuth": "file_expired",
+        "needsPerson": false,
+        "routes": "none"
+      },
+      {
+        "usageUpdating": {
+          "state": "off",
+          "text": "Keep usage updated: off"
+        },
+        "quota": {
+          "summary": {
+            "provenance": {
+              "version": 1,
+              "retrievedAt": "2030-03-04T11:59:00Z",
+              "providerObservedAt": null
+            },
+            "state": "reported",
+            "text": "Saved selected-context quota; provider observation time is unavailable. Collection time does not verify provider freshness. Account identity and live thread binding are not verified.",
+            "source": "codex account/rateLimits/read",
+            "observedAt": "2030-03-04T11:59:00Z",
+            "freshness": "fresh",
+            "rows": [
+              {
+                "name": "Codex \u00b7 5-hour",
+                "text": "0% used \u00b7 100% remaining",
+                "usedPercent": 0,
+                "remainingPercent": 100,
+                "resetsAt": "2030-03-17T17:46:40Z"
+              },
+              {
+                "name": "Codex \u00b7 secondary window",
+                "text": "42% used \u00b7 58% remaining",
+                "usedPercent": 42,
+                "remainingPercent": 58
+              },
+              {
+                "name": "Provider availability",
+                "text": "Unknown; percentages and reset times do not establish access."
+              }
+            ],
+            "partial": true
+          },
+          "state": "reported",
+          "source": "codex account/rateLimits/read",
+          "observedAt": "2030-03-04T11:59:00Z",
+          "ageSeconds": 60,
+          "freshness": "fresh",
+          "windows": [
+            {
+              "name": "primary",
+              "usedPercent": 0,
+              "durationMinutes": 300,
+              "resetsAt": "2030-03-17T17:46:40Z"
+            },
+            {
+              "name": "secondary",
+              "usedPercent": 42
+            }
+          ]
+        },
+        "id": "9114fc219d311c9ba23ff5b6dbcb45a6",
+        "label": "ExampleExampleExampleExampleExampleExampleExampleExampleExampleExampleExampleExampleExampleExampleExample",
+        "provider": "codex",
+        "selection": "inherited",
+        "auth": {
+          "text": "Not checked",
+          "state": "unchecked",
+          "freshness": "unavailable"
+        },
+        "plan": {
+          "text": "Not checked",
+          "state": "unavailable",
+          "freshness": "unavailable",
+          "missing": "not_checked"
+        },
+        "configuredModel": {
+          "text": "Not recorded",
+          "state": "unavailable",
+          "freshness": "unavailable",
+          "missing": "not_recorded"
+        },
+        "observedModel": {
+          "text": "Not recorded",
+          "state": "unavailable",
+          "freshness": "unavailable",
+          "missing": "not_recorded"
+        },
+        "uses": "unavailable",
+        "identity": "selected_context_only",
+        "localAuth": "file_expired",
+        "needsPerson": false,
+        "routes": "none"
+      }
+    ]
+  }
+}
