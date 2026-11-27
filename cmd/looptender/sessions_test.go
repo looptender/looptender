@@ -155,7 +155,7 @@ func TestRegisteredLoopsAreFoundAndStartAndInitRefuse(t *testing.T) {
 	}
 	other := secondLoop(t, f, "example-loop-b", nil)
 	code, _, errs := runWith("start", "-c", other)
-	if code != exitFailed || !strings.Contains(errs, "start: loop example-loop (") || !strings.Contains(errs, "--allow-second-loop to start this one") {
+	if code != exitFailed || !strings.Contains(errs, "start: loop example-loop (") || !strings.Contains(errs, "This registration blocks a second loop") || !strings.Contains(errs, "--allow-second-loop explicitly permits dual registrations") {
 		t.Fatalf("start: %d %s", code, errs)
 	}
 	otherCfg, _ := config.Load(other)
