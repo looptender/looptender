@@ -196,12 +196,12 @@ extension MenuBuilder {
 
     /// The accounts that matter now (at or near a limit), as top-level rows; at most two.
     /// Ranks by each account's highest active usage window descending, with list-order tie-breaking.
-    static func accountsThatMatter(_ quota: AccountQuotaList) -> [MenuRow] {
+    static func accountsThatMatter(_ quota: AccountQuotaList, now: Date = Date()) -> [MenuRow] {
         guard quota.state == "available" else { return [] }
         let candidates: [(index: Int, account: AccountQuota, peak: Double)] = quota.accounts.enumerated().compactMap { index, account in
             guard account.summary.state == "reported" else { return nil }
             let peak = account.summary.rows
-                .filter { $0.ended != true }
+                .filter { !quotaEnded($0, now: now) }
                 .compactMap(\.usedPercent)
                 .max()
             guard let peak, peak >= 80 else { return nil }
@@ -211,6 +211,6 @@ extension MenuBuilder {
             if lhs.peak != rhs.peak { return lhs.peak > rhs.peak }
             return lhs.index < rhs.index
         }
-        return sorted.prefix(2).map { quotaAccountRow($0.account, peakUsed: $0.peak) }
+        return sorted.prefix(2).map { quotaAccountRow($0.account, now: now) }
     }
 }

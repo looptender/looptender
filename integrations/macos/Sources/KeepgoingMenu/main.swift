@@ -134,6 +134,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var menuOpen = false
     var notice: String?
     var loading = false
+    lazy var usageWorker = MenuUsageWorker { [client] in try client.startUsageWorker() }
     /// Nil when the menu cannot tell which build it runs: it then never offers an update.
     var flow: UpdateFlow?
     let launchPath: String
@@ -248,9 +249,13 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // menu is first opened. After that it reads when the menu opens, when
         // Refresh is chosen, and on the slow schedule in ReadSchedule.
         let workspace = NSWorkspace.shared.notificationCenter
-        workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in self?.timer?.invalidate() }
+        workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in self?.timer?.invalidate(); self?.usageWorker.stop() }
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.refresh() }
-        NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { [weak self] _ in self?.scheduleNextRead() }
+        NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { [weak self] _ in
+            self?.scheduleNextRead()
+            if ProcessInfo.processInfo.isLowPowerModeEnabled { self?.usageWorker.stop() }
+            else { self?.refresh() }
+        }
         if let told = updater?.takeTold() { notifier.restoreTold(told) }
         // "Updated" is said once the menu this one replaced has really exited.
         flow?.confirmUpdateAfterStart()
@@ -259,6 +264,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     func menuWillOpen(_ menu: NSMenu) {
         menuOpen = true
+        render() // Recompute saved ages even if the next CLI read fails.
         refresh()
     }
     func menuDidClose(_ menu: NSMenu) {
@@ -297,11 +303,12 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.setAccessibilityLabel(model.iconAccessibilityLabel + (mark.isEmpty ? "" : ", menu update available"))
         }
         let column = stateColumn(model.rows)
-        if MenuBuilder.sameShape(model.rows, shown), menu.items.count == model.rows.count {
+        switch MenuBuilder.updateMode(shown: shown, next: model.rows, itemCount: menu.items.count, menuOpen: menuOpen, hasHighlight: menu.highlightedItem != nil) {
+        case .inPlace:
             for (entry, row) in zip(menu.items, model.rows) where row.kind != .separator { fill(entry, row, column: column) }
-        } else if MenuBuilder.deferStructuralUpdate(menuOpen: menuOpen, hasHighlightedItem: menu.highlightedItem != nil) {
-            return // menuDidClose renders again
-        } else {
+        case .deferred:
+            return // menuDidClose renders again; preserve the highlighted target
+        case .rebuild:
             build(menu, model.rows, column: column)
         }
         shown = model.rows
@@ -602,6 +609,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        usageWorker.stop()
         // Said once, in this process, before it exits (the app is ending, so this
         // one call is made here and waited for). It carries this menu's pid, so
         // it takes effect only if the heartbeat file is still this menu's: a menu
@@ -630,6 +638,9 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // stop row is simply absent.
             let status = try? client.panelStatus()
             DispatchQueue.main.async { [self] in
+                if renderPath == nil, case .read(let list, _) = result {
+                    usageWorker.update(eligible: list.accountQuotas?.workerEligible == true, suspended: ProcessInfo.processInfo.isLowPowerModeEnabled, now: Date())
+                }
                 reading = result
                 panel = status
                 failures = failed ? failures + 1 : 0
