@@ -1,11 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
-	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -24,6 +24,36 @@ type accountQuotaReceipt struct {
 	elapsed                time.Duration
 	parsed                 []byte
 	digest                 [32]byte
+	publication            accountQuotaPublicationProof
+}
+
+// Only the original invocation's tuple is snapshotted, while its confirmed
+// cache publication is locked. No view/cache reread can fill this proof later.
+// confirmedAt is local confirmation time, distinct from request/parse completion.
+type accountQuotaPublicationProof struct {
+	attempt     []byte
+	confirmedAt time.Time
+}
+
+func (r *accountQuotaReceipt) publicationBytesCopy() []byte {
+	if r == nil {
+		return nil
+	}
+	return append([]byte(nil), r.publication.attempt...)
+}
+func (r *accountQuotaReceipt) publicationCopy() (*accounts.QuotaAttempt, time.Time) {
+	if r == nil || len(r.publication.attempt) == 0 {
+		return nil, time.Time{}
+	}
+	var attempt accounts.QuotaAttempt
+	if json.Unmarshal(r.publication.attempt, &attempt) != nil || attempt.At.IsZero() || attempt.Reason != "" || attempt.Details == nil || r.publication.confirmedAt.IsZero() || attempt.At.Before(r.completedAt) || attempt.At.After(r.publication.confirmedAt) {
+		return nil, time.Time{}
+	}
+	details, err := json.Marshal(attempt.Details)
+	if err != nil || !bytes.Equal(details, r.parsed) {
+		return nil, time.Time{}
+	}
+	return &attempt, r.publication.confirmedAt
 }
 
 func (r *accountQuotaReceipt) detailsCopy() *accounts.QuotaDetails {
@@ -219,18 +249,32 @@ func (t *quotaReceiptTrace) publish(dir string, selected accountQuotaSelection, 
 	if err != nil {
 		return nil, "publication_unconfirmed"
 	}
+	// Freeze the ORIGINAL invocation argument, never the latest cache record.
+	// Canonical bytes preserve -0 and optional values that Go equality can lose.
+	details, err := json.Marshal(attempt.Details)
+	if err != nil || attempt.Reason != "" || attempt.Details == nil || !bytes.Equal(details, t.parsed) {
+		return nil, "publication_unconfirmed"
+	}
+	original, err := json.Marshal(attempt)
+	if err != nil {
+		return nil, "publication_unconfirmed"
+	}
 	confirmed := false
 	for _, entry := range cache.Entries {
-		if entry.ID == selected.Entry.ID && entry.Revision == selected.Entry.Revision && entry.Context == selected.Bound && entry.Success != nil && reflect.DeepEqual(*entry.Success, attempt) && reflect.DeepEqual(entry.Attempt, attempt) {
-			confirmed = true
+		if entry.ID == selected.Entry.ID && entry.Revision == selected.Entry.Revision && entry.Context == selected.Bound && entry.Success != nil {
+			successBytes, successErr := json.Marshal(entry.Success)
+			attemptBytes, attemptErr := json.Marshal(entry.Attempt)
+			if successErr == nil && attemptErr == nil && bytes.Equal(successBytes, original) && bytes.Equal(attemptBytes, original) {
+				confirmed = true
+			}
 		}
 	}
 	if !confirmed {
 		return nil, "publication_superseded"
 	}
 	check := t.clock()
-	if check.wall.Before(t.finish.wall) || check.monotonic < t.finish.monotonic || attempt.At.Before(t.finish.wall) || attempt.At.After(check.wall) {
+	if check.wall.UTC().Year() < 2000 || check.wall.UTC().Year() > 9999 || check.wall.Before(t.finish.wall) || check.monotonic < t.finish.monotonic || attempt.At.Before(t.finish.wall) || attempt.At.After(check.wall) {
 		return nil, "clock_unavailable"
 	}
-	return &accountQuotaReceipt{id: t.id, reader: "codex-account-rateLimits-read/v1", binding: selected, startedAt: t.start.wall.UTC(), completedAt: t.finish.wall.UTC(), elapsed: t.finish.monotonic - t.start.monotonic, parsed: append([]byte(nil), t.parsed...), digest: sha256.Sum256(t.parsed)}, ""
+	return &accountQuotaReceipt{id: t.id, reader: "codex-account-rateLimits-read/v1", binding: selected, startedAt: t.start.wall.UTC(), completedAt: t.finish.wall.UTC(), elapsed: t.finish.monotonic - t.start.monotonic, parsed: append([]byte(nil), t.parsed...), digest: sha256.Sum256(t.parsed), publication: accountQuotaPublicationProof{attempt: original, confirmedAt: check.wall.UTC()}}, ""
 }
