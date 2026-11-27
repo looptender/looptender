@@ -334,3 +334,41 @@ func TestLegacyProtectionAndReviewPolicy(t *testing.T) {
 		t.Fatal(r)
 	}
 }
+
+func TestLegacyCheckPolicyEnforcementThroughInspect(t *testing.T) {
+	for _, tc := range []struct {
+		name, policy, reason string
+		activeRules          bool
+		calls                int
+	}{
+		{"disabled retained contexts alone", `{"requiresStatusChecks":false,"requiredStatusChecks":[{"context":"test","app":{"databaseId":10}}]}`, "missing_required_check_policy", false, 6},
+		{"enabled legacy policy", `{"requiresStatusChecks":true,"requiredStatusChecks":[{"context":"test","app":{"databaseId":10}}]}`, "ready", false, 12},
+		{"active rules independently apply", `{"requiresStatusChecks":false,"requiredStatusChecks":[{"context":"obsolete","app":{"databaseId":11}}]}`, "ready", true, 12},
+		{"disabled empty policy", `{"requiresStatusChecks":false,"requiredStatusChecks":[]}`, "missing_required_check_policy", false, 6},
+		{"enabled empty policy unknown", `{"requiresStatusChecks":true,"requiredStatusChecks":[]}`, "unknown_check_policy", true, 6},
+		{"missing enforcement unknown", `{"requiredStatusChecks":[{"context":"test","app":{"databaseId":10}}]}`, "unknown_check_policy", true, 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := fixture()
+			if !tc.activeRules {
+				s.Rules = []Rule{}
+			}
+			if err := json.Unmarshal([]byte(tc.policy), &s.PR.BaseRef.BranchProtectionRule); err != nil {
+				t.Fatal(err)
+			}
+			reads := encoded(t, s)
+			n := 0
+			r := Inspect(context.Background(), func(context.Context, ...string) ([]byte, error) {
+				if n >= 12 {
+					t.Fatal("read bound exceeded")
+				}
+				b := reads[n%len(reads)]
+				n++
+				return b, nil
+			}, "example-org/example-app", 42)
+			if r.Reason != tc.reason || r.Ready != (tc.reason == "ready") || n != tc.calls {
+				t.Fatalf("got %+v calls=%d; want reason=%s calls=%d", r, n, tc.reason, tc.calls)
+			}
+		})
+	}
+}

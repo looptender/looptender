@@ -318,11 +318,15 @@ func evaluate(s Snapshot) Report {
 		if *protection.RequiresStatusChecks && len(protection.RequiredStatusChecks) == 0 {
 			return fail("unknown_check_policy")
 		}
-		for _, c := range protection.RequiredStatusChecks {
-			if c.Context == "" || c.App == nil || c.App.DatabaseID <= 0 {
-				return fail("unsupported_required_check_identity")
+		// Retained context metadata is not enforcement. Only an enabled legacy
+		// policy contributes obligations; effective rules are evaluated separately.
+		if *protection.RequiresStatusChecks {
+			for _, c := range protection.RequiredStatusChecks {
+				if c.Context == "" || c.App == nil || c.App.DatabaseID <= 0 {
+					return fail("unsupported_required_check_identity")
+				}
+				required[checkKey(c.Context, c.App.DatabaseID)] = true
 			}
-			required[checkKey(c.Context, c.App.DatabaseID)] = true
 		}
 	}
 	for _, rule := range s.Rules {
