@@ -120,6 +120,43 @@ inputs and secret canaries. Negative controls that treat incomplete coverage as
 absence or source text as permission must fail. This slice can proceed separately
 from source readers, pool admission and HOME; it adds no authority to them.
 
+### Planned use case: reusable documentation upkeep
+
+A project may explicitly adopt reusable documentation obligations in its
+configured authorized work source. Adoption must bind the project/repository,
+policy/source revision, allowed change scope, responsible agent/assignment and
+acceptance references. Installing a looptender update, discovering a repository
+or reading its docs does not adopt or enable this policy. Cross-project reuse
+shares the obligation template, not permission or claims between projects.
+
+For each bound change, the agent records documentation impact and affected guides,
+or a justified no-change decision tied to that exact change/review revision.
+Release-facing work must align documented behavior, version/release evidence and
+limitations, distinguishing source implementation, published artifacts, installed
+builds and native/live verification. A successful build, version string or docs
+edit alone cannot close acceptance. Missing or stale verification and unmatched
+release/version evidence produce scoped findings; incomplete coverage remains
+`cannot_assess`, never inferred compliance or a demand to publish.
+
+**Bounded follow-on:** represent these obligations as structured work items in
+the same bound inventory and goal/assignment lifecycle, with impact/no-change and
+release/verification evidence references supplied by the authorized agent. Add a
+read-only coverage projection for missing, stale or mismatched references; reuse
+source/item identities, revision checks, claim isolation and existing findings
+rather than creating a docs ledger, parser, scheduler or second policy engine.
+Looptender reports coverage; the agent owns repository edits, review and any
+separately authorized publication. The supervisor never edits repositories,
+auto-enables policy or infers acceptance. Source progress edits remain separate
+authorized actions; a finding grants no new scope or spend.
+
+Fictional fixtures must cover explicit versus absent adoption, installation
+without adoption, two projects sharing a template with isolated claims, changed
+source/change/review revisions, a bound justified no-change result, missing/stale
+verification and source-versus-release/installed version mismatch. A docs edit or
+passing CI with unmet acceptance must remain open. This is planned follow-on to
+work-source/coverage mechanisms, not delivered upkeep, site implementation,
+scheduling or a new recurring paid lane.
+
 ## Find inefficiencies without maximizing activity
 
 Finding inefficiencies is a core looptender responsibility in the planned
