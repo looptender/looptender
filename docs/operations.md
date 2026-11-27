@@ -1010,6 +1010,10 @@ Released in v0.2.0; **offline fixtures only**. A provider limit with a reported 
 
 The payload carries the loop name, the target alias, the reset time, the reason the threshold and the report's number within the wait. It carries no task text, transcript or thread ID. This is the same content class as the existing `handoff` report.
 
+## pr-ready
+
+Unreleased source: `looptender pr-ready --repo example-org/example-app --pr 42` makes one bounded readiness inspection. It prints the exact head commit only on success; `--json` includes the reason and head/base/merge identities. Exit 1 means nonready or unsupported evidence, exit 2 means usage error. See the [supported evidence contract](pr-ready.md), especially the queue and head-only Actions limitations. It performs no merge, queue submission or PR mutation.
+
 ## ci-wait
 
 ```sh

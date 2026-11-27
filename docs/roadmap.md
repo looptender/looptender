@@ -843,11 +843,11 @@ The theme: bring keepgoing to any machine a person runs, such as a laptop, a hea
 
 #### Fleet coordination
 
-Planned, not started. keepgoing observes delivery state and tells the owning agent. It never assigns work, reviews, rebases or merges.
+Planned, with the conservative FC5 helper available in unreleased source below. Delivery-state observation and notices to the owning agent remain planned. keepgoing never assigns work, reviews, rebases or merges.
 
 - [ ] **FC1 — Delivery state.** A tracked pull request's merge state, checks, review decision and head commit, per loop and then per lane, read-only in `status`, `runs` and the panel. The routine chore a coordinator does by hand today. An `UNKNOWN` state stays unknown and triggers nothing. Per lane depends on P6.
 - [ ] **FC2 — Base-moved notice.** One fixed notice to the owning session when its tracked pull request falls behind its base or conflicts. Nothing else tells it. First use of F8 through E1. The agent rebases; keepgoing never does.
-- [ ] **FC5 — `pr-ready`.** A helper beside `ci-wait` that exits 0 only when the current head has passing checks on the current base and is mergeable, and prints the commit to pin. It turns the merge rules into one exit code. The agent still merges.
+- [ ] **FC5 — `pr-ready`.** A helper beside `ci-wait` that exits 0 only when the current head has passing checks on the current base and is mergeable, and prints the commit to pin. Unreleased source implements a [conservative structured-evidence subset](pr-ready.md), with fictional fixtures for changing identities, stale synthetic merges, check/review completeness and policy refusals. Queue policy, head-only Actions evidence, unstructured review findings and live acceptance remain open; this item stays unchecked. The agent still owns review acceptance and any merge.
 - [ ] **FC7 — One needs-you list across loops.** Ordered by lanes blocked and time waited, because attention is the scarce resource. Depends on D4's blocked-by links.
 - [ ] **FC6 — Review backlog bound.** An opt-in hold on new idle wakes while N pull requests wait on a person, so unreviewed work stops piling up.
 - [ ] **FC8 — Stale-review and failing-head flags.** Flag a review given on an older head and repeated failing heads, with an optional hold at a count, so an agent cannot retry without limit.
