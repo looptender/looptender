@@ -1,0 +1,1 @@
+- Document the landed quota summary provenance v1 producer and source consumers, preserving local-retrieval semantics, strict compatibility limits and unverified provider/account/pooling boundaries.

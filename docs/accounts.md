@@ -685,10 +685,9 @@ local time after the RPC/parse attempt and projects a successful value as
 `observedAt`, with `fresh`/`stale` based on its local age. Those existing field
 names do not establish a provider-authenticated measurement time or proof that
 the provider freshly measured quota. Recent retrieval and provider freshness
-remain different facts. An additive provenance contract is planned separately;
-it must preserve this distinction before any runtime evidence assembler or
-operational pool admission is claimed. No such assembler or pooling is delivered
-by the current reading or this documentation.
+remain different facts. The [additive provenance v1 source contract](#quota-summary-provenance-v1-source-contract)
+makes that distinction explicit without changing those historical fields. It
+establishes neither a runtime evidence assembler nor operational pooling.
 
 The supported Codex response can expose several metered buckets. Up to eight
 are retained separately, with primary and secondary windows where present,
@@ -877,6 +876,76 @@ registry/route-list plus 64 detailed quota fixture requires the existing main
 6 MiB regression threshold; all quota rows remain obtainable in the separate
 1 MiB response. Native remains bounded to 1 MiB.
 
+### Quota summary provenance v1 (source contract)
+
+As of 2026-11-27, the additive producer
+[#588](https://github.com/looptender/looptender/pull/588) has landed on main in
+[`1c38291e`](https://github.com/looptender/looptender/commit/1c38291ec47b4d01bf01b90dabc834034986b0c5).
+The strict native/CLI consumer [#589](https://github.com/looptender/looptender/pull/589)
+has landed in [`3282d990`](https://github.com/looptender/looptender/commit/3282d9905b1ab0362ffa2c864f12bbc7e6447442),
+and the strict web consumer [#590](https://github.com/looptender/looptender/pull/590)
+has landed in [`9dcf7948`](https://github.com/looptender/looptender/commit/9dcf79487ffa5ee6f24a43cbce1077fb1588de16).
+These are landed source changes, not evidence of released or installed
+capability. This reference preserves the historical reviewed evidence pins for
+producer [`0f5c60a9`](https://github.com/looptender/looptender/blob/0f5c60a99cc230dfd1f17f4230f98e381e6c211f/internal/accounts/quota_details.go),
+native [`b2feafc4`](https://github.com/looptender/looptender/blob/b2feafc412f320cd13c94c51cd55bc388d85f45d/integrations/macos/Sources/KeepgoingMenuCore/Quota.swift)
+and web [`719e5bfb`](https://github.com/looptender/looptender/blob/719e5bfb2db2e37357378c3e6ea0ccde22e98407/cmd/looptender/dockui/dock.js)
+independently; deployment must establish which producer and consumers are in use.
+
+The producer adds this object inside a **reported quota summary**, not at the
+account-card root or in the private quota cache:
+
+```json
+{
+  "provenance": {
+    "version": 1,
+    "retrievedAt": "2030-03-04T12:00:02Z",
+    "providerObservedAt": null
+  }
+}
+```
+
+This is a summary fragment with a fictional timestamp, not a complete response.
+The public paths are `quota.summary.provenance` on an account card and
+`accountQuotas.accounts[].summary.provenance` in native `panel list --json`.
+Its three required members are:
+
+| Member | Meaning in v1 |
+| --- | --- |
+| `version` | Numeric `1`. |
+| `retrievedAt` | Retained local successful retrieval-completion timestamp. It must match the historical summary timestamp as the same instant, including fractional precision. |
+| `providerObservedAt` | Explicit JSON `null`. No current supported reader supplies a verified provider measurement time. A non-null value requires a new reviewed contract. |
+
+The producer keeps Codex's summary `observedAt` and `fresh`/`stale` for wire
+compatibility; these describe local retrieval age only. For Claude/Antigravity,
+summary `retrievedAt` and `provider_unknown` remain unchanged. Provenance does
+not rewrite cache schemas or turn failed-attempt time, page-read time or the
+next eligible fetch into a successful retrieval. Failed reads keep any earlier
+successful timestamp; reset passing does not prove refill.
+
+The pinned strict consumers accept **absent** `summary.provenance` through the
+legacy source/provider/timestamp checks, with provider time and freshness still
+unknown. They reject **present** malformed or unsupported provenance without
+legacy fallback: null, missing/extra members, unsupported version, invalid time,
+non-null provider time or disagreement with the historical timestamp. Their raw
+JSON boundaries also reject ambiguous duplicate member names along the
+quota-summary/provenance path, including escaped-equivalent keys. Existing
+source/provider/timestamp consistency checks still apply. Older consumers do
+not thereby gain the new strict validation or corrected labels.
+
+The source CLI text from #589 says **Last successful fetch … (local retrieval
+time); provider observation time and freshness unknown**. The source native
+menu distinguishes local successful-fetch time from unavailable provider
+observation time; the source web consumer uses **Retrieved** (or legacy
+**Local read**) with **Provider freshness unknown**. JSON retains the historical
+fields. See the [native saved-quota contract](../integrations/macos/README.md#saved-account-quota-unreleased)
+for the separately versioned companion behavior.
+
+Neither recent retrieval nor provenance v1 proves provider freshness, refill,
+account identity, live thread account binding, route availability or permission
+to pool work. Automatic acquisition opt-ins and holds remain independent.
+No runtime assembler, reservation, account switching or operational pooling is
+established by these producer/consumer changes or this documentation.
 
 ## Connect a subscription from a terminal (unreleased)
 
