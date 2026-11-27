@@ -208,8 +208,11 @@ as local retrieval times with provider time unknown. When provenance is present,
 v1 requires exactly `version:1`, a valid `retrievedAt` equal to the historical
 local timestamp, and explicit `providerObservedAt:null`. Present null, missing or
 unknown keys, unsupported versions, non-null provider time and mismatched times
-are rejected, without legacy fallback. A non-null provider time requires a new
-reviewed contract. The matching source CLI's `accounts usage` text labels the
+are rejected, without legacy fallback. Duplicate provenance member names or
+keys selecting its enclosing path are rejected before JSON object decoding can
+discard them, including equal values and escaped-equivalent key names. A non-null
+provider time requires a new reviewed contract. The matching source CLI's
+`accounts usage` text labels the
 last successful fetch as local retrieval time; JSON retains its historical
 fields. These are source contracts, not a claim about an installed build or live
 provider acceptance.

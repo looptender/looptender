@@ -11,7 +11,72 @@ enum QuotaProvenanceFixture {
     static func require(_ condition: Bool, _ message: String) throws {
         if !condition { throw Failure(text: message) }
     }
+    static func rawDuplicateKeys(_ input: Data) throws {
+        let raw = String(decoding: input, as: UTF8.self)
+        func replacing(_ text: String, _ token: String, _ replacement: String) throws -> Data {
+            guard let range = text.range(of: token) else { throw Failure(text: "Raw fixture token absent: " + token) }
+            var changed = text
+            changed.replaceSubrange(range, with: replacement)
+            return Data(changed.utf8)
+        }
+        var acceptedDuplicates: [String] = []
+        func rejected(_ bytes: Data, _ name: String) throws {
+            // Validate fixture syntax without using the normalized object for the test.
+            _ = try JSONSerialization.jsonObject(with: bytes)
+            do { _ = try Contract.panelList(bytes, exit: 0) } catch { return }
+            acceptedDuplicates.append(name)
+        }
+        let stamp = #""2030-03-04T12:00:00Z""#
+        for (key, escaped, valid, invalid) in [
+            ("version", #"\u0076ersion"#, "1", "2"),
+            ("retrievedAt", #"\u0072etrievedAt"#, stamp, #""2031-03-04T12:00:00Z""#),
+            ("providerObservedAt", #"\u0070roviderObservedAt"#, "null", stamp)
+        ] {
+            let token = "\"" + key + "\":" + valid
+            for (first, second) in [(valid, invalid), (invalid, valid), (valid, valid), (invalid, invalid)] {
+                for (left, right) in [(key, key), (key, escaped), (escaped, key)] {
+                    let duplicate = "\"" + left + "\":" + first + ",\"" + right + "\":" + second
+                    try rejected(replacing(raw, token, duplicate), key + " " + duplicate)
+                }
+            }
+            // Escapes alone are legitimate JSON and do not manufacture duplicates.
+            _ = try Contract.panelList(replacing(raw, token, "\"" + escaped + "\":" + valid), exit: 0)
+        }
+        let object = #"{"version":1,"retrievedAt":"2030-03-04T12:00:00Z","providerObservedAt":null}"#
+        for (first, second) in [(object, "null"), ("null", object), (object, object)] {
+            for key in ["provenance", #"\u0070rovenance"#] {
+                try rejected(replacing(raw, "\"provenance\":" + object, "\"provenance\":" + first + ",\"" + key + "\":" + second), "duplicate summary.provenance")
+            }
+        }
+        // Enclosing duplicate keys cannot hide an ambiguous provenance path.
+        for token in ["\"accountQuotas\":{", "\"accounts\":[", "\"summary\":{"] {
+            let key = String(token.dropLast())
+            try rejected(replacing(raw, token, key + "null," + token), "duplicate enclosing " + token)
+            let changed = try replacing(raw, token, key + "null," + token)
+            // Reverse null/object order using the complete valid value below.
+            let parsed = try JSONSerialization.jsonObject(with: input) as! [String: Any]
+            let quotas = parsed["accountQuotas"] as! [String: Any]
+            let accounts = quotas["accounts"] as! [[String: Any]]
+            let value: Any = token.contains("accountQuotas") ? quotas : token.contains("accounts") ? accounts : accounts[0]["summary"]!
+            let encoded = String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
+            try rejected(replacing(String(decoding: changed, as: UTF8.self), key + "null,", key + encoded + ","), "duplicate equal enclosing " + token)
+            try rejected(replacing(raw, token, key + encoded + "," + key + "null,\"ignoredFixture\":" + String(token.suffix(1))), "duplicate reversed enclosing " + token)
+        }
+        var escapedPath = raw
+        for (key, escaped) in [("accountQuotas", #"\u0061ccountQuotas"#), ("accounts", #"\u0061ccounts"#), ("summary", #"\u0073ummary"#), ("provenance", #"\u0070rovenance"#)] {
+            escapedPath = escapedPath.replacingOccurrences(of: "\"" + key + "\":", with: "\"" + escaped + "\":")
+        }
+        _ = try Contract.panelList(Data(escapedPath.utf8), exit: 0)
+        // Scope stays additive: old producers and unrelated ignored fields are
+        // still accepted, including strings that merely resemble duplicate keys.
+        let legacy = raw.replacingOccurrences(of: "\"provenance\":" + object + ",", with: "")
+        _ = try Contract.panelList(Data(legacy.utf8), exit: 0)
+        _ = try Contract.panelList(Data([0xEF, 0xBB, 0xBF]) + Data(legacy.utf8), exit: 0)
+        _ = try Contract.panelList(replacing(legacy, "{", #"{"ignoredFixture":{"version":1,"version":2,"text":"escaped \"version\":1,\"version\":2"},"#), exit: 0)
+        try require(acceptedDuplicates.isEmpty, "Accepted raw duplicate keys (\(acceptedDuplicates.count)): " + acceptedDuplicates.joined(separator: "; "))
+    }
     static func run(_ input: Data = Data(json.utf8)) throws {
+        try rawDuplicateKeys(input)
         let now = Contract.date("2030-03-04T12:00:00Z")!
         let original = try JSONSerialization.jsonObject(with: input) as! [String: Any]
         let quotas = original["accountQuotas"] as! [String: Any]
