@@ -27,7 +27,7 @@ test("card retains retired, active and completed matches; pending controls follo
     // Each held loop says it once in its own words, and keeps its own command in its Details.
     assert.equal(ui.getAllByText(/from the looptender panel \(looptender panel\), or from a terminal outside BB with looptender resume/).length, 2);
     assert.ok(region(retired.loop).getByText(/looptender resume -c "\/example\/retired-example\/looptender.yaml"/)); assert.equal(ui.queryAllByText(/A person resumes this/).length, 0);
-    assert.ok(region(completed.loop).getByText("looptender: completed"));
+    assert.ok(region(completed.loop).getByText("looptender: loop completion declared"));
     assert.equal(ui.queryByRole("button", { name: "Resume" }), null);
     fireEvent.click(region(active.loop).getByRole("button", { name: /^Pause / }));
     assert.deepEqual(calls, [{ configPath: active.configPath, action: "pause", managedId: active.managedId, expectedThreadId: "thr_example_matches" }]);

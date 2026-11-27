@@ -155,7 +155,7 @@ func TestRegisteredLoopsAreFoundAndStartAndInitRefuse(t *testing.T) {
 	}
 	other := secondLoop(t, f, "example-loop-b", nil)
 	code, _, errs := runWith("start", "-c", other)
-	if code != exitFailed || !strings.Contains(errs, "start: loop example-loop (") || !strings.Contains(errs, "--allow-second-loop to start this one") {
+	if code != exitFailed || !strings.Contains(errs, "start: loop example-loop (") || !strings.Contains(errs, "This registration blocks a second loop") || !strings.Contains(errs, "--allow-second-loop explicitly permits dual registrations") {
 		t.Fatalf("start: %d %s", code, errs)
 	}
 	otherCfg, _ := config.Load(other)
@@ -373,4 +373,72 @@ func TestDaemonRetriesASkippedStopAtTheControlPoll(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+// Completion and archive describe the registration, never remove its guard.
+func TestHeldRegistrationRefusalExplainsReuseWithoutChangingHolds(t *testing.T) {
+	for _, archived := range []bool{false, true} {
+		t.Run(map[bool]string{false: "completed", true: "archived-completed"}[archived], func(t *testing.T) {
+			f := newFixture(t)
+			if code, _, errs := f.run("enable"); code != exitOK {
+				t.Fatal(errs)
+			}
+			dir := archiveFixtureDir(t, f)
+			ctl, err := control.Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctl.Completed = true
+			if err := control.Save(dir, ctl); err != nil {
+				t.Fatal(err)
+			}
+			if archived {
+				if code, out, errs := f.run("archive"); code != exitOK {
+					t.Fatalf("archive: %s %s", out, errs)
+				}
+			}
+			before, err := os.ReadFile(filepath.Join(dir, control.FileName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			other := secondLoop(t, f, "example-loop-b", nil)
+			code, out, errs := runWith("start", "--background", "--json", "-c", other)
+			var got struct {
+				Refusal sessionRefusal `json:"refusal"`
+			}
+			if code != exitFailed || json.Unmarshal([]byte(out), &got) != nil || got.Refusal.Code != "second_loop_on_session" || got.Refusal.Held != "completed" || got.Refusal.Archived != archived {
+				t.Fatalf("refusal: %d %s %s", code, out, errs)
+			}
+			for _, want := range []string{"registered and enabled, held: completed", "does not prove current activity", "resume clears other holds too", "disable that loop first", "Pause or archive alone does not release"} {
+				if !strings.Contains(errs, want) {
+					t.Fatalf("missing %q: %s", want, errs)
+				}
+			}
+			if archived && !strings.Contains(errs, "unarchive resumes nothing") {
+				t.Fatal(errs)
+			}
+			if strings.Contains(out, f.dir) {
+				t.Fatal("private path crossed structured refusal boundary")
+			}
+			after, _ := os.ReadFile(filepath.Join(dir, control.FileName))
+			if !bytes.Equal(before, after) {
+				t.Fatal("refusal changed existing holds or ownership")
+			}
+			cfg, err := config.Load(other)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ctl, _ := control.Load(cfg.Loop.StateDir); ctl.Enabled {
+				t.Fatal("refused loop was enabled")
+			}
+			// Only the person's disable removes the registration guard; no resume is implied.
+			ctl.Enabled = false
+			if err := control.Save(dir, ctl); err != nil {
+				t.Fatal(err)
+			}
+			if conflict := secondLoopConflict(cfg, findOtherLoops(cfg)); conflict != nil {
+				t.Fatalf("disabled registration still conflicts: %+v", conflict)
+			}
+		})
+	}
 }

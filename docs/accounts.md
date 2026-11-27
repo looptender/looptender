@@ -10,9 +10,11 @@ Login wording is scoped to the selected CLI: "Selected CLI reports login" or
 provider account globally. Another running session can have a different context.
 
 **View recorded usage** opens Routes and its existing Allowances section.
-Those readings belong to configured route groups, are not live, and are not
-linked to these account cards. Read their recorded age, ended windows or
-unavailable state; an old limit reading does not establish current exhaustion. Selecting an
+Those readings belong to configured route groups and retain their own source
+and age. Where a route explicitly names a catalog entry, that association is
+owner-assigned rather than verified account identity; selected-context quota
+readings remain separate. Read ended windows and unavailable states honestly;
+an old limit reading does not establish current exhaustion. Selecting an
 account does not assign its ID to a route group or usage identity. The link
 reads only the existing recorded projection; it does not invoke BB usage APIs
 or refresh provider measurements, including APIs whose refresh:false option
@@ -26,6 +28,18 @@ only these model-free reads and does not enable any account or loop controls. In
 model request. Supported Darwin arm64 panels also offer **Retrieve usage** for the inspected native Claude image, with provider freshness always unknown. Same-selection recovery for either provider is a separate local revision review, never a provider read. The read-only panel offers no such action. The `accounts` commands below do not start
 a loop, enroll a route, sign in or copy credentials. Complete provider sign-in in
 the official provider tool first.
+
+## Planned orchestration and Accounts experience
+
+The selected-context catalog, configured routes and verified provider account identity are different facts. An owner-chosen name or `account` assignment is descriptive; several entries can name the same effective context or share an allowance. BB chooses its account context per project and offers no per-thread account selection. A catalog entry cannot make a BB thread run on a different account.
+
+[Automatic selected-context usage](#automatic-selected-context-usage-unreleased) is already implemented in unreleased source (#572), with explicit grants and bounded model-free reads. It does not route work, pool allowances or distribute lanes. Updating source does not update an installed menu/CLI, enable existing entries, or certify live polling; rollout, opt-in and installed/provider acceptance remain separate.
+
+**Planned:** retain a useful configurable Accounts list (sorting, filtering, grouping and selection details) alongside a native macOS HOME graph of loops, lanes, accounts and configured fallback relations. The current native app is a menu-bar accessory; no Dock settings or HOME window is implemented. Windows/Linux desktop equivalents are deferred; portable CLI and panel behavior remain in scope.
+
+The first planned pooling slice is a pure `internal/poolplan` preview: caller-supplied fresh structured Codex evidence bound to explicit account/allowance IDs and complete occupancy. It has no reader, CLI, reservation, adapter binding or dispatch and does not switch accounts. Real pooling needs explicit membership, supported account/context binding, allowance-window identities, reserves and shared reservations; fresh quota alone is not permission to move work. Shared Low / Medium / High / Unleashed profiles must preview independent scope, holds, spend, reserve, effort and concurrency caps. Unknown/stale data cannot justify increased work or silently refreshed capacity. Neither profiles nor a graph clear holds, grant spending, select BB accounts per thread or add conversation-creation authority. See the [orchestration policy and build order](design/orchestration-policy.md).
+
+Planned pool capacity uses managed-work slots, never quota-percent-to-turn estimates; reserve thresholds cannot guarantee remaining external quota. Changed selection/authentication invalidates bound observations/grants but must retain existing charged reservations until explicit reconciliation. Reset alone does not clear exhaustion: future ingestion needs immutable observation/reset/window provenance and a known-boundary observation fence; the pure preview cannot authenticate caller inputs.
 
 ## Add an account, a subscription or a model
 
@@ -665,6 +679,16 @@ or call the separate token-usage endpoint. The official CLI may perform its
 own ordinary authentication/network work. The read has a five-second deadline,
 a 64 KiB stdout bound, discarded stderr, strict response correlation and owned
 process cleanup. A rejected or unsupported CLI returns unavailable evidence.
+
+**Codex timestamp provenance:** current source records `QuotaAttempt.At` from
+local time after the RPC/parse attempt and projects a successful value as
+`observedAt`, with `fresh`/`stale` based on its local age. Those existing field
+names do not establish a provider-authenticated measurement time or proof that
+the provider freshly measured quota. Recent retrieval and provider freshness
+remain different facts. An additive provenance contract is planned separately;
+it must preserve this distinction before any runtime evidence assembler or
+operational pool admission is claimed. No such assembler or pooling is delivered
+by the current reading or this documentation.
 
 The supported Codex response can expose several metered buckets. Up to eight
 are retained separately, with primary and secondary windows where present,
