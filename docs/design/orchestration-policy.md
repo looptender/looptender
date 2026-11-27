@@ -93,32 +93,40 @@ read-only inventory or today's direct-child assignment coverage.
 
 ### First coverage slice: read-only bound inventory
 
-Implement a bounded pure projection over caller-supplied structured source items
-and an explicit source snapshot/revision, existing goal references, current
-assignment bindings/revisions, declared dependencies and acceptance evidence
-references. The caller must declare source/claim coverage and capture time.
-Return item-to-goal/assignment associations, unknowns and findings with exact
-provenance. Do not fetch sources, parse Markdown, discover work, write progress,
-create a full ledger, reserve/dispatch work or change lifecycle state. No reader,
-CLI or automatic conversation creation is part of this first slice.
+The related unreleased draft [#586](https://github.com/looptender/looptender/pull/586),
+inspected at `1814a5190a3bc2414cc691e498cacf18a61647a3`, supplies a usable read-only
+Python command, `scripts/coordinator_coverage.py`, around a bounded projection.
+It accepts caller-supplied structured work inventory, dated context/control and
+assignment captures, with explicit source/item revisions, dependencies and
+acceptance references. Bounded local private-input and pinned-source hash reads,
+including rereads to detect drift, are part of this command. They are not live
+source acquisition, discovery, Markdown interpretation or authenticated current
+host state. The coordinator supplies/reviews the declarations and invokes it at
+an authorized phase/wait boundary; no automatic invocation is added.
 
-Source drift, a claimed item missing from the current bound inventory, or backlog
-exhaustion with unmet acceptance produces a finding, never automatic completion,
-requeue, supersession or archive. Missing/partial inventory cannot prove absence;
-an alias collision or incomplete claim snapshot cannot prove work is unclaimed.
-Keep prior revision evidence rather than rewriting history. Distinguish directly
-observed drift from suspected mismatch and explicitly unavailable coverage using
-the [finding contract](#find-inefficiencies-without-maximizing-activity).
+The draft reports declared coverage, unknowns and findings with provenance; it
+never proves semantic objective coverage or completion (`objectiveComplete` stays
+false). Source drift, a claimed item missing from the bound inventory, or exhausted
+items with unmet acceptance requires reconciliation/review, never automatic
+completion, requeue, supersession or archive. Missing/partial inventory cannot
+prove absence. Keep prior revision evidence and distinguish observed drift from
+suspected mismatch and unavailable coverage using the
+[finding contract](#find-inefficiencies-without-maximizing-activity). The command
+makes no repository/journal/control writes, live provider/BB/GitHub reads,
+reservations, dispatch or conversation creation.
 
-Focused fictional fixtures must cover stable identity across revisions and source
-aliases; two loops claiming one item; intentionally distinct review claims;
-stale/missing source, authorization, dependency and assignment bindings; partial
-coverage; drift and missing claimed items; and exhausted items with failed or
-unmet acceptance. Checkboxes, commits and CI success must not settle that last
-case. Test deterministic bounded results, injected-time boundaries, unchanged
-inputs and secret canaries. Negative controls that treat incomplete coverage as
-absence or source text as permission must fail. This slice can proceed separately
-from source readers, pool admission and HOME; it adds no authority to them.
+The draft's fictional fixtures cover declared independent work, missing versus
+empty inputs, binding/source/claim drift, dependency and acceptance revisions,
+holds, incomplete health, bounded output and unchanged inputs. These checks of
+supplied declarations do not authenticate live state or shared-source ownership.
+Cross-source alias identity, two-loop claim isolation and intentionally distinct
+parallel-review claims require a separately reviewed follow-on contract and its
+own fixtures; they are not delivered or promised as first-slice isolation tests.
+
+Draft packaging/fixtures do not establish release, installed adoption, actual
+coordinator invocation/continuation, live acceptance, Windows support or measured
+throughput improvement. Source discovery/parsing, atomic shared claims, pool
+admission and HOME remain separate work; this command grants them no authority.
 
 ### Planned use case: reusable documentation upkeep
 
