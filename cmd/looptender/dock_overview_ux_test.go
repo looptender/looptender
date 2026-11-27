@@ -1,0 +1,85 @@
+package main
+
+import (
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// TestDockOverviewGlossaryAndBoundaryInvariants checks vocabulary rules,
+// absence of fake Work Intensity controls, honest build revision wording,
+// forced-colors support for Overview/Accounts/Task-Flow elements, and
+// read-only guarantees on Home.
+func TestDockOverviewGlossaryAndBoundaryInvariants(t *testing.T) {
+	html := dockUIText(t, "index.html")
+	css := dockUIText(t, "dock.css")
+	js := dockUIText(t, "dock.js")
+
+	// Glossary compliance: user-facing copy and accessibility labels must never
+	// use the banned term "node" or misname looptender as a "server".
+	if re := regexp.MustCompile(`(?i)\bnodes?\b`); re.MatchString(html) {
+		t.Errorf("dockui/index.html uses banned glossary term node(s)")
+	}
+	for _, m := range regexp.MustCompile(`"[^"\n]*"`).FindAllString(js, -1) {
+		if regexp.MustCompile(`(?i)\bnodes?\b`).MatchString(m) {
+			t.Errorf("dock.js string literal contains banned term node(s): %s", m)
+		}
+		if regexp.MustCompile(`(?i)\b(?:looptender|panel)\s+server\b`).MatchString(m) {
+			t.Errorf("dock.js string literal misnames looptender as a server: %s", m)
+		}
+	}
+
+	// No fake Work Intensity slider or policy controls shipped in live panel UI.
+	for _, fake := range []string{`type="range"`, `type = "range"`, "work-intensity", "intensity-slider", "Unleashed"} {
+		if strings.Contains(html, fake) || strings.Contains(js, fake) {
+			t.Errorf("panel UI contains unimplemented Work Intensity control or label %q", fake)
+		}
+	}
+
+	// Header & build identity honesty invariants.
+	for _, want := range []string{
+		`id="build-pill"`,
+		`href="#/versions"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html lacks %q", want)
+		}
+	}
+	for _, want := range []string{
+		`"Saved records read at "`,
+		`Build unknown (dev)`,
+		`release label · commit revision not embedded`,
+		`renderBuildPill(`,
+		`reconcileActiveIssue(`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("dock.js lacks %q", want)
+		}
+	}
+
+	// Home view and Setup Map must never initiate account auto-checks or quota POSTs.
+	for _, fnHead := range []string{
+		"function renderHome(d, pane) {",
+		"function setupMapPanel(d, cats) {",
+		"function attentionPanel(d, cats) {",
+		"function overviewHealthBar(d, cats) {",
+	} {
+		body := jsFunction(t, js, fnHead)
+		for _, banned := range []string{"maybeAutoCheckAccounts(", "accountCheckPost(", "runAccountChecks("} {
+			if strings.Contains(body, banned) {
+				t.Errorf("%s calls prohibited home-load action %s", fnHead, banned)
+			}
+		}
+	}
+
+	// Forced colors rules must cover new pressed, selected, card, and drawer states.
+	for _, want := range []string{
+		`.chip-btn[aria-pressed="true"], .view-switch button[aria-pressed="true"], .cat-pill[aria-pressed="true"]`,
+		`.map-card.is-selected`,
+		`.edge-badge-bg`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("dock.css forced-colors rules lack %q", want)
+		}
+	}
+}
