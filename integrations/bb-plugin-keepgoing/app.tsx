@@ -115,6 +115,7 @@ function fetchLoops(rpc: Rpc, threadId: string, force = false) {
   const entry = cache.get(threadId);
   if (entry?.inflight || (!force && entry && Date.now() - entry.at < STALE_MS)) return;
   cache.set(threadId, { loops: entry?.loops ?? [], at: entry?.at ?? 0, inflight: true, failed: entry?.failed ?? false, references: entry?.references ?? new Map() });
+  notify(); // Repaint retained evidence immediately, even if this refresh remains pending.
   rpc
     .call("forThread", { threadId })
     .then((result) => {
@@ -160,10 +161,30 @@ function useLineage(threadId: string, loopsKey = "") {
   return e?.value ? { ...e.value, pending: false } : { child: false as boolean, coveredBy: undefined, pending: !e || (e.inflight && e.failures === 0) };
 }
 
+// Only the display clock advances here: no RPC, cache timestamp or sample changes.
+// A pending/slow refresh must not freeze the age of retained filesystem evidence.
+function useDiskDisplayClock(active: boolean) {
+  const [, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!active) return;
+    const update = () => setNow(Date.now());
+    const timer = setInterval(update, 1_000);
+    document.addEventListener("visibilitychange", update);
+    window.addEventListener("pageshow", update);
+    update();
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", update);
+      window.removeEventListener("pageshow", update);
+    };
+  }, [active]);
+}
+
 function useLoops(threadId: string) {
   const rpc = useRpc<typeof rpcContract>();
   const entry = useSyncExternalStore(subscribe, () => cache.get(threadId));
   const starting = useSyncExternalStore(subscribe, () => startingChecks.get(threadId));
+  useDiskDisplayClock(!!entry?.loops.some(loop => loop.details?.disk));
   const refresh = useCallback(() => fetchLoops(rpc, threadId, true), [rpc, threadId]);
   const hasStarting = !!starting?.size;
   useEffect(() => {
