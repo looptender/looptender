@@ -703,3 +703,115 @@ func TestIngestionLatestBodyAfterFailureRetirementAndOlderTombstone(t *testing.T
 		})
 	}
 }
+
+// Independent sequence-link regression retained verbatim.
+func TestIndependentFixReviewSequenceHistoryAndLatest(t *testing.T) {
+	s, _ := ingestionTestStore(t)
+	for _, n := range []int{200, 204} {
+		_, tk := ingestionTestBegin(t, s, n)
+		ingestionTestCommit(t, s, tk, n+2, nil)
+	}
+	f := ingestionRead(t, s)
+	if _, err := decodeIngestion(ingestionJSON(f)); err != nil {
+		t.Fatal("valid original control", err)
+	}
+	// Mutation revisions still say Begin(A), Commit(A), Begin(B), Commit(B),
+	// but persisted request sequences now claim A=2 and B=1.
+	for i := range f.Requests {
+		f.Requests[i].Sequence = 3 - f.Requests[i].Sequence
+	}
+	for i := range f.Receipts {
+		f.Receipts[i].Sequence = 3 - f.Receipts[i].Sequence
+		f.Receipts[i].RecordSHA256 = ingestionReceiptHash(f.Receipts[i])
+		for j := range f.Seen {
+			if f.Seen[j].ID == f.Receipts[i].ID {
+				f.Seen[j].RecordSHA256 = f.Receipts[i].RecordSHA256
+			}
+		}
+	}
+	sortIngestion(&f)
+	// The actual later success B is now incorrectly considered old; dropping it
+	// must not pass the new latest-success protection.
+	latestID := ingestionTestID(207)
+	kept := []ingestionReceipt{}
+	for _, r := range f.Receipts {
+		if r.ID != latestID {
+			kept = append(kept, r)
+		}
+	}
+	f.Receipts = kept
+	for i := range f.Seen {
+		if f.Seen[i].ID == latestID {
+			f.Seen[i].Retired = true
+		}
+	}
+	if _, err := decodeIngestion(ingestionJSON(f)); err == nil {
+		t.Fatal("accepted backwards Begin sequences and missing actual latest success")
+	}
+}
+
+func TestIngestionBeginSequenceOrderWithoutBodyLoss(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprint(failed), func(t *testing.T) {
+			s, b := ingestionTestStore(t)
+			for _, n := range []int{200, 204} {
+				_, tk := ingestionTestBegin(t, s, n)
+				if failed {
+					f := ingestionRead(t, s)
+					op := s.prepare(ingestionInput{Kind: "fail", OperationID: ingestionTestID(n + 2), StoreID: f.StoreID, ExpectedRevision: f.Revision, At: f.WallHighWater, Reason: "failedRead"}, tk)
+					if _, err := s.apply(op); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					ingestionTestCommit(t, s, tk, n+2, nil)
+				}
+			}
+			f := ingestionRead(t, s)
+			// Keep ALL receipt bodies, references, operation revisions and terminal
+			// ordering. Recomputed local hashes do not justify reversed Begin sequences.
+			for i := range f.Requests {
+				f.Requests[i].Sequence = 3 - f.Requests[i].Sequence
+			}
+			for i := range f.Receipts {
+				r := &f.Receipts[i]
+				r.Sequence = 3 - r.Sequence
+				r.RecordSHA256 = ingestionReceiptHash(*r)
+				for j := range f.Seen {
+					if f.Seen[j].ID == r.ID {
+						f.Seen[j].RecordSHA256 = r.RecordSHA256
+					}
+				}
+			}
+			sortIngestion(&f)
+			wire := ingestionJSON(f)
+			if _, err := decodeIngestion(wire); err == nil {
+				t.Fatal("accepted backwards Begin sequence without body loss", failed)
+			}
+			b.data = wire
+			if _, err := s.load(); err == nil {
+				t.Fatal("read boundary ignored Begin sequence")
+			}
+		})
+	}
+}
+
+func TestIngestionBeginSequenceNonzeroInitialCounter(t *testing.T) {
+	// Fictional explicit initialization permits a nonzero starting counter.
+	// Validate strict chronological increase, not an invented mandatory start=1.
+	b := &ingestionMemory{durable: true}
+	s := &quotaIngestionStore{backend: b, session: ingestionTestID(100)}
+	initial := ingestionTestInitial()
+	initial.NextSequence = 41
+	init := s.prepare(ingestionInput{Kind: "initialize", OperationID: ingestionTestID(101), StoreID: initial.StoreID, Initial: &initial, At: initial.WallHighWater}, nil)
+	if _, err := s.apply(init); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []int{200, 204} {
+		_, tk := ingestionTestBegin(t, s, n)
+		ingestionTestCommit(t, s, tk, n+2, nil)
+	}
+	f := ingestionRead(t, s)
+	if f.Requests[0].Sequence != 41 || f.Requests[1].Sequence != 42 || f.NextSequence != 43 {
+		t.Fatal("valid counter allocation changed")
+	}
+}

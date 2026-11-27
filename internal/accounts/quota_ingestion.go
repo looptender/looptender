@@ -594,6 +594,7 @@ func validateIngestion(f ingestionFile) error {
 	active := map[string]string{}
 	ops := map[string]bool{}
 	var prior uint64
+	var lastBeginSequence uint64
 	for _, m := range f.Mutations {
 		if !ingestionID(m.OperationID) || ops[m.OperationID] || !ingestionKind(m.Kind) || !ingestionDigest(m.InputSHA256) || m.AppliedRevision == 0 || m.AppliedRevision > f.Revision || m.AppliedRevision != prior+1 {
 			return bad()
@@ -612,6 +613,12 @@ func validateIngestion(f ingestionFile) error {
 			}
 			canonical := epochs[q.Epoch].Canonical
 			if m.Kind == "begin" {
+				// apply allocates sequences globally in Begin revision order.
+				// Retention may trust their relative order only after this check.
+				if q.Sequence <= lastBeginSequence {
+					return bad()
+				}
+				lastBeginSequence = q.Sequence
 				if begins[q.IntentID] != 0 || active[canonical] != "" {
 					return bad()
 				}
