@@ -559,7 +559,7 @@ html:not(.has-script) .needs-script { visibility: hidden; }
   /* The route in use keeps its filled position badge. */
   .route.is-active .pos { background: Highlight; color: HighlightText; border-color: Highlight; }
   .chip-btn[aria-pressed="true"], .view-switch button[aria-pressed="true"], .cat-pill[aria-pressed="true"] { background: Highlight; color: HighlightText; border-color: Highlight; forced-color-adjust: none; }
-  .build-pill, .cat-pill, .map-card, .task-card, .task-drawer, .acct-stat, .unconfirmed-badge, .gap-note, .path-inspector, .list-loop-card, .list-route-row { border: 1px solid CanvasText; }
+  .build-pill, .cat-pill, .map-card, .task-card, .task-drawer, .acct-stat, .unconfirmed-badge, .gap-note, .path-inspector, .map-badge-fallback, .list-loop-card, .list-route-row { border: 1px solid CanvasText; }
   .map-card.is-selected { outline: 2.5px solid Highlight; outline-offset: -2px; border-color: Highlight; }
   .map-card.is-related { border: 2px solid Highlight; }
   .edge { stroke: CanvasText; }
@@ -822,6 +822,13 @@ details[open] > .how-summary::before { transform: rotate(45deg); }
 }
 .path-inspector.is-active { background: var(--good-soft); border-color: var(--good-line); }
 .path-inspector-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem 0.85rem; }
+.map-badge-fallback {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.35rem 0.75rem;
+  padding: 0.44rem 0.7rem; margin-bottom: 0.65rem;
+  background: var(--sunk); border: 1px solid var(--line-2); border-radius: var(--radius-sm);
+  font-size: 0.79rem; color: var(--ink-2); min-width: 0; overflow-wrap: anywhere;
+}
+.map-badge-fallback[hidden] { display: none; }
 
 .graph-canvas { position: relative; min-width: 0; }
 .graph-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; overflow: visible; stroke: none; stroke-width: 0; }

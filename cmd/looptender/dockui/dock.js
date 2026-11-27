@@ -1636,10 +1636,11 @@
       var rBox = domEl.getBoundingClientRect();
       return { x: (side === "right" ? rBox.right : rBox.left) - cBox.left, y: (rBox.top + rBox.height / 2 + (dy || 0)) - cBox.top };
     }
-    var placedBadges = [];
-    function badgeCollides(cx, cy, w) {
+    var placedBadges = [], suppressedBadges = 0;
+    var maxBadgeY = Math.max(9, cBox.height - 9);
+    function badgeCollides(cx, cy, badgeW) {
       return placedBadges.some(function (b) {
-        return Math.abs(b.x - cx) < (b.w + w) / 2 + 2 && Math.abs(b.y - cy) < 18;
+        return Math.abs(b.x - cx) < (b.w + badgeW) / 2 + 2 && Math.abs(b.y - cy) < 18;
       });
     }
     function ortho(p1, p2, channelX, clsStr, markerId, badgeLabel, portCls, isLimitBadge, badgeSide) {
@@ -1682,24 +1683,29 @@
           ? Math.max(x1 + bw / 2 + 6, Math.min(channelX - bw / 2 - 4, x1 + bw / 2 + 7))
           : Math.max(channelX + bw / 2 + 3, endX - bw / 2 - 7);
         var baseBy = badgeSide === "start" ? y1 : y2;
-        var by = baseBy;
-        if (badgeCollides(bx, by, bw)) {
-          for (var step = 1; step <= 16; step++) {
+        var by = Math.min(maxBadgeY, Math.max(9, baseBy));
+        var placed = !badgeCollides(bx, by, bw);
+        if (!placed) {
+          for (var step = 1; step <= 12; step++) {
             var upY = baseBy - step * 18;
-            if (upY >= 9 && !badgeCollides(bx, upY, bw)) { by = upY; break; }
+            if (upY >= 9 && upY <= maxBadgeY && !badgeCollides(bx, upY, bw)) { by = upY; placed = true; break; }
             var dnY = baseBy + step * 18;
-            if (!badgeCollides(bx, dnY, bw)) { by = dnY; break; }
+            if (dnY >= 9 && dnY <= maxBadgeY && !badgeCollides(bx, dnY, bw)) { by = dnY; placed = true; break; }
           }
         }
-        placedBadges.push({ x: bx, y: by, w: bw });
-        var bg = document.createElementNS(ns, "rect");
-        bg.setAttribute("x", (bx - bw / 2).toFixed(1)); bg.setAttribute("y", (by - 8).toFixed(1));
-        bg.setAttribute("width", String(bw)); bg.setAttribute("height", "16"); bg.setAttribute("rx", "3");
-        bg.setAttribute("class", "edge-badge-bg" + (isLimitBadge ? " is-limit" : ""));
-        var txt = document.createElementNS(ns, "text");
-        txt.setAttribute("x", bx.toFixed(1)); txt.setAttribute("y", by.toFixed(1));
-        txt.setAttribute("class", "edge-badge-text"); txt.textContent = badgeLabel;
-        svgEl.appendChild(bg); svgEl.appendChild(txt);
+        if (placed) {
+          placedBadges.push({ x: bx, y: by, w: bw });
+          var bg = document.createElementNS(ns, "rect");
+          bg.setAttribute("x", (bx - bw / 2).toFixed(1)); bg.setAttribute("y", (by - 8).toFixed(1));
+          bg.setAttribute("width", String(bw)); bg.setAttribute("height", "16"); bg.setAttribute("rx", "3");
+          bg.setAttribute("class", "edge-badge-bg" + (isLimitBadge ? " is-limit" : ""));
+          var txt = document.createElementNS(ns, "text");
+          txt.setAttribute("x", bx.toFixed(1)); txt.setAttribute("y", by.toFixed(1));
+          txt.setAttribute("class", "edge-badge-text"); txt.textContent = badgeLabel;
+          svgEl.appendChild(bg); svgEl.appendChild(txt);
+        } else {
+          suppressedBadges += 1;
+        }
       }
     }
 
@@ -1719,17 +1725,27 @@
         }
         inCountByRoute[ed.routeKey] = (inCountByRoute[ed.routeKey] || 0) + 1;
         outCountByLoop[lKey] = (outCountByLoop[lKey] || 0) + 1;
-        lrList.push({ loopKey: lKey, edge: ed, seq: inCountByRoute[ed.routeKey] });
+        lrList.push({ loopKey: lKey, edge: ed, seq: inCountByRoute[ed.routeKey], outSeq: outCountByLoop[lKey] });
       });
     });
-    var useStartBadges = Boolean(topo.sel && topo.sel.kind !== "loop" && lrList.some(function (it) { return (inCountByRoute[it.edge.routeKey] || 0) > 1; }) && lrList.every(function (it) { return (outCountByLoop[it.loopKey] || 0) === 1; }));
+    var maxInPerRoute = 0, maxOutPerLoop = 0, maxBadgeW = 22;
+    Object.keys(inCountByRoute).forEach(function (k) { if (inCountByRoute[k] > maxInPerRoute) maxInPerRoute = inCountByRoute[k]; });
+    Object.keys(outCountByLoop).forEach(function (k) { if (outCountByLoop[k] > maxOutPerLoop) maxOutPerLoop = outCountByLoop[k]; });
+    if (topo.sel) {
+      lrList.forEach(function (it) {
+        var lblW = Math.max(22, Math.ceil(("#" + it.edge.pos).length * 6.5 + 8));
+        if (lblW > maxBadgeW) maxBadgeW = lblW;
+      });
+    }
+    var useStartBadges = Boolean(topo.sel && topo.sel.kind !== "loop" && maxInPerRoute > 1 && maxOutPerLoop < maxInPerRoute);
     lrList.forEach(function (item, i) {
-      var ed = item.edge, totalIn = inCountByRoute[ed.routeKey] || 1;
+      var ed = item.edge, totalIn = inCountByRoute[ed.routeKey] || 1, totalOut = outCountByLoop[item.loopKey] || 1;
       var tgtDy = totalIn > 1 ? (item.seq - (totalIn + 1) / 2) * 8 : 0;
-      var srcDy = topo.sel && vEdgesCount(topo, item.loopKey) > 1 ? (ed.pos - 1.5) * 6 : 0;
+      var srcStep = useStartBadges ? Math.min(19, 54 / Math.max(1, totalOut - 1)) : Math.min(8, 44 / Math.max(1, totalOut - 1));
+      var srcDy = totalOut > 1 ? (item.outSeq - (totalOut + 1) / 2) * srcStep : 0;
       var p1 = anchorPt("loop-" + item.loopKey, "right", srcDy), p2 = anchorPt("route-" + ed.routeKey, "left", tgtDy);
-      var chLeft = useStartBadges ? (c1R + 38) : (c1R + 12);
-      var chRight = Math.max(chLeft + 4, useStartBadges ? (c2L - 18) : (c2L - 46));
+      var chLeft = useStartBadges ? Math.min(c1R + maxBadgeW + 16, c2L - 20) : (c1R + 12);
+      var chRight = Math.max(chLeft + 4, useStartBadges ? (c2L - 16) : (c2L - (maxBadgeW + 24)));
       var spanW = Math.max(4, chRight - chLeft);
       var chX = chLeft + (lrList.length <= 1 ? spanW / 2 : (i / (lrList.length - 1)) * spanW);
       var eCls = ed.departedLimit ? "edge-limit" : ed.inUse ? "edge-inuse" : ed.current ? "edge-current" : "edge-fallback";
@@ -1756,6 +1772,26 @@
       var mkId = rRec.bindingKind === "none" ? "arr-neutral" : rRec.bindingKind === "mismatch" ? "arr-attn" : "arr-bound";
       ortho(p1, p2, chX, eCls, mkId, "", rRec.bindingKind === "mismatch" ? "is-attn" : "is-neutral", false);
     });
+
+    if (suppressedBadges > 0) svgEl.setAttribute("data-suppressed-badges", String(suppressedBadges));
+    else if (typeof svgEl.removeAttribute === "function") svgEl.removeAttribute("data-suppressed-badges");
+    var fbEl = canvasEl.parentElement && typeof canvasEl.parentElement.querySelector === "function"
+      ? canvasEl.parentElement.querySelector("#map-badge-fallback")
+      : null;
+    if (fbEl) {
+      fbEl.replaceChildren();
+      if (suppressedBadges > 0) {
+        fbEl.hidden = false;
+        fbEl.appendChild(el("span", null, suppressedBadges + " route-order badge" + (suppressedBadges === 1 ? "" : "s") + " omitted to avoid overlap in this dense view. Full #1 \u2192 #2 chains remain in List view or by selecting a single loop."));
+        var fbBtn = el("button", "linkish", "Open List view");
+        fbBtn.type = "button";
+        fbBtn.dataset.focus = "map-fallback-list";
+        fbBtn.addEventListener("click", function () { state.mapMode = "list"; render(false, true); });
+        fbEl.appendChild(fbBtn);
+      } else {
+        fbEl.hidden = true;
+      }
+    }
   }
   function vEdgesCount(topo, lKey) {
     var hit = topo.loops.filter(function (v) { return v.loop.key === lKey; })[0];
@@ -1823,6 +1859,11 @@
     sec.appendChild(toolbar);
 
     sec.appendChild(renderPathInspector(topo));
+    var badgeFallback = el("div", "map-badge-fallback");
+    badgeFallback.id = "map-badge-fallback";
+    badgeFallback.setAttribute("role", "status");
+    badgeFallback.hidden = true;
+    sec.appendChild(badgeFallback);
 
     var canvas = el("div", "graph-canvas");
     canvas.id = "graph-canvas";
