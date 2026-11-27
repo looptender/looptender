@@ -55,7 +55,47 @@ This adds no task/goal/hold reconciliation, dispatch or resume capability.
 Fictional projection/browser checks do not establish installed-panel or live
 migration acceptance.
 
-**Unreleased source.** The overview opens with the existing loop needs-you queue and its recorded reason and next action. Under **Loops**, expand a loop to see the direct lanes of its last verified listing, its supervision state, last recorded decision and next known check. Expansion and keyboard focus survive ordinary reads while the page remains open. Choosing another view and returning also preserves expansion; reloading the browser page starts over. The registry's existing order keeps loops needing attention first. The first loop is the first thing in the card; each row shows its last-check age, or explicitly says the last check is unknown. The evidence limits remain: only conversations looptender supervises are shown, with their lanes, and another coordinator appears once a loop is created for it (the page does not look for other conversations); an active state does not prove progress or connectivity; a lane that is not listed does not mean the work is complete; and finished means the loop declared it, which looptender has not verified (the row says so).
+**Draft Home layout ([#587](https://github.com/looptender/looptender/pull/587),
+inspected at `d7515005938015d2fd894c2330115bb9fbb53946`; unreleased).** On a
+populated, readable Home view, the concise build/health summary comes first,
+followed by **Setup map**, then categorized **Needs attention**. Group/router
+summaries and notices follow, then **Loops** and **Recent activity**. An unreadable
+registry or empty registration list has its own explicit state instead of a map.
+This draft is browser-panel presentation, not a native macOS HOME window or
+installed rollout. The header's saved-record read time is not provider freshness;
+the build pill links to Versions and distinguishes a label from an embedded
+source revision.
+
+The map groups loops/direct-lane summaries, configured routes, and selected
+accounts/unbound contexts. Default connectors show current routes; selecting or
+focusing an item traces its ordered configured chain and account assignments.
+Escape clears selection. **Map / List**, search/category filters and a narrow-
+layout list fallback keep the same evidence limits. A configured fallback is not
+verified eligibility, and an assigned catalog account is not verified turn
+identity or pooled quota. No grandchildren or lane-specific routing is inferred.
+
+Attention separates decisions/bounds, stopped checks, unreadable records and
+account-context review; context drift is not quota exhaustion. **Open question**,
+**Review deadline** and **Inspect supervision** open details and supported next
+steps. Existing reviewed controls retain their startup-caller/permission checks;
+a drawer supplies no new authority. Failed/incomplete reads retain attention as
+**Unconfirmed** and pause affected actions. Client reconciliation cancels an old
+drawer/review when relevant saved issue/target/hold evidence changes. It does not
+prove a question was answered merely because a card disappeared.
+
+| Backend gap | What the draft does not deliver |
+| --- | --- |
+| G9: question identity/revisions | No authoritative question/target/owner revision or direct-question URL contract is added to the feed. Client fingerprints do not replace backend question preflight; a replacement without changed supplied fields remains unverified. |
+| G10: external BB resolution | Answering elsewhere does not make this client clear BB's `awaiting_user` hold. A separately authorized structured resolution policy is still needed; independent pause, stop, deadline and manual holds must survive. |
+| G11: deadline/completion | Deadline details do not implement panel deadline editing or marking work complete. Existing commands and controls retain their own reviewed effects. |
+| G12: recovery | Diagnostics and optional recovery labels do not restart a scheduler or implement recovery policy. Unknown cause stays explicit. |
+
+These are draft source/UI boundaries, not backend acceptance. Optional fixture
+fields cannot certify an emitted backend contract. The layout adds no provenance
+consumer support, provider collection or automatic dispatch. Browser fixtures do
+not establish live BB resolution, native accessibility or installed acceptance.
+
+Under **Loops**, expand a loop to see the direct lanes of its last verified listing, its supervision state, last recorded decision and next known check. Expansion and keyboard focus survive ordinary reads while the page remains open. Choosing another view and returning also preserves expansion; reloading the browser page starts over. The registry's existing order keeps loops needing attention first. The first loop is the first thing in the card; each row shows its last-check age, or explicitly says the last check is unknown. The evidence limits remain: only conversations looptender supervises are shown, with their lanes, and another coordinator appears once a loop is created for it (the page does not look for other conversations); an active state does not prove progress or connectivity; a lane that is not listed does not mean the work is complete; and finished means the loop declared it, which looptender has not verified (the row says so).
 
 Each loop's row labels its target "coordinator" when its last verified listing has lanes (the [glossary](glossary.md)'s role; nothing is renamed), and sums those lanes on one line, people first: "Lanes: 3 waiting · 2 failed · 35 working". A listing kept across a hold or pause says so on that line too. Rows without a listing keep "Lane evidence:" with its reason. When an expanded loop lists more than 8 lanes, the lanes waiting for an answer stay in view and the rest fold into one "Show the other N of M lanes" element, which also keeps its state across reads. The 24-lane cap and the count of lanes not listed are unchanged.
 
@@ -558,6 +598,20 @@ keepgoing dock --directory /private/example-scratch/registry
 ```
 
 ## Accounts
+
+**Draft layout ([#587](https://github.com/looptender/looptender/pull/587), same
+inspected head as above; unreleased).** When selected-account records are
+available, Accounts adds a five-category evidence summary, provider/review/saved-
+limit filters and **Detailed / Compact** cards. The summary separates saved
+readings, provider-freshness-unknown readings, saved limits, ended/missing quota
+and context review. These are display categories from supplied evidence, not
+verified account capacity or a new provenance consumer. In particular, a local
+retrieval/age label does not prove provider measurement freshness. Context review
+withholds prior quota; ended windows show current capacity as unknown and keep
+historical detail folded. Missing or incompletely read catalogs stay unavailable,
+not zero selected accounts. These choices change presentation, not route binding,
+polling grants or permission to refresh a provider. Home's saved-account read
+also adds no provider refresh; existing authorized collection remains separate.
 
 Unreleased source adds a persistent Accounts view backed by a private selected-context catalog. Refresh reads retained evidence only. Setup/status are explicit CLI operations; sign-in stays with the official provider tool. Names are owner labels, and login, plan, model and route-use evidence remain distinct. Each card says its source and age once when login and plan come from the same check, and says why a value is missing when nothing is wrong (a plan has not been read, the catalog records no model, no route names the entry yet) in neutral text; "Needs you" stays for no login, a failed check and a changed context. One footnote at the end names the check command, `looptender accounts check --id CONNECTION_ID --json`. Under the count, **Add an account** is a closed disclosure (open when there are no accounts) with three cases, each with its `looptender accounts add` command to copy: another subscription of a provider you use (sign in with the provider's tool in a new folder, then `--selection explicit_directory --account-dir FOLDER`), a provider that manages its own login (Cursor, BB), and an API key, which gets its own entry and is never taken. After the three cases it says once: "This names the account. It does not put it in any loop. To use it, add it to a loop's order." With no accounts the page says, in three sentences, what an account, a route and a loop's order are. The **Routes** view offers the [standard route editor](#configure-routes-in-the-panel), with a concise command-reference link. Each card lists the routes that use it, the loops on each and each route's own reading, with "… allowance was out when read … · resets …" in the summary when any route's reading had a window used up that has not ended (naming the route when there are several), else "Not out when read …". Routes without an explicit catalog binding appear separately under **Routes with unknown accounts**, with each route's own recorded reading. Only registered selections count as selected accounts in the page and sidebar. Configuration contexts, providers, models and groups do not establish distinct subscriptions or match routes to selected accounts; no inferred account match or extra-account naming command is offered for these routes. A loop's page shows a bound route as "on *Label* · assigned by you · identity not verified" and an unbound one as "Not assigned to an account." See [Accounts](accounts.md) for commands, caller/privacy boundaries and unverified live acceptance.
 
