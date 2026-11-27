@@ -146,9 +146,9 @@ func accountQuotaRefreshInternal(ctx context.Context, dir, id string, expected *
 			timeout = 10 * time.Second
 		}
 		c, cancel := context.WithTimeout(ctx, timeout)
-		if trace != nil {
-			c = context.WithValue(c, quotaReceiptContextKey{}, trace)
-		}
+		// Always shadow inherited carriers. A typed nil disables capture for this
+		// invocation; detailed refreshes attach only their own fresh trace.
+		c = context.WithValue(c, quotaReceiptContextKey{}, trace)
 		raw, err := run(c, s.Entry.Provider, s.Entry.CLI, executionEnv, s.Entry.Workdir)
 		cancel()
 		switch s.Entry.Provider {

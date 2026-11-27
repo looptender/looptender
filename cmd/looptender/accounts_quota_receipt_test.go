@@ -477,7 +477,8 @@ func TestQuotaReceiptOrdinaryRefreshDoesNotCaptureOrFinalize(t *testing.T) {
 			runs, carrierSeen, timestamps := 0, false, 0
 			run := func(ctx context.Context, provider, cli string, env []string, wd string) ([]byte, error) {
 				runs++
-				carrierSeen = ctx.Value(quotaReceiptContextKey{}) != nil
+				carrier, _ := ctx.Value(quotaReceiptContextKey{}).(*quotaReceiptTrace)
+				carrierSeen = carrier != nil
 				return accountQuotaRead(ctx, provider, cli, env, wd)
 			}
 			lockPath := filepath.Join(dir, "accounts.lock")
@@ -514,5 +515,63 @@ func TestQuotaReceiptOrdinaryRefreshDoesNotCaptureOrFinalize(t *testing.T) {
 				t.Fatal("refresh did not preserve published values", loadErr)
 			}
 		})
+	}
+}
+
+func TestQuotaReceiptInheritedCarrierIsolation(t *testing.T) {
+	for _, capture := range []bool{false, true} {
+		for _, claimed := range []bool{false, true} {
+			t.Run("capture="+strconv.FormatBool(capture)+"/parentClaimed="+strconv.FormatBool(claimed), func(t *testing.T) {
+				dir, entry := receiptFixture(t, `{"id":2,"result":`+receiptQuotaResult+`}`)
+				clock, stamps := receiptClock(quotaReceiptTick{receiptPublicationTime(), 0})
+				parent := newQuotaReceiptTrace(clock)
+				parent.expected = &quotaReceiptExecution{cli: entry.CLI, workdir: entry.Workdir, environment: accountQuotaExecutionEnvironment(entry, os.Environ())}
+				parent.claimed = claimed
+				type otherKey struct{}
+				ctx := context.WithValue(context.Background(), otherKey{}, "retained")
+				ctx = context.WithValue(ctx, quotaReceiptContextKey{}, parent)
+				ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+				defer cancel()
+				deadline, _ := ctx.Deadline()
+				runs := 0
+				run := func(c context.Context, provider, cli string, env []string, wd string) ([]byte, error) {
+					runs++
+					carrier, _ := c.Value(quotaReceiptContextKey{}).(*quotaReceiptTrace)
+					if (carrier != nil) != capture || carrier == parent {
+						t.Errorf("inherited carrier not isolated: capture=%v carrier=%p parent=%p", capture, carrier, parent)
+					}
+					gotDeadline, ok := c.Deadline()
+					if !ok || !gotDeadline.Equal(deadline) || c.Value(otherKey{}) != "retained" {
+						t.Fatal("isolation discarded parent deadline/other values")
+					}
+					raw, err := accountQuotaRead(c, provider, cli, env, wd)
+					cancel()
+					if c.Err() != context.Canceled {
+						t.Fatal("isolation discarded cancellation")
+					}
+					return raw, err
+				}
+				var view accounts.QuotaView
+				var err error
+				if capture {
+					var result accountQuotaRefreshResult
+					result, err = accountQuotaRefreshReceipt(ctx, dir, entry.ID, nil, run, os.Environ(), time.Now, nil)
+					view = result.view
+					if result.receipt == nil || result.receiptReason != "" {
+						t.Errorf("detailed nil-clock capture lost independent evidence: %v %s", err, result.receiptReason)
+					}
+				} else {
+					view, err = accountQuotaRefresh(ctx, dir, entry.ID, nil, run, os.Environ(), time.Now)
+				}
+				if err != nil || view.State != "reported" || runs != 1 {
+					t.Errorf("public refresh changed: %v state=%s runs=%d", err, view.State, runs)
+				}
+				parent.mu.Lock()
+				defer parent.mu.Unlock()
+				if stamps.Load() != 0 || parent.claimed != claimed || parent.written || parent.correlated || parent.finalized || parent.reason != "" || parent.start != (quotaReceiptTick{}) || parent.finish != (quotaReceiptTick{}) || parent.responseDigest != ([32]byte{}) || parent.parsed != nil {
+					t.Errorf("parent carrier mutated: stamps=%d claimed=%v written=%v correlated=%v reason=%s digest=%x", stamps.Load(), parent.claimed, parent.written, parent.correlated, parent.reason, parent.responseDigest)
+				}
+			})
+		}
 	}
 }
