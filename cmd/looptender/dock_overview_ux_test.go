@@ -30,9 +30,25 @@ func TestDockOverviewGlossaryAndBoundaryInvariants(t *testing.T) {
 	}
 
 	// No fake Work Intensity slider or policy controls shipped in live panel UI.
-	for _, fake := range []string{`type="range"`, `type = "range"`, "work-intensity", "intensity-slider", "Unleashed"} {
+	for _, fake := range []string{`type="range"`, `type = "range"`, "work-intensity", "intensity-slider", "Unleashed", "Fresh measured quota"} {
 		if strings.Contains(html, fake) || strings.Contains(js, fake) {
-			t.Errorf("panel UI contains unimplemented Work Intensity control or label %q", fake)
+			t.Errorf("panel UI contains unimplemented control or disallowed provider-fresh claim %q", fake)
+		}
+	}
+
+	// Quota provenance v1 parser + raw ingestion boundary + fail-closed invariants.
+	quotaBody := jsFunction(t, js, "function accountQuotaSummary(c) {")
+	for _, want := range []string{"provenance", "providerObservedAt !== null", "parseRFC3339", "epochSec", "nanos"} {
+		if !strings.Contains(quotaBody, want) {
+			t.Errorf("accountQuotaSummary lacks provenance v1 invariant %q", want)
+		}
+	}
+	if !strings.Contains(js, "accountQuotaMalformedProvenance(") {
+		t.Errorf("dock.js lacks accountQuotaMalformedProvenance fail-closed helper")
+	}
+	for _, fnHead := range []string{"function getJSON(url) {", "function loadSavedAccounts(retry) {"} {
+		if !strings.Contains(jsFunction(t, js, fnHead), "parseDockQuotaJSON(") {
+			t.Errorf("%s must route raw text through parseDockQuotaJSON before JSON duplicate collapse", fnHead)
 		}
 	}
 

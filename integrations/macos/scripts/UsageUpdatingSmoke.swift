@@ -38,8 +38,8 @@ import Foundation
         }
         precondition(first.submenu.contains { $0.title == "Next eligible fetch in 2 h" })
         precondition(later.submenu.contains { $0.title == "Fetch eligible now · waiting for scheduler" })
-        precondition(first.submenu.filter { $0.accessibilityLabel == "Last successful fetch 2030-03-04T12:00:00Z" }.count == 1)
-        precondition(later.submenu.contains { $0.accessibilityLabel == "Last successful fetch 2030-03-04T12:00:00Z" })
+        precondition(first.submenu.filter { $0.accessibilityLabel == "Last successful fetch 2030-03-04T12:00:00Z (local retrieval time)" }.count == 1)
+        precondition(later.submenu.contains { $0.accessibilityLabel == "Last successful fetch 2030-03-04T12:00:00Z (local retrieval time)" })
         precondition(first.detail.contains("updates off"))
         // Provider retrieval is a successful fetch, never evidence of a fresh
         // provider observation. Match the same user-visible contract as XCTest.

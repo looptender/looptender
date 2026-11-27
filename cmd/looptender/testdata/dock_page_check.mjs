@@ -7,6 +7,7 @@
 // jsdom comes from DOCK_JSDOM_DIR, the directory of the jsdom package.
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
+import http from "node:http";
 
 const require = createRequire(import.meta.url);
 const { JSDOM, VirtualConsole } = require(process.env.DOCK_JSDOM_DIR);
@@ -1256,7 +1257,7 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
   // Transition 5: Accounts view 5-category strip, context_changed vs 100% vs ended windows folded into Previous readings
   w.location.hash = "#/accounts"; w.dispatchEvent(new w.Event("hashchange")); await settle();
   const stripTxt = w.document.querySelector(".acct-summary-strip")?.textContent || "";
-  if (!stripTxt.includes("Fresh measured quota") || !stripTxt.includes("Context review needed")) errs.push("Accounts summary strip missing expected buckets: " + stripTxt);
+  if (!stripTxt.includes("Recent local read · provider time unknown") || !stripTxt.includes("Context review needed") || stripTxt.includes("Fresh measured quota")) errs.push("Accounts summary strip missing expected provenance-aware buckets: " + stripTxt);
   const endedFold = w.document.querySelectorAll(".acct-prev");
   if (!endedFold.length || !w.document.body.textContent.includes("Window ended · current quota unknown")) errs.push("ended Antigravity window was not folded behind Previous readings");
   if (!w.document.body.textContent.includes("Context review needed — not a quota limit") || !w.document.body.textContent.includes("Updates not reported by this panel build")) errs.push("context_changed or missing usageUpdating label missing on Accounts");
@@ -1275,6 +1276,201 @@ if (unlisted.size) failures.push(`the variants set loop fields that dock_page_va
 
   w.close();
   for (const e of errs) failures.push("overview-ux: " + e);
+}
+
+// Quota provenance v1 consumer migration with actual #588 fixtures, legacy absent
+// fallback, malformed fail-closed matrix, clock progression, reset, and collection modes.
+{
+  const errs = [];
+  const vc = new VirtualConsole(); vc.on("jsdomError", (e) => errs.push(String(e.message || e)));
+  const prov588 = JSON.parse(readFileSync(new URL("./quota_provenance_588_fixture.json", import.meta.url), "utf8"));
+  const cards588 = JSON.parse(readFileSync(new URL("./quota_provenance_588_cards.json", import.meta.url), "utf8"));
+  const baseCards = clone(cards588.accounts.cards);
+  const claude588 = clone(prov588.accountQuotas.accounts.find((x) => x.provider === "claude-code"));
+  const agy588 = clone(prov588.accountQuotas.accounts.find((x) => x.provider === "antigravity"));
+  const mkCard = (id, label, provider, summary, extra = {}) => ({
+    id, label, provider, selection: "explicit_directory",
+    auth: { text: "Selected CLI reports login", state: "reported_present", freshness: "fresh", source: provider + " status", observedAt: "2030-03-04T12:00:00Z" },
+    plan: { text: "Pro", state: "reported", value: "pro", freshness: "fresh", source: provider + " status", observedAt: "2030-03-04T12:00:00Z" },
+    configuredModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+    observedModel: { text: "Not recorded", state: "unavailable", freshness: "unavailable", missing: "not_recorded" },
+    quota: { state: summary.state || "reported", source: summary.source, freshness: summary.freshness, summary },
+    usageUpdating: { state: "off", text: "Keep usage updated: off" },
+    ...extra,
+  });
+  const legacyCodex = clone(baseCards[0].quota.summary);
+  delete legacyCodex.provenance;
+  const badVerSummary = clone(baseCards[0].quota.summary);
+  badVerSummary.provenance = { version: 2, retrievedAt: "2030-03-04T11:59:00Z", providerObservedAt: null };
+  badVerSummary.text = "SHOULD_NEVER_APPEAR_BAD_VERSION";
+  badVerSummary.rows = [{ name: "Bad row", text: "77% used", usedPercent: 77, remainingPercent: 23, resetsAt: "2030-03-17T17:46:40Z" }];
+  const badNonNullProv = clone(baseCards[0].quota.summary);
+  badNonNullProv.provenance = { version: 1, retrievedAt: "2030-03-04T11:59:00Z", providerObservedAt: "2030-03-04T11:59:00Z" };
+  badNonNullProv.text = "SHOULD_NEVER_APPEAR_NONNULL_PROVIDER";
+  const badSubMs = clone(baseCards[0].quota.summary);
+  badSubMs.observedAt = "2030-03-04T11:59:00Z";
+  badSubMs.provenance = { version: 1, retrievedAt: "2030-03-04T11:59:00.000000001Z", providerObservedAt: null };
+  badSubMs.text = "SHOULD_NEVER_APPEAR_SUBMS_CONFLICT";
+  const badPresentNull = clone(claude588.summary);
+  badPresentNull.provenance = null;
+  badPresentNull.text = "SHOULD_NEVER_APPEAR_PRESENT_NULL";
+
+  const provCards = [
+    { ...baseCards[0], usageUpdating: { state: "enabled", text: "Keep usage updated: enabled" } }, // #588 v1 codex fresh + resets 2030-03-17
+    baseCards[1], // #588 v1 codex stale + ended primary + failedRefreshAt
+    baseCards[2], // #588 unavailable no_windows
+    mkCard("99000000000000000000000000000001", "Legacy Codex", "codex", legacyCodex),
+    mkCard("99000000000000000000000000000002", "V1 Claude", "claude-code", clone(claude588.summary)),
+    mkCard("99000000000000000000000000000003", "V1 Antigravity", "antigravity", clone(agy588.summary)),
+    mkCard("99000000000000000000000000000004", "Bad Version Codex", "codex", badVerSummary),
+    mkCard("99000000000000000000000000000005", "Bad NonNull Provider", "codex", badNonNullProv),
+    mkCard("99000000000000000000000000000006", "Bad SubMs Conflict", "codex", badSubMs),
+    mkCard("99000000000000000000000000000007", "Bad Present Null", "claude-code", badPresentNull),
+  ];
+  const provDock = clone(fixture.dock);
+  delete provDock.accountsReference;
+  provDock.readAt = "2030-03-04T12:00:00Z";
+  provDock.accounts = { state: "available", complete: true, cards: provCards };
+  const provClockNowStart = Date.parse("2030-03-04T12:00:00Z");
+  let provNow = provClockNowStart;
+  const provIntervals = [];
+  const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "http://127.0.0.1:1/s/token/#/", virtualConsole: vc });
+  const w = dom.window;
+  w.Date = class extends Date {
+    constructor(...args) { super(...(args.length ? args : [provNow])); }
+    static now() { return provNow; }
+  };
+  w.setInterval = (fn) => { provIntervals.push(fn); return provIntervals.length; };
+  w.clearInterval = () => {};
+  w.fetch = async (url, opts) => {
+    const path = String(url).split("?")[0].replace(/^.*\/s\/[^/]+\//, "");
+    if (opts && opts.method === "POST") { errs.push("unsolicited POST: " + path); return { ok: false, status: 500, json: async () => ({}), text: async () => "{}" }; }
+    let payload;
+    if (path === "api/v1/server") payload = { schemaVersion: 1, servedBy: "panel", version: "v0.3.0-dev", changes: "off", accountQuota: true, accountQuotaProviders: ["codex", "claude-code", "antigravity"] };
+    else if (path === "api/v1/dock") payload = clone(provDock);
+    else if (path === "api/v1/usage") payload = clone(fixture.usage);
+    return { ok: payload !== undefined, status: payload === undefined ? 404 : 200, json: async () => clone(payload), text: async () => JSON.stringify(payload) };
+  };
+  w.TextEncoder = TextEncoder; w.scrollTo = () => {}; w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} }); w.Element.prototype.scrollIntoView = () => {};
+  w.eval(js);
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+  await settle();
+
+  // Check Home Setup Map cards do not claim Measured and reject malformed provenance.
+  const colAcctsText = w.document.getElementById("col-accounts")?.textContent || "";
+  if (colAcctsText.includes("Measured") || colAcctsText.includes("Older snapshot")) errs.push("Home map showed legacy Measured/Older snapshot claim: " + colAcctsText);
+  if (!colAcctsText.includes("Retrieved (provider freshness unknown)") || !colAcctsText.includes("Local read (provider freshness unknown)")) errs.push("Home map missing explicit provider-freshness-unknown labels");
+  if (!colAcctsText.includes("Quota rejected · invalid provenance metadata") || colAcctsText.includes("77%")) errs.push("Home map failed to reject malformed provenance card cleanly");
+
+  // Navigate to #/accounts and inspect summary strip + expanded v1/legacy/malformed cards.
+  w.location.hash = "#/accounts"; w.dispatchEvent(new w.Event("hashchange")); await settle();
+  const stripText = w.document.querySelector(".acct-summary-strip")?.textContent || "";
+  if (!stripText.includes("Recent local read · provider time unknown") || !stripText.includes("Older local read · provider time unknown") || !stripText.includes("Window ended, unavailable, or rejected") || stripText.includes("Fresh measured quota")) {
+    errs.push("Accounts summary strip wrong provenance buckets: " + stripText);
+  }
+  const acctsBody = w.document.body.textContent;
+  for (const leaked of ["SHOULD_NEVER_APPEAR_BAD_VERSION", "SHOULD_NEVER_APPEAR_NONNULL_PROVIDER", "SHOULD_NEVER_APPEAR_SUBMS_CONFLICT", "SHOULD_NEVER_APPEAR_PRESENT_NULL", "77%"]) {
+    if (acctsBody.includes(leaked)) errs.push("malformed provenance card leaked content: " + leaked);
+  }
+  const acctsHtmlCards = [...w.document.querySelectorAll(".account-card")];
+  for (const li of acctsHtmlCards) li.querySelector("details").open = true;
+  if (!w.document.body.textContent.includes("Provider observation time is unavailable (provenance v1; local retrieval time only)")) errs.push("expanded v1 provenance notice missing");
+  if (!w.document.body.textContent.includes("Provider observation time is unavailable (legacy local read timestamp)")) errs.push("expanded legacy fallback notice missing");
+  if (!w.document.body.textContent.includes("Quota provenance metadata was invalid or unsupported. No usage is assumed.")) errs.push("expanded malformed rejection message missing");
+
+  // Clock advancement across reset and collection state changes keep retrieval provenance untouched.
+  provNow = Date.parse("2030-03-18T00:00:00Z");
+  provIntervals.forEach((fn) => fn());
+  const firstWin = acctsHtmlCards[0].querySelectorAll(".quota-window")[0];
+  if (!firstWin || !firstWin.textContent.includes("Window ended · Last reading")) errs.push("clock advancement across reset failed to end v1 window");
+  if (firstWin && firstWin.querySelector("meter:not([hidden])")) errs.push("ended v1 window left active meter visible");
+
+  // Future device clock relative to v1 retrievedAt displays Time unavailable, never recent.
+  provNow = Date.parse("2030-03-04T10:00:00Z");
+  provIntervals.forEach((fn) => fn());
+  if (!w.document.body.textContent.includes("Time unavailable · device clock is before the reading")) errs.push("future clock relative to retrievedAt missing safety warning");
+
+  for (const colState of ["off", "waiting", "enabled", "backoff"]) {
+    provDock.accounts.cards[0].usageUpdating = { state: colState, text: "State " + colState };
+    w.document.getElementById("refresh").click(); await settle();
+    if (!w.document.body.textContent.includes("Provider observation time is unavailable (provenance v1; local retrieval time only)")) errs.push("collection mode " + colState + " erased v1 provenance notice");
+  }
+
+  if (w.__renderError) errs.push(String(w.__renderError));
+  dom.window.close();
+  for (const e of errs) failures.push("quota-provenance: " + e);
+}
+
+// End-to-end real HTTP + fetch/Response raw duplicate/escaped-equivalent provenance keys
+// across both api/v1/dock (inline accounts) and api/v1/saved-accounts (reference fetch).
+{
+  const errs = [];
+  const cards588 = JSON.parse(readFileSync(new URL("./quota_provenance_588_cards.json", import.meta.url), "utf8"));
+  const baseCard = clone(cards588.accounts.cards[0]);
+  baseCard.label = "Fictional HTTP Provenance Check";
+  baseCard.quota.summary.rows = [{ name: "Fictional window", text: "77% used · 23% remaining", usedPercent: 77, remainingPercent: 23, resetsAt: "2030-03-17T17:46:40Z" }];
+  const goodProv = JSON.stringify(baseCard.quota.summary.provenance);
+  const ts = baseCard.quota.summary.provenance.retrievedAt;
+  const legacyCard = clone(baseCard);
+  delete legacyCard.quota.summary.provenance;
+  const rawCases = [
+    ["valid", true, false, JSON.stringify(baseCard)],
+    ["legacy_absent", true, false, JSON.stringify(legacyCard)],
+    ["invalid_version", false, true, JSON.stringify(baseCard).replace('"version":1', '"version":2')],
+    ["dup_version_2_1", false, true, JSON.stringify(baseCard).replace('"version":1', '"version":2,"version":1')],
+    ["dup_version_1_2", false, true, JSON.stringify(baseCard).replace('"version":1', '"version":1,"version":2')],
+    ["dup_version_equal", false, true, JSON.stringify(baseCard).replace('"version":1', '"version":1,"version":1')],
+    ["dup_provider_ts_null", false, true, JSON.stringify(baseCard).replace('"providerObservedAt":null', '"providerObservedAt":"2030-03-04T12:00:00Z","providerObservedAt":null')],
+    ["dup_provider_null_ts", false, true, JSON.stringify(baseCard).replace('"providerObservedAt":null', '"providerObservedAt":null,"providerObservedAt":"2030-03-04T12:00:00Z"')],
+    ["dup_provider_null_null", false, true, JSON.stringify(baseCard).replace('"providerObservedAt":null', '"providerObservedAt":null,"providerObservedAt":null')],
+    ["escaped_dup_retrieval_conflict", false, true, JSON.stringify(baseCard).replace('"retrievedAt":"' + ts + '"', '"retrievedAt":"2030-03-04T12:00:01Z","retrieved\\u0041t":"' + ts + '"')],
+    ["escaped_dup_retrieval_equal", false, true, JSON.stringify(baseCard).replace('"retrievedAt":"' + ts + '"', '"retrievedAt":"' + ts + '","retrieved\\u0041t":"' + ts + '"')],
+    ["dup_provenance_null_good", false, true, JSON.stringify(baseCard).replace('"provenance":' + goodProv, '"provenance":null,"provenance":' + goodProv)],
+    ["dup_summary_bad_good", false, true, JSON.stringify(baseCard).replace('"summary":{', '"summary":{"state":"reported","provenance":{"version":2}},"summary":{')],
+  ];
+  for (const endpoint of ["dock", "saved-accounts"]) {
+    for (const [kind, wantQuota, wantRejected, rawCard] of rawCases) {
+      const accountsRaw = '{"state":"available","complete":true,"cards":[' + rawCard + ']}';
+      const unrelatedDock = {
+        schemaVersion: 1, complete: true, readAt: "2030-03-04T12:00:00Z", refreshSeconds: 3600,
+        registry: { availability: "available" }, loops: [{ key: "lu1", name: "unrelated-loop", state: "supervising", phrase: "Supervising", currentRoute: { availability: "known", tool: "BB thread" }, can: [] }], needsYou: []
+      };
+      if (endpoint === "saved-accounts") unrelatedDock.accountsReference = "fictional-ref";
+      let rawDock = JSON.stringify(unrelatedDock).replace('"name":"unrelated-loop"', '"name":"x","name":"unrelated-loop","note":"\\"version\\":2,\\"version\\":1"');
+      rawDock = rawDock.replace(/}$/, endpoint === "dock" ? ',"accounts":' + accountsRaw + '}' : '}');
+      const rawSaved = '{"schemaVersion":1,"reference":"fictional-ref","accounts":' + accountsRaw + '}';
+      const server = http.createServer((req, res) => {
+        res.setHeader("Content-Type", "application/json");
+        res.setHeader("Connection", "close");
+        if (req.url.includes("api/v1/dock")) res.end(rawDock);
+        else if (req.url.includes("api/v1/saved-accounts")) res.end(rawSaved);
+        else if (req.url.includes("api/v1/server")) res.end(JSON.stringify({ schemaVersion: 1, servedBy: "panel", changes: "off", accountQuota: true, accountQuotaProviders: ["codex"] }));
+        else { res.statusCode = 404; res.end("{}"); }
+      });
+      await new Promise((r) => server.listen(0, "127.0.0.1", r));
+      const origin = "http://127.0.0.1:" + server.address().port;
+      const vc = new VirtualConsole(); vc.on("jsdomError", (e) => errs.push(`${endpoint}/${kind}: ` + String(e.message || e)));
+      const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: origin + "/s/fictional/#/accounts", virtualConsole: vc });
+      const w = dom.window;
+      w.fetch = (url, opts) => fetch(new URL(url, w.location.href), opts);
+      w.TextEncoder = TextEncoder;
+      w.Date = class extends Date { constructor(...a) { super(...(a.length ? a : ["2030-03-04T12:00:00Z"])); } static now() { return Date.parse("2030-03-04T12:00:00Z"); } };
+      w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      w.scrollTo = () => {}; w.Element.prototype.scrollIntoView = () => {};
+      w.eval(js);
+      await new Promise((r) => setTimeout(r, 180));
+      const txt = w.document.body.textContent || "";
+      const cardsN = w.document.querySelectorAll(".account-card").length;
+      if (cardsN !== 1) errs.push(`${endpoint}/${kind}: expected 1 card, got ${cardsN}`);
+      if (txt.includes("77% used") !== wantQuota) errs.push(`${endpoint}/${kind}: quotaDisplayed=${txt.includes("77% used")} want ${wantQuota}`);
+      if (txt.includes("Quota provenance rejected") !== wantRejected) errs.push(`${endpoint}/${kind}: rejected=${txt.includes("Quota provenance rejected")} want ${wantRejected}`);
+      if (w.__renderError) errs.push(`${endpoint}/${kind}: ` + String(w.__renderError));
+      dom.window.close();
+      if (server.closeAllConnections) server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    }
+  }
+  for (const e of errs) failures.push("raw-http-provenance: " + e);
 }
 
 if (failures.length) {
