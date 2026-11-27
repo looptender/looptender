@@ -271,11 +271,19 @@ Planned pool admission must establish:
 2. Supported context/account binding and allowance identity with provenance,
    measurement/retrieval times, window/reset and declared validity. Missing
    identity, plan, cost or access stays unknown; names are not identifiers.
+   Ingestion must retain immutable observation/reset provenance and explicit
+   window-instance identity. After a known boundary, require an observation captured
+   no earlier than that ended reset; unknown provenance/boundary is
+   incomplete evidence. A reset alone never clears recorded exhaustion.
 3. Per-allowance reserves and independent spend/effort/concurrency bounds. A
    recent sample is an admission input, not authority to spend or move work.
 4. Durable reservations shared by loops using an allowance, with one owner,
-   revision fencing, bounded expiry/reconciliation and crash/unknown handling.
-   A failed or ambiguous dispatch cannot immediately refund/reuse capacity.
+   revision fencing and bounded reconciliation for expiry/crash/unknown outcomes.
+   A failed or ambiguous dispatch, expired lease or missing heartbeat cannot
+   release charges or authorize requeue. Selection/authentication changes
+   invalidate bound observations and grants but retain existing charged
+   reservations under their original identity/generation until explicit
+   reconciliation; never project old charges through a newly selected route.
 5. Supported safe-boundary handoff, a verified assignment transfer and retained
    loop/goal/hold/history identities. P6 first-class lane ownership precedes
    general lane distribution. Unverified or active obligations cannot be
@@ -307,14 +315,33 @@ an allocation preview or return explicit unavailable reasons. A partial list of
 busy loops is not a complete occupancy snapshot; a selected catalog label is not
 an account binding. No other provider is inferred compatible.
 
-This slice has no evidence reader, CLI, worker, configuration write, account
-selection or dispatch. A suggested allocation is not a reservation, successful
-switch or promise of available capacity at execution time. Atomic reservations,
+Preview capacity is measured in managed-work concurrency slots, charged against
+the global/account/shared-allowance bounds. Never convert remaining quota
+percentages into estimated turns, tokens or slot inventory. A reserve threshold
+is an admission condition, not a spend limit or a guaranteed residual balance;
+unknown/metered billing remains excluded from this initial preview. Outcome per
+reserved capacity requires an explicit compatible unit and scope, not summed
+provider percentages.
+
+The pure planner cannot authenticate caller-generated evidence or establish that
+a reset/window identity was not rewritten around an old observation. The future
+ingestion boundary must enforce immutable provenance and the known-boundary
+observation fence above. A complete local ledger can fence managed writers only
+after atomic reservation exists; unrelated clients can still consume the same
+account. Fresh observations may become obsolete between read, reserve and
+dispatch, so neither a preview nor local reservation guarantees external quota.
+
+This slice has no evidence reader, CLI, worker, configuration write, runtime caller,
+account selection or dispatch. A suggested allocation is not a reservation,
+successful switch or promise of available capacity at execution time. Atomic reservations,
 actual supported adapter/account binding, execution-time revalidation and P6 lane
 ownership remain future dependencies before any account switching or work moves.
 Test deterministic previews with stale/unknown evidence, shared windows, reserves,
-complete/partial occupancy, conflicting IDs and concurrent-demand examples; such
-tests do not establish a live pool or delivered account switching.
+complete/partial occupancy, conflicting IDs and concurrent-demand examples.
+Future ingestion/ledger fixtures must reject rewritten reset provenance and
+pre-boundary observations, retain charges across selection/authentication drift,
+and refuse release on timeout/unknown outcomes. Pure caller-input fixtures do
+not authenticate observations or establish a live pool/account switching.
 
 ## Shared work intensity
 
@@ -328,7 +355,7 @@ bounded by the reviewed caps and existing authority.
 | Work scope | Allowed projects, loops, goals/revisions and action kinds. No widening to unrelated work. |
 | Holds and approvals | Existing pause/stop/person gates win. A profile never clears them or turns an unresolved approval into permission. |
 | Spend | Metered-route permission, billing basis, per-turn/period ceilings and existing attempt accounting. Unknown billing/cost cannot be presented as zero. Defaults remain a separate decision. |
-| Allowance reserve | Named window/context, protected capacity and fresh-data policy. A reset timestamp alone cannot restore availability. |
+| Allowance reserve | Named window/context, explicit admission threshold and fresh-data policy, without a guaranteed external balance. A reset timestamp alone cannot restore availability. |
 | Model and effort | Explicit allowed routes and effort ceilings/floors. No silent downgrade or claim that configured identity is observed identity. |
 | Concurrency | Explicit maximum active work/reservations per loop and shared allowance/device scope. No unbounded lane creation or autonomous expansion of reach. |
 

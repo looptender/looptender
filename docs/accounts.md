@@ -39,6 +39,8 @@ The selected-context catalog, configured routes and verified provider account id
 
 The first planned pooling slice is a pure `internal/poolplan` preview: caller-supplied fresh structured Codex evidence bound to explicit account/allowance IDs and complete occupancy. It has no reader, CLI, reservation, adapter binding or dispatch and does not switch accounts. Real pooling needs explicit membership, supported account/context binding, allowance-window identities, reserves and shared reservations; fresh quota alone is not permission to move work. Shared Low / Medium / High / Unleashed profiles must preview independent scope, holds, spend, reserve, effort and concurrency caps. Unknown/stale data cannot justify increased work or silently refreshed capacity. Neither profiles nor a graph clear holds, grant spending, select BB accounts per thread or add conversation-creation authority. See the [orchestration policy and build order](design/orchestration-policy.md).
 
+Planned pool capacity uses managed-work slots, never quota-percent-to-turn estimates; reserve thresholds cannot guarantee remaining external quota. Changed selection/authentication invalidates bound observations/grants but must retain existing charged reservations until explicit reconciliation. Reset alone does not clear exhaustion: future ingestion needs immutable observation/reset/window provenance and a known-boundary observation fence; the pure preview cannot authenticate caller inputs.
+
 ## Add an account, a subscription or a model
 
 The short version. Run these in a terminal of your own, not inside a BB agent
