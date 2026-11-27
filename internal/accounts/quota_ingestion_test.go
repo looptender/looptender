@@ -496,3 +496,210 @@ func TestIngestionAllCollectionCapsBeforeDecode(t *testing.T) {
 		})
 	}
 }
+
+// Independent review regressions retained verbatim.
+func TestIndependentIngestionRejectImpossibleHistory(t *testing.T) {
+	s, _ := ingestionTestStore(t)
+	_, ticket := ingestionTestBegin(t, s, 200)
+	ingestionTestCommit(t, s, ticket, 202, nil)
+	f := ingestionRead(t, s)
+	if _, err := decodeIngestion(ingestionJSON(f)); err != nil {
+		t.Fatal("valid control", err)
+	}
+	// A commit at revision 2 followed by its Begin at revision 3 is impossible.
+	f.Mutations[1], f.Mutations[2] = f.Mutations[2], f.Mutations[1]
+	f.Mutations[1].AppliedRevision = 2
+	f.Mutations[2].AppliedRevision = 3
+	if _, err := decodeIngestion(ingestionJSON(f)); err == nil {
+		t.Fatal("accepted Commit before Begin with canonical contiguous revision history")
+	}
+}
+
+func TestIndependentIngestionRetainsLatestBody(t *testing.T) {
+	s, _ := ingestionTestStore(t)
+	_, ticket := ingestionTestBegin(t, s, 200)
+	ingestionTestCommit(t, s, ticket, 202, nil)
+	f := ingestionRead(t, s)
+	if _, err := decodeIngestion(ingestionJSON(f)); err != nil {
+		t.Fatal("valid control", err)
+	}
+	// The sole and latest success cannot legitimately have been compacted.
+	f.Receipts = []ingestionReceipt{}
+	f.Seen[0].Retired = true
+	if _, err := decodeIngestion(ingestionJSON(f)); err == nil {
+		t.Fatal("accepted compacted-away sole/latest success body")
+	}
+}
+
+func TestIndependentIngestionRejectHistoricalPendingOverlap(t *testing.T) {
+	s, _ := ingestionTestStore(t)
+	for _, n := range []int{200, 204} {
+		_, ticket := ingestionTestBegin(t, s, n)
+		ingestionTestCommit(t, s, ticket, n+2, nil)
+	}
+	f := ingestionRead(t, s)
+	if _, err := decodeIngestion(ingestionJSON(f)); err != nil {
+		t.Fatal("valid serialized control", err)
+	}
+	// init, Begin(A), Begin(B), Commit(A), Commit(B): both terminal now,
+	// but B began while A still owned this same canonical selection.
+	f.Mutations[2], f.Mutations[3] = f.Mutations[3], f.Mutations[2]
+	f.Mutations[2].AppliedRevision = 3
+	f.Mutations[3].AppliedRevision = 4
+	if _, err := decodeIngestion(ingestionJSON(f)); err == nil {
+		t.Fatal("accepted two overlapping historical pending owners on one canonical selection")
+	}
+}
+
+func TestIngestionHistoricalFailureCausalityAndReadBoundary(t *testing.T) {
+	for _, firstFails := range []bool{false, true} {
+		t.Run(fmt.Sprint(firstFails), func(t *testing.T) {
+			s, b := ingestionTestStore(t)
+			for i, n := range []int{200, 204} {
+				_, tk := ingestionTestBegin(t, s, n)
+				if i == 0 && firstFails {
+					f := ingestionRead(t, s)
+					op := s.prepare(ingestionInput{Kind: "fail", OperationID: ingestionTestID(n + 2), StoreID: f.StoreID, ExpectedRevision: f.Revision, At: f.WallHighWater, Reason: "failedRead"}, tk)
+					if _, err := s.apply(op); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					ingestionTestCommit(t, s, tk, n+2, nil)
+				}
+			}
+			good := ingestionRead(t, s)
+			// Both serialized success and serialized failure release the original
+			// pending owner. Their historical order must be preserved on every read.
+			for _, terminalBeforeBegin := range []bool{false, true} {
+				f := cloneIngestion(good)
+				a, z := 2, 3
+				if terminalBeforeBegin {
+					a, z = 1, 2
+				}
+				f.Mutations[a], f.Mutations[z] = f.Mutations[z], f.Mutations[a]
+				for i := range f.Mutations {
+					f.Mutations[i].AppliedRevision = uint64(i + 1)
+				}
+				wire := ingestionJSON(f)
+				if _, err := decodeIngestion(wire); err == nil {
+					t.Fatal("accepted impossible historical owner order", firstFails, terminalBeforeBegin)
+				}
+				b.data = wire
+				if _, err := s.load(); err == nil {
+					t.Fatal("read boundary accepted impossible history")
+				}
+				b.data = ingestionJSON(good)
+			}
+		})
+	}
+}
+
+func TestIngestionHistoricalPendingOnDifferentSelections(t *testing.T) {
+	b := &ingestionMemory{durable: true}
+	s := &quotaIngestionStore{backend: b, session: ingestionTestID(100)}
+	initial := ingestionTestInitial()
+	second := initial.Epochs[0]
+	second.SelectionID = ingestionTestID(20)
+	second.Canonical = second.SelectionID
+	second.Account = "fictional-account-b"
+	second.Allowance = "fictional-allowance-b"
+	second.ID = ingestionEpochHash(second)
+	firstID := initial.Epochs[0].ID
+	secondID := second.ID
+	initial.Epochs = append(initial.Epochs, second)
+	sortIngestion(&initial)
+	init := s.prepare(ingestionInput{Kind: "initialize", OperationID: ingestionTestID(101), StoreID: initial.StoreID, Initial: &initial, At: initial.WallHighWater}, nil)
+	if _, err := s.apply(init); err != nil {
+		t.Fatal(err)
+	}
+	tickets := []*ingestionTicket{}
+	for i, epoch := range []string{firstID, secondID} {
+		f := ingestionRead(t, s)
+		op := s.prepare(ingestionInput{Kind: "begin", OperationID: ingestionTestID(200 + i*4), IntentID: ingestionTestID(201 + i*4), StoreID: f.StoreID, ExpectedRevision: f.Revision, At: f.WallHighWater.Add(time.Millisecond), Epoch: epoch}, nil)
+		a, err := s.apply(op)
+		if err != nil || a.Ticket == nil {
+			t.Fatal("different selection excluded", err)
+		}
+		tickets = append(tickets, a.Ticket)
+	}
+	for i, tk := range tickets {
+		ingestionTestCommit(t, s, tk, 202+i*4, nil)
+	}
+	f := ingestionRead(t, s)
+	if len(f.Receipts) != 2 {
+		t.Fatal("lost independent selection history")
+	}
+	// Each selection needs its own latest body, even though the other has a
+	// globally newer sequence and a fully retained receipt.
+	for _, r := range f.Receipts {
+		mutated := cloneIngestion(f)
+		bodies := mutated.Receipts[:0]
+		for _, body := range mutated.Receipts {
+			if body.ID != r.ID {
+				bodies = append(bodies, body)
+			}
+		}
+		mutated.Receipts = bodies
+		for i := range mutated.Seen {
+			if mutated.Seen[i].ID == r.ID {
+				mutated.Seen[i].Retired = true
+			}
+		}
+		if _, err := decodeIngestion(ingestionJSON(mutated)); err == nil {
+			t.Fatal("lost one selection's latest body")
+		}
+	}
+}
+
+func TestIngestionLatestBodyAfterFailureRetirementAndOlderTombstone(t *testing.T) {
+	for _, laterFailure := range []bool{false, true} {
+		t.Run(fmt.Sprint(laterFailure), func(t *testing.T) {
+			s, b := ingestionTestStore(t)
+			_, tk := ingestionTestBegin(t, s, 200)
+			_, first := ingestionTestCommit(t, s, tk, 202, nil)
+			_, tk = ingestionTestBegin(t, s, 204)
+			f := ingestionRead(t, s)
+			latest := first.ID
+			if laterFailure {
+				fail := s.prepare(ingestionInput{Kind: "fail", OperationID: ingestionTestID(206), StoreID: f.StoreID, ExpectedRevision: f.Revision, At: f.WallHighWater, Reason: "failedRead"}, tk)
+				if _, err := s.apply(fail); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				_, last := ingestionTestCommit(t, s, tk, 206, nil)
+				latest = last.ID
+			}
+			f = ingestionRead(t, s)
+			if !laterFailure {
+				// Legitimate older tombstone survives strict decode; latest remains intact.
+				older := cloneIngestion(f)
+				older.Receipts = older.Receipts[1:]
+				older.Seen[0].Retired = true
+				if _, err := decodeIngestion(ingestionJSON(older)); err != nil {
+					t.Fatal("legitimate older tombstone refused", err)
+				}
+			}
+			retire := s.prepare(ingestionInput{Kind: "retireEpoch", OperationID: ingestionTestID(208), StoreID: f.StoreID, ExpectedRevision: f.Revision, At: f.WallHighWater, Epoch: f.Epochs[0].ID}, nil)
+			if _, err := s.apply(retire); err != nil {
+				t.Fatal(err)
+			}
+			f = ingestionRead(t, s)
+			bodies := f.Receipts[:0]
+			for _, r := range f.Receipts {
+				if r.ID != latest {
+					bodies = append(bodies, r)
+				}
+			}
+			f.Receipts = bodies
+			for i := range f.Seen {
+				if f.Seen[i].ID == latest {
+					f.Seen[i].Retired = true
+				}
+			}
+			b.data = ingestionJSON(f)
+			if _, err := s.load(); err == nil {
+				t.Fatal("read accepted lost latest success after failure/retirement")
+			}
+		})
+	}
+}

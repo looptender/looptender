@@ -341,6 +341,25 @@ func (s *quotaIngestionStore) apply(op *ingestionOperation) (ack ingestionAck, e
 
 // Backend-independent copies only; no disk/transport work in this helper.
 func bytesReaderIngestion(b []byte) *bytes.Reader { return bytes.NewReader(b) }
+
+// Include tombstoned receipts in the history-derived latest-success anchor.
+func ingestionLatestReceipts(f ingestionFile) map[string]string {
+	canonical := map[string]string{}
+	for _, e := range f.Epochs {
+		canonical[e.ID] = e.Canonical
+	}
+	latest := map[string]string{}
+	sequences := map[string]uint64{}
+	for _, q := range f.Requests {
+		key := canonical[q.Epoch]
+		if q.Outcome == "retained" && q.ReceiptID != nil && q.Sequence > sequences[key] {
+			sequences[key] = q.Sequence
+			latest[key] = *q.ReceiptID
+		}
+	}
+	return latest
+}
+
 func ingestionRetentionKeep(f ingestionFile) map[string]bool {
 	pinned := map[string]bool{}
 	for _, v := range f.Fences {
@@ -358,11 +377,12 @@ func ingestionRetentionKeep(f ingestionFile) map[string]bool {
 		bySelection[canonical[r.Epoch]] = append(bySelection[canonical[r.Epoch]], r)
 	}
 	keep := map[string]bool{}
-	for _, rs := range bySelection {
+	latest := ingestionLatestReceipts(f)
+	for key, rs := range bySelection {
 		sort.Slice(rs, func(i, j int) bool { return rs[i].Sequence > rs[j].Sequence })
 		historical := 0
-		for i, r := range rs {
-			if i == 0 || pinned[r.ID] {
+		for _, r := range rs {
+			if r.ID == latest[key] || pinned[r.ID] {
 				keep[r.ID] = true
 				continue
 			}

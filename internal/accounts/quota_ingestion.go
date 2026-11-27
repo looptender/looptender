@@ -531,6 +531,15 @@ func validateIngestion(f ingestionFile) error {
 			return bad()
 		}
 	}
+	// Latest success is defined by immutable request history, not whichever
+	// receipt bodies survived compaction. Even a sole/latest tombstone is loss.
+	for _, id := range ingestionLatestReceipts(f) {
+		body, ok := receipts[id]
+		seen := seenIDs[id]
+		if !ok || seen.Retired || seen.RecordSHA256 != body.RecordSHA256 {
+			return bad()
+		}
+	}
 	lastFences := map[string]ingestionFence{}
 	for i, v := range f.Fences {
 		key := ingestionFenceKey(v)
@@ -580,6 +589,9 @@ func validateIngestion(f ingestionFile) error {
 	}
 	begins := map[string]int{}
 	ends := map[string]int{}
+	// Replay causality over revisions. Final counts alone would allow terminal
+	// events before their Begin or overlapping historical pending owners.
+	active := map[string]string{}
 	ops := map[string]bool{}
 	var prior uint64
 	for _, m := range f.Mutations {
@@ -598,10 +610,19 @@ func validateIngestion(f ingestionFile) error {
 			if !ok {
 				return bad()
 			}
+			canonical := epochs[q.Epoch].Canonical
 			if m.Kind == "begin" {
-				begins[*m.IntentID]++
+				if begins[q.IntentID] != 0 || active[canonical] != "" {
+					return bad()
+				}
+				begins[q.IntentID]++
+				active[canonical] = q.IntentID
 			} else {
-				ends[*m.IntentID]++
+				if begins[q.IntentID] != 1 || ends[q.IntentID] != 0 || active[canonical] != q.IntentID {
+					return bad()
+				}
+				ends[q.IntentID]++
+				delete(active, canonical)
 			}
 			if m.Kind == "fail" && q.Outcome != "failed" {
 				return bad()
@@ -622,6 +643,9 @@ func validateIngestion(f ingestionFile) error {
 		prior = m.AppliedRevision
 	}
 	for id, q := range requests {
+		if q.Outcome == "pending" && active[epochs[q.Epoch].Canonical] != id {
+			return bad()
+		}
 		if begins[id] != 1 || q.Outcome == "pending" && ends[id] != 0 || q.Outcome != "pending" && ends[id] != 1 {
 			return bad()
 		}
