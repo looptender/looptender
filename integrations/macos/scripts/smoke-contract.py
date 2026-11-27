@@ -15,6 +15,17 @@ with tempfile.TemporaryDirectory(prefix="keepgoing-menu-smoke-") as temporary:
     native = work / "contract-smoke"
     subprocess.run(["swiftc", *map(str, sorted((root / "Sources/KeepgoingMenuCore").glob("*.swift"))),
                     str(root / "scripts/ContractSmoke.swift"), "-o", str(native)], check=True)
+    usage = work / "usage-updating-smoke"
+    subprocess.run(["swiftc", *map(str, sorted((root / "Sources/KeepgoingMenuCore").glob("*.swift"))),
+                    str(root / "scripts/UsageUpdatingSmoke.swift"), "-o", str(usage)], check=True)
+    subprocess.run([str(usage)], check=True, timeout=10)
+    worker_fixture = work / "worker-fixture"
+    worker_smoke = work / "worker-smoke"
+    subprocess.run(["swiftc", str(root / "scripts/MenuUsageWorkerFixture.swift"), "-parse-as-library", "-o", str(worker_fixture)], check=True)
+    subprocess.run([str(worker_fixture), "--warmup"], check=True, timeout=10)
+    subprocess.run(["swiftc", *map(str, sorted((root / "Sources/KeepgoingMenuCore").glob("*.swift"))),
+                    str(root / "scripts/MenuUsageWorkerSmoke.swift"), "-o", str(worker_smoke)], check=True)
+    subprocess.run([str(worker_smoke), str(worker_fixture), str(work / "worker-lifetime")], check=True, timeout=15)
     trap = work / "provider-trap"
     trap.write_text('#!/bin/sh\n: > "$0.called"\nexit 99\n')
     trap.chmod(0o700)
