@@ -152,8 +152,13 @@ bounds include 32 items, 32 sources of each kind, 32 dependencies/item and the
 existing 32 assignment revisions/200-row bound. Dependency evaluation is bounded
 and memoized. Source reads reuse the existing coordinator hash/regular-file
 checks and cooperative ten-second operation budget between reads, not a guarantee
-against a blocked filesystem syscall. The three private files and all source pins
-are reread before output; changed evidence refuses. This is not an atomic snapshot,
+against a blocked filesystem syscall. Input/source descriptors are acquired with
+nonblocking, no-follow opens and
+validated as regular files before reading, so a no-writer FIFO (including a
+replacement at open) refuses without waiting. Private inputs retain owner/privacy
+checks; source hashes retain byte/identity bounds. The three private files and all
+source pins are reread before output; changed evidence refuses. This is not an
+atomic snapshot,
 a hostile-writer isolation boundary or proof of current host state after capture.
 
 Invoke at real phase/wait boundaries, not repeatedly to manufacture status-only

@@ -290,6 +290,69 @@ class CoverageTests(unittest.TestCase):
         link = self.root / "link"; link.symlink_to(paths[0])
         with self.assertRaises(OSError):
             coverage.inspect([link, *paths[1:]], datetime.now(timezone.utc))
+    @unittest.skipUnless(hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK"), "Unix descriptor boundary")
+    def test_fifo_inputs_and_sources_refuse_before_blocking(self):
+        paths = self.write_inputs()
+        entry = [sys.executable, "-B", str(SCRIPTS / "coordinator_coverage.py")]
+        args = ["--inventory", str(paths[0]), "--context", str(paths[1]), "--assignments", str(paths[2])]
+        # Run the actual CLI in an owned child with no FIFO writer. The race
+        # variant swaps the path immediately before acquisition, defeating any
+        # pre-open path-type check while still exercising descriptor validation.
+        race = """import os,runpy,sys
+sys.dont_write_bytecode = True
+script, target = sys.argv[1:3]
+sys.argv = [script] + sys.argv[3:]
+original = os.open
+def replacing_open(path, flags, *a, **kw):
+    if str(path) == target and not replacing_open.changed:
+        replacing_open.changed = True
+        os.unlink(target)
+        os.mkfifo(target, 0o600)
+    return original(path, flags, *a, **kw)
+replacing_open.changed = False
+os.open = replacing_open
+sys.path.insert(0, os.path.dirname(script))
+runpy.run_path(script, run_name="__main__")
+"""
+        for target in (paths[1], Path(self.i["workSources"][0]["path"])):
+            for replace in (False, True):
+                with self.subTest(kind="private" if target == paths[1] else "source", replacement=replace):
+                    original = target.read_bytes()
+                    try:
+                        if replace:
+                            cmd = [sys.executable, "-B", "-c", race, entry[-1], str(target), *args]
+                        else:
+                            target.unlink(); os.mkfifo(target, 0o600)
+                            cmd = entry + args
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+                        self.assertEqual(result.returncode, 1, result.stderr)
+                        report = json.loads(result.stdout)
+                        self.assertEqual(report["verdict"], "cannot_assess")
+                        self.assertFalse(report["objectiveComplete"])
+                        self.assertNotIn(str(target), result.stdout)
+                    finally:
+                        target.unlink(); target.write_bytes(original); target.chmod(0o600)
+
+    def test_descriptor_readers_preserve_regular_symlink_and_size_guards(self):
+        path = self.root / "private.json"; raw = b'{"fictional":true}'
+        path.write_bytes(raw); path.chmod(0o600)
+        self.assertEqual(coverage.private_read(path), raw)
+        self.assertEqual(coverage.workflow.file_hash(path, collect=True), (hashlib.sha256(raw).hexdigest(), raw))
+        for reader in (coverage.private_read, coverage.workflow.file_hash):
+            with self.subTest(reader=reader.__name__):
+                with self.assertRaisesRegex(Refused, "absolute_path_required"):
+                    reader("relative.json")
+                with self.assertRaises((OSError, Refused)):
+                    reader(self.root)
+                link = self.root / (reader.__name__ + "-link"); link.symlink_to(path)
+                with self.assertRaises(OSError):
+                    reader(link)
+                with self.assertRaisesRegex(Refused, "input_bound|source_bound"):
+                    reader(path, 1)
+        path.chmod(0o644)
+        with self.assertRaisesRegex(Refused, "private_regular_file_required"):
+            coverage.private_read(path)
+
     def test_contradictory_handoff_cannot_supply_acceptance(self):
         self.r["revisions"][-1]["rows"][0]["handoff"]["remainingRefs"] = ["example:unfinished"]
         self.i["items"][2]["dependsOn"] = [{"id": "implementation", "revision": 1}]
