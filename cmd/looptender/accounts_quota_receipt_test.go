@@ -467,3 +467,52 @@ func TestQuotaReceiptExactParsedFloatBits(t *testing.T) {
 		}
 	}
 }
+
+// Remove the fixture's released publication lock at the final view timestamp.
+// A receipt finalization would recreate it; ordinary refresh must not do so.
+func TestQuotaReceiptOrdinaryRefreshDoesNotCaptureOrFinalize(t *testing.T) {
+	for _, capture := range []bool{false, true} {
+		t.Run(strconv.FormatBool(capture), func(t *testing.T) {
+			dir, entry := receiptFixture(t, `{"id":2,"result":`+receiptQuotaResult+`}`)
+			runs, carrierSeen, timestamps := 0, false, 0
+			run := func(ctx context.Context, provider, cli string, env []string, wd string) ([]byte, error) {
+				runs++
+				carrierSeen = ctx.Value(quotaReceiptContextKey{}) != nil
+				return accountQuotaRead(ctx, provider, cli, env, wd)
+			}
+			lockPath := filepath.Join(dir, "accounts.lock")
+			now := func() time.Time {
+				timestamps++
+				if timestamps == 2 {
+					if err := os.Remove(lockPath); err != nil {
+						t.Fatal("remove released fixture lock", err)
+					}
+				}
+				return receiptPublicationTime()
+			}
+			var view accounts.QuotaView
+			var err error
+			if capture {
+				var result accountQuotaRefreshResult
+				result, err = accountQuotaRefreshReceipt(context.Background(), dir, entry.ID, nil, run, os.Environ(), now, normalReceiptClock())
+				view = result.view
+				if result.receipt == nil || result.receiptReason != "" {
+					t.Fatalf("explicit capture lost evidence: %v %s", err, result.receiptReason)
+				}
+			} else {
+				view, err = accountQuotaRefresh(context.Background(), dir, entry.ID, nil, run, os.Environ(), now)
+			}
+			if err != nil || view.State != "reported" || runs != 1 || carrierSeen != capture {
+				t.Errorf("public result/RPC/carrier mismatch: %v %s runs=%d carrier=%v", err, view.State, runs, carrierSeen)
+			}
+			_, statErr := os.Stat(lockPath)
+			if capture && statErr != nil || !capture && !os.IsNotExist(statErr) {
+				t.Fatalf("receipt-specific lock acquisition mismatch: capture=%v stat=%v", capture, statErr)
+			}
+			cache, loadErr := accounts.LoadQuota(dir)
+			if loadErr != nil || len(cache.Entries) != 1 || cache.Entries[0].Success == nil || !cache.Entries[0].Success.At.Equal(receiptPublicationTime()) || cache.Entries[0].Success.Details.Buckets[0].Windows[0].UsedPercent != 37.125 {
+				t.Fatal("refresh did not preserve published values", loadErr)
+			}
+		})
+	}
+}

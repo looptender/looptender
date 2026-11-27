@@ -97,13 +97,17 @@ func accountQuotaRead(ctx context.Context, provider, cli string, env []string, w
 // accountQuotaRefresh never runs a route probe. CheckGuard prevents parallel
 // same-selection reads; publication independently fences edits during the RPC.
 func accountQuotaRefresh(ctx context.Context, dir, id string, expected *accountQuotaSelection, run accountQuotaRun, env []string, now func() time.Time) (accounts.QuotaView, error) {
-	result, err := accountQuotaRefreshReceipt(ctx, dir, id, expected, run, env, now, nil)
+	result, err := accountQuotaRefreshInternal(ctx, dir, id, expected, run, env, now, false, nil)
 	return result.view, err
 }
 
-// The detailed result retains an in-memory receipt only. Existing callers keep
-// their public view/return contract; no receipt is persisted or used for pooling.
+// This helper explicitly opts into an in-memory receipt. Ordinary refreshes
+// use no carrier or finalization; no receipt is persisted or used for pooling.
 func accountQuotaRefreshReceipt(ctx context.Context, dir, id string, expected *accountQuotaSelection, run accountQuotaRun, env []string, now func() time.Time, clock quotaReceiptClock) (accountQuotaRefreshResult, error) {
+	return accountQuotaRefreshInternal(ctx, dir, id, expected, run, env, now, true, clock)
+}
+
+func accountQuotaRefreshInternal(ctx context.Context, dir, id string, expected *accountQuotaSelection, run accountQuotaRun, env []string, now func() time.Time, capture bool, clock quotaReceiptClock) (accountQuotaRefreshResult, error) {
 	unavailable := accounts.QuotaView{State: "unavailable", Reason: "selection_unavailable", Freshness: "unavailable", Windows: []accounts.QuotaWindow{}}
 	g, err := accounts.CheckGuard(dir, id)
 	if err != nil {
@@ -130,7 +134,7 @@ func accountQuotaRefreshReceipt(ctx context.Context, dir, id string, expected *a
 	a := accounts.QuotaAttempt{}
 	executionEnv := accountQuotaExecutionEnvironment(s.Entry, env)
 	var trace *quotaReceiptTrace
-	if s.Entry.Provider == "codex" {
+	if capture && s.Entry.Provider == "codex" {
 		trace = newQuotaReceiptTrace(clock)
 		trace.expected = &quotaReceiptExecution{cli: s.Entry.CLI, workdir: s.Entry.Workdir, environment: append([]string(nil), executionEnv...)}
 	}
