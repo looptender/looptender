@@ -691,6 +691,8 @@ details[open] > .how-summary::before { transform: rotate(45deg); }
 
 /* Saved account quota uses its provider's windows; it is never route evidence. */
 .quota-compact { display: flex; flex-wrap: wrap; gap: .5rem 1rem; min-width: 0; overflow-wrap: anywhere; }
+.quota-compact > .quota-stamp { flex-basis: 100%; margin: 0; }
+.quota-countdown { font-variant-numeric: tabular-nums; }
 .quota-chip { display: grid; gap: .15rem; font-size: .875rem; font-variant-numeric: tabular-nums; }
 .quota-windows { list-style: none; padding: 0; margin: .8rem 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 1rem; }
 .quota-window { min-width: 0; overflow-wrap: anywhere; padding-block: .75rem; border-top: 1px solid var(--line); }

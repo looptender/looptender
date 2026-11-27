@@ -1,0 +1,1 @@
+- Accounts in the panel now show remaining quota, reset countdowns and advancing last-checked/read ages. Passed windows require a new reading, missing quota stays unavailable, and refresh guidance distinguishes saved-page reads, login checks and reviewed usage retrieval.
