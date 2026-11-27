@@ -185,7 +185,7 @@ looptender stop -c /private/example-loop/looptender.yaml
 looptender complete -c /private/example-loop/looptender.yaml --note "Task verified"
 ```
 
-`stop` stops the supervised conversation at the next check (`--lanes` also stops the conversations it started); `complete` records a declaration, not a verification (unreleased source [binds it to the current goal revision](docs/goals.md#completion-declarations-unreleased)); `resume` clears the holds a person or looptender set. The [setup guide](docs/setup.md) covers scripted setup, accounts, limits and Windows; [operations](docs/operations.md) covers every control.
+`stop` stops the supervised conversation at the next check (`--lanes` also stops the conversations it started); `complete` records a declaration, not a verification (unreleased source [binds it to the current goal revision](docs/goals.md#completion-declarations-unreleased)); `resume` clears the holds a person or looptender set. Unreleased BB diagnostics label completion as a declaration for that loop, not verification of current project or thread work; new messages do not clear its hold. Enabled registrations still block duplicate attachment while held or archived. Disk warnings show their own severity and measurement evidence; see [diagnostics](docs/operations.md#bb-loop-and-disk-diagnostics-unreleased). The [setup guide](docs/setup.md) covers scripted setup, accounts, limits and Windows; [operations](docs/operations.md) covers every control.
 
 ## Where it stands
 

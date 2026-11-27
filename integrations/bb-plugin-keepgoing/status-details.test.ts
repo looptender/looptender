@@ -25,7 +25,7 @@ test("status RPC projects diagnostic metadata, preserves completion under other 
     assert.equal(loop.details?.targetThread, "thr_destination");
     assert.ok(!JSON.stringify(result).includes("PRIVATE"));
     const lines = diagnosticLines(loop.details, loop.target, loop.supervising).join("\n");
-    assert.match(lines, /declared; not independently verified/);
+    assert.match(lines, /declared for this loop; project and current thread work are not independently verified/);
     assert.match(lines, /thr_destination.*not this thread/);
     assert.match(lines, /stale/); assert.match(lines, /dry run/); assert.match(lines, /build comparison different/);
     assert.match(lines, /Last recorded action: wake · failed · target primary/);

@@ -15,18 +15,29 @@ import (
 type diskSpaceStatus struct {
 	// Level is ok, low (below the larger of 1 GiB and 2% of the volume),
 	// critical (below 100 MiB) or unknown.
-	Level          string `json:"level"`
-	AvailableBytes uint64 `json:"availableBytes,omitempty"`
-	TotalBytes     uint64 `json:"totalBytes,omitempty"`
-	Message        string `json:"message,omitempty"`
+	Level          string     `json:"level"`
+	MeasuredAt     *time.Time `json:"measuredAt,omitempty"`
+	Source         string     `json:"source"`
+	AvailableBytes uint64     `json:"availableBytes,omitempty"`
+	TotalBytes     uint64     `json:"totalBytes,omitempty"`
+	Message        string     `json:"message,omitempty"`
 	// volume names the volume, for the panel to tell loops on one volume
 	// as one.
 	volume string
 }
 
 func describeDiskSpace(dir string) diskSpaceStatus {
+	return describeDiskSpaceWithClock(dir, time.Now)
+}
+
+func describeDiskSpaceWithClock(dir string, now func() time.Time) diskSpaceStatus {
+	at := now().UTC() // Capture at the filesystem measurement, never at view construction.
 	r := diskspace.Of(dir)
-	return diskSpaceStatus{Level: r.Level(), AvailableBytes: r.Available, TotalBytes: r.Total, Message: r.Sentence(), volume: diskspace.VolumeID(dir)}
+	var measuredAt *time.Time
+	if r.Known {
+		measuredAt = &at
+	}
+	return diskSpaceStatus{MeasuredAt: measuredAt, Source: "filesystem", Level: r.Level(), AvailableBytes: r.Available, TotalBytes: r.Total, Message: r.Sentence(), volume: diskspace.VolumeID(dir)}
 }
 
 // lowDisk says whether the reading is one to show: low or critical.

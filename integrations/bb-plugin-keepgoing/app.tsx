@@ -14,7 +14,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { LoopView, rpcContract } from "./server";
-import { diagnosticLines, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, archivedLine, firstSentenceOf, observedRoleLabel } from "./status-details";
+import { diagnosticLines, diskLine, diskSummary, dateLabel, buildSummary, reasonLines, boundedTitle, recordsUnreadable, freshnessToShow, lastLabel, archivedLine, firstSentenceOf, observedRoleLabel } from "./status-details";
 import { lineageDue, type LineageEntry } from "./lineage";
 import { heldSentence, isWait, isObserved, waitFor, resumeCommand, PhoneResumeLink } from "./held-card";
 import { SetupPanel } from "./setup-panel";
@@ -209,7 +209,7 @@ function stateLabel(loop: LoopView, starting = false): string {
     if (isObserved(loop)) return loop.details?.observedWakes ? "looptender: observed (idle wakes)" : "looptender: observed";
     return loop.supervising ? "looptender: enabled" : `looptender: watching ${loop.details?.targetThread ?? loop.target}`;
   }
-  return `looptender: ${loop.controlState}`;
+  return loop.controlState === "completed" ? "looptender: loop completion declared" : `looptender: ${loop.controlState}`;
 }
 
 const sameBuild = (a: string, b: string) => a.startsWith(b) || b.startsWith(a);
@@ -475,8 +475,8 @@ function BuildFreshness({ loop }: { loop: LoopView }) {
 
 const plainList = { margin: 0, padding: 0, listStyle: "none" } as const;
 
-function Reasons({ loop }: { loop: LoopView }) {
-  const lines = reasonLines(loop.controlState, loop.note, loop.details);
+function Reasons({ loop, failed = false }: { loop: LoopView; failed?: boolean }) {
+  const lines = failed ? (loop.details?.disk ? [diskLine(loop.details, true)] : []) : reasonLines(loop.controlState, loop.note, loop.details);
   return lines.length ? <ul aria-label="Why" className="kg-t" style={{ margin: 0, padding: "0 12px 4px 28px", fontSize: 12, opacity: 0.85, overflowWrap: "anywhere" }}>{lines.map((l, i) => <li key={i}>{l}</li>)}</ul> : null;
 }
 
@@ -510,9 +510,9 @@ function CardLoop({ loop, name, threadId, starting, refresh, failed, created, sh
       action={<>{!failed && created !== KEEPING_GOING && <><StartChecksButton loop={loop} threadId={threadId} starting={starting} onDone={refresh} /><ToggleButton loop={loop} threadId={threadId} onDone={refresh} /></>}</>} />
     {!failed && <ObservedRole loop={loop} />}
     {!failed && <BuildFreshness loop={loop} />}
-    {!failed && <Reasons loop={loop} />}
+    <Reasons loop={loop} failed={failed} />
     {/* Everything the tooltip holds, in the card itself: reachable by keyboard and touch. */}
-    <LoopDetails {...splitDetails(loop, reasonLines(loop.controlState, loop.note, loop.details))} />
+    <LoopDetails {...splitDetails(loop, reasonLines(loop.controlState, loop.note, loop.details, failed))} />
   </section>;
 }
 
@@ -576,7 +576,6 @@ function shortReason(loop: LoopView, base: string): string {
   if (recordsUnreadable(d) || d?.archived || isWait(loop)) return "";
   if (d?.sends?.reached) return "send limit reached";
   if (d?.deadline?.reached === true) return "deadline passed";
-  if (d?.disk) return "disk low";
   const wait = d?.limitWait;
   if (wait && wait.state !== "none" && !wait.resetPassed) return "waiting on a usage limit";
   if (buildSummary(d?.runtime).differs && showBuildDiffersOnChip(loop, base)) return "build differs";
@@ -632,7 +631,9 @@ function BannerSummary({ threadId, isExpanded, onToggle }: { threadId: string; i
     <button type="button" data-kg="chip" onClick={onToggle} aria-expanded={isExpanded} title={failed ? "Status could not be refreshed. Open details to retry." : loops.length ? summaryTitle(loops, starting) : childText ? "This thread is a child; setup is in the details" : "Set up a loop for this thread"}
       style={chipButtonStyle}>
       <span style={chipTextStyle}>{text}</span>
-    </button></>;
+    </button>
+    {loops.filter(l => l.details?.disk).map(l => <span key={loopKey(l)} role="status" aria-label="State-volume disk" className="kg-t" style={{ fontSize: 12, overflowWrap: "anywhere" }}>{loops.length > 1 ? `${nameOf(l)} · ` : ""}{diskSummary(l.details, failed)}</span>)}
+    </>;
 }
 
 
@@ -660,7 +661,7 @@ function BannerDetails({ threadId, isExpanded, onToggle }: { threadId: string; i
     {loops.map(l => {
       const name = referenceName(l, loops, references);
       const isStarting = !!starting?.has(loopKey(l));
-      const reasons = reasonLines(l.controlState, l.note, l.details);
+      const reasons = reasonLines(l.controlState, l.note, l.details, failed);
       const split = splitDetails(l, reasons);
       return <section key={loopKey(l)} aria-label={`Loop ${name}`} style={{ display: "grid", gap: 8, padding: "4px 12px 8px", fontSize: 12, overflowWrap: "anywhere", minWidth: 0 }}>
         <div className="kg-t" style={{ minWidth: 0, opacity: 0.9 }}>
