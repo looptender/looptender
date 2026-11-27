@@ -24,7 +24,7 @@ const done = (...uis: { lifecycle: { unmount(): void } }[]) => { for (const u of
 
 test("the collapsed chip says the state and, when a person is needed, the reason, in words and not only in a tooltip", async () => {
   const cases: [object, string][] = [
-    [loop({}, { disk: { level: "low", message: "the volume is filling" } }), "looptender: enabled · disk low"],
+    [loop({}, { disk: { level: "low", message: "the volume is filling" } }), "looptender: enabled"],
     [loop({ controlState: "awaiting user", note: "Needs a decision in /private/example/path." }), "looptender: awaiting user"],
     [loop({ controlState: "awaiting user", note: "x" }, { deadline: { at: "2026-01-01T00:00:00Z", reached: true } }), "looptender: awaiting user · deadline passed"],
     [loop({}, { sends: { max: 40, used: 40, remaining: 0, reached: true } }), "looptender: enabled · send limit reached"],
@@ -33,7 +33,7 @@ test("the collapsed chip says the state and, when a person is needed, the reason
     // One reason, the one that matters most now: a limit before a passed deadline before a build difference.
     [loop({ controlState: "paused" }, { deadline: { at: "2026-01-01T00:00:00Z", reached: true }, limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false }, runtime: { ...base.runtime, recordedBuild: "v0.2.0-dev.1111111", binaryComparison: "different" } }), "looptender: paused · deadline passed"],
     [loop({ controlState: "paused" }, { sends: { max: 40, used: 40, remaining: 0, reached: true }, deadline: { at: "2026-01-01T00:00:00Z", reached: true }, disk: { level: "low", message: "x" } }), "looptender: paused · send limit reached"],
-    [loop({ controlState: "paused" }, { disk: { level: "low", message: "x" }, limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false } }), "looptender: paused · disk low"],
+    [loop({ controlState: "paused" }, { disk: { level: "low", message: "x" }, limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false } }), "looptender: paused · waiting on a usage limit"],
     [loop({ controlState: "paused" }, { limitWait: { state: "waiting", reason: "limit_no_fallback", resetsAt: "2099-01-01T00:00:00Z", resetPassed: false }, runtime: { ...base.runtime, recordedBuild: "v0.2.0-dev.1111111", binaryComparison: "different" } }), "looptender: paused · waiting on a usage limit"],
     [loop({ controlState: "awaiting user" }, { wait: { until: "network" } }), "looptender: waiting for the network"],
     [loop({ controlState: "paused" }, { deadline: { at: "2026-01-01T00:00:00Z", reached: true }, runtime: { ...base.runtime, recordedBuild: "v0.2.0-dev.1111111", binaryComparison: "different" } }), "looptender: paused · deadline passed"],
@@ -80,7 +80,7 @@ test("expanded banner: reason and Pause first, full-width under the text; the re
   const narrow = mount([l]);
   try {
     const section = await narrow.details.findByRole("region", { name: "Loop example-loop" });
-    assert.ok(within(section).getByText(/Disk: the volume that holds the state directory is filling/));
+    assert.ok(within(section).getByText(/State-volume disk:.*the volume that holds the state directory is filling/));
     assert.equal((section.querySelector("details") as HTMLDetailsElement).open, false);
     const order = [...section.querySelectorAll("[aria-label=Why], .kg-actions, :scope > details")].map(e => e.tagName === "DETAILS" ? "details" : e.getAttribute("aria-label") ?? e.className);
     assert.deepEqual(order, ["Why", "kg-actions", "details"]);
@@ -171,7 +171,7 @@ test("checks have stopped omits build differs on the collapsed chip while keepin
 
   for (const [label, candidate, expected] of [
     ["enabled with stopped daemon", loop({ controlState: "enabled" }, { daemon: { state: "not_recorded" }, runtime: diffRuntime }), "looptender: enabled"],
-    ["completed", loop({ controlState: "completed" }, { runtime: diffRuntime }), "looptender: completed"],
+    ["completed", loop({ controlState: "completed" }, { runtime: diffRuntime }), "looptender: loop completion declared"],
     ["moved", loop({ controlState: "awaiting user" }, { moved: { held: true, text: "Moved." }, runtime: diffRuntime }), "looptender: moved, resume to start"],
     ["watching", loop({ controlState: "enabled", supervising: false }, { runtime: diffRuntime }), "looptender: watching thr_example"],
     ["enabled with responsive daemon", loop({ controlState: "enabled" }, { daemon: { state: "responsive" }, runtime: diffRuntime }), "looptender: enabled · build differs"],

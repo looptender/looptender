@@ -23,7 +23,7 @@ test("a held loop says it once, in its own state's words, with the same structur
     ["awaiting user", `Held for you. Resume it ${WHERE}.`],
     ["paused", `Paused. Resume it ${WHERE}.`],
     ["stop requested", `Stop requested. It stays stopped until a person resumes it ${WHERE}; resuming lifts the stop.`],
-    ["completed", `Marked finished. Resuming it reopens it ${WHERE}.`],
+    ["completed", `Completion declared for this loop. Project and current thread work are not verified; new messages do not clear this hold. Review the configured task, routes, limits and other holds before a person resumes it ${WHERE}; resume clears other holds too.`],
   ];
   for (const [controlState, sentence] of cases) {
     const ui = details([loop({ controlState })]);
@@ -137,12 +137,12 @@ test("cutAtWord never splits a character; firstSentenceOf skips abbreviations an
   assert.equal(firstSentenceOf("Restart it. Then wait."), "Restart it.");
 });
 
-test("Goal and Task completion are plain facts in Details, not under Technical details", async () => {
+test("Goal and Loop completion are plain facts in Details, not under Technical details", async () => {
   const ui = details([loop({ controlState: "paused" })]);
   try {
     await ui.findByRole("region", { name: "Loop example-loop" });
     const plain = within(ui.getByRole("list", { name: "Details" })), tech = within(ui.getByRole("list", { name: "Technical details" }));
-    assert.ok(plain.getByText(/^Goal: /)); assert.ok(plain.getByText(/^Task completion: /));
-    assert.equal(tech.queryByText(/^Goal: /), null); assert.equal(tech.queryByText(/^Task completion: /), null);
+    assert.ok(plain.getByText(/^Goal: /)); assert.ok(plain.getByText(/^Loop completion: /));
+    assert.equal(tech.queryByText(/^Goal: /), null); assert.equal(tech.queryByText(/^Loop completion: /), null);
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
