@@ -1922,11 +1922,17 @@
         var uUpd = cardData.usageUpdating;
         if (isDrift) {
           cardBtn.appendChild(el("div", "map-card-meta", "Context review needed \u2014 not a quota limit. Prior quota withheld."));
+        } else if (accountQuotaMalformedProvenance(cardData)) {
+          cardBtn.appendChild(el("div", "map-card-meta", "Quota rejected \u00B7 invalid provenance metadata"));
         } else if (qs && qs.state === "reported") {
           var rowsQ = list(qs.rows), nowMs = readTime();
           var allEnded = rowsQ.length > 0 && rowsQ.every(function (w) { return accountWindowEnded(w.resetsAt, w.ended, nowMs); });
           var firstW = rowsQ.filter(function (w) { return typeof w.usedPercent === "number"; })[0];
-          var freshStr = qs.freshness === "provider_unknown" ? "Retrieved (freshness unknown)" : qs.freshness === "stale" ? "Older snapshot" : "Measured";
+          var qsAtMs = Date.parse(accountQuotaRetrievedAt(qs));
+          var isOlder = qs.freshness === "stale" || !isFinite(qsAtMs) || qsAtMs > nowMs || (nowMs - qsAtMs) > 1800000;
+          var freshStr = (qs.provenance || qs.retrievedAt)
+            ? (isOlder ? "Retrieved (older \u00B7 provider freshness unknown)" : "Retrieved (provider freshness unknown)")
+            : (isOlder ? "Older local read (provider freshness unknown)" : "Local read (provider freshness unknown)");
           cardBtn.appendChild(el("div", "map-card-meta", allEnded ? freshStr + " \u00B7 Window ended \u00B7 current unknown" : freshStr + (firstW ? " \u00B7 " + firstW.usedPercent + "% used" : "")));
           if (!allEnded && firstW) {
             var mDiv = el("div", "map-mini-meter" + (firstW.usedPercent >= 100 ? " is-limit" : ""));
@@ -1935,6 +1941,8 @@
             mDiv.appendChild(mBar);
             cardBtn.appendChild(mDiv);
           }
+        } else if (cardData.quota && cardData.quota.summary && cardData.quota.summary.state === "reported") {
+          cardBtn.appendChild(el("div", "map-card-meta", "Quota reading unavailable"));
         } else {
           cardBtn.appendChild(el("div", "map-card-meta", "No saved quota reading"));
         }
@@ -3270,13 +3278,62 @@
     return !!state.server.accountQuota && (Array.isArray(providers) ? providers.indexOf(c.provider) >= 0 : c.provider === "codex");
   }
   function accountQuotaSummary(c) {
+    if (!c || typeof c !== "object") return null;
     var s = c.quota && c.quota.summary;
-    if (!s || s.state !== "reported") return null;
-    function date(v) { return typeof v === "string" && isFinite(Date.parse(v)); }
-    if (c.provider === "codex" && s.source === "codex account/rateLimits/read" && date(s.observedAt) && !s.retrievedAt && (s.freshness === "fresh" || s.freshness === "stale")) return s;
-    if (c.provider === "claude-code" && s.source === "claude:get_usage" && date(s.retrievedAt) && !s.observedAt && s.freshness === "provider_unknown") return s;
-    if (c.provider === "antigravity" && s.source === "agy:/usage" && date(s.retrievedAt) && !s.observedAt && s.freshness === "provider_unknown") return s;
-    return null;
+    if (!s || typeof s !== "object" || Array.isArray(s) || s.state !== "reported") return null;
+    var hasOwn = Object.prototype.hasOwnProperty;
+    function parseRFC3339(v) {
+      if (typeof v !== "string" || v.length < 20 || v.length > 35) return null;
+      var m = /^([0-9]{4})-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])(?:\.([0-9]{1,9}))?(Z|([+-])([01][0-9]|2[0-3]):([0-5][0-9]))$/.exec(v);
+      if (!m) return null;
+      var yr = Number(m[1]), mo = Number(m[2]), dy = Number(m[3]), hr = Number(m[4]), mi = Number(m[5]), sc = Number(m[6]);
+      if (yr < 2000 || yr > 9999) return null;
+      var leap = (yr % 4 === 0 && yr % 100 !== 0) || (yr % 400 === 0);
+      var maxDay = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1];
+      if (dy > maxDay) return null;
+      var offsetSec = 0;
+      if (m[8] !== "Z") {
+        var offSecAbs = Number(m[10]) * 3600 + Number(m[11]) * 60;
+        offsetSec = m[9] === "+" ? -offSecAbs : offSecAbs;
+      }
+      var baseMs = Date.UTC(yr, mo - 1, dy, hr, mi, sc);
+      if (!isFinite(baseMs)) return null;
+      var epochSec = Math.floor(baseMs / 1000) + offsetSec;
+      if (!Number.isSafeInteger(epochSec)) return null;
+      var frac = m[7] || "";
+      var nanos = (frac + "000000000").slice(0, 9);
+      return { epochSec: epochSec, nanos: nanos };
+    }
+    var hasObs = hasOwn.call(s, "observedAt") && s.observedAt !== undefined;
+    var hasRet = hasOwn.call(s, "retrievedAt") && s.retrievedAt !== undefined;
+    var legacyAt = null;
+    if (c.provider === "codex" && s.source === "codex account/rateLimits/read" && hasObs && !hasRet && (s.freshness === "fresh" || s.freshness === "stale")) {
+      legacyAt = parseRFC3339(s.observedAt);
+    } else if (c.provider === "claude-code" && s.source === "claude:get_usage" && hasRet && !hasObs && s.freshness === "provider_unknown") {
+      legacyAt = parseRFC3339(s.retrievedAt);
+    } else if (c.provider === "antigravity" && s.source === "agy:/usage" && hasRet && !hasObs && s.freshness === "provider_unknown") {
+      legacyAt = parseRFC3339(s.retrievedAt);
+    }
+    if (!legacyAt) return null;
+    if (hasOwn.call(s, "provenance")) {
+      var p = s.provenance;
+      if (!p || typeof p !== "object" || Array.isArray(p)) return null;
+      var pKeys = Object.keys(p);
+      if (pKeys.length !== 3 || !hasOwn.call(p, "version") || !hasOwn.call(p, "retrievedAt") || !hasOwn.call(p, "providerObservedAt")) return null;
+      if (typeof p.version !== "number" || p.version !== 1 || p.providerObservedAt !== null) return null;
+      var provAt = parseRFC3339(p.retrievedAt);
+      if (!provAt || provAt.epochSec !== legacyAt.epochSec || provAt.nanos !== legacyAt.nanos) return null;
+    }
+    return s;
+  }
+  function accountQuotaRetrievedAt(saved) {
+    if (!saved) return "";
+    if (saved.provenance && typeof saved.provenance.retrievedAt === "string") return saved.provenance.retrievedAt;
+    return saved.retrievedAt || saved.observedAt || "";
+  }
+  function accountQuotaMalformedProvenance(c) {
+    var s = c && c.quota && c.quota.summary;
+    return !!(s && typeof s === "object" && !Array.isArray(s) && Object.prototype.hasOwnProperty.call(s, "provenance") && !accountQuotaSummary(c));
   }
   // Clock labels update independently of saved reads, without replacing a
   // focused disclosure/input or making a provider request. Wall time, rather
@@ -3298,8 +3355,8 @@
     if (seconds < 0) return "Time unavailable · device clock is before the reading";
     var age = span(seconds) + " ago";
     if (mode === "checked") return "Last checked " + age + (seconds >= 300 ? " · Older check" : "") + (checkAgain || seconds > 86400 ? " · check again to confirm" : "");
-    if (mode === "retrieved") return "Retrieved " + age + " · Provider freshness unknown";
-    return "Read " + age + (stale || seconds > 1800 ? " · Older reading" : " · Saved snapshot");
+    if (mode === "retrieved") return "Retrieved " + age + (stale || seconds > 1800 ? " · Older reading" : "") + " · Provider freshness unknown";
+    return "Local read " + age + (stale || seconds > 1800 ? " · Older reading" : " · Saved snapshot") + " · Provider freshness unknown";
   }
   function accountWindowEnded(at, ended, now) {
     return ended || (isFinite(Date.parse(at)) && Date.parse(at) <= now);
@@ -3309,7 +3366,8 @@
     var now = Date.now();
     document.querySelectorAll("[data-account-clock]").forEach(function (label) {
       label.textContent = accountClockText(label.dataset.accountClock, label.dataset.at, now, label.dataset.stale === "true", label.dataset.checkAgain === "true");
-      label.title = label.dataset.at + " · " + when({ at: label.dataset.at }) + " (local time)";
+      var localNote = (label.dataset.accountClock === "retrieved" || label.dataset.accountClock === "quota") ? " (local retrieval time)" : " (local time)";
+      label.title = label.dataset.at + " · " + when({ at: label.dataset.at }) + localNote;
     });
     document.querySelectorAll("[data-account-window]").forEach(function (row) {
       var ended = accountWindowEnded(row.dataset.reset, row.dataset.ended === "true", now);
@@ -3331,8 +3389,10 @@
     row.appendChild(label);
   }
   function accountQuotaStamp(saved, compact) {
-    var stamp = accountClock(compact ? "span" : "p", "quota-stamp", saved.retrievedAt ? "retrieved" : "quota", saved.retrievedAt || saved.observedAt);
-    stamp.dataset.stale = saved.freshness === "stale" ? "true" : "false";
+    var at = accountQuotaRetrievedAt(saved);
+    var mode = (saved && (saved.provenance || saved.retrievedAt)) ? "retrieved" : "quota";
+    var stamp = accountClock(compact ? "span" : "p", "quota-stamp", mode, at);
+    stamp.dataset.stale = saved && saved.freshness === "stale" ? "true" : "false";
     return stamp;
   }
   function accountQuotaRequest(c, confirm, recovery) {
@@ -3609,9 +3669,18 @@
     box.appendChild(accountUsageBox(c));
     box.appendChild(el("p", "sub", "Saved for this selection; separate from route readings. Live thread account binding is not verified."));
     var saved = accountQuotaSummary(c) || {};
+    var rejectedProv = accountQuotaMalformedProvenance(c);
     if (saved.state === "reported") {
       box.appendChild(accountQuotaStamp(saved));
-      if (saved.retrievedAt) box.appendChild(el("p", "sub", "Retrieval may return cached or seeded usage. The provider's observation time is unavailable."));
+      if (saved.provenance) {
+        box.appendChild(el("p", "sub", c.provider === "codex"
+          ? "Provider observation time is unavailable (provenance v1; local retrieval time only). Collection time does not verify provider freshness."
+          : "Provider observation time is unavailable (provenance v1; local retrieval time only). Retrieval may return cached or seeded usage."));
+      } else {
+        box.appendChild(el("p", "sub", c.provider === "codex"
+          ? "Provider observation time is unavailable (legacy local read timestamp). Collection time does not verify provider freshness."
+          : "Provider observation time is unavailable (legacy retrieval timestamp). Retrieval may return cached or seeded usage."));
+      }
       var savedRows = list(saved.rows), nowCheck = Date.now();
       var allInitiallyEnded = savedRows.length > 0 && savedRows.every(function (w) { return accountWindowEnded(w.resetsAt, w.ended, nowCheck); });
       function renderQuotaRowList(rowItems) {
@@ -3644,8 +3713,10 @@
       }
       if (saved.partial || saved.omitted) box.appendChild(el("p", "sub quota-incomplete", "Partial evidence: some quota detail is unavailable" + (saved.omitted ? "; " + saved.omitted + " additional buckets not shown" : "") + ". Missing values are not zero."));
       box.appendChild(el("p", "sub", "Source: " + saved.source));
+    } else if (rejectedProv) {
+      box.appendChild(el("p", "sub", "Quota provenance metadata was invalid or unsupported. No usage is assumed."));
     } else box.appendChild(el("p", "sub", (q.summary && q.summary.state !== "reported" && q.summary.text) || accountQuotaReason(q.reason || "schema_unavailable")));
-    if (saved.failedRefreshAt) box.appendChild(el("p", "sub", "Refresh failed " + when({ at: saved.failedRefreshAt }) + ". " + saved.failedRefreshText + " Any earlier reading retains its original time."));
+    if (!rejectedProv && saved.failedRefreshAt) box.appendChild(el("p", "sub", "Refresh failed " + when({ at: saved.failedRefreshAt }) + ". " + saved.failedRefreshText + " Any earlier reading retains its original time."));
     if (c.provider !== "codex" && c.provider !== "claude-code" && c.provider !== "antigravity") return box;
     var change = state.accountQuotaChange, current = change && change.id === c.id ? change : null;
     if (current) {
@@ -3819,31 +3890,34 @@
       pane.appendChild(addAccountBox(true));
       return;
     }
-    var acctCounts = { fresh: 0, unknownFresh: 0, atLimit: 0, endedOrNone: 0, drift: 0 }, provCounts = Object.create(null), nowAc = Date.now();
+    var acctCounts = { recentLocal: 0, olderLocal: 0, atLimit: 0, endedOrNone: 0, drift: 0 }, provCounts = Object.create(null), nowAc = Date.now();
     function classifyAccountCard(cCard) {
       var isDr = cCard.attention === "context_changed" || cCard.reason === "context_changed" || (cCard.quota && (cCard.quota.reason === "selection_review_required" || cCard.quota.reason === "context_changed"));
       if (isDr) return "drift";
+      if (accountQuotaMalformedProvenance(cCard)) return "rejected";
       var qSum = accountQuotaSummary(cCard);
       if (!qSum || qSum.state !== "reported") return "endedOrNone";
       var qRows = list(qSum.rows);
       var allEnd = qRows.length > 0 && qRows.every(function (rw) { return accountWindowEnded(rw.resetsAt, rw.ended, nowAc); });
       if (allEnd) return "endedOrNone";
       if (qRows.some(function (rw) { return typeof rw.usedPercent === "number" && rw.usedPercent >= 100 && !accountWindowEnded(rw.resetsAt, rw.ended, nowAc); })) return "atLimit";
-      if (qSum.freshness === "provider_unknown") return "unknownFresh";
-      return "fresh";
+      var atMs = Date.parse(accountQuotaRetrievedAt(qSum));
+      if (qSum.freshness === "stale" || !isFinite(atMs) || atMs > nowAc || (nowAc - atMs) > 1800000) return "olderLocal";
+      return "recentLocal";
     }
     cards.forEach(function (cCard) {
-      acctCounts[classifyAccountCard(cCard)]++;
+      var kClass = classifyAccountCard(cCard);
+      acctCounts[kClass === "rejected" ? "endedOrNone" : kClass]++;
       if (cCard.provider) provCounts[cCard.provider] = (provCounts[cCard.provider] || 0) + 1;
     });
     if (cards.length) {
       var strip = el("section", "acct-summary-strip");
       strip.setAttribute("aria-label", "Account evidence summary");
       [
-        ["num-good", acctCounts.fresh, "Fresh measured quota"],
-        ["", acctCounts.unknownFresh, "Saved \u00B7 provider freshness unknown"],
+        ["num-good", acctCounts.recentLocal, "Recent local read \u00B7 provider time unknown"],
+        ["", acctCounts.olderLocal, "Older local read \u00B7 provider time unknown"],
         ["num-limit", acctCounts.atLimit, "At saved limit (100%)"],
-        ["", acctCounts.endedOrNone, "Window ended or no saved quota"],
+        ["", acctCounts.endedOrNone, "Window ended, unavailable, or rejected"],
         ["num-attn", acctCounts.drift, "Context review needed"]
       ].forEach(function (stRow) {
         var stDiv = el("div", "acct-stat");
@@ -3925,7 +3999,7 @@
     ul.dataset.density = state.acctDensity;
     visibleAccts.forEach(function (c) {
       var bucketKind = classifyAccountCard(c);
-      var li = el("li", "account-card" + (c.needsPerson || bucketKind === "drift" ? " is-attention" : "")), details = el("details");
+      var li = el("li", "account-card" + (c.needsPerson || bucketKind === "drift" || bucketKind === "rejected" ? " is-attention" : "")), details = el("details");
       details.open = Object.prototype.hasOwnProperty.call(state.accountOpen, c.id) ? !!state.accountOpen[c.id] : route().key === c.id; retained[c.id] = details.open;
       var summary = el("summary", "account-summary");
       summary.setAttribute("data-focus", "account-" + c.id);
@@ -3935,8 +4009,13 @@
       identity.appendChild(el("span", "sub", c.selection === "inherited" ? "Inherited context" : c.selection === "explicit_directory" ? "Selected context" : "External context"));
       var badgeWrap = el("span", "acct-badge-row");
       if (bucketKind === "drift") badgeWrap.appendChild(uiBadge("attn", "Context review needed \u2014 not a quota limit"));
-      else if (bucketKind === "atLimit") badgeWrap.appendChild(uiBadge("limit", "At saved limit (100%)"));
-      else if (bucketKind === "unknownFresh") badgeWrap.appendChild(uiBadge("plain", "Provider freshness unknown"));
+      else if (bucketKind === "rejected") badgeWrap.appendChild(uiBadge("warn", "Quota provenance rejected"));
+      else if (bucketKind === "atLimit") {
+        badgeWrap.appendChild(uiBadge("limit", "At saved limit (100%)"));
+        badgeWrap.appendChild(uiBadge("plain", "Provider freshness unknown"));
+      } else if (bucketKind === "recentLocal" || bucketKind === "olderLocal") {
+        badgeWrap.appendChild(uiBadge("plain", "Provider freshness unknown"));
+      }
       if (badgeWrap.childNodes.length) identity.appendChild(badgeWrap);
       summary.appendChild(identity);
       var status = el("span", "account-status");
@@ -4009,9 +4088,12 @@
         connect.setAttribute("aria-label", "Connect " + connectProvider(c) + " for " + c.label);
         compact.appendChild(connect);
         if (c.auth && c.auth.state === "reported_absent") compact.appendChild(el("span", "sub", "Sign-in required"));
+      } else if (bucketKind === "rejected") {
+        compact.appendChild(el("strong", null, "Quota reading rejected"));
+        compact.appendChild(el("span", "sub", "Quota provenance metadata was invalid or unsupported. No usage is assumed."));
       } else {
         compact.appendChild(el("strong", null, "No saved quota reading"));
-        compact.appendChild(el("span", "sub", (c.quota && c.quota.summary && c.quota.summary.text) || accountQuotaReason(c.quota && c.quota.reason || "not_checked")));
+        compact.appendChild(el("span", "sub", (c.quota && c.quota.summary && c.quota.summary.state !== "reported" && c.quota.summary.text) || accountQuotaReason((c.quota && c.quota.summary && c.quota.summary.state === "reported" ? "schema_unavailable" : (c.quota && c.quota.reason)) || "not_checked")));
         compact.appendChild(el("span", "sub", "Expand for quota details and available actions"));
       }
       if (c.usageUpdating) {
