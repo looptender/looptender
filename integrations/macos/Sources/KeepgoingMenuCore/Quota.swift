@@ -187,7 +187,7 @@ extension MenuBuilder {
         else if let limiting {
             let value = limiting.remainingPercent.map { "\($0)% left" } ?? limiting.usedPercent.map { "\($0)% used" } ?? "Quota details recorded"
             detail = value + " · " + quotaReset(limiting, now: now)
-        } else { detail = windows.isEmpty ? (q.partial == true ? "Partial quota evidence" : "Quota details recorded") : "Reading out of date · reset passed" }
+        } else { detail = windows.isEmpty ? (q.partial == true ? "Partial quota evidence" : "Quota details recorded") : "Reading out of date" }
         if let state = a.usageUpdating?.state {
             if state == "off" { detail += " · updates off" }
             else if ["waiting", "paused"].contains(state) { detail += " · updates paused" }

@@ -32,7 +32,7 @@ final class QuotaTests: XCTestCase {
         XCTAssertTrue(before.detail.contains("63.0% left"))
         XCTAssertTrue(before.detail.contains("Resets in 5 h"))
         let after = MenuBuilder.quotaAccountRow(account, now: quotaNow.addingTimeInterval(5 * 3600))
-        XCTAssertEqual(after.detail, "Reading out of date · reset passed")
+        XCTAssertEqual(after.detail, "Reading out of date")
         XCTAssertTrue(after.submenu.flatMap(\.submenu).contains { $0.accessibilityLabel.contains("Last reading: 37% used") })
         XCTAssertTrue(after.submenu.contains { $0.accessibilityLabel.contains("older reading") })
         XCTAssertFalse(after.detail.contains("100%"))

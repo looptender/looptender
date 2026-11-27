@@ -21,7 +21,7 @@ import Foundation
         precondition(MenuBuilder.quotaEnded(live, now: later))
         precondition(MenuBuilder.quotaReset(live, now: later).contains("refresh to confirm"))
         let ended = MenuBuilder.quotaAccountRow(account([live]), now: later)
-        precondition(ended.detail == "Reading out of date · reset passed")
+        precondition(ended.detail == "Reading out of date")
         precondition(windows(ended)[0].accessibilityLabel.contains("Last reading: 100% used"))
         precondition(!ended.detail.contains("100.0% left"))
         let mixed = MenuBuilder.quotaAccountRow(a, now: later)
@@ -43,7 +43,7 @@ import Foundation
         let empty = account([], state: "unavailable")
         let menu = MenuBuilder.quotaRows(AccountQuotaList(state: "available", complete: true, accounts: [empty, account([live]), account([missing])], omitted: 0), now: later)
         precondition(menu[1].detail.contains("90.0% left"))
-        precondition(menu[2].detail.contains("reset passed"))
+        precondition(menu[2].detail.contains("Reading out of date"))
         precondition(menu[3].detail == "Quota unavailable")
         // Supported individual limits can report remaining without usedPercent.
         let remainingOnly = AccountQuotaRow(name: "Individual limit", text: "87.5% remaining · provider units", usedPercent: nil, remainingPercent: 87.5, resetsAt: "2030-03-04T14:00:00Z", ended: nil)
@@ -51,7 +51,7 @@ import Foundation
         precondition(mixedRemaining.detail.contains("87.5% left") && !mixedRemaining.detail.contains("reset passed"))
         precondition(windows(mixedRemaining)[0].title == "Individual limit")
         let remainingOrder = MenuBuilder.quotaRows(AccountQuotaList(state: "available", complete: true, accounts: [account([live]), account([remainingOnly])], omitted: 0), now: later)
-        precondition(remainingOrder[1].detail.contains("87.5% left") && remainingOrder[2].detail.contains("reset passed"))
+        precondition(remainingOrder[1].detail.contains("87.5% left") && remainingOrder[2].detail.contains("Reading out of date"))
         precondition(remainingOnly.usedPercent == nil)
         // Equal-shaped windows swap as the first reset passes. A tracked menu
         // must defer that structural change, while ordinary countdowns update.
