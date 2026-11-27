@@ -457,6 +457,58 @@ not create a supervisor or duplicate the existing usage worker. Preserve the
 tracked-menu structural guard. Portable core and browser-panel work continue;
 deferring other desktop equivalents does not defer their core correctness tests.
 
+### Interface research reconciliation and unresolved actions
+
+Interface research supplies recommendations and fixture ideas, not new
+permissions or proof of the installed experience. The existing owner requirements
+are useful HOME/Accounts views, honest freshness/build identity and actionable
+status within the authority bounds above. Proposed issue ledgers/tombstones,
+transport changes, numerical latency/resource targets and generalized recovery
+are additional design candidates; they require scoped contracts and measurement
+before adoption, not an automatic expansion of this plan.
+
+The browser-panel presentation in draft [#587](https://github.com/looptender/looptender/pull/587),
+inspected at `f6d0d292d2f30e92df2293e73f5df1d5828be4bf`, adds a setup map,
+categorized attention/task drawers, Accounts summaries and client reconciliation
+against supplied snapshots. This is a source-only draft, not native HOME, a new
+collector or verified external resolution. Optional fields and fictional DOM tests
+cannot establish that the backend emits those fields or enforces their semantics.
+The native menu/accessory and proposed app window remain distinct surfaces.
+
+| Contract gap | Remaining implementation and acceptance boundary |
+| --- | --- |
+| G9: question identity and stale-action preflight | Structured question/target/owner revisions and supported question links must come from authoritative backend evidence. Client fingerprints are presentation guards, not server-enforced question freshness. Existing control-record tickets do not supply the missing question revision contract. |
+| G10: external question resolution | The client cannot itself clear BB `awaiting_user`. A separate explicitly enabled supervision policy would need a supported structured signal for the exact awaited question and must preserve every independent manual, stop, deadline or other hold. Missing/unreadable resolution stays unconfirmed; no timeout, click, prose match or disappeared item in an incomplete read establishes clearance. |
+| G11: deadline and completion actions | Reviewed deadline extension and panel completion are not delivered by task drawers or links to existing commands. They need separately authorized backend operations, exact effects/revision checks and acceptance evidence; deadline or finished status is never inferred from UI interaction. |
+| G12: recovery and diagnosis | Rendering a supplied `recovering` field does not implement recovery policy, scheduler restart or a reliable overdue-cause contract. Keep unknown cause explicit; diagnostic reads and any later recovery action need their own bounds, ownership and verification. |
+
+Bind actions to the affected issue/question, target, owner, control and relevant
+policy revisions, with backend preflight and locked apply where supported. Reject
+replaced questions and relevant drift; an unrelated loop update or global
+snapshot sequence increment must not by itself invalidate an otherwise unchanged
+action. Preserve independent holds and do not silently retry an unknown outcome.
+A fresh complete authoritative observation may reconcile a displayed condition;
+it cannot grant a missing auto-clear policy or erase a different condition.
+
+Keep view-read/render time separate from source observation, retrieval, last
+success/failure and scheduler state. Preserve each source's unknown age basis;
+reset passed is not available capacity, and a build label is not an embedded
+source revision. Running-process identity and installed files are separate facts.
+Do not replace existing bounded caches, selected-context grants or single-owner
+polling with a new collector because a report proposes one. SSE, a new snapshot
+sequence, tombstones and leader-tab coordination are options to evaluate only
+against demonstrated gaps, authentication, ordering, privacy, power and fallback
+requirements. No streaming endpoint or new worker is required by this document.
+
+Proposed acceptance must distinguish old responses, replaced questions, separate
+remaining holds, partial/unreadable snapshots and unsupported resolution APIs.
+Include the negative case where a client sees optional future fields but the
+backend cannot enforce them, plus an unrelated-loop update that leaves a valid
+target-scoped action intact. Native menu tracking, wake/Low Power Mode, window
+reopen, VoiceOver/contrast and installed/live provider results remain separate
+acceptance. Report latency, graph-scale and CPU/memory numbers as unverified
+proposed targets until measured; presentation fixtures do not close these gaps.
+
 ## Acceptance and build order
 
 Every item remains open. Each slice needs focused fictional fixtures and a
