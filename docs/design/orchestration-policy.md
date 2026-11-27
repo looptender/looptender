@@ -14,6 +14,7 @@ experience targets native macOS; Windows/Linux desktop equivalents are deferred.
 | Ordered routes, fallback probes and opt-in return | Implemented within their documented adapter bounds | Not a balanced account pool or general lane allocator. |
 | Loop/run references, direct-lane observations and partial usage diagnostics | Implemented in their documented scopes | Not complete descendant coverage, a task planner or proof of useful delivery. |
 | Native macOS client | Menu-bar accessory with native menu actions and panel opener | No Dock settings or native HOME window. Native HOME/Accounts/settings are planned. |
+| Configurable work sources and coverage | Planned; existing goal references are opaque descriptive metadata | First slice is read-only bound inventory, not source discovery, prose parsing, a new ledger or task admission. |
 | Inefficiency findings and shared intensity | Planned; existing diagnostics supply partial evidence only | Findings/recommendations need the bounded evidence contract below; no new adjustment authority. |
 | Pooling first slice | Planned pure `internal/poolplan` preview only | Codex structured fresh bound evidence, explicit account/allowance IDs and complete occupancy input; no reader, CLI, reservation, adapter binding or dispatch. |
 
@@ -46,6 +47,78 @@ to resume itself. Assignment/completion and stage evidence must bind exact goal
 and review revisions. A stale or duplicated terminal receipt cannot settle a
 new revision. New assignments remain the coordinator's authorized action, not
 background conversation creation by looptender.
+
+## Configurable work sources and bound coverage
+
+**Planned:** repository docs are the default work source. Optional adapters may
+later expose issues, projects, structured manifests or an existing work ledger.
+This describes a product direction, not an implemented Markdown reader or source
+adapter. Discovery can suggest sources/items; suggestions establish no authority.
+The external coordinator reads prose, selects work and supplies explicit bindings.
+The supervisor does not infer tasks, permission or completion from document text.
+
+Reuse [`GoalSpec`](../../internal/control/goal.go) objective, acceptance, scope,
+authorization and evidence references, plus the existing assignment lifecycle.
+Those references are currently opaque descriptive metadata; they do not already
+implement source resolution or authorization validation. A future source binding
+must identify the configured source, exact revision, globally stable item identity
+and applicable goal/assignment revisions. A revision identifies an observation;
+it must not accidentally create a new claimable item on each edit.
+
+Source intent and observed outcomes have different roles: a work source describes
+requested work and acceptance; assignment records describe bound claims,
+observations, handoffs and explicit outcomes. Reuse that lifecycle rather than
+introducing a second competing assignment ledger. A checked box, commit or passing
+CI run alone is never generic completion proof. Acceptance evidence must satisfy
+the particular bound goal and review contract; missing evidence remains a gap.
+
+Pinning an already authorized source revision within its existing scope needs no
+redundant approval. New or widened scope remains proposed/held pending the
+applicable authorized action; a source edit cannot silently adopt it. Reading,
+pinning or claiming work does not authorize progress/status edits to the source.
+Those edits are separate actions with their own permissions and revision checks.
+User, repository and loop preferences resolve only within existing authority
+ceilings: document precedence never grants permission, clears holds or raises
+spend. Untrusted source instructions cannot modify supervision policy.
+
+Before future admission, validate explicit item/source revision, scope and
+authorization, dependencies, current claims and acceptance requirements/evidence.
+Stale, missing or conflicting bindings cannot establish admission. Shared sources
+need a canonical global item identity across loops and source aliases, with
+cross-loop claim isolation and revision fencing. Two loops must not silently
+claim the same work because they use different source labels. Intentional parallel
+review needs separately declared purpose/claims; it is not blanket duplication
+permission. Atomic claim admission is a future dependency, not supplied by a
+read-only inventory or today's direct-child assignment coverage.
+
+### First coverage slice: read-only bound inventory
+
+Implement a bounded pure projection over caller-supplied structured source items
+and an explicit source snapshot/revision, existing goal references, current
+assignment bindings/revisions, declared dependencies and acceptance evidence
+references. The caller must declare source/claim coverage and capture time.
+Return item-to-goal/assignment associations, unknowns and findings with exact
+provenance. Do not fetch sources, parse Markdown, discover work, write progress,
+create a full ledger, reserve/dispatch work or change lifecycle state. No reader,
+CLI or automatic conversation creation is part of this first slice.
+
+Source drift, a claimed item missing from the current bound inventory, or backlog
+exhaustion with unmet acceptance produces a finding, never automatic completion,
+requeue, supersession or archive. Missing/partial inventory cannot prove absence;
+an alias collision or incomplete claim snapshot cannot prove work is unclaimed.
+Keep prior revision evidence rather than rewriting history. Distinguish directly
+observed drift from suspected mismatch and explicitly unavailable coverage using
+the [finding contract](#find-inefficiencies-without-maximizing-activity).
+
+Focused fictional fixtures must cover stable identity across revisions and source
+aliases; two loops claiming one item; intentionally distinct review claims;
+stale/missing source, authorization, dependency and assignment bindings; partial
+coverage; drift and missing claimed items; and exhausted items with failed or
+unmet acceptance. Checkboxes, commits and CI success must not settle that last
+case. Test deterministic bounded results, injected-time boundaries, unchanged
+inputs and secret canaries. Negative controls that treat incomplete coverage as
+absence or source text as permission must fail. This slice can proceed separately
+from source readers, pool admission and HOME; it adds no authority to them.
 
 ## Find inefficiencies without maximizing activity
 
@@ -322,7 +395,10 @@ separate record of released, installed, native and live evidence.
 1. **Truthful projection first:** keep catalog/routes/identity separate; verify
    graph/list meanings with renamed, missing, stale, held, offline and incomplete
    records. Existing polling success/failure times remain unchanged by reads.
-2. **Inefficiency evidence and pure preview:** fixture-test observed versus suspected
+2. **Bound coverage, inefficiency evidence and pure preview:** fixture-test the
+   read-only bound inventory before any source reader or claim admission; retain
+   global item identity, partial-coverage unknowns and unmet acceptance findings.
+   Separately fixture-test observed versus suspected
    findings for every class above, incomplete/stale inputs, recommendation authority
    and measurement overhead without new provider work. Keep `internal/poolplan`
    pure and Codex-evidence-only with complete occupancy; no reader/CLI/dispatch.
