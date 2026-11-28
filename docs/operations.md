@@ -431,7 +431,7 @@ Declaring completion also ends a wait on a person, so `status` shows the loop as
 
 To reopen the task, or continue with a revised `prompt` or `prompt_file`, run `keepgoing resume`. The supervised session cannot run it on its own loop ([why](#the-supervised-session-cannot-clear-its-own-hold)). Resume explicitly clears completion along with pause, stop, and awaiting-user, and clears the old note. It preserves the current target and session; it does not create a fresh conversation. It also does not enable a disabled loop: use `enable` separately in that case. `enable` alone never clears completion. Manual commands such as `fallbacks check` remain explicit operations and can still run while a task is completed.
 
-Use `await-user` when unfinished work needs a person, and `complete` when all authorized work is done. If the task is an entire roadmap, completing one item is not completion of the task.
+Use `await-user` only when all remaining authorized work needs a person, and `complete` when all authorized work is done. If the task is an entire roadmap, completing one item is not completion of the task.
 
 ## Archiving a loop
 
@@ -873,7 +873,9 @@ A hold set by a person, a terminal, a client or another thread, a stop and a pau
 - nothing changed the control record since, by anyone;
 - the loop is not archived.
 
-The withdrawal restores exactly the control record from before that await-user: a person's hold underneath (an await-user, a pause, a stop) stays, so re-running await-user on top of a person's hold and withdrawing it changes nothing a person set. It is journalled as `await-user_withdrawn` by the owner thread, never as a person's resume, and `status` says `question:  the session withdrew its own question: WHY` until the next await-user. It can be done once per await-user.
+The withdrawal restores exactly the control record from before that await-user: a person's hold underneath (an await-user, a pause, a stop) stays, so re-running await-user on top of a person's hold and withdrawing it changes nothing a person set. It is journalled as `await-user_withdrawn` by the owner thread, never as a person's resume, and `status` says `question:  the session withdrew its own question: WHY` until the next await-user. It can be done once per await-user. Before setting a whole-loop question, [reconcile the authorized backlog](coordinating-lanes.md#approval-dependent-work); a gate on one action does not block independent work. Withdrawal is appropriate only when that owner-set question no longer stands, not because a chat reply or child receipt is itself a runtime approval. If withdrawal refuses or restores another hold, preserve it and report the remaining restriction.
+
+Completion is a separate control gate. Withdrawal cannot reopen a completed loop; app relaunch, new instructions and finished lane results do not renew it. Current source offers ordinary person-controlled `resume`, whose broader effects clear pause/stop/awaiting-user/completion and retained note/question state (with the documented stop-preserving variant). There is no completion-only, history-preserving renewal command. Review those effects rather than substituting withdrawal or editing runtime files.
 
 ## Situations that need a person
 
@@ -1611,7 +1613,7 @@ A lane that has a [successor thread](transfer.md#replace-blocked-child-lanes-unr
 
 A reply in a conversation does not release an awaiting-user hold. Use explicit Resume in the menu/panel or `keepgoing resume -c <config>` from an ordinary terminal outside BB. In unreleased source, a resume carrying a different `BB_THREAD_ID` explains this recovery path instead of recommending `enable --take-over`. Older builds may still suggest takeover; resuming the existing loop does not require transferring its owner. The visible status can lag until the next client refresh.
 
-Unreleased source. Supervision never clears a hold; a person does. On top of the ownership rule above, `resume`, `retarget`, `client prepare-resume`, `client resume`, and the panel's and `client review`'s resume refuse two callers, even when they own the loop:
+Unreleased source. General resume remains person-controlled; [condition waits and owner-question withdrawal](#withdrawing-the-sessions-own-question) end only their own recorded holds under their separate guards. On top of the ownership rule above, `resume`, `retarget`, `client prepare-resume`, `client resume`, and the panel's and `client review`'s resume refuse two callers, even when they own the loop:
 
 - **The loop's current target thread.** `BB_THREAD_ID` equals the BB thread of the route the loop is on now. Every command the session runs, and a BB terminal opened on that thread, carries that ID.
 - **Anything this loop's supervisor started.** `tick` and `daemon` put `LOOPTENDER_SUPERVISED_LOOP`, set to the loop's state directory, in their own environment. A headless Claude Code, Codex or Cursor turn, a process-adapter command, a probe and every program those start inherit it. A process carrying another loop's state directory there is not refused for this loop.
