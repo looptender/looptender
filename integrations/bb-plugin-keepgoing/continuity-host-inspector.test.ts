@@ -162,3 +162,47 @@ test("deadline requests termination but still requires actual close", async () =
   await stop; assert.equal(settled, false); assert.equal(f.kills[0], "SIGTERM");
   f.child.stdout!.emit("data", bytes(report())); f.child.emit("close", 1, null); assert.deepEqual(await pending, nil);
 });
+
+test("actual packaged canonical bound/unbound scenarios preserve verdict, all counts and evidence", { skip: process.platform === "win32" }, async () => {
+  const tools = fileURLToPath(new URL("../../tools/coordinator-workflow/", import.meta.url));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "example-canonical-host-")));
+  const prepare = `from pathlib import Path
+import sys,json,datetime
+sys.path.insert(0,sys.argv[1])
+from test_project_work import register,work
+root=Path(sys.argv[2]);root.mkdir(mode=0o700);case=sys.argv[3]
+i,c,r=register(root)
+now=datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z')
+c['observedAt']=now;r['revisions'][-1]['inventory']['observedAt']=now
+if case=='held':c['controls']['paused']=True
+if case=='unbound':i.update(binding=None,assignmentRecord=None,assignmentRevision=None)
+if case=='open-child':i['items'][0].update(state='open',acceptance=None)
+if case=='source-drift':(root/'scope.md').write_text('Fictional source drift')
+if case=='missing-assignment':r=None
+if case=='person-gate':i['items'][0]['personGate']={'state':'held','refs':['example:person']}
+if case=='unknown-item':i['items'][0].update(state='unknown',acceptance=None)
+for name,data in [('WORK.md',work.markdown(i,'looptender-work','# Fictional canonical parity')),('context.json',json.dumps(c).encode()),('assignments.json',json.dumps(r).encode())]:
+ p=root/name;p.write_bytes(data);p.chmod(0o600)
+`;
+  try {
+    const helper = join(dir, "helper.pyz"); await writeFile(helper, Buffer.from(continuityHelperBase64, "base64"), { mode: 0o600 });
+    for (const scenario of ["base", "held", "unbound", "open-child", "source-drift", "missing-assignment", "person-gate", "unknown-item"]) {
+      const fixture = join(dir, scenario), init = spawnSync("python3", ["-I", "-B", "-c", prepare, tools, fixture, scenario], { encoding: "utf8" });
+      assert.equal(init.status, 0, init.stderr);
+      const paths = { work: join(fixture, "WORK.md"), context: join(fixture, "context.json"), ...(scenario === "missing-assignment" ? {} : { assignments: join(fixture, "assignments.json") }) };
+      const before = await Promise.all(Object.values(paths).map(p => readFile(p)));
+      const checked = spawnSync("python3", ["-I", "-B", helper, "check", "--work", paths.work, "--context", paths.context, ...(paths.assignments ? ["--assignments", paths.assignments] : []), "--max-age", "300"], { encoding: "utf8" });
+      assert.equal(checked.status, 1, scenario); const canonical = JSON.parse(checked.stdout);
+      assert.ok(["runtime_held", "reconciliation_required"].includes(canonical.verdict), scenario);
+      const expected = { verdict: canonical.verdict, objectiveComplete: false, workSha256: canonical.evidence.workSha256,
+        registerRevision: canonical.evidence.registerRevision, itemCount: canonical.itemCount,
+        findingCount: canonical.findings.length, missingInputCount: canonical.missingInputs.length };
+      assert.deepEqual(normalizeContinuityHelper(Buffer.from(checked.stdout), checked.status), expected, scenario);
+      assert.deepEqual(await inspectContinuityHost(paths, new AbortController().signal), expected, scenario);
+      if (scenario === "held" || scenario === "base") assert.ok(canonical.missingInputs.includes("objective_acceptance_unavailable"), scenario);
+      assert.deepEqual(await Promise.all(Object.values(paths).map(p => readFile(p))), before, scenario);
+      const unknown = structuredClone(canonical); unknown.missingInputs.push("unrecognized_example_reason");
+      assert.deepEqual(normalizeContinuityHelper(bytes(unknown), 1), nil, scenario);
+    }
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

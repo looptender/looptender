@@ -32,6 +32,12 @@ def generate():
                             if kw.arg == 'action': actions.update(strings(kw.value))
                     if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'reason' for t in node.targets):
                         codes.update(strings(node.value))
+                    # Missing inputs can be appended directly, without finding/unknown.
+                    # Extract the canonical reason role, not unrelated global literals.
+                    if isinstance(node, ast.Dict):
+                        for key, value in zip(node.keys, node.values):
+                            if isinstance(key, ast.Constant) and key.value == 'reason':
+                                codes.update(strings(value))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and re.fullmatch('[a-z][a-z0-9_]*', node.value):
                     tokens.add(node.value)
