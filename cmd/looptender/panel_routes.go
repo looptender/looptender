@@ -21,6 +21,7 @@ const panelRoutesPrefix = "api/v1/routes/"
 // planners/writers, never a shell or a command assembled by the browser.
 type panelRouteInput struct {
 	Op              string   `json:"op"`
+	Loop            string   `json:"loop,omitempty"`
 	ID              string   `json:"id,omitempty"`
 	To              int      `json:"to,omitempty"`
 	Account         string   `json:"account,omitempty"`
@@ -54,6 +55,8 @@ type panelRouteReview struct {
 	requests []routeChangeRequest
 	keys     []string
 	account  *accounts.Entry
+	loopKey  string
+	entry    *registry.Entry
 }
 type panelRouteReply struct {
 	AccountLabels map[string]string `json:"accountLabels,omitempty"`
@@ -136,7 +139,7 @@ func panelReadRoute(body io.Reader) (panelRouteInput, bool) {
 	if t, err := d.Token(); err != nil || t != json.Delim('{') {
 		return in, false
 	}
-	allowed := []string{"op", "id", "to", "account", "model", "effort", "limit", "behavior", "newConversation", "loops", "provider"}
+	allowed := []string{"op", "id", "to", "account", "model", "effort", "limit", "behavior", "newConversation", "loops", "provider", "loop"}
 	seen := map[string]bool{}
 	for d.More() {
 		t, err := d.Token()
@@ -156,7 +159,7 @@ func panelReadRoute(body io.Reader) (panelRouteInput, bool) {
 	if _, err := d.Token(); err != io.EOF {
 		return in, false
 	}
-	if json.Unmarshal(raw, &in) != nil || !seen["op"] {
+	if json.Unmarshal(raw, &in) != nil || !seen["op"] || (seen["loop"] && !panelKeyPattern.MatchString(in.Loop)) {
 		return in, false
 	}
 	return in, true
@@ -189,6 +192,17 @@ func (c *panelChanges) serveRoutes(w http.ResponseWriter, r *http.Request, rest,
 			return
 		}
 		v := c.routeEditor()
+		if in.Loop != "" {
+			if _, ok := panelRouteEntry(c.registry, in.Loop); !ok {
+				reply = panelRouteFailure("The selected registration is unavailable or ambiguous. Read the list again.")
+				break
+			}
+			v.Loops = slices.DeleteFunc(v.Loops, func(l panelRouteLoop) bool { return l.Key != in.Loop })
+			if len(v.Loops) != 1 {
+				reply = panelRouteFailure("The selected registration is unavailable. Read the list again.")
+				break
+			}
+		}
 		reply.Editor = &v
 	case "models":
 		if in.Op != "models" || (in.Provider != "codex" && in.Provider != "claude-code") {
@@ -220,7 +234,7 @@ func (c *panelChanges) serveRoutes(w http.ResponseWriter, r *http.Request, rest,
 	case "prepare":
 		reply = c.prepareRoutes(session, in)
 	case "confirm":
-		reply = c.confirmRoutes(session, value, in.Op)
+		reply = c.confirmRoutes(session, value, in.Op, in.Loop)
 	}
 	reply.SchemaVersion = 1
 	w.Header().Set("Content-Type", "application/json")
@@ -230,9 +244,39 @@ func (c *panelChanges) serveRoutes(w http.ResponseWriter, r *http.Request, rest,
 func panelRouteFailure(text string) panelRouteReply {
 	return panelRouteReply{Outcome: "refused", Text: text}
 }
+
+// Core writers resolve a loop by name. An opaque-key review must therefore
+// refuse ambiguous names and stale config/state bindings before using them.
+func panelRouteEntry(registryDir, key string) (registry.Entry, bool) {
+	entry, entries, _, ok := panelEntry(registryDir, key)
+	if !ok {
+		return registry.Entry{}, false
+	}
+	for _, other := range entries {
+		if other.Loop == entry.Loop && other.ID != entry.ID {
+			return registry.Entry{}, false
+		}
+	}
+	if _, ok := clientConfig(entry); !ok {
+		return registry.Entry{}, false
+	}
+	return entry, true
+}
+
 func (c *panelChanges) prepareRoutes(session string, in panelRouteInput) panelRouteReply {
 	review := &panelRouteReview{}
 	base := routeChangeRequest{op: in.Op, id: in.ID, to: in.To, caller: c.caller, source: "panel", registry: c.registry, now: c.now().UTC()}
+	if in.Loop != "" {
+		if !slices.Contains([]string{"move", "remove", "off", "on", "own"}, in.Op) || len(in.Loops) != 0 {
+			return panelRouteFailure("This action is not supported for a selected loop.")
+		}
+		entry, ok := panelRouteEntry(c.registry, in.Loop)
+		if !ok {
+			return panelRouteFailure("The selected registration is unavailable. Read the list again.")
+		}
+		review.loopKey, review.entry = in.Loop, &entry
+		base.loop = entry.Loop
+	}
 	switch in.Op {
 	case "add":
 		if c.caller != "" {
@@ -282,6 +326,11 @@ func (c *panelChanges) prepareRoutes(session string, in panelRouteInput) panelRo
 			base.route.AccountDir = a.Directory
 		}
 		review.lines = []string{"Account selection you state: " + a.Label + " (" + a.Provider + "). This does not verify a live thread's login.", "Model: " + in.Model + ". Effort: " + in.Effort + " (empty uses provider default).", "Recorded limit label: " + in.Limit + ". Sharing or independence is your configuration statement, not verified quota.", "Conversation behavior: " + map[string]string{config.EnterSameConversation: "continue the loop's existing BB conversation", config.EnterNewConversation: "may create a BB conversation at handoff, only for loops already opted in", config.EnterHeadless: "run the loop's CLI with inherited login or the selected existing directory"}[in.Behavior] + "."}
+		review.requests = []routeChangeRequest{base}
+	case "own":
+		if review.entry == nil || in.ID != "" || in.To != 0 {
+			return panelRouteFailure("Choose a registered loop to give it its own route list.")
+		}
 		review.requests = []routeChangeRequest{base}
 	case "move", "remove", "off", "on":
 		review.requests = []routeChangeRequest{base}
@@ -333,6 +382,9 @@ func (c *panelChanges) prepareRoutes(session string, in panelRouteInput) panelRo
 	return reply
 }
 func panelRouteChange(req routeChangeRequest, apply bool) (routeChangeOut, int) {
+	if req.op == "own" {
+		return routeSourceChange(req, "", "fallbacks.yaml", apply)
+	}
 	if req.op == "follow_standard" {
 		return routeSourceChange(req, "", "", apply)
 	}
@@ -347,12 +399,30 @@ func panelSafeRouteOut(out routeChangeOut) routeChangeOut {
 	}
 	return out
 }
-func (c *panelChanges) confirmRoutes(session, value, op string) panelRouteReply {
+func (c *panelChanges) confirmRoutes(session, value, op, loopKey string) panelRouteReply {
 	f, ok := c.take(value)
-	if !ok || f.session != session || f.key != "routes" || f.action != op || f.route == nil || !c.now().Before(f.expires) {
+	if !ok || f.session != session || f.key != "routes" || f.action != op || f.route == nil || f.route.loopKey != loopKey || !c.now().Before(f.expires) {
 		return panelRouteReply{Outcome: "review_again", Text: "This review expired, was already used, or belongs to another page. Review again; nothing was changed."}
 	}
 	review := f.route
+	// A loop name alone is not a registration identity. Keep the registry
+	// writer lock through the core write so cooperative replacement cannot
+	// redirect a reviewed key between validation and name resolution.
+	if reviewed := review.entry; reviewed != nil {
+		dir, err := registryDirectory(c.registry)
+		if err != nil {
+			return panelRouteFailure("The registry is unavailable; nothing was changed.")
+		}
+		held, err := lock.AcquireNamed(dir, registry.LockName)
+		if err != nil {
+			return panelRouteFailure("The registry is changing; nothing was changed. Review again.")
+		}
+		defer held.Release()
+		current, exists := panelRouteEntry(c.registry, review.loopKey)
+		if !exists || current != *reviewed {
+			return panelRouteReply{Outcome: "review_again", Text: "The selected registration changed. Nothing was changed. Review again."}
+		}
+	}
 	// Bind the account selection to the review, including its exact revision.
 	// Hold the catalog writer lock until the route writer finishes.
 	if a := review.account; a != nil {
