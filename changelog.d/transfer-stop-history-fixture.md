@@ -1,0 +1,1 @@
+- Test the transferred-target stop guard with both available and locked incident history, requiring a freshly verified saved stop even when diagnostic history cannot be written. Runtime behavior is unchanged.
