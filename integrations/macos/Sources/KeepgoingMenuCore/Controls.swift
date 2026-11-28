@@ -262,7 +262,8 @@ public enum ConfirmationBuilder {
     static func resumeLines(_ raw: [String]) -> [String] {
         let omitted: Set<String> = [
             "Confirming prepares this resume's own ticket, so a resume another client prepared and has not used yet can no longer be used.",
-            "If the loop's control record changes before you confirm, nothing is changed and you are asked to review again."
+            "If the loop's control record changes before you confirm, nothing is changed and you are asked to review again.",
+            "Its current route: BB thread · model not configured."
         ]
         let replacements = [
             "Resume does not turn supervision on or start a turn; the next check decides what to send.": "No turn starts now; the next check decides what to send.",
@@ -271,12 +272,15 @@ public enum ConfirmationBuilder {
         ]
         return raw.compactMap { value in
             let text = Contract.text(value)
+            // Never recognize boilerplate from a truncated/sanitized variant.
+            // Unknown suffixes and unfamiliar formats must remain visible.
+            guard value == text else { return text }
             if omitted.contains(text) { return nil }
-            // These exact producer line families are context/implementation
-            // detail; holds, disabled supervision and unknown timing survive.
-            if text.hasPrefix("Now: ") && text.contains(". Last check: ") { return nil }
-            if text.hasPrefix("Its current route: ") { return nil }
-            if text.hasPrefix("This review expires ") { return nil }
+            let supported = [
+                #"\ANow: (?:Waiting for you|Supervising|Paused|Stopped|Off|Finished)\. Last check: checked; sent nothing · (?:just now|(?:[1-9]|[1-5][0-9]) min ago)\.\z"#,
+                #"\AThis review expires in (?:under a minute|(?:[1-9]|[1-5][0-9]) min) \((?:[01][0-9]|2[0-3]):[0-5][0-9] (?:UTC|[+-](?:0[0-9]|1[0-4])(?::[0-5][0-9])?)\)\.\z"#
+            ]
+            if supported.contains(where: { text.range(of: $0, options: .regularExpression) != nil }) { return nil }
             return replacements[text] ?? text
         }
     }

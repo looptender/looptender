@@ -57,6 +57,27 @@ enum CompactResumeFixture {
         try check(ConfirmationBuilder.build(r, loop: loop(name: String(repeating: "Long name ", count: 30))).messageText.count <= 89, "Long heading unbounded")
         let observed = try review(["Resume continues checking; nothing is ever sent to this session."], title: "Resume checking example-project?")
         try check(ConfirmationBuilder.build(observed, loop: loop()).messageText == "Resume checking Example project?", "Observed-session checking scope lost")
+        // Familiar prefixes cannot consume appended or unfamiliar consequences.
+        let unknownVariants = [
+            "This review expires in 2 min (12:02 UTC). Resume also clears the saved pending-question record.",
+            "Now: Waiting for you. Last check: checked; sent nothing · 3 min ago. Supervision remains disabled.",
+            "Its current route: BB thread · model not configured. Loop-wide limits remain unchanged.",
+            "This review expires in 2 min (12:02 UTC). Loop-wide limits remain unchanged.",
+            "Its current route: Example model on Example account.",
+            "Now: Future state. Last check: a future format.",
+            "This review expires someday; supervision remains disabled.",
+            "This review expires in 2 min (12:02 UTC). ",
+            "This review expires in 2 min (12:02 UTC).\nResume also clears a pending question.",
+            "Its current route: BB thread · model not configured. Resume also clears a pending question.",
+            "Now: Waiting for you. Last check: checked; sent nothing · 3 min ago. Resume clears a pending question."
+        ]
+        for line in unknownVariants {
+            let review = try self.review([line])
+            try check(ConfirmationBuilder.build(review).informativeText == Contract.text(line), "Unknown familiar-prefix consequence hidden: \(line)")
+        }
+        for line in ["This review expires in under a minute (00:03 -03:30).", "This review expires in 5 min (23:59 +07).", "This review expires in 2 min (12:02 UTC)."] {
+            try check(ConfirmationBuilder.build(try review([line])).informativeText.isEmpty, "Complete supported expiry boilerplate restored")
+        }
         let future = try review(["New safety consequence from a future CLI."])
         try check(ConfirmationBuilder.build(future).informativeText == future.lines[0], "Unknown future consequence hidden")
         let pause = try review(boilerplate, action: "pause")
