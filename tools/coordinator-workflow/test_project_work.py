@@ -71,6 +71,13 @@ class ProjectWorkTests(unittest.TestCase):
         self.assertFalse(report['objectiveComplete'])
         self.assertEqual(before, (self.i, self.c, self.r))
 
+    def test_completed_child_and_claimed_closed_item_still_need_acceptance(self):
+        self.i['items'][0]['acceptance'] = None
+        report = self.project()
+        self.assertIn('item_acceptance_unavailable', self.codes(report))
+        self.assertIn('child_complete_follow_through_open', self.codes(report))
+        self.assertFalse(report['objectiveComplete'])
+
     def test_fulfilled_wait_keeps_independent_work_and_never_changes_wait(self):
         before = copy.deepcopy(self.i)
         report = self.project()

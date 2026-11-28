@@ -251,7 +251,7 @@ def reconcile(work, work_sha, pins, context=None, assignments=None, previous=Non
         # acknowledgement, lane state and complete outcome before this finding.
         for key, row in rows.items():
             out = by_id[key]
-            if row["assignment"] and out["disposition"] in {"independent_open", "dependency_waiting", "person_gated", "declared_external_wait"}:
+            if row["assignment"] and (out["disposition"] in {"independent_open", "dependency_waiting", "person_gated", "declared_external_wait"} or out["reason"] == "item_acceptance_unavailable"):
                 finding("child_complete_follow_through_open", key, "retain_work_item_and_review_acceptance_or_remaining_next_action")
     else:
         finding("coverage_inputs_unavailable", "register", "supply_current_bound_context_and_assignment_capture_for_coverage", True)
