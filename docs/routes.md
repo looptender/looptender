@@ -218,9 +218,7 @@ not run a provider, load models, test a route, change automatic handoff or
 conversation-creation settings, or clear holds and spent allowances. An
 already enabled supervisor can use the changed list on its next check.
 
-This is backend support tested with fictional local fixtures, without new
-browser controls or installed/live acceptance. The bounded headless `add` operation below is also backend-only; route probes,
-handoff toggles and primary replacement are not offered by this API.
+In unreleased source, the loop page's **Preferred routes** section wires these per-loop `read`, `models`, `prepare`, and `confirm` endpoints for **+ Add route** (headless CLI routes), **Manage order** (`move`, `off`, `on`, `remove`), and **Use own list...** (`own`), alongside panel mode indicators and collapsed **Terminal commands (advanced)**, verified with fictional local fixtures in Go, `jsdom`, Chromium and WebKit (without installed or live-provider acceptance). Route probes, handoff toggles, effort overrides, primary replacement, and BB conversation route adds remain CLI-only (`looptender fallbacks` or the Routes page for standard routes).
 
 ### Add a headless route through the API (unreleased)
 

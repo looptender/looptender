@@ -559,7 +559,8 @@ html:not(.has-script) .needs-script { visibility: hidden; }
   /* The route in use keeps its filled position badge. */
   .route.is-active .pos { background: Highlight; color: HighlightText; border-color: Highlight; }
   .chip-btn[aria-pressed="true"], .view-switch button[aria-pressed="true"], .cat-pill[aria-pressed="true"] { background: Highlight; color: HighlightText; border-color: Highlight; forced-color-adjust: none; }
-  .build-pill, .cat-pill, .map-card, .task-card, .task-drawer, .acct-stat, .unconfirmed-badge, .gap-note, .path-inspector, .map-badge-fallback, .list-loop-card, .list-route-row { border: 1px solid CanvasText; }
+  .build-pill, .cat-pill, .map-card, .task-card, .task-drawer, .acct-stat, .unconfirmed-badge, .gap-note, .path-inspector, .map-badge-fallback, .list-loop-card, .list-route-row, .loop-route-bar, .loop-route-mgmt, .loop-route-panel, .loop-route-review, .loop-route-result, .loop-route-row, .how-advanced { border: 1px solid CanvasText; }
+  .loop-route-field select { appearance: menulist; -webkit-appearance: menulist; background-image: none; padding-right: 0.65rem; }
   .map-card.is-selected { outline: 2.5px solid Highlight; outline-offset: -2px; border-color: Highlight; }
   .map-card.is-related { border: 2px solid Highlight; }
   .edge { stroke: CanvasText; }
@@ -949,8 +950,81 @@ details[open] > .how-summary::before { transform: rotate(45deg); }
 .acct-prev { margin-top: 0.5rem; font-size: 0.81rem; }
 .acct-prev summary { cursor: pointer; font-weight: 560; }
 
+/* Per-loop Preferred routes flow and collapsed advanced Terminal commands */
+.loop-route-flow { margin-top: 1rem; display: grid; gap: 0.75rem; min-width: 0; overflow-wrap: anywhere; scroll-margin-top: 5rem; }
+.loop-route-bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.5rem 0.75rem; padding: 0.65rem 0.85rem; background: var(--sunk);
+  border: 1px solid var(--line); border-radius: var(--radius); min-width: 0;
+}
+.loop-route-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; min-width: 0; }
+.loop-route-mode .sub { margin: 0; }
+.loop-route-bar-actions, .loop-route-actions, .loop-route-row-actions, .loop-route-model-tools {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; min-width: 0;
+}
+.loop-route-flow .btn, .loop-route-flow select, .loop-route-flow input, .how-advanced-summary {
+  min-height: 2.75rem; box-sizing: border-box;
+}
+.loop-route-flow .btn { white-space: normal; max-width: 100%; transition: background-color 180ms ease, border-color 180ms ease; }
+.loop-route-mgmt, .loop-route-panel {
+  border: 1px solid var(--line-2); border-radius: var(--radius); padding: 0.9rem 1rem;
+  background: var(--surface); display: grid; gap: 0.7rem; min-width: 0;
+}
+.loop-route-mgmt h3, .loop-route-panel h3, .loop-route-form h3 { margin: 0; font-size: 1rem; }
+.loop-route-panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.loop-route-form { display: grid; gap: 0.85rem; min-width: 0; }
+.loop-route-field { display: grid; gap: 0.35rem; max-width: 36rem; min-width: 0; }
+.loop-route-field label { font-weight: 600; font-size: 0.9rem; }
+.loop-route-field input, .loop-route-field select {
+  width: 100%; min-width: 0; font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--border-ui); border-radius: var(--radius-sm); padding: 0.55rem 0.65rem;
+  caret-color: var(--focus);
+}
+.loop-route-field select {
+  -webkit-appearance: none; appearance: none; padding-right: 2.25rem;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 1.1rem) 50%, calc(100% - 0.78rem) 50%;
+  background-size: 0.35rem 0.35rem; background-repeat: no-repeat;
+}
+.loop-route-field input[aria-invalid="true"], .loop-route-field select[aria-invalid="true"] { border-color: var(--attn); }
+.loop-route-hint { margin: 0; max-width: 68ch; }
+.loop-route-error { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--attn); }
+.loop-route-guarantee { margin: 0; max-width: 70ch; }
+.loop-route-order { list-style: decimal; margin: 0; padding-left: 1.4rem; display: grid; gap: 0.65rem; }
+.loop-route-row {
+  padding: 0.65rem 0.75rem; background: var(--sunk); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); display: grid; gap: 0.45rem; min-width: 0;
+}
+.loop-route-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.55rem; min-width: 0; }
+.loop-route-row-title { font-weight: 600; overflow-wrap: anywhere; }
+.loop-route-row-note { margin: 0; }
+.loop-route-review, .loop-route-result {
+  border: 1px solid var(--border-ui); border-radius: var(--radius); padding: 0.9rem 1rem;
+  background: var(--sunk); display: grid; gap: 0.55rem; min-width: 0; scroll-margin-top: 5rem;
+}
+.loop-route-review h4, .loop-route-result h4 { margin: 0; font-size: 0.95rem; }
+.loop-route-review p, .loop-route-result p { margin: 0; max-width: 72ch; }
+.loop-route-result.is-changed { background: var(--good-soft); border-color: var(--good-line); }
+.loop-route-result.is-partial, .loop-route-result.is-unknown { background: var(--warn-soft); border-color: var(--warn-line); }
+.loop-route-effect-main { font-weight: 600; }
+.loop-route-effect { border-top: 1px solid var(--line); padding-top: 0.45rem; display: grid; gap: 0.3rem; }
+.loop-route-next { border-top: 1px solid var(--line); padding-top: 0.65rem; display: grid; gap: 0.6rem; }
+.how-advanced {
+  margin-top: 0.9rem; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--sunk); min-width: 0;
+}
+.how-advanced-summary {
+  display: flex; align-items: center; padding: 0.5rem 0.85rem; cursor: pointer;
+  font-weight: 580; color: var(--ink-2); list-style: none;
+}
+.how-advanced-summary::before { content: "+"; margin-right: 0.5rem; font-weight: 700; }
+.how-advanced[open] > .how-advanced-summary::before { content: "-"; }
+.how-advanced-body { margin-top: 0; border-top: 1px solid var(--line); padding: 0.25rem 0.75rem 0.65rem; }
+
 @media (max-width: 40rem) {
   .drawer-kv { grid-template-columns: minmax(0, 1fr); gap: 0.08rem; }
+  .loop-route-bar { align-items: stretch; }
+  .loop-route-bar-actions, .loop-route-panel-head { width: 100%; }
 }
 @media (max-width: 34rem) {
   .bar-in { padding: 0.5rem 0.75rem; gap: 0.4rem 0.5rem; }
