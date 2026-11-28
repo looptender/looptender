@@ -46,6 +46,7 @@ enum CompactResumeFixture {
             try check(c.buttons.map(\.title) == ["Cancel", "Resume"] && c.defaultButton.command == nil, "Concise labels/default cancel lost")
             try check(c.buttons[1].command == .apply(.resume, key: key, expect: expect, lanes: false, immediately: false), "Intent identity/ticket changed")
             try check(!c.informativeText.contains("ticket") && !c.informativeText.contains("Last check:") && !c.informativeText.contains("current route:"), "Generic mechanics still primary")
+            if lines.contains(where: { $0.hasPrefix("It also removes") }) { try check(c.informativeText.contains("The saved pending-question record is also cleared. This does not answer the question."), "Completion question-record consequence lost") }
             for line in lines where !line.hasPrefix("It also removes") { try check(c.informativeText.contains(Contract.text(line)), "Actual state/consequence lost: \(line)") }
             try check(!ConfirmationBuilder.current(r, now: r.expiresAt) && ConfirmationBuilder.current(r, now: r.expiresAt.addingTimeInterval(-1)), "Expiry safeguard changed")
         }
