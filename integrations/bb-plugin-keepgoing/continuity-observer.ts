@@ -167,9 +167,14 @@ export function createContinuityObserver(deps: ContinuityDependencies) {
       }
       for (const [id, binding] of next) {
         let slot = slots.get(id);
-        if (slot?.entry && sameBinding(slot.entry.binding, binding)) continue;
+        if (slot?.entry && sameBinding(slot.entry.binding, binding)) {
+          // Retain work committed by a superseded notification batch. An abort
+          // listener or publisher may reenter before that batch reaches this entry.
+          if (slot.entry.serial === 0 && slot.entry.dirty) changed.push([id, slot, slot.entry]);
+          continue;
+        }
         if (!slot) { slot = { entry: null, flight: null }; slots.set(id, slot); }
-        slot.entry = { binding, generation: ++generation, serial: 0, dirty: false, suspended: false };
+        slot.entry = { binding, generation: ++generation, serial: 0, dirty: true, suspended: false };
         if (slot.flight) cancelled.add(slot.flight);
         changed.push([id, slot, slot.entry]);
       }

@@ -214,3 +214,28 @@ test("abort listeners see the complete binding replacement and cannot resurrect 
   assert.equal(f.calls.length, 4);
   assert.deepEqual(f.calls.slice(2).map(call => call.binding.revision), [3, 3]);
 });
+
+for (const addThird of [false, true]) test(`reentrant replacement retains pending initial inspection, add another binding=${addThird}`, async () => {
+  const f = fixture(); let once = true;
+  const initial = [binding(), binding({ id: "second", threadId: "thr_second" })];
+  f.setPublisher(o => {
+    if (once && o.phase === "checking") {
+      once = false;
+      f.c.replaceBindings(addThird ? [...initial, binding({ id: "third", threadId: "thr_third" })] : initial);
+    }
+  });
+  f.c.replaceBindings(initial); await flush();
+  assert.deepEqual(f.calls.map(call => call.binding.id).sort(), addThird ? ["example", "second", "third"] : ["example", "second"]);
+  for (const call of f.calls) call.resolve(summary()); await flush();
+  assert.equal(f.available().length, addThird ? 3 : 2);
+});
+
+test("identical replacement from an abort listener retains fresh inspection after settlement", async () => {
+  const f = fixture(); await f.start();
+  f.calls[0].signal.addEventListener("abort", () => f.c.replaceBindings([binding({ revision: 2 })]), { once: true });
+  f.c.replaceBindings([binding({ revision: 2 })]);
+  assert.equal(f.calls.length, 1);
+  f.calls[0].resolve(summary()); await flush();
+  assert.equal(f.calls.length, 2); assert.equal(f.calls[1].binding.revision, 2);
+  f.calls[1].resolve(summary()); await flush(); assert.equal(f.last().bindingRevision, 2);
+});
