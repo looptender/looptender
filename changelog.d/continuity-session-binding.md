@@ -1,0 +1,1 @@
+Added a disconnected continuity enrollment validator and exact-session pointer selector. Whole-list validation and instruction-bound refusal preserve records instead of truncating them. No automatic enrollment, session registration or runtime behavior is enabled.

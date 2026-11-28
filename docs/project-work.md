@@ -16,9 +16,54 @@ assignment, dispatch, host compaction or enforced turn-end hook.
 
 ## Continuity observation foundation
 
-Unreleased source includes a disconnected controller in the BB plugin. It is
-not registered with BB and does not read files or start checks in installed
-sessions. The explicit workflow below remains necessary.
+Unreleased BB plugin source explicitly enrolls an existing private register for
+one exact thread/project/environment/host tuple. Enrollment is opt-in; installing
+the plugin discovers no registers. The observer remains advisory and the explicit
+workflow below remains necessary.
+
+### Explicit BB enrollment (source only)
+
+Invoke the plugin-contributed `continuity` command through its installed BB CLI
+namespace (for example, `bb looptender continuity status`). Rebuilt server and
+host artifacts are required; this source change is not an installed rollout.
+Use `status` to obtain the registry epoch, then explicitly supply all identities
+and absolute private host paths. The example starts with an empty registry:
+
+```sh
+bb looptender continuity status
+bb looptender continuity attach 0 work_example 1 thr_example project_example env_example host_example /private/example/WORK.md --context /private/example/context.json --assignments /private/example/assignments.json
+bb looptender continuity check work_example 1
+bb looptender continuity status
+bb looptender continuity detach 1 work_example 1
+```
+
+Optional `--context`, `--assignments` and `--previous` each accept one absolute
+path. Quote paths containing spaces. `attach` and `detach` require the current
+registry epoch; stale writes refuse. Changing any path or identity requires a
+higher binding revision (or a new binding ID). A detached ID cannot reuse its old
+revision. The entire bounded registry is validated without selecting a prefix.
+An oversized session pointer refuses attachment before persistence.
+
+Startup and matched active/idle/failed events request read-only checks; removal,
+identity change and worker exit invalidate observations. Metadata is checked
+before dispatch and after the response. `check` requests an observation, returning
+immediately; `status` shows its phase. No file text or private diagnostics appear
+in status. The exact enrolled next provider session receives a quoted file pointer
+and the existing keepgoing skill; children, forks and other tuple members do not
+inherit it. Existing live sessions are not updated retroactively.
+
+Before dispatch, an atomic plugin-private database transaction saves a host check
+token. Only a valid correlated, current response after physical inspector
+settlement can remove it. Transport rejection, cancellation, worker exit, stale
+results or uncertain storage leave automatic checking unavailable across reload,
+detach and path replacement. A prepared token can survive a crash before dispatch,
+so it does not prove a child is running. There is no supported unknown-attempt
+clear/retry or automatic reconnect reconciliation. Do not edit the database to
+retry. This quarantine affects **automatic observation only**: agent turns,
+session pointers, other authorized work and manual file-backed reconciliation
+remain usable. It sets no loop hold and does not mean a person must act before
+work continues. Database failure refuses dispatch; host identity reads never
+hold a database transaction open.
 
 The controller accepts normalized lifecycle events for a configured coordinator
 and an injected inspector. Each trigger invalidates the prior observation
@@ -26,8 +71,8 @@ immediately. Repeated triggers coalesce while an inspection is pending; delayed
 successes and failures cannot replace a newer binding or observation. A timeout
 requests cancellation but retains the inspection slot until the inspector
 settles. An inspector that ignores cancellation leaves that binding unavailable;
-other bindings can proceed. A production adapter must guarantee bounded process
-termination before this can be wired into live use.
+other bindings can proceed. The registered adapter also retains a durable host guard when transport cannot
+prove physical settlement; it does not assume a timeout stopped the process.
 
 Observations contain binding revisions, sequence numbers, counts and nullable
 supplied evidence. `available` means the injected inspection supplied an accepted
@@ -44,9 +89,26 @@ scheduling is injected: callbacks run after scheduling returns and cancellation
 removes future callbacks. These dependency contracts do not authenticate hosts
 or prove that an inspector read the intended register.
 
-Raw helper parsing, host packaging, resolved identity checks, lifecycle/startup
-and reconnect listeners, session instructions, and installed acceptance remain
-follow-on work. BB lifecycle notifications cannot veto a turn ending; session
+The host inspector packages the canonical four Python
+modules deterministically; it introduces no second WORK validator. Explicit
+absolute input paths and Python 3.9+ on macOS/Linux are required; Windows is
+unsupported. Its fixed isolated `check` invocation never checkpoints. Strict,
+whole-report normalization publishes only counts, verdict and supplied evidence;
+malformed, unfamiliar or oversized output becomes wholly unavailable, never a
+prefix or subset. Run `python3 continuity-host-inspector-generate.py --check`
+from the plugin directory to reject packaged-source drift.
+
+The host runner requests termination after cancellation or its 12-second limit,
+escalates after 250ms, and retains the physical flight and temporary asset until
+Node reports child `close`. Timeout or a successful signal alone never proves
+termination; an unconfirmed close leaves the operation pending. No raw output or
+private exception is logged or returned. Temporary asset cleanup is attempted
+after close. Existing file/permission/source validation remains in the canonical
+helper. Host transport correlation is not file identity authentication or proof of an
+installed rollout.
+
+Automatic reconnect reconciliation and installed acceptance remain open.
+BB lifecycle notifications cannot veto a turn ending; session
 instructions apply when a provider session is constructed, not on every existing
 turn. This controller neither checkpoints on idle nor clears holds, dispatches
 work or prevents an agent from forgetting to invoke the explicit workflow.
