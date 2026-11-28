@@ -177,7 +177,7 @@ c['observedAt']=now;r['revisions'][-1]['inventory']['observedAt']=now
 if case=='held':c['controls']['paused']=True
 if case=='unbound':i.update(binding=None,assignmentRecord=None,assignmentRevision=None)
 if case=='open-child':i['items'][0].update(state='open',acceptance=None)
-if case=='source-drift':(root/'scope.md').write_text('Fictional source drift')
+if case=='source-drift':Path(i['workSources'][0]['path']).write_text('Fictional source drift')
 if case=='missing-assignment':r=None
 if case=='person-gate':i['items'][0]['personGate']={'state':'held','refs':['example:person']}
 if case=='unknown-item':i['items'][0].update(state='unknown',acceptance=None)
@@ -194,6 +194,7 @@ for name,data in [('WORK.md',work.markdown(i,'looptender-work','# Fictional cano
       const checked = spawnSync("python3", ["-I", "-B", helper, "check", "--work", paths.work, "--context", paths.context, ...(paths.assignments ? ["--assignments", paths.assignments] : []), "--max-age", "300"], { encoding: "utf8" });
       assert.equal(checked.status, 1, scenario); const canonical = JSON.parse(checked.stdout);
       assert.ok(["runtime_held", "reconciliation_required"].includes(canonical.verdict), scenario);
+      if (scenario === "source-drift") assert.ok(canonical.findings.some((f: { class: string }) => f.class === "source_drift"), "pinned source drift must be exercised");
       const expected = { verdict: canonical.verdict, objectiveComplete: false, workSha256: canonical.evidence.workSha256,
         registerRevision: canonical.evidence.registerRevision, itemCount: canonical.itemCount,
         findingCount: canonical.findings.length, missingInputCount: canonical.missingInputs.length };
