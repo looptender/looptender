@@ -177,3 +177,69 @@ func TestSourcesDigestBindsFallbackBytesAndPaths(t *testing.T) {
 		t.Fatal("in-memory source invented", err)
 	}
 }
+
+func TestCheckSourceBytesUsesLoadedSnapshotsWithoutIO(t *testing.T) {
+	dir := t.TempDir()
+	path, fb := filepath.Join(dir, "looptender.yaml"), filepath.Join(dir, "fallbacks.yaml")
+	raw := []byte(valid + "  fallbacks: fallbacks.yaml\n")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	fallbackRaw := []byte(validFallbacks)
+	if err := os.WriteFile(fb, fallbackRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(fb); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.CheckSourceBytes(raw, fallbackRaw); err != nil {
+		t.Fatal("comparison performed IO", err)
+	}
+	for _, pair := range [][2][]byte{{nil, fallbackRaw}, {[]byte{}, fallbackRaw}, {append(append([]byte{}, raw...), ' '), fallbackRaw}, {raw, nil}, {raw, []byte{}}, {raw, append(append([]byte{}, fallbackRaw...), ' ')}} {
+		if cfg.CheckSourceBytes(pair[0], pair[1]) == nil {
+			t.Fatal("mismatched read certified")
+		}
+	}
+	cfg.MarkSourcesStale()
+	if cfg.CheckSourceBytes(raw, fallbackRaw) == nil {
+		t.Fatal("stale source certified")
+	}
+	parsed, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.CheckSourceBytes(raw, nil) == nil {
+		t.Fatal("Parse-only source certified")
+	}
+	// Present-empty differs from missing, even though an empty document is not
+	// a valid loaded config. Exercise the captured primitive directly.
+	empty := &Config{source: snapshot(path, []byte{})}
+	if empty.CheckSourceBytes([]byte{}, nil) != nil || empty.CheckSourceBytes(nil, nil) == nil {
+		t.Fatal("empty conflated with missing")
+	}
+	empty.source = sourceSnapshot{path: path, absent: true}
+	if empty.CheckSourceBytes([]byte{}, nil) == nil || empty.CheckSourceBytes(nil, nil) == nil {
+		t.Fatal("unavailable certified")
+	}
+	empty.source = snapshot(path, raw)
+	empty.FallbackSet = &Fallbacks{source: snapshot(fb, []byte{})}
+	if empty.CheckSourceBytes(raw, []byte{}) != nil || empty.CheckSourceBytes(raw, nil) == nil {
+		t.Fatal("empty required fallback conflated with absent input")
+	}
+	empty.FallbackSet.source = sourceSnapshot{path: fb, absent: true}
+	if empty.CheckSourceBytes(raw, nil) == nil || empty.CheckSourceBytes(raw, []byte{}) == nil {
+		t.Fatal("unavailable fallback certified")
+	}
+	empty.FallbackSet = nil
+	empty.source = snapshot(path, raw)
+	if empty.CheckSourceBytes(raw, []byte{}) == nil {
+		t.Fatal("unexpected empty fallback certified")
+	}
+}

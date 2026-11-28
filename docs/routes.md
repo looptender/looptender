@@ -201,7 +201,7 @@ returns only that loop in `editor.loops`; unknown keys refuse instead of
 falling back to all loops. Ambiguous loop names and stale configuration/state
 directory bindings also refuse rather than selecting a different registration.
 
-For a selected loop, the supported operations are `move`, `remove`, `off`,
+For a selected loop, existing-list operations are `move`, `remove`, `off`,
 and `on` on its own list, plus a separately reviewed `own` conversion from
 the standard list. `own` copies the currently resolved routes into
 `fallbacks.yaml` beside the loop configuration and refuses if that file
@@ -219,6 +219,49 @@ conversation-creation settings, or clear holds and spent allowances. An
 already enabled supervisor can use the changed list on its next check.
 
 This is backend support tested with fictional local fixtures, without new
-browser controls or installed/live acceptance. Per-loop add remains a
-separate implementation requirement; route probes, handoff toggles and
-primary replacement are not offered by this API slice.
+browser controls or installed/live acceptance. The bounded headless `add` operation below is also backend-only; route probes,
+handoff toggles and primary replacement are not offered by this API.
+
+### Add a headless route through the API (unreleased)
+
+Selected-loop `prepare` also accepts `op: "add"`, `account`, `model`, `limit`,
+`behavior: "headless"`, and optional `at`. The account must be an existing
+Claude Code or Codex catalog selection using inherited login or an explicit
+existing directory. The selected CLI and work directory must match the
+context resolved from the loop, and the saved account context must still be
+current. Missing executables/directories, unavailable contexts, or a loop
+without an inferable project refuse without starting anything. A loop that
+follows standard routes must first complete a separate `own` review.
+
+`at` counts fallback positions starting at 1, after the primary; omitted or 0
+means append as seen at prepare. The generated route ID, positive insertion
+position, account revision/context, configuration sources, current route and
+planned output are frozen in the form. Confirmation sends only `op` and
+`loop`, with that form in `X-Keepgoing-Form`. Changed bindings, list contents,
+source reads or resolved CLI paths require a new review. The source checks
+also reject temporary changed bytes consumed during planning even when the
+file is restored before the check ends.
+
+There is no effort override in this initial headless add path: nonempty
+`effort` is refused for both providers. Browser-supplied IDs, paths, provider
+substitutions, probe settings, handoff settings and conversation-creation
+options are not accepted. Account consistency is configuration evidence;
+login identity, model access, credential contents and quota are not verified.
+
+A panel-created first fallback file has scheduled probes disabled and keeps
+automatic handoff off, including when an absent setting would otherwise
+default to rate-limit handoff. Existing fallback files retain their probe
+policy and configured failover classes: later ordinary checks may test or
+select the added candidate. Saving itself runs no model, model discovery,
+probe or quota request. The CLI's existing first-file probe defaults are
+unchanged.
+
+A failed first-file save removes only its still-matching owned file, and
+checks cleanup success. If cleanup fails or a different file occupies the
+path, `partial` with stage `fallback_file_retained` requires inspection;
+it does not claim rollback or retry automatically. A successful save with a
+history error remains `changed` with a diagnostic warning. Forms prevent
+process-local replay, not durable exactly-once publication across crashes:
+a lost reply requires reading and reconciling the current files before a
+new explicit review. These are fictional local fixture guarantees, without
+installed/browser, live-provider, power-loss or hostile-writer certification.
