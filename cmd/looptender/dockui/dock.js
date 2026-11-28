@@ -23,7 +23,7 @@
   // What looptender did: worded by the same read as API, served on its own
   // for its size, and read only for the Usage page and a loop's page.
   var USAGE = "api/v1/usage";
-  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), ruleOpen: Object.create(null), advRoutesOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false, accountRemove: null, mapMode: "map", mapQuery: "", mapFilter: "all", mapShowRetired: false, mapSelected: null, activeDrawer: null, issueStaleNotice: "", changeSerial: 0, supersededChangeResult: null, retainedNeeds: [], retainedLoops: Object.create(null), acctFilter: "all", acctDensity: "detailed" };
+  var state = { data: null, identifiers: false, paused: false, timer: 0, busy: false, again: false, missed: false, lastOk: null, failed: false, failedSince: 0, failedLong: false, notice: "", pending: false, said: "", server: null, treeOpen: Object.create(null), accountOpen: Object.create(null), accountDetailsOpen: Object.create(null), ruleOpen: Object.create(null), advRoutesOpen: Object.create(null), usage: null, usageText: "", usageFailed: false, usageBusy: false, accountRemove: null, acctMgmt: null, acctHelpOpen: false, acctCliHelpOpen: false, mapMode: "map", mapQuery: "", mapFilter: "all", mapShowRetired: false, mapSelected: null, activeDrawer: null, issueStaleNotice: "", changeSerial: 0, supersededChangeResult: null, retainedNeeds: [], retainedLoops: Object.create(null), acctFilter: "all", acctDensity: "detailed" };
 
   var TONES = {
     supervising: "good", waiting_for_you: "attn", waiting_on_limit: "limit", waiting_on_network: "limit", checks_failing: "warn",
@@ -3202,7 +3202,7 @@
       (c.attention === "context_changed"
         ? (changesOn() && state.server && state.server.accountSelectionReview
             ? " Review selection for this panel before checking again."
-            : " Open a panel with --allow-changes or update the selection before checking again.")
+            : " Open Full mode or update the selection before checking again.")
         : "");
   }
   // What on a card needs a person, in words; the warning style is kept for
@@ -3563,6 +3563,106 @@
   // Connecting is a person-started provider sign-in, never a consequence of
   // polling saved quota. Each attempt stays bound to one selected account.
   var accountConnections = Object.create(null), accountConnectionLabels = Object.create(null);
+  function panelAccountMode() {
+    var s = state.server || {};
+    if (!changesOn()) return s.servedBy === "panel" ? "read_only" : "dock";
+    if (s.accountCheck || s.accountQuota || s.accountSelectionReview || s.accountUsageUpdating || s.accountRemove ||
+        list(s.accountConnectProviders).length || s.routeChanges === "person" || s.routeChanges === "bb_caller") return "full";
+    return "controls";
+  }
+  function accountProviderLabel(provider) {
+    if (provider === "claude-code") return "Claude Code";
+    if (provider === "codex") return "Codex";
+    if (provider === "antigravity") return "Antigravity";
+    return provider || "Unknown";
+  }
+  function accountConnectUnsupportedNote(c) {
+    if (c && c.provider === "claude-code") return "In-panel Claude sign-in is unavailable on this device (requires macOS Apple Silicon). Sign in with Claude CLI, then check login.";
+    if (c && c.provider === "codex") return "In-panel Codex sign-in is unavailable on this panel build. Sign in with Codex CLI, then check login.";
+    return "In-panel sign-in is unavailable for this provider on this device.";
+  }
+  function openAccountMgmtPanel(c, reason, triggerFocus) {
+    state.acctMgmt = {
+      cardId: c ? c.id : "",
+      label: c ? c.label : "",
+      reason: reason || "general",
+      trigger: triggerFocus || "acct-mgmt-toggle"
+    };
+    render(false, true);
+    focusOn("acct-mgmt-heading");
+  }
+  function closeAccountMgmtPanel(restoreFocus) {
+    var cur = state.acctMgmt;
+    state.acctMgmt = null;
+    render(false, true);
+    if (restoreFocus && cur && cur.trigger) focusOn(cur.trigger);
+  }
+  function renderAccountMgmtPanel(cards, mode) {
+    var mgmt = state.acctMgmt;
+    if (!mgmt || mode === "full") return null;
+    var targetCard = mgmt.cardId ? list(cards).filter(function (x) { return x.id === mgmt.cardId; })[0] || null : null;
+    var wrap = el("section", "acct-mgmt-panel");
+    wrap.setAttribute("aria-labelledby", "acct-mgmt-heading-id");
+    var head = el("div", "acct-mgmt-head");
+    var headingText = mgmt.reason === "reconnect" && targetCard
+      ? "Open Full mode to reconnect " + targetCard.label
+      : mgmt.reason === "review" && targetCard
+        ? "Open Full mode to review " + targetCard.label
+        : mgmt.reason === "quota" && targetCard
+          ? "Open Full mode to refresh quota for " + targetCard.label
+          : "Open Full mode for account actions";
+    var heading = el("h3", null, headingText);
+    heading.id = "acct-mgmt-heading-id";
+    heading.tabIndex = -1;
+    heading.setAttribute("data-focus", "acct-mgmt-heading");
+    head.appendChild(heading);
+    head.appendChild(button("Close", "acct-mgmt-close", "", function () { closeAccountMgmtPanel(true); }));
+    wrap.appendChild(head);
+    var currentModeText = mode === "controls"
+      ? "Currently in Controls mode (pause, stop, and resume only). Running panels keep their startup mode, so this page cannot change account actions on its own."
+      : "Currently in Read-only mode (saved evidence only). Running panels keep their startup mode, so this page cannot elevate itself on its own.";
+    wrap.appendChild(el("p", "sub", currentModeText));
+    var grid = el("div", "acct-mgmt-grid");
+    var macPath = el("div", "acct-mgmt-path");
+    macPath.appendChild(el("h4", null, "macOS menu bar"));
+    var macDesc = el("p", "sub");
+    if (targetCard) {
+      macDesc.appendChild(document.createTextNode("In the looptender menu bar icon, open this account's submenu and choose "));
+      macDesc.appendChild(el("strong", null, "Manage Account in Panel\u2026"));
+      macDesc.appendChild(document.createTextNode(", or choose "));
+      macDesc.appendChild(el("strong", null, "Open Management Panel\u2026"));
+      macDesc.appendChild(document.createTextNode(" from the top menu."));
+    } else {
+      macDesc.appendChild(document.createTextNode("In the looptender menu bar icon, choose "));
+      macDesc.appendChild(el("strong", null, "Open Management Panel\u2026"));
+      macDesc.appendChild(document.createTextNode(" (or "));
+      macDesc.appendChild(el("strong", null, "Manage Account in Panel\u2026"));
+      macDesc.appendChild(document.createTextNode(" inside a specific account submenu)."));
+    }
+    macPath.appendChild(macDesc);
+    grid.appendChild(macPath);
+    var termPath = el("div", "acct-mgmt-path");
+    termPath.appendChild(el("h4", null, "Terminal (outside BB)"));
+    termPath.appendChild(el("p", "sub", "Run in an ordinary terminal, not in a BB agent thread:"));
+    var stopTitle = el("p", "acct-mgmt-step", "1. Stop this panel window (loop supervision keeps running):");
+    stopTitle.id = "acct-mgmt-stop-desc";
+    termPath.appendChild(stopTitle);
+    termPath.appendChild(copyCommand("div", "looptender panel stop", "acct-mgmt-copy-stop", stopTitle.id));
+    var allowCmd = targetCard ? "looptender panel --allow-changes --account " + accountId(targetCard) : "looptender panel --allow-changes";
+    var startTitle = el("p", "acct-mgmt-step", targetCard ? "2. Reopen in Full mode for this account:" : "2. Start in Full mode:");
+    startTitle.id = "acct-mgmt-start-desc";
+    termPath.appendChild(startTitle);
+    termPath.appendChild(copyCommand("div", allowCmd, "acct-mgmt-copy-allow", startTitle.id));
+    if (targetCard && !state.identifiers) {
+      termPath.appendChild(el("p", "sub", "Turn on Identifiers in the header to fill in the connection ID instead of CONNECTION_ID."));
+    }
+    grid.appendChild(termPath);
+    wrap.appendChild(grid);
+    var foot = el("div", "acct-mgmt-foot");
+    foot.appendChild(link(ROUTE_DOCS, "Panel modes guide", "more"));
+    wrap.appendChild(foot);
+    return wrap;
+  }
   function connectProvider(c) { return c.provider === "claude-code" ? "Claude" : "Codex"; }
   function accountConnectSupported(c) {
     return changesOn() && list(state.server.accountConnectProviders).indexOf(c.provider) >= 0;
@@ -3807,12 +3907,24 @@
     if (needsSelectionReview) {
       if (changesOn() && state.server.accountSelectionReview) {
         if (!current) box.appendChild(button("Review selection for this panel…", "selection-review-" + c.id, "", function () { accountQuotaRequest(c, false, true); }));
-      } else box.appendChild(el("p", "sub", "Reviewing this selection needs a panel started with looptender panel --allow-changes; open one, then return to Accounts."));
+      } else {
+        box.appendChild(el("p", "sub", "Reviewing this selection requires Full mode."));
+        box.appendChild(button("How to review…", "selection-review-help-" + c.id, "", function () { openAccountMgmtPanel(c, "review", "selection-review-help-" + c.id); }));
+      }
       return box;
     }
     if (changesOn() && accountQuotaSupported(c)) {
       if (!current) box.appendChild(button((c.provider === "claude-code" || c.provider === "antigravity") ? "Retrieve usage…" : "Refresh subscription quota…", "quota-refresh-" + c.id, "", function () { accountQuotaRequest(c, false); }));
-    } else box.appendChild(el("p", "sub", c.provider === "claude-code" ? "Claude usage retrieval requires a panel with changes allowed on Darwin arm64 and the inspected native Claude Code 2.1.326 image. Each selection is checked before a request; other images remain unavailable." : c.provider === "antigravity" ? "Antigravity usage retrieval requires a panel with changes allowed. It runs agy /usage in read-only plan mode without an ordinary model turn." : "Review a refresh in a panel with changes allowed."));
+    } else if (panelAccountMode() !== "full") {
+      box.appendChild(el("p", "sub", "Quota refresh requires Full mode."));
+      box.appendChild(button("Open Full mode…", "quota-mgmt-help-" + c.id, "", function () { openAccountMgmtPanel(c, "quota", "quota-mgmt-help-" + c.id); }));
+    } else {
+      box.appendChild(el("p", "sub", c.provider === "claude-code"
+        ? "Claude usage retrieval requires macOS Apple Silicon and the inspected native Claude Code 2.1.326 image."
+        : c.provider === "antigravity"
+          ? "Antigravity usage retrieval requires agy /usage in read-only plan mode on this build."
+          : "Quota refresh is unavailable for this provider on this panel build."));
+    }
     return box;
   }
   function accountRemoveSupported() {
@@ -3901,15 +4013,39 @@
 
   function renderAccounts(d, pane) {
     var a = d.accounts || {};
+    var acctMode = panelAccountMode();
     pane.appendChild(back());
     pane.appendChild(paneHead("Accounts"));
-    pane.appendChild(el("p", "lede", "Your selected accounts, with the evidence available on this device."));
-    pane.appendChild(el("p", "sub", "Read now reloads saved evidence. Keep usage updated authorizes a running menu, panel or dock process to fetch usage in the background. Check login now checks login and plan; manual quota retrieval has its own review and calls no model. Countdown labels update every 15 seconds; a passed reset needs a new reading to confirm availability."));
-    var usage = el("p", "account-usage-link");
-    usage.appendChild(link("#/routes", "View recorded usage", "work-inspect"));
-    usage.appendChild(el("span", "sub", ". Readings come from configured routes and are not live. Each account shows the readings of the routes that use it."));
-    pane.appendChild(usage);
+    pane.appendChild(el("p", "lede", "Selected accounts on this device, with saved status and quota evidence."));
+    var modeBar = el("div", "acct-mode-bar");
+    var modeMeta = el("div", "acct-mode-meta");
+    var modeBadgeTone = acctMode === "full" ? "good" : "plain";
+    var modeBadgeText = acctMode === "full" ? "Full mode" : acctMode === "controls" ? "Controls mode" : acctMode === "read_only" ? "Read-only mode" : "Read-only dock";
+    var modeDescText = acctMode === "full"
+      ? "Checks, selection review, quota reads, and supported sign-in are available."
+      : acctMode === "controls"
+        ? "Pause, stop, and resume only. Account actions require Full mode."
+        : acctMode === "read_only"
+          ? "Saved evidence only. Account actions require Full mode."
+          : "Saved evidence only. Start a panel in Full mode to manage accounts.";
+    modeMeta.appendChild(uiBadge(modeBadgeTone, modeBadgeText));
+    modeMeta.appendChild(el("span", "sub", modeDescText));
+    modeBar.appendChild(modeMeta);
+    var modeActs = el("div", "acct-mode-actions");
+    modeActs.appendChild(link("#/routes", "View recorded usage", "btn"));
+    if (acctMode !== "full") {
+      var mgmtBtn = button("Open Full mode\u2026", "acct-mgmt-toggle", "", function () {
+        if (state.acctMgmt) closeAccountMgmtPanel(false);
+        else openAccountMgmtPanel(null, "general", "acct-mgmt-toggle");
+      });
+      mgmtBtn.setAttribute("aria-expanded", String(!!state.acctMgmt));
+      modeActs.appendChild(mgmtBtn);
+    }
+    modeBar.appendChild(modeActs);
+    pane.appendChild(modeBar);
     if (d.accountsReference && (savedAccounts.reference !== d.accountsReference || savedAccounts.status !== "ready")) {
+      var pendingMgmt = renderAccountMgmtPanel([], acctMode);
+      if (pendingMgmt) pane.appendChild(pendingMgmt);
       var failed = savedAccounts.reference === d.accountsReference && savedAccounts.status === "failed";
       var pending = emptyBox(failed ? "Saved accounts unavailable" : "Reading saved accounts", failed ? "This saved snapshot could not be read. Use Read now to try the current panel snapshot. Missing quota is not zero; no provider refresh was made." : "Reading the saved selections and quota evidence for this panel snapshot. No provider is queried.");
       pending.setAttribute("role", "status"); pane.appendChild(pending);
@@ -3939,12 +4075,25 @@
       return;
     }
     if (!a.complete || a.state !== "available") {
+      var unavailMgmt = renderAccountMgmtPanel([], acctMode);
+      if (unavailMgmt) pane.appendChild(unavailMgmt);
       pane.appendChild(emptyBox("Accounts unavailable", "The private account catalog could not be read completely. This does not mean no accounts are selected."));
       return;
     }
     var cards = list(a.cards), uses = list(d.accountUses), byCard = Object.create(null);
     uses.forEach(function (u) { if (u.card) byCard[u.card] = u; });
     var unnamed = uses.filter(function (u) { return u.context; });
+    var mgmtPanel = renderAccountMgmtPanel(cards, acctMode);
+    if (mgmtPanel) pane.appendChild(mgmtPanel);
+    var helpFold = el("details", "acct-help-fold");
+    helpFold.open = !!state.acctHelpOpen;
+    helpFold.appendChild(el("summary", "acct-help-summary", "How checks, quotas, and recorded usage work"));
+    var helpBody = el("div", "acct-help-body");
+    helpBody.appendChild(el("p", "sub", "Read now reloads saved evidence. Keep usage updated authorizes a running menu, panel, or dock process to fetch usage in the background. Check login now checks login and plan; manual quota retrieval has its own review and calls no model."));
+    helpBody.appendChild(el("p", "sub", "Countdown labels update every 15 seconds; a passed reset needs a new reading to confirm availability. View recorded usage shows configured route readings rather than live probes. Login and plan reports do not verify quota, model access, or continuing availability."));
+    helpFold.appendChild(helpBody);
+    helpFold.addEventListener("toggle", function () { if (helpFold.isConnected) state.acctHelpOpen = helpFold.open; });
+    pane.appendChild(helpFold);
     var removeDone = state.accountRemove && state.accountRemove.result && !cards.some(function (x) { return x.id === state.accountRemove.id; }) ? state.accountRemove : null;
     if (removeDone) {
       var doneBox = el("div", "panel account-remove-result");
@@ -4049,7 +4198,10 @@
         var template = templates.find(function (c) { return c.provider === provider; });
         if (!template) return;
         add.appendChild(button("Connect another " + connectProvider(template) + " account", "connect-another-" + provider, "", function () {
-          state.accountOpen[template.id] = true; render(false, true); focusOn("connect-label-" + template.id);
+          state.accountOpen[template.id] = true;
+          state.accountDetailsOpen[template.id] = true;
+          render(false, true);
+          focusOn("connect-label-" + template.id);
         }));
       });
       pane.appendChild(add);
@@ -4064,7 +4216,7 @@
       pane.appendChild(checkNotice);
     }
     if (!d.complete || (d.registry || {}).availability !== "available") pane.appendChild(el("p", "sub", "Not every loop could be read, so some routes may be missing here."));
-    var ul = el("ul", "accounts-list acct-cards"), retained = Object.create(null);
+    var ul = el("ul", "accounts-list acct-cards"), retained = Object.create(null), retainedDet = Object.create(null);
     ul.dataset.density = state.acctDensity;
     visibleAccts.forEach(function (c) {
       var bucketKind = classifyAccountCard(c);
@@ -4073,9 +4225,9 @@
       var summary = el("summary", "account-summary");
       summary.setAttribute("data-focus", "account-" + c.id);
       var name = el("span", "account-name", c.label);
-      var provider = el("span", "sub", c.provider === "claude-code" ? "Claude Code" : c.provider === "codex" ? "Codex" : c.provider === "antigravity" ? "Antigravity" : c.provider);
-      var identity = el("span", "account-title"); identity.appendChild(name); identity.appendChild(provider);
-      identity.appendChild(el("span", "sub", c.selection === "inherited" ? "Inherited context" : c.selection === "explicit_directory" ? "Selected context" : "External context"));
+      var ctxLabel = c.selection === "inherited" ? "Inherited context" : c.selection === "explicit_directory" ? "Selected context" : "External context";
+      var identity = el("span", "account-title"); identity.appendChild(name);
+      identity.appendChild(el("span", "sub", accountProviderLabel(c.provider) + " \u00B7 " + ctxLabel));
       var badgeWrap = el("span", "acct-badge-row");
       if (bucketKind === "drift") badgeWrap.appendChild(uiBadge("attn", "Context review needed \u2014 not a quota limit"));
       else if (bucketKind === "rejected") badgeWrap.appendChild(uiBadge("warn", "Quota provenance rejected"));
@@ -4150,20 +4302,61 @@
         compact.appendChild(reviewBtn);
       } else if (bucketKind === "drift") {
         compact.appendChild(el("strong", null, "Prior quota withheld"));
-        compact.appendChild(el("span", "sub", "Context validation changed \u2014 not a quota limit."));
+        compact.appendChild(el("span", "sub", "Context validation changed; not a quota limit."));
+        if (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity") {
+          var reviewHelp = button("How to review\u2026", "account-review-help-" + c.id, "", function (event) {
+            event.preventDefault(); event.stopPropagation();
+            openAccountMgmtPanel(c, "review", "account-review-help-" + c.id);
+          });
+          reviewHelp.setAttribute("aria-label", "How to review selection for " + c.label);
+          compact.appendChild(reviewHelp);
+        }
       } else if ((c.provider === "codex" || c.provider === "claude-code") && accountSignInNeeded(c)) {
-        compact.appendChild(el("span", "sub", "Account quota unavailable"));
-        var connect = button("Connect " + connectProvider(c), "account-connect-" + c.id, "", function (event) { event.preventDefault(); event.stopPropagation(); accountConnectOpen(c); });
-        connect.setAttribute("aria-label", "Connect " + connectProvider(c) + " for " + c.label);
-        compact.appendChild(connect);
-        if (c.auth && c.auth.state === "reported_absent") compact.appendChild(el("span", "sub", "Sign-in required"));
+        var ongoingConn = accountConnections[c.id];
+        var isReconnect = (c.auth && c.auth.state === "reported_absent") || c.localAuth === "file_expired";
+        if (accountConnectSupported(c)) {
+          if (ongoingConn && ongoingConn.busy) {
+            var busyBtn = button("Connecting\u2026", "account-connect-" + c.id, "", function (event) { event.preventDefault(); event.stopPropagation(); }, true);
+            busyBtn.setAttribute("aria-label", "Connecting " + connectProvider(c) + " for " + c.label);
+            compact.appendChild(busyBtn);
+          } else if (ongoingConn && ongoingConn.connect && ongoingConn.connect.state === "waiting") {
+            var waitBtn = button("Sign-in waiting\u2026", "account-connect-" + c.id, "", function (event) { event.preventDefault(); event.stopPropagation(); accountConnectOpen(c); });
+            waitBtn.setAttribute("aria-label", "View pending " + connectProvider(c) + " sign-in for " + c.label);
+            compact.appendChild(waitBtn);
+          } else {
+            var connectLabel = (isReconnect ? "Reconnect " : "Connect ") + connectProvider(c) + "\u2026";
+            var connect = button(connectLabel, "account-connect-" + c.id, "is-primary", function (event) { event.preventDefault(); event.stopPropagation(); accountConnectOpen(c); });
+            connect.setAttribute("aria-label", (isReconnect ? "Reconnect " : "Connect ") + connectProvider(c) + " for " + c.label);
+            compact.appendChild(connect);
+          }
+          if (c.auth && c.auth.state === "reported_absent") compact.appendChild(el("span", "sub", "Sign-in required"));
+        } else if (acctMode === "full") {
+          compact.appendChild(uiBadge("attn", c.auth && c.auth.state === "reported_absent" ? "Sign-in required" : "Login unavailable"));
+          compact.appendChild(el("span", "sub", accountConnectUnsupportedNote(c)));
+          if (accountCheckSupported(c) && accountCheckEligible(c)) {
+            var quickCheck = button(accountChecks.active ? "Checking\u2026" : "Check login now", "account-check-summary-" + c.id, "", function (event) {
+              event.preventDefault(); event.stopPropagation();
+              delete accountChecks.attempted[c.id];
+              runAccountChecks([c], true);
+            }, accountChecks.active);
+            compact.appendChild(quickCheck);
+          }
+        } else {
+          compact.appendChild(uiBadge("attn", c.auth && c.auth.state === "reported_absent" ? "Sign-in required" : "Local login unavailable"));
+          compact.appendChild(el("span", "sub", acctMode === "controls" ? "Needs Full mode" : "Read-only \u00B7 needs Full mode"));
+          var connectHelp = button("How to reconnect\u2026", "account-connect-help-" + c.id, "", function (event) {
+            event.preventDefault(); event.stopPropagation();
+            openAccountMgmtPanel(c, "reconnect", "account-connect-help-" + c.id);
+          });
+          connectHelp.setAttribute("aria-label", "How to reconnect " + connectProvider(c) + " for " + c.label);
+          compact.appendChild(connectHelp);
+        }
       } else if (bucketKind === "rejected") {
         compact.appendChild(el("strong", null, "Quota reading rejected"));
         compact.appendChild(el("span", "sub", "Quota provenance metadata was invalid or unsupported. No usage is assumed."));
       } else {
         compact.appendChild(el("strong", null, "No saved quota reading"));
         compact.appendChild(el("span", "sub", (c.quota && c.quota.summary && c.quota.summary.state !== "reported" && c.quota.summary.text) || accountQuotaReason((c.quota && c.quota.summary && c.quota.summary.state === "reported" ? "schema_unavailable" : (c.quota && c.quota.reason)) || "not_checked")));
-        compact.appendChild(el("span", "sub", "Expand for quota details and available actions"));
       }
       if (c.usageUpdating) {
         var updatingLabel = ({ enabled: "Updates on", off: "Updates off", backoff: "Fetch failed \u00B7 retrying", waiting: "Updates paused \u00B7 scheduler not running", paused: "Updates paused \u00B7 selection changed", unavailable: "Update settings unavailable" })[c.usageUpdating.state];
@@ -4176,6 +4369,47 @@
       var body = el("div", "account-body");
       var connection = accountConnectBox(c);
       if (connection) body.appendChild(connection);
+      var reasons = {
+        context_changed: "This selection was saved under a different shell, context, or CLI path (such as Terminal vs an agent session or an updated binary). Review it for this panel or run looptender accounts update before checking again.",
+        unsupported: "Authentication is externally managed or unsupported here. Use the provider's own controls.",
+        timeout: "The latest status check timed out. It did not establish a current login.",
+        cancelled: "The latest status check was cancelled.",
+        version_unavailable: "The selected CLI version could not be established.",
+        status_unavailable: "The latest status command did not establish a recognized login result."
+      };
+      if (c.reason) body.appendChild(el("p", "account-note", reasons[c.reason] || "The latest account check is unavailable."));
+      if (acctMode === "full" && (c.provider === "codex" || c.provider === "claude-code") && accountSignInNeeded(c) && !accountConnectSupported(c)) {
+        body.appendChild(el("p", "account-note", accountConnectUnsupportedNote(c)));
+      }
+      if (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity") body.appendChild(accountQuotaBox(c));
+      if (accountCheckSupported(c) && accountCheckEligible(c)) {
+        var cardActions = el("div", "account-quota-actions");
+        cardActions.appendChild(button(accountChecks.active ? "Checking…" : "Check login now", "account-check-" + c.id, "", function () {
+          delete accountChecks.attempted[c.id];
+          runAccountChecks([c], true);
+        }, accountChecks.active));
+        body.appendChild(cardActions);
+      }
+      var removeBox = accountRemoveBox(c);
+      if (removeBox) body.appendChild(removeBox);
+      var advDetails = el("details", "acct-details");
+      advDetails.open = !!state.accountDetailsOpen[c.id];
+      retainedDet[c.id] = advDetails.open;
+      advDetails.appendChild(el("summary", "acct-details-summary", "Identity, routes, models & advanced tools"));
+      var advBody = el("div", "acct-details-body");
+      var facts = el("dl", "work-facts");
+      if (state.identifiers) facts.appendChild(fact("Connection ID", c.id));
+      facts.appendChild(fact("Account identity", "Not verified. The name is your selected label."));
+      var use = byCard[c.id];
+      facts.appendChild(fact("Routes", use && list(use.routes).length ? accountRouteList(d, use, true) : accountRoutes(c)));
+      if (c.configuredModel && c.configuredModel.missing === "not_recorded" && c.observedModel && c.observedModel.missing === "not_recorded") {
+        advBody.appendChild(facts);
+        advBody.appendChild(el("p", "sub", "Models are not recorded here: a route chooses the model, and a check never calls one."));
+      } else {
+        facts.appendChild(fact("Configured model", accountEvidence(c.configuredModel)));
+        facts.appendChild(fact("Actual response model", accountEvidence(c.observedModel)));
+        advBody.appendChild(facts);
+      }
       if (accountConnectSupported(c)) {
         var another = el("form", "account-connect-another"), nameID = "connect-label-" + c.id;
         another.setAttribute("aria-label", "Connect another " + connectProvider(c) + " account"); another.method = "post";
@@ -4194,60 +4428,37 @@
           accountConnections[c.id] = { newLabel: name }; accountConnectRequest(c, "prepare");
         });
         input.addEventListener("input", function () { accountConnectionLabels[c.id] = input.value; input.setCustomValidity(""); });
-        body.appendChild(another);
+        advBody.appendChild(another);
       }
-      var facts = el("dl", "work-facts");
-      if (state.identifiers) facts.appendChild(fact("Connection ID", c.id));
-      facts.appendChild(fact("Account identity", "Not verified. The name is your selected label."));
-      var use = byCard[c.id];
-      facts.appendChild(fact("Routes", use && list(use.routes).length ? accountRouteList(d, use, true) : accountRoutes(c)));
-      body.appendChild(facts);
-      if (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity") body.appendChild(accountQuotaBox(c));
-      // The catalog records no model: a route chooses it, and a check never
-      // calls one. Said once, quietly, in place of two empty rows.
-      if (c.configuredModel && c.configuredModel.missing === "not_recorded" && c.observedModel && c.observedModel.missing === "not_recorded") body.appendChild(el("p", "sub", "Models are not recorded here: a route chooses the model, and a check never calls one."));
-      else {
-        facts.appendChild(fact("Configured model", accountEvidence(c.configuredModel)));
-        facts.appendChild(fact("Actual response model", accountEvidence(c.observedModel)));
-      }
-      var reasons = {
-        context_changed: "This selection was saved under a different shell, context, or CLI path (such as Terminal vs an agent session or an updated binary). Review it for this panel or run looptender accounts update before checking again.",
-        unsupported: "Authentication is externally managed or unsupported here. Use the provider's own controls.",
-        timeout: "The latest status check timed out. It did not establish a current login.",
-        cancelled: "The latest status check was cancelled.",
-        version_unavailable: "The selected CLI version could not be established.",
-        status_unavailable: "The latest status command did not establish a recognized login result."
-      };
-      if (c.reason) body.appendChild(el("p", "account-note", reasons[c.reason] || "The latest account check is unavailable."));
-      if (accountCheckSupported(c) && accountCheckEligible(c)) {
-        var cardActions = el("div", "account-quota-actions");
-        cardActions.appendChild(button(accountChecks.active ? "Checking…" : "Check login now", "account-check-" + c.id, "", function () {
-          delete accountChecks.attempted[c.id];
-          runAccountChecks([c], true);
-        }, accountChecks.active));
-        body.appendChild(cardActions);
-      }
-      var removeBox = accountRemoveBox(c);
-      if (removeBox) body.appendChild(removeBox);
+      // A changed context is updated before it is checked again, so it gets no check command.
+      if (c.attention !== "context_changed" && (c.needsPerson || (c.auth && c.auth.checkAgain) || (c.plan && c.plan.checkAgain))) advBody.appendChild(accountCheckHint(c));
+      advDetails.appendChild(advBody);
+      advDetails.addEventListener("toggle", function () { if (advDetails.isConnected) state.accountDetailsOpen[c.id] = advDetails.open; });
+      body.appendChild(advDetails);
       details.appendChild(body);
       details.addEventListener("toggle", function () { if (details.isConnected) state.accountOpen[c.id] = details.open; });
       li.appendChild(details);
-      // A changed context is updated before it is checked again, so it gets no check command.
-      if (c.attention !== "context_changed" && (c.needsPerson || (c.auth && c.auth.checkAgain) || (c.plan && c.plan.checkAgain))) li.appendChild(accountCheckHint(c));
       ul.appendChild(li);
     });
     state.accountOpen = retained;
+    state.accountDetailsOpen = retainedDet;
     if (cards.length) pane.appendChild(ul);
     if (unnamed.length) pane.appendChild(unknownAccountSection(d, unnamed));
     if (d.accountUsesOmitted) pane.appendChild(el("p", "more", d.accountUsesOmitted + " more account entries or route contexts are not shown."));
-    // One footnote for the page, naming the command. With one card its ID
-    // fills in as on the card's own hint.
-    var note = el("p", "sub account-footnote");
-    note.appendChild(document.createTextNode("Login and plan reports do not verify quota, model access or continuing availability. Opening Accounts in a panel with changes allowed runs one bounded check for unchecked or older accounts; to check again manually, run "));
     if (!cards.length) return;
+    // One folded CLI footnote for the page, naming the manual command.
+    var cliFold = el("details", "acct-help-fold acct-cli-fold");
+    cliFold.open = !!state.acctCliHelpOpen;
+    cliFold.appendChild(el("summary", "acct-help-summary", "Manual CLI check command"));
+    var cliBody = el("div", "acct-help-body");
+    var note = el("p", "sub account-footnote");
+    note.appendChild(document.createTextNode("Opening Accounts in Full mode runs one bounded check for unchecked or older accounts; to check again manually in a terminal, run "));
     note.appendChild(accountCheckCommand(cards.length === 1 ? cards[0] : null));
-    note.appendChild(document.createTextNode(cards.length === 1 && state.identifiers ? "." : state.identifiers ? " with the card's connection ID." : " with the card's connection ID (Show identifiers to see it)."));
-    pane.appendChild(note);
+    note.appendChild(document.createTextNode(cards.length === 1 && state.identifiers ? "." : state.identifiers ? " with the card's connection ID." : " with the card's connection ID (turn on Identifiers to see it)."));
+    cliBody.appendChild(note);
+    cliFold.appendChild(cliBody);
+    cliFold.addEventListener("toggle", function () { if (cliFold.isConnected) state.acctCliHelpOpen = cliFold.open; });
+    pane.appendChild(cliFold);
     updateAccountClocks();
     maybeAutoCheckAccounts(cards);
   }
@@ -6410,6 +6621,7 @@
     window.addEventListener("hashchange", function () {
       var nextRoute = route();
       if (nextRoute.view !== "loop" || nextRoute.key !== loopRouteEdit.loopKey) loopRouteReset("", "");
+      if (nextRoute.view !== "accounts") state.acctMgmt = null;
       render(true);
       loadSavedAccounts(false);
       if (wantsUsage(route())) loadUsage();
@@ -6421,6 +6633,8 @@
           ev.preventDefault(); loopRouteEdit.reqSeq += 1; loopRouteEdit.reply = null; loopRouteEdit.message = ""; render(false, true);
         } else if (loopRouteEdit.panel && !loopRouteEdit.busy) {
           ev.preventDefault(); loopRouteSwitchPanel(""); render(false, true);
+        } else if (route().view === "accounts" && state.acctMgmt) {
+          ev.preventDefault(); closeAccountMgmtPanel(true);
         }
         else if (state.activeDrawer) { ev.preventDefault(); state.activeDrawer = null; render(false, true); }
         else if (state.mapSelected) { ev.preventDefault(); state.mapSelected = null; render(false, true); }

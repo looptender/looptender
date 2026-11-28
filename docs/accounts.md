@@ -21,13 +21,20 @@ or refresh provider measurements, including APIs whose refresh:false option
 may still contact a provider.
 
 By default, page refresh reads retained catalog and quota evidence only and
-executes no provider command. Unreleased source can service explicitly enabled
+executes no provider command. The Accounts header shows the running panel's mode
+before you click (`Full mode`, `Controls mode`, `Read-only mode`, or
+`Read-only dock`), keeps explanatory help and manual check commands folded, and
+separates per-card secondary identity/model details behind disclosure. In
+controls or read-only modes, unavailable sign-in and selection-review actions
+offer an explicit guidance panel naming macOS menu entry (**Open Management
+Panel…** or **Manage Account in Panel…**) and terminal restart commands rather
+than dead-end action buttons. Unreleased source can service explicitly enabled
 [automatic usage](#automatic-selected-context-usage-unreleased) through the running updated menu or a non-offline panel/dock process, including a read-only panel; the prior per-selection authorization permits
-only these model-free reads and does not enable any account or loop controls. In a panel started with `--allow-changes`, an explicit reviewed
+only these model-free reads and does not enable any account or loop controls. In a panel started with `--allow-changes` (`Full mode`), supported sign-in offers **Connect…** / **Reconnect…** (showing **Sign-in waiting…** without re-starting while active), unavailable platform sign-in states device support limits directly, and an explicit reviewed
 **Refresh subscription quota** action contacts the selected Codex CLI without a
-model request. Supported Darwin arm64 panels also offer **Retrieve usage** for the inspected native Claude image, with provider freshness always unknown. Same-selection recovery for either provider is a separate local revision review, never a provider read. The read-only panel offers no such action. The `accounts` commands below do not start
+model request. Supported Darwin arm64 panels also offer **Retrieve usage** for the inspected native Claude image, with provider freshness always unknown. Same-selection recovery for either provider is a separate local revision review, never a provider read. The read-only and controls panels offer no such provider action. The `accounts` commands below do not start
 a loop, enroll a route, sign in or copy credentials. Complete provider sign-in in
-the official provider tool first.
+the official provider tool first. (Installed binaries, native menu builds, and live provider sign-in acceptance remain separate from this UI work.)
 
 ## Planned orchestration and Accounts experience
 
