@@ -21,7 +21,7 @@ Each cell is a status and an evidence level:
 | `fixture` | Tests with stand-in executables or fake adapters only. |
 | `none` | Nothing exercises it. |
 
-Antigravity has internal protocol code and no registered adapter, so a loop cannot use it and every row is `missing`.
+Antigravity is a registered, primary-only standalone ACP adapter. Each matrix cell retains its own capability and evidence status; see [Antigravity integration](antigravity.md#installed-testing-and-debugging) for version/platform-specific installed and live checks and remaining gaps. Fallbacks, switch-back, timing probes and IDE-chat attachment remain unavailable; registration does not establish unattended permission recovery or installed Linux/Windows acceptance.
 
 The last column is every [agent defined in configuration](configuration.md#an-agent-defined-in-configuration). What such an agent can do depends on what its definition declares, so most of its cells are `partial` and say which declaration the behaviour needs. All of its evidence is `fixture`: no real agent has been run from a definition.
 
