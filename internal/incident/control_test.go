@@ -129,3 +129,10 @@ func TestControlRecordCallerAndNewEpisode(t *testing.T) {
 		t.Fatalf("%+v %v", j.Records, err)
 	}
 }
+
+func TestCompletionRenewalOperationDoesNotBecomeResume(t *testing.T) {
+	r := clean(Record{Kind: "control", ControlChange: &ControlChange{Operation: "completion_renewal", Caller: "terminal", NewEpisode: true}})
+	if r.ControlChange == nil || r.ControlChange.Operation != "completion_renewal" || r.ControlChange.Caller != "terminal" || r.ControlChange.NewEpisode {
+		t.Fatal(r.ControlChange)
+	}
+}

@@ -182,3 +182,26 @@ func (c *Config) MarkSourcesStale() {
 		c.source.absent, c.source.size = false, -1
 	}
 }
+
+// CheckSourceBytes compares the exact bytes consumed by a caller with the
+// snapshots captured by Load. It performs no IO. Nil means no bytes supplied;
+// a non-nil empty slice means a present empty file. Neither certifies filesystem
+// absence: callers must verify a new destination separately. Parse-only,
+// unavailable and deliberately stale required sources cannot certify reads.
+// CheckSources is still required at use to detect subsequent disk changes.
+func (c *Config) CheckSourceBytes(configRaw, fallbackRaw []byte) error {
+	matches := func(s sourceSnapshot, raw []byte) bool {
+		return s.path != "" && !s.absent && raw != nil && int64(len(raw)) == s.size && sha256.Sum256(raw) == s.sum
+	}
+	if !matches(c.source, configRaw) {
+		return errors.New("configuration read does not match loaded source")
+	}
+	if c.FallbackSet != nil {
+		if !matches(c.FallbackSet.source, fallbackRaw) {
+			return errors.New("fallback read does not match loaded source")
+		}
+	} else if fallbackRaw != nil {
+		return errors.New("unexpected fallback source read")
+	}
+	return nil
+}

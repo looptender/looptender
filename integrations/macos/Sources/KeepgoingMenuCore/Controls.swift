@@ -255,18 +255,18 @@ public enum ConfirmationBuilder {
     /// not run, and the review's own words say to review again.
     public static func current(_ review: Review, now: Date) -> Bool { now < review.expiresAt }
 
-    /// The confirmation for opening the panel with controls. A read-only panel
-    /// that is running is stopped and started again, which the text says;
-    /// one that already allows changes needs no confirmation (nil).
+    /// Starting management, or replacing a weaker/unknown panel, is confirmed
+    /// with the CLI's full exposure statement. Only a running explicit all mode
+    /// is reused without an upgrade; the legacy loop-controls flag is not enough.
     public static func openWithControls(_ status: PanelStatus) -> Confirmation? {
         guard let raw = status.exposure, let exposure = Contract.panelAuthority(raw) else { return nil }
-        if status.running && status.changesAllowed == true { return nil }
-        let restart = status.running
-        let what = "The panel's page will be able to pause, stop and resume loops, and offer a separate review to replace a loop’s own build. " + exposure + " Stop the Panel Page turns them off."
+        if status.runningInFullMode { return nil }
+        let restart = status.requiresManagementRestart
+        let what = exposure + " Opening does not sign in or run a model probe. Stop the Panel Page turns management off."
         return Confirmation(
-            messageText: restart ? "Restart the panel with controls?" : "Open the panel with controls?",
-            informativeText: restart ? "The read-only panel that is running is stopped first; a page open on it stops working. " + what : what,
+            messageText: restart ? "Restart the panel for management?" : "Open the management panel?",
+            informativeText: restart ? "The current panel is stopped first; pages open on it will disconnect. " + what : what,
             buttons: [ConfirmButton(title: "Cancel", destructive: false, command: nil),
-                      ConfirmButton(title: restart ? "Restart with Controls" : "Open with Controls", destructive: false, command: .openPanelWithChanges)])
+                      ConfirmButton(title: restart ? "Restart for Management" : "Open Management Panel", destructive: false, command: .openPanelWithChanges)])
     }
 }

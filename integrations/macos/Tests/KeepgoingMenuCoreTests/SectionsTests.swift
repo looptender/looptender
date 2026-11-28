@@ -184,7 +184,8 @@ final class SectionsTests: XCTestCase {
         let view = NoticeView(recent: [RecentNotice(text: "a stopped.", at: now.addingTimeInterval(-60))], on: NoticeSettings.map(nil))
         let m = MenuBuilder.build(.read(l, at: now), now: now, panel: PanelStatus(schemaVersion: 1, running: true, idleRemainingSeconds: 600, exposure: "x"), update: UpdateOffer(availableLabel: nil, automatic: true), notices: view)
         let bottom = titles(m).drop { $0 != "Pause All Loops…" }
-        XCTAssertEqual(Array(bottom), ["Pause All Loops…", "Stop All Loops…", "Stop the Panel Page", "Recent", "Notify me when…", "Update the menu automatically", "Quit looptender Menu", "Read just now"])
+        XCTAssertEqual(Array(bottom), ["Pause All Loops…", "Stop All Loops…", "Open Management Panel…", "Stop the Panel Page", "Recent", "Notify me when…", "Update the menu automatically", "Quit looptender Menu", "Read just now"])
+        XCTAssertEqual(m.rows.first { $0.title == "Open Management Panel…" }?.command, .openPanelWithChanges)
         XCTAssertEqual(m.rows.first { $0.title == "Recent" }?.submenu.map(\.title), ["a stopped. · 1 min ago"])
         // Every bottom row that can be chosen has an icon.
         XCTAssertTrue(m.rows.filter { $0.isEnabled && $0.kind == .action }.allSatisfy { !$0.symbol.isEmpty })

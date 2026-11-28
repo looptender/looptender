@@ -195,20 +195,19 @@ final class MenuTests: XCTestCase {
         XCTAssertFalse(MenuBuilder.sameShape(MenuBuilder.build(.read(list([loop(["pause", "stop"])]), at: now), now: now).rows, other))
     }
 
-    // One panel item: the panel it opens can pause, stop and resume, so
-    // there is no separate "with controls" item, whatever the CLI says.
-    func testOnePanelItemOpensThePanelThatCanChangeLoops() {
+    func testManagementEntryIsSeparateAndRequiresAuthorityDisclosure() {
         func rows(_ status: PanelStatus?) -> [MenuCommand?] { MenuBuilder.build(.read(three, at: now), now: now, panel: status).rows.map(\.command) }
-        var status = PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil)
-        status.exposure = "While changes are allowed, anyone who can use this browser window can pause, stop and resume loops."
-        for s in [nil, PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil), status] {
+        for s in [nil, PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil)] {
             XCTAssertFalse(rows(s).contains(.openPanelWithChanges))
         }
+        var status = PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil)
+        status.exposure = "While changes are allowed, anyone who can use this browser window can pause, stop and resume loops."
         let model = MenuBuilder.build(.read(three, at: now), now: now, panel: status)
-        XCTAssertEqual(Array(text(model).suffix(4)), ["---", "Quit looptender Menu", "---", "Read just now"])
+        XCTAssertEqual(model.rows.first?.command, .openPanel)
+        XCTAssertEqual(model.rows.filter { $0.command == .openPanelWithChanges }.map(\.title), ["Open Management Panel…"])
         XCTAssertEqual(model.rows.first { $0.command == .openPanel }?.accessibilityHelp, "Opens the looptender panel in your browser, where you can pause, stop and resume loops, each after a review.")
-        // An older menu's "with controls" call still opens the panel.
         XCTAssertEqual(MenuBuilder.arguments(.openPanelWithChanges), ["panel", "--allow-changes"])
+        XCTAssertEqual(MenuBuilder.updateMode(shown: MenuBuilder.build(.read(three, at: now), now: now).rows, next: model.rows, itemCount: model.rows.count - 1, menuOpen: true, hasHighlight: true), .deferred)
     }
 
     func testBadgeAndNeedsLine() {
