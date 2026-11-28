@@ -1,3 +1,4 @@
+import { continuityHostInput, continuityHostOutput } from "./continuity-registration-contract.ts";
 import { taskTextSchema } from "./task-text.ts";
 import { publicationSchema } from "./registry-contract.ts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
@@ -10,6 +11,7 @@ const text = z.string().min(1).max(4096);
 // Only the server calls the host entry. Browser input never selects a binary,
 // host, project path, config path, provider, or arbitrary command arguments.
 export const hostContract = defineRpcContract({
+  continuityCheck: { input: continuityHostInput, output: continuityHostOutput },
   attachment: { input: attachHostInput, output: attachHostResult },
   transfer: { input: transferHostInput, output: z.object({ code: z.number().int(), data: z.unknown(), registration: publicationSchema.optional() }) },
   init: {

@@ -8,7 +8,7 @@ The plugin reports its version with `--client bb-plugin@VERSION` when it reads a
 
 ## Project continuity foundation
 
-Unreleased source includes a disconnected [continuity observation controller](../../docs/project-work.md#continuity-observation-foundation). Injected fixtures verify immediate invalidation, stale-result rejection and single pending inspection through timeout. It is not registered with BB: installing this source does not automatically read a work register, inject a session pointer or enforce a turn-end check. The explicit [project work workflow](../../docs/project-work.md) remains separate.
+Unreleased source offers explicit `continuity attach/status/check/detach` CLI enrollment for an exact thread/project/environment/host and private host paths; see the [command and failure contract](../../docs/project-work.md#explicit-bb-enrollment-source-only). Startup and matched lifecycle events use the packaged read-only Python inspector. Exact next-session instructions preserve the keepgoing skill; children and other tuples inherit nothing. Whole-registry validation and revision/epoch checks refuse stale changes or an oversized pointer. A persisted per-host token quarantines automatic checks after unknown transport outcomes, even across reload/detach/rebind. It never blocks turns or session pointers, changes a hold, or prevents manual reconciliation. Unknown-call clearing and automatic reconnect reconciliation are unsupported. Python 3.9+ on macOS/Linux is required; Windows is unavailable. Fictional SDK/host fixtures establish source behavior only: no installation, real enrollment or live continuity acceptance is claimed.
 
 ## Install
 

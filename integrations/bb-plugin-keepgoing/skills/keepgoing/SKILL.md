@@ -78,3 +78,24 @@ The unreleased `bb looptender usage-events <thread> <latest|after-seq>` bridge i
 for configured opt-in usage collectors. It reads one bounded, filtered Codex
 metadata page, not transcripts. It does not measure subscription savings. Ordinary
 status reads never invoke it; see the repository usage measurement contract.
+
+## Explicit project continuity enrollment (unreleased source)
+
+Only when authorized, use `bb looptender continuity status`, then
+`continuity attach <epoch> <binding-id> <revision> <thread> <project> <environment> <host> <absolute-WORK-path>`
+with optional `--context`, `--assignments`, `--previous` absolute private paths.
+Use the actual contributed plugin namespace if different. See the repository
+project-work guide for the exact command/failure contract. No automatic discovery
+or child inheritance occurs. Every changed path needs a higher revision or new
+binding ID; registry epochs protect concurrent replacement. Oversized pointers
+refuse rather than clipping paths. `continuity check <binding-id> <revision>`
+requests a read-only check; `status` reports the minimized result.
+`continuity detach <epoch> <binding-id> <revision>` removes enrollment only.
+
+The pointer applies only to the next exact provider session. A check is advisory,
+not completion proof, an agent-read receipt or a reason to clear any hold. After
+unknown transport or stale response, automatic checking may remain unavailable
+across reload and reattachment; there is no supported clear/retry or automatic
+reconnect reconciliation. Continue authorized work and the manual file-backed
+workflow normally: this observer never sets a supervision hold or requires a
+person to unblock agent turns. Never edit its database to replay a check.
