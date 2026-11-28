@@ -44,9 +44,26 @@ scheduling is injected: callbacks run after scheduling returns and cancellation
 removes future callbacks. These dependency contracts do not authenticate hosts
 or prove that an inspector read the intended register.
 
-Raw helper parsing, host packaging, resolved identity checks, lifecycle/startup
-and reconnect listeners, session instructions, and installed acceptance remain
-follow-on work. BB lifecycle notifications cannot veto a turn ending; session
+A separate disconnected host inspector packages the canonical four Python
+modules deterministically; it introduces no second WORK validator. Explicit
+absolute input paths and Python 3.9+ on macOS/Linux are required; Windows is
+unsupported. Its fixed isolated `check` invocation never checkpoints. Strict,
+whole-report normalization publishes only counts, verdict and supplied evidence;
+malformed, unfamiliar or oversized output becomes wholly unavailable, never a
+prefix or subset. Run `python3 continuity-host-inspector-generate.py --check`
+from the plugin directory to reject packaged-source drift.
+
+The host runner requests termination after cancellation or its 12-second limit,
+escalates after 250ms, and retains the physical flight and temporary asset until
+Node reports child `close`. Timeout or a successful signal alone never proves
+termination; an unconfirmed close leaves the operation pending. No raw output or
+private exception is logged or returned. Temporary asset cleanup is attempted
+after close. Existing file/permission/source validation remains in the canonical
+helper. This is an offline host foundation, not host enrollment or identity
+proof, listener registration, an installed check or automatic adoption.
+
+Resolved identity checks, lifecycle/startup and reconnect listeners, session
+instructions, and installed acceptance remain follow-on work. BB lifecycle notifications cannot veto a turn ending; session
 instructions apply when a provider session is constructed, not on every existing
 turn. This controller neither checkpoints on idle nor clears holds, dispatches
 work or prevents an agent from forgetting to invoke the explicit workflow.
