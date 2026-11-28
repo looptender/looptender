@@ -274,7 +274,7 @@ func collectInit(e env, o *initOptions, input io.Reader, lookPath func(string) (
 		return nil
 	}
 	r := bufio.NewReader(input)
-	ask := func(label, value string) (string, error) {
+	askLine := func(label, value string) (string, error) {
 		if err := e.ctx.Err(); err != nil {
 			return "", err
 		}
@@ -282,6 +282,14 @@ func collectInit(e env, o *initOptions, input io.Reader, lookPath func(string) (
 		s, err := readInitLine(e.ctx, r)
 		if err != nil {
 			return "", fmt.Errorf("input ended; no setup written (use --non-interactive for scripts): %w", err)
+		}
+		// Enter terminates a wizard answer; other task whitespace is content.
+		return strings.TrimSuffix(strings.TrimSuffix(s, "\n"), "\r"), nil
+	}
+	ask := func(label, value string) (string, error) {
+		s, err := askLine(label, value)
+		if err != nil {
+			return "", err
 		}
 		s = strings.TrimSpace(s)
 		if s == "" {
@@ -322,7 +330,7 @@ func collectInit(e env, o *initOptions, input io.Reader, lookPath func(string) (
 			return err
 		}
 		if o.taskFile == "" {
-			if o.task, err = ask("Task and completion criteria", ""); err != nil {
+			if o.task, err = askLine("Task and completion criteria", ""); err != nil {
 				return err
 			}
 		}
@@ -550,8 +558,7 @@ func planInit(o *initOptions, lookPath func(string) (string, error)) (map[string
 		}
 		o.task = string(b)
 	}
-	o.task = strings.TrimSpace(o.task)
-	if o.task == "" {
+	if strings.TrimSpace(o.task) == "" {
 		return fail(errors.New("task must not be empty"))
 	}
 	// Validate names before using them as path components.
@@ -755,7 +762,7 @@ func planInit(o *initOptions, lookPath func(string) (string, error)) (map[string
 	files[config.FileName] = b
 	files["prompt.md"] = []byte(initPrompt(o.task, filepath.Join(o.directory, config.FileName)))
 	if o.withGoal {
-		files["task.md"] = []byte(o.task + "\n")
+		files["task.md"] = []byte(o.task)
 		files["prompt.md"] = []byte(initGoalPrompt(filepath.Join(o.directory, config.FileName)))
 	}
 	return files, cfg, nil

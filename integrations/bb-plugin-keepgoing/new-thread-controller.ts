@@ -15,6 +15,7 @@
 // The plugin never creates, sends to or changes a thread. The task text is
 // held in memory only until setup has been asked to create the loop, and
 // reaches keepgoing through the existing setup flow, on stdin.
+import { taskTextProblem } from "./task-text.ts";
 import type { SetupResult } from "./setup-contract.ts";
 import { boundsPhrase, loopName, markerSchema, newThreadInput, planBounds, sameBounds, stricter, type Bounds, type NewThreadInput, type NewThreadResult, type Outcome, type StartMode } from "./new-thread-contract.ts";
 
@@ -246,7 +247,8 @@ export function createNewThreadController(d: NewThreadDependencies) {
         intent.threadId = x.threadId; // single use, whatever happens next
         const exact = x.projectId === intent.projectId && x.attempt === "start-turn" && x.initiator === "user" && x.senderThreadId === null && x.parentThreadId === null && x.sourceThreadId === null && x.queued === 0 && x.threadCreatedAt >= intent.createdAt;
         if (!exact) return explain(x.threadId, NOT_MATCHED);
-        if (!x.text.trim() || Buffer.byteLength(x.text) > 262144) return explain(x.threadId, "The first message has no text looptender can use as a task, or is larger than 256 KiB. Nothing was created. Use Add to Looptender to enter a task.");
+        const taskProblem = taskTextProblem(x.text);
+        if (taskProblem) return explain(x.threadId, `${taskProblem} Nothing was created. Looptender left the message unchanged. The same limit applies in Add to Looptender; this plugin cannot import a larger task.`);
         jobs.set(x.threadId, { threadId: x.threadId, task: x.text, bounds: intent.bounds, mode: intent.mode, expires: d.now() + JOB_WAIT_MS, outcome: { state: "waiting", message: "looptender is waiting for this thread's first turn to start, then sets it up from the first message." } });
       } catch { /* never fail a send */ }
     },

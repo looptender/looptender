@@ -1,3 +1,4 @@
+import { taskTextSchema } from "./task-text.ts";
 import { publicationSchema } from "./registry-contract.ts";
 import { z } from "zod";
 import { goalSummarySchema, goalStateSchema } from "./status-details.ts";
@@ -87,7 +88,7 @@ export const setupInput = z.object({
   action: z.enum(["preview", "create", "inspect", "start"]), threadId: text,
   withGoal: z.boolean().optional(),
   name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional(),
-  task: z.string().max(262144).optional(), ticket: text.optional(),
+  task: taskTextSchema.optional(), ticket: text.optional(),
   // Configuration path of an existing loop this setup continues (--succeeds).
   succeeds: text.optional(),
   // Follow the person's standard route list for handoffs. Off unless chosen.
@@ -174,7 +175,7 @@ export const setupResult = z.object({
   standardRoutes: z.literal(true).optional(),
   // The exact task a preview would send, so the person sees it. Only for the
   // built-in task, whose text the plugin wrote.
-  task: z.string().max(262144).optional(),
+  task: taskTextSchema.optional(),
   // On a thread with no setup: "none" when BB's metadata says the thread has
   // not had a turn yet, "unknown" when it cannot tell. Absent from older builds.
   conversation: conversationSchema.optional(),
