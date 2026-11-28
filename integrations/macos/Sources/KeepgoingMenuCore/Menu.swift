@@ -211,7 +211,10 @@ extension Contract {
     public static func panelList(_ data: Data, exit: Int32) throws -> PanelList {
         guard data.count <= 1_048_576 else { throw ClientFailure.outputLimit }
         let result: PanelList
-        do { result = try JSONDecoder().decode(PanelList.self, from: data) }
+        do {
+            try QuotaJSON.validateProvenanceKeys(data)
+            result = try JSONDecoder().decode(PanelList.self, from: data)
+        }
         catch { throw ClientFailure.invalidResponse }
         guard result.schemaVersion == 1 else { throw ClientFailure.unsupported }
         // An unreadable registry exits 1 and still says so in a valid reply.
@@ -472,9 +475,10 @@ public enum MenuBuilder {
     /// in place and the status line says a read is under way. `panel` is the
     /// panel server's status when it was read; the row that stops it is there
     /// only while it is running.
-    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil, notices: NoticeView? = nil) -> MenuModel {
+    public static func build(_ reading: MenuReading, now: Date, notice: String? = nil, refreshing: Bool = false, panel: PanelStatus? = nil, update: UpdateOffer? = nil, notices: NoticeView? = nil, buildStamp: MenuBuildStamp? = nil) -> MenuModel {
         // The first row is always there and always tries, whatever was read.
         var rows = [action("Open looptender Panel", .openPanel, symbol: "macwindow", help: "Opens the looptender panel in your browser, where you can pause, stop and resume loops, each after a review.")]
+        if let buildStamp { rows.append(contentsOf: identityRows(buildStamp, reading: reading, update: update)) }
         var badge = ""
         var iconLabel = "looptender"
         var line: String

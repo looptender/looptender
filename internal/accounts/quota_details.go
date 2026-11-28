@@ -86,6 +86,7 @@ func ValidQuotaDetails(d *QuotaDetails) bool {
 // QuotaSummary is the same bounded saved-evidence projection for web and native.
 // Rows never combine buckets, account selections, route evidence or units.
 type QuotaSummary struct {
+	Provenance        *QuotaProvenance  `json:"provenance,omitempty"`
 	State             string            `json:"state"`
 	Text              string            `json:"text"`
 	Source            string            `json:"source,omitempty"`
@@ -98,6 +99,26 @@ type QuotaSummary struct {
 	FailedRefreshAt   *time.Time        `json:"failedRefreshAt,omitempty"`
 	FailedRefreshText string            `json:"failedRefreshText,omitempty"`
 }
+
+// QuotaProvenance distinguishes local successful retrieval completion from a
+// provider measurement. Legacy Codex observedAt and fresh/stale describe local
+// read recency, not provider attestation. No current reader supplies provider
+// observation time; v1 therefore requires an explicit null providerObservedAt.
+// This projection is not persisted into the quota cache.
+type QuotaProvenance struct {
+	Version            int        `json:"version"`
+	RetrievedAt        time.Time  `json:"retrievedAt"`
+	ProviderObservedAt *time.Time `json:"providerObservedAt"`
+}
+
+func (p QuotaProvenance) MarshalJSON() ([]byte, error) {
+	if p.Version != 1 || !quotaTime(p.RetrievedAt) || p.ProviderObservedAt != nil {
+		return nil, ErrInvalid
+	}
+	type plain QuotaProvenance
+	return json.Marshal(plain(p))
+}
+
 type QuotaSummaryRow struct {
 	Name             string     `json:"name"`
 	Text             string     `json:"text"`
@@ -159,7 +180,12 @@ func SummarizeQuota(v QuotaView, now time.Time) QuotaSummary {
 	s.Source = v.Source
 	s.ObservedAt = v.ObservedAt
 	s.RetrievedAt = v.RetrievedAt
-	s.Text = "Saved selected-context quota; account identity and live thread binding are not verified."
+	at := v.RetrievedAt
+	if codex {
+		at = v.ObservedAt // legacy name for the collector's post-RPC/parse clock
+	}
+	s.Provenance = &QuotaProvenance{Version: 1, RetrievedAt: *at}
+	s.Text = "Saved selected-context quota; provider observation time is unavailable. Collection time does not verify provider freshness. Account identity and live thread binding are not verified."
 	if claude || antigravity {
 		s.Text = "Saved selected-context quota; provider freshness unknown. Retrieval may return cached or seeded data. Account identity and live thread binding are not verified."
 	}

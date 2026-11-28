@@ -110,3 +110,28 @@ func TestDoctorLowDiskHintIsTwoStatements(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+func TestDiskSpaceTimestampBelongsToMeasurementNotView(t *testing.T) {
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("fictional", 3600))
+	clock := at
+	saved := diskspace.Measure
+	t.Cleanup(func() { diskspace.Measure = saved })
+	diskspace.Measure = func(string) (diskspace.Reading, error) {
+		clock = clock.Add(10 * time.Minute) // View construction happens much later.
+		return diskspace.Reading{Available: 60 << 20, Total: 100 << 30}, nil
+	}
+	s := describeDiskSpaceWithClock(t.TempDir(), func() time.Time { return clock })
+	if s.MeasuredAt == nil || !s.MeasuredAt.Equal(at) || s.MeasuredAt.Location() != time.UTC || s.Source != "filesystem" || s.Level != "critical" {
+		t.Fatalf("measurement evidence: %+v", s)
+	}
+	b, err := json.Marshal(s)
+	if err != nil || !bytes.Contains(b, []byte(`"measuredAt":"2026-01-02T02:04:05Z"`)) || bytes.Contains(b, []byte(`"volume":`)) {
+		t.Fatalf("wire evidence: %s %v", b, err)
+	}
+	diskspace.Measure = func(string) (diskspace.Reading, error) { return diskspace.Reading{}, os.ErrPermission }
+	s = describeDiskSpaceWithClock(t.TempDir(), func() time.Time { return clock })
+	b, err = json.Marshal(s)
+	if err != nil || s.Level != "unknown" || s.MeasuredAt != nil || bytes.Contains(b, []byte(`measuredAt`)) {
+		t.Fatalf("failed measurement invented a sample: %s %v", b, err)
+	}
+}

@@ -21,6 +21,7 @@ public struct AccountQuota: Decodable, Equatable {
     public let summary: AccountQuotaSummary
 }
 public struct AccountQuotaSummary: Decodable, Equatable {
+    public var provenance: AccountQuotaProvenance? = nil
     public let state: String
     public let text: String
     public let source: String?
@@ -32,6 +33,87 @@ public struct AccountQuotaSummary: Decodable, Equatable {
     public let omitted: Int?
     public let failedRefreshAt: String?
     public let failedRefreshText: String?
+}
+/// Version 1 attests only local retrieval completion, never provider measurement time.
+public struct AccountQuotaProvenance: Decodable, Equatable {
+    public let version: Int
+    public let retrievedAt: String
+    public let providerObservedAt: String?
+
+    private struct Key: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init(_ value: String) { stringValue = value }
+        init?(stringValue: String) { self.init(stringValue) }
+        init?(intValue: Int) { return nil }
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        guard Set(c.allKeys.map(\.stringValue)) == Set(["version", "retrievedAt", "providerObservedAt"]) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unsupported quota provenance keys"))
+        }
+        version = try c.decode(Int.self, forKey: Key("version"))
+        retrievedAt = try c.decode(String.self, forKey: Key("retrievedAt"))
+        guard version == 1, Self.validRetrievalTime(retrievedAt),
+              try c.decodeNil(forKey: Key("providerObservedAt")) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unsupported quota provenance version or time"))
+        }
+        providerObservedAt = nil
+    }
+    static func matchesLegacyTime(_ value: String, _ legacy: String?) -> Bool {
+        func parts(_ text: String) -> (Date, String)? {
+            guard validRetrievalTime(text) else { return nil }
+            var whole = text, fraction = ""
+            if let range = text.range(of: #"\.[0-9]{1,9}"#, options: .regularExpression) {
+                fraction = String(text[range].dropFirst())
+                whole.removeSubrange(range)
+            }
+            guard let seconds = Contract.date(whole) else { return nil }
+            return (seconds, fraction + String(repeating: "0", count: 9 - fraction.count))
+        }
+        guard let legacy, let a = parts(value), let b = parts(legacy) else { return false }
+        // Date alone loses sub-microsecond differences at current epochs.
+        return a.0 == b.0 && a.1 == b.1
+    }
+    private static func validRetrievalTime(_ value: String) -> Bool {
+        // Foundation's ISO parser accepts trailing text and normalizes invalid
+        // calendar days. The additive contract requires an entire RFC3339 time.
+        let pattern = #"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,9})?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"#
+        guard value.utf8.count <= 35,
+              let match = value.range(of: pattern, options: .regularExpression),
+              match == value.startIndex..<value.endIndex else { return false }
+        let calendar = DateFormatter()
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)
+        calendar.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        calendar.isLenient = false
+        return calendar.date(from: String(value.prefix(19))) != nil && Contract.date(value) != nil
+    }
+}
+extension AccountQuotaSummary {
+    private enum CodingKeys: String, CodingKey {
+        case provenance, state, text, source, observedAt, retrievedAt, freshness, rows, partial, omitted, failedRefreshAt, failedRefreshText
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Only absence permits legacy interpretation. Present null or malformed
+        // provenance must not silently fall back to the historical time fields.
+        provenance = c.contains(.provenance) ? try c.decode(AccountQuotaProvenance.self, forKey: .provenance) : nil
+        state = try c.decode(String.self, forKey: .state)
+        text = try c.decode(String.self, forKey: .text)
+        source = try c.decodeIfPresent(String.self, forKey: .source)
+        observedAt = try c.decodeIfPresent(String.self, forKey: .observedAt)
+        retrievedAt = try c.decodeIfPresent(String.self, forKey: .retrievedAt)
+        freshness = try c.decode(String.self, forKey: .freshness)
+        rows = try c.decode([AccountQuotaRow].self, forKey: .rows)
+        partial = try c.decodeIfPresent(Bool.self, forKey: .partial)
+        omitted = try c.decodeIfPresent(Int.self, forKey: .omitted)
+        failedRefreshAt = try c.decodeIfPresent(String.self, forKey: .failedRefreshAt)
+        failedRefreshText = try c.decodeIfPresent(String.self, forKey: .failedRefreshText)
+    }
+    /// Historical observedAt was also a local read time, not provider proof.
+    var localRetrievedAt: String? { provenance?.retrievedAt ?? retrievedAt ?? observedAt }
 }
 public struct AccountQuotaRow: Decodable, Equatable {
     public let name: String
@@ -62,6 +144,10 @@ extension Contract {
                   q.failedRefreshAt == nil || date(q.failedRefreshAt) != nil,
                   q.failedRefreshText == nil || quotaText(q.failedRefreshText!),
                   q.source == nil || ["codex account/rateLimits/read", "claude:get_usage", "agy:/usage"].contains(q.source!) else { return false }
+            if let p = q.provenance {
+                guard q.state == "reported", p.version == 1, p.providerObservedAt == nil,
+                      AccountQuotaProvenance.matchesLegacyTime(p.retrievedAt, q.retrievedAt ?? q.observedAt) else { return false }
+            }
             if q.state == "reported" {
                 let codex = a.provider == "codex" && q.source == "codex account/rateLimits/read" && q.observedAt != nil && q.retrievedAt == nil && ["fresh", "stale"].contains(q.freshness)
                 let claude = a.provider == "claude-code" && q.source == "claude:get_usage" && q.retrievedAt != nil && q.observedAt == nil && q.freshness == "provider_unknown"
@@ -123,19 +209,30 @@ extension MenuBuilder {
         return "Resets in \(quotaDuration(at.timeIntervalSince(now)))"
     }
     static func quotaAge(_ summary: AccountQuotaSummary, now: Date) -> String {
-        let retrieved = summary.retrievedAt != nil
-        guard let at = Contract.date(summary.retrievedAt ?? summary.observedAt), at <= now else { return "Reading time unavailable · check device clock" }
+        guard let at = Contract.date(summary.localRetrievedAt), at <= now else { return "Reading time unavailable · check device clock" }
         let age = now.timeIntervalSince(at)
         let stamp = age < 60 ? "just now" : "\(quotaDuration(age)) ago"
-        if retrieved { return "Retrieved \(stamp) · provider freshness unknown" }
-        return "Read \(stamp) · " + (summary.freshness == "stale" || age > 1800 ? "older reading" : "saved snapshot")
+        return "Last successful fetch \(stamp) · " + (summary.freshness == "stale" || age > 1800 ? "older reading · " : "") + "provider freshness unknown"
     }
     static func quotaAccountRow(_ a: AccountQuota, now: Date = Date()) -> MenuRow {
         let q = a.summary
         let open = MenuRow(kind: .action, title: "Open Account in Panel…", detail: "", symbol: "macwindow", accessibilityLabel: "Open account \(a.label) in panel", accessibilityHelp: "Review quota refresh or automatic usage settings in Accounts with changes allowed. Opening this page does not refresh usage or sign in.", toolTip: "", command: a.id.map { .openAccount(id: $0) } ?? .openPanel)
         var children = [open]
+        // Collection facts precede quota history, without granting new authority.
+        if let u = a.usageUpdating {
+            children.append(quotaStatus(u.text))
+            if let next = u.nextAttemptAt, let at = Contract.date(next) {
+                let remaining = at.timeIntervalSince(now)
+                let text = remaining > 0 ? "Next eligible fetch in \(quotaDuration(remaining))" : "Fetch eligible now · waiting for scheduler"
+                children.append(quotaStatus(text))
+                children.append(quotaStatus("Next eligible: \(DateFormatter.localizedString(from: at, dateStyle: .medium, timeStyle: .short)) (local time) · \(next)"))
+            }
+        } else { children.append(quotaStatus("Automatic update status unavailable from this CLI")) }
         if q.state == "reported" { children.append(quotaStatus(quotaAge(q, now: now))) }
-        else { children.append(quotaStatus("Quota unavailable · \(q.text)")) }
+        else { children.append(quotaStatus("No successful quota reading · \(q.text)")) }
+        if let at = q.localRetrievedAt { children.append(quotaStatus("Last successful fetch \(at) (local retrieval time)")) }
+        if q.state == "reported" { children.append(quotaStatus("Provider observation time unavailable; fetch time is local.")) }
+        if let failed = q.failedRefreshAt { children.append(quotaStatus("Refresh failed \(failed). \(q.failedRefreshText ?? "Earlier evidence retains its time.")")) }
         // Active windows precede expired history, retaining provider order within each group.
         let indexed = Array(q.rows.enumerated())
         let ordered = indexed.filter { !quotaEnded($0.element, now: now) } + indexed.filter { quotaEnded($0.element, now: now) }
@@ -158,15 +255,8 @@ extension MenuBuilder {
         }
         if q.rows.count > 8 { children.append(quotaStatus("\(q.rows.count - 8) more quota details in the panel.")) }
         if q.partial == true || (q.omitted ?? 0) > 0 { children.append(quotaStatus("Partial quota evidence; missing values are not zero.")) }
-        if let u = a.usageUpdating {
-            children.append(quotaStatus(u.text))
-            if let next = u.nextAttemptAt { children.append(quotaStatus("Next eligible fetch \(next)")) }
-        }
-        if let at = q.retrievedAt ?? q.observedAt { children.append(quotaStatus("Last successful fetch \(at)")) }
-        if let at = q.retrievedAt ?? q.observedAt { children.append(quotaStatus("\(q.retrievedAt == nil ? "Read" : "Retrieved") \(at)")) }
         if q.retrievedAt != nil { children.append(quotaStatus("Provider freshness unknown; usage may be cached or seeded.")) }
         if let source = q.source { children.append(quotaStatus("Source: \(source)")) }
-        if let failed = q.failedRefreshAt { children.append(quotaStatus("Refresh failed \(failed). \(q.failedRefreshText ?? "Earlier evidence retains its time.")")) }
         if q.state == "reported" { children.append(quotaStatus(q.text)) }
         children.append(quotaStatus("Refresh usage: open this account in Accounts to review retrieval or Keep usage updated settings."))
         let windows = q.rows.filter { quotaWindow($0) }
@@ -182,9 +272,10 @@ extension MenuBuilder {
         else if let limiting {
             let value = limiting.remainingPercent.map { "\($0)% left" } ?? limiting.usedPercent.map { "\($0)% used" } ?? "Quota details recorded"
             detail = value + " · " + quotaReset(limiting, now: now)
-        } else { detail = windows.isEmpty ? (q.partial == true ? "Partial quota evidence" : "Quota details recorded") : "Reset passed · refresh needed" }
+        } else { detail = windows.isEmpty ? (q.partial == true ? "Partial quota evidence" : "Quota details recorded") : "Reading out of date" }
         if let state = a.usageUpdating?.state {
-            if ["waiting", "paused"].contains(state) { detail += " · updates paused" }
+            if state == "off" { detail += " · updates off" }
+            else if ["waiting", "paused"].contains(state) { detail += " · updates paused" }
             else if state == "backoff" { detail += " · fetch failed" }
             else if state == "unavailable" { detail += " · update settings unavailable" }
         }

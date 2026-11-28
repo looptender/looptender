@@ -1,11 +1,17 @@
-# Sessionpipe integration (unreleased)
+# Sessionpipe integration
+
+The IN, OUT and opt-in idle-wake slices described here are included in the v0.3.0 source tag.
+Release availability does not certify installed artifacts, receiver/GUI/phone
+acceptance or live wakes. The stricter newly read sequence validation below is
+unreleased source. See the dated [upstream review](#current-upstream-review-2026-11-27).
 
 Source has two separate sessionpipe integrations:
 
 - **IN, [observed sessions](#observed-sessions-in-unreleased):** `adapter: sessionpipe`
   observes one agent session that sessionpipe reports, from a tier-0 file sink
-  the person adds. The session is observed, never woken: looptender never sends
-  to, wakes, re-prompts or stops it.
+  the person adds. By default the session is observed, never woken.
+  [Explicit `wake_only`](#waking-an-observed-session-opt-in-unreleased) is separate;
+  observation alone never sends, re-prompts or stops it.
 - **OUT, reporting:** opt-in reports to a receiver the person runs, described
   from [Setup](#setup) on. The report format is not a supervision adapter. It
   cannot observe, wake, send to, stop or own an agent session, answer a hold, or
@@ -14,7 +20,9 @@ Source has two separate sessionpipe integrations:
 provider error or decide failover. Unknown, refused and restricted provider
 results retain their existing handling.
 
-## Observed sessions (IN, unreleased)
+<a id="observed-sessions-in-unreleased"></a>
+
+## Observed sessions (IN)
 
 A loop with `adapter: sessionpipe` watches one session of any agent sessionpipe
 hooks (Claude Code, Codex, Gemini CLI, Antigravity, Devin and the others its
@@ -115,8 +123,8 @@ lines of the one configured session and, of those, only these:
 
 - **Silence is unknown, never idle.** A session that has said nothing for
   `stale_after` reads unknown, so does one not yet seen, and so does the file
-  while a backlog over 4 MiB is being read over several checks. Four harnesses
-  never send `session.ended`.
+  while a backlog over 4 MiB is being read over several checks. Some harnesses
+  never send `session.ended`; silence is not proof of completion.
 - **No text is kept.** Each line is decoded into a fixed set of fields:
   protocol, type, time, tier, harness name, session id and sequence, and the
   data keys `reason`, `kind`, `attention_id`, `background` and `turn_id`. Each
@@ -125,6 +133,13 @@ lines of the one configured session and, of those, only these:
   The session's title (by default the first prompt, cut short), folder,
   repository, branch, model, account and every other key are never decoded,
   stored, logged or shown. Unknown and extension event types are ignored.
+- **Sequence validity (unreleased).** A newly read event must have a session
+  sequence that is a nonnegative JSON integer no larger than `2^53 - 1`.
+  Missing/null, negative, fractional, string and out-of-range sequences are
+  skipped as malformed: they establish no state and do not refresh an older
+  observation. Zero, sequence gaps and the maximum safe integer remain valid;
+  repeated/lower sequences are ignored. This validates new input, not an
+  audit or repair of reader state saved by an older binary.
 - **Tier 0 only.** Every line must say tier 0 and protocol 1. One that does not
   makes the whole file unreadable for this loop until it is replaced: a higher
   tier carries words and paths. A line over 64 KiB or that is not JSON is
@@ -170,7 +185,9 @@ idle", omit Stop, and label pause/resume actions as checking controls.
 `looptender stop` is still accepted: it ends the checks and leaves the session
 alone.
 
-### Waking an observed session (opt-in, unreleased)
+<a id="waking-an-observed-session-opt-in-unreleased"></a>
+
+### Waking an observed session (opt-in)
 
 A loop may opt in to waking the session when it is idle:
 
@@ -248,8 +265,9 @@ loop:
 - **What you set up.** In sessionpipe: `sessionpipe ask on`, and the session's
   folder on `sessionpipe control folders`. looptender runs neither; doctor's
   `send` check says when asking is off or the service is not running.
-- **Not possible.** Stopping a wake: sessionpipe has no local cancel. A
-  delivered message stays delivered.
+- **Not exposed by this adapter.** looptender does not cancel a Sessionpipe
+  wake or retract a delivered message. Current upstream control capability
+  growth does not grant this observer stop authority.
 - **Before you opt in: builds from before this change refuse the key.**
   `sessionpipe.send` is a new configuration key, and configuration is read
   strictly, so an older looptender (a daemon still running the previous
@@ -287,10 +305,10 @@ Without the `sessionpipe` command, doctor warns and still checks the file.
   the attention message. So every error is unknown, and no limit or reset is
   read. Reading them needs sessionpipe to offer those words or numbers at tier 0.
 - **Nudges, re-prompts, stop and takeover.** Only the opt-in idle wake above
-  is sent. `ask` has no local cancel, waits for the agent's whole answer, and
-  takes no account or effort, so a stop, a queued nudge, a re-prompt after an
-  error of unknown class, and a takeover onto another account or a new
-  session are not done.
+  is sent through the existing bounded ask path. This adapter exposes no
+  cancel, queued nudge, re-prompt or account/session takeover. These are
+  implementation and authorization limits, not a claim that current upstream
+  lacks related control capabilities.
 - **Children, context window and per-turn usage.**
 - **Fallbacks, routes, switch-back and timing**, which configuration refuses.
 - **Live acceptance.** Observing was run once against one real headless Claude
@@ -478,32 +496,64 @@ unverified. Local native fixtures ran on macOS; record exact-head hosted native
 fixture execution separately in the PR, without treating it as live platform
 acceptance. No subprocess or OS control is added.
 
-**IN is separate:** reading a configured filtered tier-0 file sink needs F8 typed
-intake and an owner decision about observing a loop that cannot be woken. Never
-read the full-detail outbox. Tier-0 input has no usage limits; silence is unknown,
-not idle. No general Sessionpipe ingest CLI or API for agent observation/send/stop
-was established by this work. Those functions are not exposed speculatively.
+**IN is separate:** the implemented adapter reads the configured tier-0 file
+sink at check time through the ordinary adapter interface; it does not depend
+on F8 typed intake. Never read the full-detail outbox. Tier-0 input has no usage
+limits; silence is unknown, not idle. This does not expose a general ingest or
+remote-control API. Default observation and explicit `wake_only` stay separate.
 
-**BACK remains held by #233:** the signed control channel targets harnesses and
-has no documented command for resuming a looptender hold. It requires an explicit
-owner decision and upstream protocol/daemon/board support. The OUT slice grants no
-remote-answer or coordinator-message authority.
+**BACK remains held by #233:** current upstream has signed prompt, permission,
+cancel, start and pool controls, plus device enrollment. None authorizes this
+integration to resume a looptender hold. At the current reviewed pin no
+looptender-hold command was established. Any future proposal must recheck the
+then-current contract and obtain explicit owner authorization; the OUT slice
+grants no remote-answer or coordinator-message authority.
+
+## Current upstream review (2026-11-27)
+
+Primary release metadata and source were read at core/CLI
+[`a41f397`](https://github.com/spacesheep-dev/sessionpipe/tree/a41f397d8f9ab61cfc2bf39a98cc73715d5933d1)
+(package and latest published GitHub release
+[0.18.6](https://github.com/spacesheep-dev/sessionpipe/releases/tag/v0.18.6)) and GUI
+[`783e560`](https://github.com/spacesheep-dev/sessionpipe-gui/tree/783e560d172dd3786e446c6d8bcfd39e658912b7)
+(source version 0.8.12; latest published GitHub release at capture was
+[0.8.11](https://github.com/spacesheep-dev/sessionpipe-gui/releases/tag/v0.8.11)).
+These are read-only source checks, not installation or execution evidence.
+
+The v1 tier-0 event vocabulary and required nonnegative sequence contract remain
+compatible with the earlier `06b8268` pin. Current proto rules bound JSON integers
+to `2^53 - 1`. The registry now includes Cursor, Copilot CLI, Droid, Kiro and
+OpenCode alongside the original harnesses and Autopilot; this is upstream's
+registry, not our cross-harness acceptance. CLI ask and account/pool behavior has
+changed since the historical 0.18.2 lab; no new ask or account behavior was tested.
+
+Current [HTTP](https://github.com/spacesheep-dev/sessionpipe/blob/a41f397d8f9ab61cfc2bf39a98cc73715d5933d1/spec/HTTP.md)
+also permits signed-only event requests and clarifies 403/backoff behavior;
+looptender's bounded bearer-only, best-effort subset remains narrower than full
+sender conformance. Current GUI source implements receiver ingestion, stale and
+attention readings, mobile layouts, signed controls and plugins. Its capabilities
+must not be inferred from the dated research or the core receiver placeholder.
+Neither current GUI/phone rendering nor receipt/notification repetition has been
+verified for this integration. The highest-value acceptance follow-up is an
+isolated current-GUI fictional harness with exact-build private screenshots for
+needs-you, ended, stale/disconnected and unavailable states; keep it distinct from
+installed/live acceptance and never expose credentials or transcripts in imagery.
 
 ## Protocol coverage matrix
 
 | Surface | Supported and exercised | Deliberate limits / next work |
 | --- | --- | --- |
-| Compatibility | Protocol integer 1; published draft core source `06b8268`, local fork built core 0.11.0 schema/data/privacy validation | Earlier research pins are not acceptance evidence; future incompatible integers refuse. No release or installed-package claim. |
+| Compatibility | Protocol integer 1; current source review core/CLI 0.18.6 at `a41f397`; historical built-core 0.11.0 schema/data/privacy demo | Earlier research pins are not acceptance evidence; future incompatible integers refuse. Existing slices are in v0.3.0; no current installed-package acceptance claim. |
 | Discovery | Origin-root GET, protocol/events/bearer/tier checks; same-origin endpoint; absent batch limits use 50/262144 | Per-report read, no 24-hour cache; no authenticated discovery, redirected discovery or foreign endpoint. |
 | Event endpoint | POST `{events:[...]}`, content type, bearer and `sessionpipe-protocol: 1`; advertised two-event/byte bounds | No native endpoint, file sink, outbox, control or pairing endpoint. No webhook HMAC is needed for v1 bearer delivery. |
 | Envelopes / fields | Protocol, ULID, fixed harness, opaque session ID, reserved seq, UTC milliseconds, tier 0, empty privacy rulesets, typed data | No source/loop/task names, transcript, arbitrary report data, account/model, machine/path/repo/title/URL or attention words. |
 | Event vocabulary | `session.started`, `attention.needed`, `session.ended`; empty-data `looptender.<report>` extensions | No invented provider turns, limit readings, periodic heartbeat, attention-cleared/answer assertion, backfill or forget. Extensions may need a receiver view. |
-| Authentication / errors | Explicit bearer config; token withheld from discovery and errors; HTTP/transport failures diagnostic only; persistent POST-401 pause; no redirects | No automatic reauth, login or credential copying. Resume affects future reports only; no durable replay. Error classification never reaches routing. |
+| Authentication / errors | Explicit bearer config; token withheld from discovery and errors; HTTP/transport failures diagnostic only; persistent POST-401 pause; no redirects | Bearer-only subset: no signed-only batches or automatic reauth, login or credential copying. Resume affects future reports only; no durable replay. Error classification never reaches routing. |
 | Acknowledgements | Only 202; accepted+duplicates exactly two, zero rejected, valid tier; duplicate acknowledgement accepted | Invalid/oversized/missing/rejected/mismatched responses remain unverified; no automatic resend or cursor advance. |
 | Restart / concurrency | Fresh CLI processes retain identity and sequences; private two-sequence reservation under nonwaiting delivery lock; separate nonwaiting report gate serializes sends/resume; rejected/corrupt state refuses send | Contention can lose a best-effort report. No replay/outbox/indefinite retry, crash-before-POST recovery or power-loss guarantee. |
-| Evidence | Native macOS fictional Go receivers, race tests, optional local demo with actual built core schema/data/filter | Local reference receiver package is a placeholder. This is not upstream receiver/conformance certification, GUI/phone or live provider acceptance. |
+| Evidence | Native macOS fictional Go receivers, race tests, optional local demo with actual built core schema/data/filter | Core reference receiver entry remains a placeholder; the separate current GUI implements a receiver, but was not exercised here. This is not upstream receiver/conformance certification, GUI/phone or live provider acceptance. |
 | IN | [Observed sessions](#observed-sessions-in-unreleased): one session from a person-added tier-0 file sink, allowlisted types and words; [opt-in idle wakes](#waking-an-observed-session-opt-in-unreleased) through `sessionpipe ask` | No error classes or usage (tier 1 only); no stop, nudge, re-prompt or takeover; observing checked live once, no wake delivered live yet. |
-| BACK | None exposed; #233 remains held | Needs owner authorization plus upstream non-harness control dispatch and a looptender-hold command/board support. Existing prompt/cancel commands cannot grant loop authority. |
+| BACK | None exposed; #233 remains held | Explicit authorization is still held. Current signed harness controls and GUI plugins do not grant looptender hold authority; recheck upstream before any future proposal. |
 
 ## Repeatable local demo and upstream documentation preparation
 
@@ -533,5 +583,6 @@ for review with this change. It is not submitted or published. The next
 maintainable OUT work is durable pending batches, restart replay with the same
 identity/seq, bounded worker backoff, proved
 with core delivery scenarios. Those are local implementation gaps, not missing
-upstream protocol capabilities. IN requires local ownership/intake work; BACK has
-an actual documented upstream capability gap as well as the owner hold.
+upstream protocol capabilities. IN already reads through the ordinary adapter;
+F8 remains an optional early-check direction. BACK remains an explicit owner hold,
+independent of upstream capability growth.

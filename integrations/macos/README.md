@@ -193,11 +193,29 @@ rows with saved quota detail in submenus. The same minimized summary powers
 Accounts in the web panel: named windows, used/remaining values, independent
 reset times, source/read time, stale/ended/partial and failed-refresh evidence.
 Credits and individual limits retain provider units. No currency, identity,
-account equivalence or access is inferred. Claude summaries show retrieval time
-and provider freshness unknown, even just after retrieval: the inspected native
-reply may contain cached or seeded usage. Strict decoding binds the provider,
+account equivalence or access is inferred. Provider measurement time and
+freshness are unknown for all current supported providers, even just after a
+successful local fetch. Claude/Antigravity replies may contain cached or seeded
+usage. Strict decoding binds the provider,
 source and timestamp type; contradictory evidence refuses rather than becoming
 fresh or zero. Route readings stay separate.
+
+Codex's historical `observedAt` and `fresh`/`stale` wire fields remain compatible:
+they describe local retrieval completion and its age, not provider measurement
+time or provider freshness. Unreleased provenance-aware native source accepts
+older producers without `summary.provenance`, interpreting their retained times
+as local retrieval times with provider time unknown. When provenance is present,
+v1 requires exactly `version:1`, a valid `retrievedAt` equal to the historical
+local timestamp, and explicit `providerObservedAt:null`. Present null, missing or
+unknown keys, unsupported versions, non-null provider time and mismatched times
+are rejected, without legacy fallback. Duplicate provenance member names or
+keys selecting its enclosing path are rejected before JSON object decoding can
+discard them, including equal values and escaped-equivalent key names. A non-null
+provider time requires a new reviewed contract. The matching source CLI's
+`accounts usage` text labels the
+last successful fetch as local retrieval time; JSON retains its historical
+fields. These are source contracts, not a claim about an installed build or live
+provider acceptance.
 
 The additive `panel list --json` field `accountQuotas` is optional: an older CLI
 keeps the old loop menu. Each account's `id` there is a handle, not the catalog ID; the menu
@@ -214,7 +232,8 @@ original timestamp). A passed reset stays historical and never assumes a new
 allowance. Accounts with no quota say **Quota unavailable** and still open
 details; missing usage is not a sign-in diagnosis. Read/retrieval age, older
 readings, unknown provider freshness, source and refresh failures stay visible
-in account details. Provider freshness remains unknown for Claude/Antigravity.
+in account details. Provider freshness remains unknown for all current supported
+providers, including Codex.
 Ages and countdowns recompute on menu opening and ordinary saved-evidence
 reads; they do not add provider polling. Existing menu tracking rules can defer
 structural changes until a highlighted menu closes. Window identities include
@@ -266,3 +285,32 @@ owned-worker cancellation during provider IO and menu takeover after panel exit.
 The contract smoke runs these alongside native decoding and real CLI fixtures.
 Physical sleep/reboot, installed-app update and real provider acceptance remain
 unrun; local XCTest availability is reported separately.
+
+### Running menu identity and collection detail (unreleased)
+
+The menu keeps its running version/source build near the top, separate from a
+transient action receipt. Packaging embeds `LooptenderSourceRevision` (full Git
+revision, or `unknown`) and `LooptenderSourceModified` (Boolean) in Info.plist;
+the app captures them once at startup. A moved install link never renames the
+already-running source stamp. Missing metadata displays **build unknown**.
+The CLI line is its build label from the last saved read, not a claim that it
+shares the menu's source revision; failed reads say **CLI build unavailable**.
+An installed-menu mismatch is shown separately using the existing local update
+comparison. These labels never restart or update anything.
+
+Accounts puts automatic collection state, next eligible fetch, last successful
+fetch age/exact time and failed-attempt evidence before quota history. A passed
+reset says **Reading out of date**, not that quota replenished. Active structured
+remaining/reset values keep their existing semantics and ordering. Provider
+freshness unknown remains distinct from retrieval age. Settings absent in older
+CLI replies say status unavailable; they do not imply a grant. Actions still
+open the scoped Accounts page for reviewed retrieval/settings. A menu redraw
+only advances clocks; it never fetches provider data. The deployment and explicit
+opt-in prerequisites above remain required.
+
+`MenuIdentitySmoke.swift` exercises startup capture, missing metadata, action
+receipt separation, failed CLI and installed mismatch/tracking behavior without
+XCTest or runtime state. `QuotaClockSmoke.swift` and `UsageUpdatingSmoke.swift`
+cover advancing quota/collection clocks and ordering with fictional evidence.
+Swift compilation, standalone fixture execution, hosted XCTest and physical
+menu acceptance are separate checks; a rendered fixture is not live acceptance.

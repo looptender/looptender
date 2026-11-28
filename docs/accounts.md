@@ -10,9 +10,11 @@ Login wording is scoped to the selected CLI: "Selected CLI reports login" or
 provider account globally. Another running session can have a different context.
 
 **View recorded usage** opens Routes and its existing Allowances section.
-Those readings belong to configured route groups, are not live, and are not
-linked to these account cards. Read their recorded age, ended windows or
-unavailable state; an old limit reading does not establish current exhaustion. Selecting an
+Those readings belong to configured route groups and retain their own source
+and age. Where a route explicitly names a catalog entry, that association is
+owner-assigned rather than verified account identity; selected-context quota
+readings remain separate. Read ended windows and unavailable states honestly;
+an old limit reading does not establish current exhaustion. Selecting an
 account does not assign its ID to a route group or usage identity. The link
 reads only the existing recorded projection; it does not invoke BB usage APIs
 or refresh provider measurements, including APIs whose refresh:false option
@@ -26,6 +28,18 @@ only these model-free reads and does not enable any account or loop controls. In
 model request. Supported Darwin arm64 panels also offer **Retrieve usage** for the inspected native Claude image, with provider freshness always unknown. Same-selection recovery for either provider is a separate local revision review, never a provider read. The read-only panel offers no such action. The `accounts` commands below do not start
 a loop, enroll a route, sign in or copy credentials. Complete provider sign-in in
 the official provider tool first.
+
+## Planned orchestration and Accounts experience
+
+The selected-context catalog, configured routes and verified provider account identity are different facts. An owner-chosen name or `account` assignment is descriptive; several entries can name the same effective context or share an allowance. BB chooses its account context per project and offers no per-thread account selection. A catalog entry cannot make a BB thread run on a different account.
+
+[Automatic selected-context usage](#automatic-selected-context-usage-unreleased) is already implemented in unreleased source (#572), with explicit grants and bounded model-free reads. It does not route work, pool allowances or distribute lanes. Updating source does not update an installed menu/CLI, enable existing entries, or certify live polling; rollout, opt-in and installed/provider acceptance remain separate.
+
+**Planned:** retain a useful configurable Accounts list (sorting, filtering, grouping and selection details) alongside a native macOS HOME graph of loops, lanes, accounts and configured fallback relations. The current native app is a menu-bar accessory; no Dock settings or HOME window is implemented. Windows/Linux desktop equivalents are deferred; portable CLI and panel behavior remain in scope.
+
+The first planned pooling slice is a pure `internal/poolplan` preview: caller-supplied fresh structured Codex evidence bound to explicit account/allowance IDs and complete occupancy. It has no reader, CLI, reservation, adapter binding or dispatch and does not switch accounts. Real pooling needs explicit membership, supported account/context binding, allowance-window identities, reserves and shared reservations; fresh quota alone is not permission to move work. Shared Low / Medium / High / Unleashed profiles must preview independent scope, holds, spend, reserve, effort and concurrency caps. Unknown/stale data cannot justify increased work or silently refreshed capacity. Neither profiles nor a graph clear holds, grant spending, select BB accounts per thread or add conversation-creation authority. See the [orchestration policy and build order](design/orchestration-policy.md).
+
+Planned pool capacity uses managed-work slots, never quota-percent-to-turn estimates; reserve thresholds cannot guarantee remaining external quota. Changed selection/authentication invalidates bound observations/grants but must retain existing charged reservations until explicit reconciliation. Reset alone does not clear exhaustion: future ingestion needs immutable observation/reset/window provenance and a known-boundary observation fence; the pure preview cannot authenticate caller inputs.
 
 ## Add an account, a subscription or a model
 
@@ -666,6 +680,15 @@ own ordinary authentication/network work. The read has a five-second deadline,
 a 64 KiB stdout bound, discarded stderr, strict response correlation and owned
 process cleanup. A rejected or unsupported CLI returns unavailable evidence.
 
+**Codex timestamp provenance:** current source records `QuotaAttempt.At` from
+local time after the RPC/parse attempt and projects a successful value as
+`observedAt`, with `fresh`/`stale` based on its local age. Those existing field
+names do not establish a provider-authenticated measurement time or proof that
+the provider freshly measured quota. Recent retrieval and provider freshness
+remain different facts. The [additive provenance v1 source contract](#quota-summary-provenance-v1-source-contract)
+makes that distinction explicit without changing those historical fields. It
+establishes neither a runtime evidence assembler nor operational pooling.
+
 The supported Codex response can expose several metered buckets. Up to eight
 are retained separately, with primary and secondary windows where present,
 including fractional percentages, duration and reset times. The legacy single
@@ -853,6 +876,76 @@ registry/route-list plus 64 detailed quota fixture requires the existing main
 6 MiB regression threshold; all quota rows remain obtainable in the separate
 1 MiB response. Native remains bounded to 1 MiB.
 
+### Quota summary provenance v1 (source contract)
+
+As of 2026-11-27, the additive producer
+[#588](https://github.com/looptender/looptender/pull/588) has landed on main in
+[`1c38291e`](https://github.com/looptender/looptender/commit/1c38291ec47b4d01bf01b90dabc834034986b0c5).
+The strict native/CLI consumer [#589](https://github.com/looptender/looptender/pull/589)
+has landed in [`3282d990`](https://github.com/looptender/looptender/commit/3282d9905b1ab0362ffa2c864f12bbc7e6447442),
+and the strict web consumer [#590](https://github.com/looptender/looptender/pull/590)
+has landed in [`9dcf7948`](https://github.com/looptender/looptender/commit/9dcf79487ffa5ee6f24a43cbce1077fb1588de16).
+These are landed source changes, not evidence of released or installed
+capability. This reference preserves the historical reviewed evidence pins for
+producer [`0f5c60a9`](https://github.com/looptender/looptender/blob/0f5c60a99cc230dfd1f17f4230f98e381e6c211f/internal/accounts/quota_details.go),
+native [`b2feafc4`](https://github.com/looptender/looptender/blob/b2feafc412f320cd13c94c51cd55bc388d85f45d/integrations/macos/Sources/KeepgoingMenuCore/Quota.swift)
+and web [`719e5bfb`](https://github.com/looptender/looptender/blob/719e5bfb2db2e37357378c3e6ea0ccde22e98407/cmd/looptender/dockui/dock.js)
+independently; deployment must establish which producer and consumers are in use.
+
+The producer adds this object inside a **reported quota summary**, not at the
+account-card root or in the private quota cache:
+
+```json
+{
+  "provenance": {
+    "version": 1,
+    "retrievedAt": "2030-03-04T12:00:02Z",
+    "providerObservedAt": null
+  }
+}
+```
+
+This is a summary fragment with a fictional timestamp, not a complete response.
+The public paths are `quota.summary.provenance` on an account card and
+`accountQuotas.accounts[].summary.provenance` in native `panel list --json`.
+Its three required members are:
+
+| Member | Meaning in v1 |
+| --- | --- |
+| `version` | Numeric `1`. |
+| `retrievedAt` | Retained local successful retrieval-completion timestamp. It must match the historical summary timestamp as the same instant, including fractional precision. |
+| `providerObservedAt` | Explicit JSON `null`. No current supported reader supplies a verified provider measurement time. A non-null value requires a new reviewed contract. |
+
+The producer keeps Codex's summary `observedAt` and `fresh`/`stale` for wire
+compatibility; these describe local retrieval age only. For Claude/Antigravity,
+summary `retrievedAt` and `provider_unknown` remain unchanged. Provenance does
+not rewrite cache schemas or turn failed-attempt time, page-read time or the
+next eligible fetch into a successful retrieval. Failed reads keep any earlier
+successful timestamp; reset passing does not prove refill.
+
+The pinned strict consumers accept **absent** `summary.provenance` through the
+legacy source/provider/timestamp checks, with provider time and freshness still
+unknown. They reject **present** malformed or unsupported provenance without
+legacy fallback: null, missing/extra members, unsupported version, invalid time,
+non-null provider time or disagreement with the historical timestamp. Their raw
+JSON boundaries also reject ambiguous duplicate member names along the
+quota-summary/provenance path, including escaped-equivalent keys. Existing
+source/provider/timestamp consistency checks still apply. Older consumers do
+not thereby gain the new strict validation or corrected labels.
+
+The source CLI text from #589 says **Last successful fetch … (local retrieval
+time); provider observation time and freshness unknown**. The source native
+menu distinguishes local successful-fetch time from unavailable provider
+observation time; the source web consumer uses **Retrieved** (or legacy
+**Local read**) with **Provider freshness unknown**. JSON retains the historical
+fields. See the [native saved-quota contract](../integrations/macos/README.md#saved-account-quota-unreleased)
+for the separately versioned companion behavior.
+
+Neither recent retrieval nor provenance v1 proves provider freshness, refill,
+account identity, live thread account binding, route availability or permission
+to pool work. Automatic acquisition opt-ins and holds remain independent.
+No runtime assembler, reservation, account switching or operational pooling is
+established by these producer/consumer changes or this documentation.
 
 ## Connect a subscription from a terminal (unreleased)
 
