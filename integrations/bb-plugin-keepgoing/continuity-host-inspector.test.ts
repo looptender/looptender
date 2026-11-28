@@ -207,3 +207,24 @@ for name,data in [('WORK.md',work.markdown(i,'looptender-work','# Fictional cano
     }
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("receipt boundary distinguishes no spawn, abort/exit, and actual owned close", async () => {
+  const early = fake(), pre = new AbortController(), earlyProof: string[] = []; pre.abort();
+  await inspectContinuityHost({ work: "/private/example/WORK.md" }, pre.signal, early.io, k => earlyProof.push(k));
+  assert.deepEqual(earlyProof, ["no_child_started"]); assert.equal(early.calls.length, 0);
+  const f = fake(), abort = new AbortController(), proof: string[] = [];
+  const pending = inspectContinuityHost({ work: "/private/example/WORK.md" }, abort.signal, f.io, k => proof.push(k));
+  await f.ready; abort.abort(); f.child.emit("exit", 1, null); await tick(); assert.deepEqual(proof, []);
+  f.child.emit("close", 1, null); await pending; assert.deepEqual(proof, ["child_closed"]);
+});
+
+test("general fulfilled unavailable after possible spawn is not a receipt", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fake(), proof: string[] = [];
+  Object.defineProperty(f.child, "stdout", { get() { throw Error("fictional post-spawn setup failure"); } });
+  const abort = new AbortController();
+  assert.deepEqual(await inspectContinuityHost({ work: "/private/example/WORK.md" }, abort.signal, f.io, k => proof.push(k)), nil);
+  assert.equal(f.calls.length, 1); assert.deepEqual(proof, []);
+  // Owned fake only: finish the abort timer so this test creates no pending timer.
+  abort.abort();
+});

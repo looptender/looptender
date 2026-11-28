@@ -94,8 +94,13 @@ requests a read-only check; `status` reports the minimized result.
 
 The pointer applies only to the next exact provider session. A check is advisory,
 not completion proof, an agent-read receipt or a reason to clear any hold. After
-unknown transport or stale response, automatic checking may remain unavailable
-across reload and reattachment; there is no supported clear/retry or automatic
-reconnect reconciliation. Continue authorized work and the manual file-backed
+unknown transport, automatic checking may remain unavailable across reload and
+reattachment. For new receipt-backed attempts only, explicit
+`continuity attempt-status HOST ATTEMPT` reads exact settlement evidence;
+`continuity reconcile HOST ATTEMPT REQUEST_DIGEST RECEIPT_DIGEST` consumes a
+matching receipt once and retires its exclusion without dispatch. Use only the
+digests returned by that exact lookup. No stale observation or completion claim
+is accepted. Legacy/unreceipted attempts cannot be cleared, and automatic
+reconnect remains unsupported. Capacity refusal preserves all records. Continue authorized work and the manual file-backed
 workflow normally: this observer never sets a supervision hold or requires a
 person to unblock agent turns. Never edit its database to replay a check.
