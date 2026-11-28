@@ -618,7 +618,7 @@ html:not(.has-script) .needs-script { visibility: hidden; }
 .account-card.is-attention { border-color: var(--warn); }
 .account-attention { display: flex; flex-direction: column; gap: .3rem; margin-top: .5rem; color: var(--ink); font-size: .875rem; }
 .account-attention .tag { align-self: flex-start; margin-left: 0; }
-.account-hint { margin: 0; padding: 0 1.2rem 1rem 2.6rem; font-size: .8125rem; overflow-wrap: anywhere; }
+.account-hint { margin: 0; font-size: .8125rem; overflow-wrap: anywhere; }
 .account-command { user-select: all; -webkit-user-select: all; font-family: var(--mono); font-size: .8125rem; }
 .account-summary > *, .account-body dd { overflow-wrap: anywhere; min-width: 0; }
 /* Each account's routes, each with its loops and its own reading. */
@@ -636,7 +636,7 @@ html:not(.has-script) .needs-script { visibility: hidden; }
 .account-name-it .command { white-space: normal; overflow-wrap: anywhere; font-family: var(--mono); font-size: .8125rem; }
 @media (max-width: 760px) {
  .account-summary { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
- .account-plan { border-top: 1px solid var(--line); padding-top: .8rem; }
+ .account-plan, .quota-compact { border-top: 1px solid var(--line); padding-top: .8rem; }
 }
 /* How to add an account, add a route and change the order: disclosures with commands to copy. Neutral: nothing here is a warning. */
 .how { margin-top: 1rem; background: var(--surface); border: 1px solid var(--border-ui); border-radius: var(--radius); }
@@ -944,11 +944,75 @@ details[open] > .how-summary::before { transform: rotate(45deg); }
 .acct-stat .num-attn { color: var(--attn); }
 .acct-stat .lbl { font-size: 0.76rem; color: var(--ink-2); }
 .acct-toolbar { margin-top: 0.75rem; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 0.75rem; }
-.acct-cards[data-density="compact"] .account-summary { padding: 0.75rem 0.9rem 0.75rem 2.3rem; gap: 0.6rem; }
+.acct-cards[data-density="compact"] { gap: 0.65rem; }
+.acct-cards[data-density="compact"] .account-summary { padding: 0.72rem 0.9rem 0.72rem 2.3rem; gap: 0.6rem; }
 .acct-cards[data-density="compact"] .account-summary::before { top: 0.75rem; left: 0.8rem; }
 .acct-badge-row { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.2rem; }
 .acct-prev { margin-top: 0.5rem; font-size: 0.81rem; }
 .acct-prev summary { cursor: pointer; font-weight: 560; }
+
+/* Accounts mode bar, management-mode guidance panel, and progressive disclosures */
+.acct-mode-bar {
+  margin-top: 0.75rem; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.5rem 0.75rem; padding: 0.65rem 0.85rem; background: var(--sunk);
+  border: 1px solid var(--line); border-radius: var(--radius); min-width: 0;
+}
+.acct-mode-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; min-width: 0; }
+.acct-mode-meta .sub { margin: 0; }
+.acct-mode-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; min-width: 0; }
+.acct-mode-bar .btn, .acct-mgmt-panel .btn, .acct-help-summary, .acct-details-summary {
+  min-height: 2.75rem; box-sizing: border-box; white-space: normal; max-width: 100%;
+}
+.acct-mgmt-panel {
+  margin-top: 0.75rem; padding: 0.9rem 1rem; background: var(--surface);
+  border: 1px solid var(--border-ui); border-radius: var(--radius);
+  display: grid; gap: 0.65rem; min-width: 0; scroll-margin-top: 5rem;
+}
+.acct-mgmt-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.acct-mgmt-head h3 { margin: 0; font-size: 1rem; }
+.acct-mgmt-panel p { margin: 0; max-width: 72ch; }
+.acct-mgmt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 0.75rem; min-width: 0; }
+.acct-mgmt-path {
+  padding: 0.75rem; background: var(--sunk); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); display: grid; gap: 0.45rem; align-content: start; min-width: 0;
+}
+.acct-mgmt-path h4 { margin: 0; font-size: 0.92rem; font-weight: 650; }
+.acct-mgmt-step { font-size: 0.875rem; font-weight: 560; }
+.acct-mgmt-path .copy { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; min-width: 0; }
+.acct-mgmt-path .command { white-space: normal; overflow-wrap: anywhere; font-family: var(--mono); font-size: 0.8125rem; }
+.acct-mgmt-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; padding-top: 0.2rem; }
+.acct-help-fold, .acct-details {
+  margin-top: 0.75rem; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--sunk); min-width: 0;
+}
+.acct-details { margin-top: 1rem; }
+.acct-cli-fold { margin-top: 1rem; }
+.acct-help-summary, .acct-details-summary {
+  display: flex; align-items: center; padding: 0.5rem 0.75rem; cursor: pointer;
+  font-size: 0.875rem; font-weight: 560; color: var(--ink-2); list-style: none;
+}
+.acct-help-summary::-webkit-details-marker, .acct-details-summary::-webkit-details-marker { display: none; }
+.acct-help-summary::before, .acct-details-summary::before { content: "+"; margin-right: 0.45rem; font-weight: 700; }
+.acct-help-fold[open] > .acct-help-summary::before, .acct-details[open] > .acct-details-summary::before { content: "-"; }
+.acct-help-body, .acct-details-body {
+  border-top: 1px solid var(--line); padding: 0.65rem 0.75rem; display: grid; gap: 0.55rem; min-width: 0;
+}
+.acct-help-body p, .acct-details-body p { margin: 0; max-width: 72ch; }
+.acct-details-body .work-facts { margin: 0; }
+.acct-details-body .account-connect-another { margin-block: 0.4rem; }
+.quota-compact { align-items: center; align-content: start; }
+.acct-signin-action { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.65rem; min-width: 0; }
+.acct-signin-action.has-quota { margin-top: 0.2rem; padding-top: 0.5rem; border-top: 1px solid var(--line); }
+@media (max-width: 40rem) {
+  .acct-mode-bar { align-items: stretch; }
+  .acct-mode-actions { width: 100%; }
+}
+@media (forced-colors: active) {
+  .acct-mode-bar, .acct-mgmt-panel, .acct-mgmt-path, .acct-help-fold, .acct-details, .acct-stat, .account-connect {
+    border: 1px solid CanvasText;
+  }
+  .acct-signin-action.has-quota { border-top: 1px solid CanvasText; }
+}
 
 /* Per-loop Preferred routes flow and collapsed advanced Terminal commands */
 .loop-route-flow { margin-top: 1rem; display: grid; gap: 0.75rem; min-width: 0; overflow-wrap: anywhere; scroll-margin-top: 5rem; }
