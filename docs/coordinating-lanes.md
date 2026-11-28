@@ -27,11 +27,11 @@ Execution status is not an assignment outcome. Reconcile existing **direct** chi
 | Idle, with unfinished work or no handoff | Retain the obligation. Request the missing handoff through an already-authorized channel, or take the next authorized action for known unfinished work. Idle alone supplies no completion or delegation permission. |
 | Error after a host disconnect | Inspect current structured status, queued/provider retry and pending input separately from the handoff. An execution error does not say whether work finished before disconnect. Do not duplicate an active retry or replay a known complete result. |
 | Superseded handoff, archived or disappeared child | Retain remaining work and its declared next owner/successor. Archive/disappearance does not finish it; supersession does not grant authority over a successor. |
-| Pending person gate | Keep that action held. Continue independent authorized work only if existing runtime controls permit it; never answer a pending interaction or clear/resume a hold on the coordinator’s own authority. |
+| Pending person gate | Keep that action held. Continue independent authorized work only if existing runtime controls permit it; never answer a pending interaction or use general resume to bypass a hold. Only the [guarded withdrawal of its own obsolete question](#approval-dependent-work) is available to the owner thread. |
 
 An earlier coordinator instruction to park a lane is not permanent when the owner explicitly directs that work forward later. Record the newer direction and reconcile the affected assignment, preserving unrelated holds. With the unreleased [assignment lifecycle](assignments.md), run `assignment inventory`, review all observed children with explicit scope/authorization references, and import/acknowledge current handoffs. A changed authorization reference advances the assignment revision and invalidates its prior handoff/acknowledgement; it does not clear controls. References are opaque: editing the contents behind an unchanged reference does not automatically update the assignment. Never infer a new owner instruction from transcript text at runtime.
 
-For a fictional example, an idle docs lane was parked for merge approval. The owner subsequently authorizes its independent documentation fix. Review that newer authorization explicitly, retire the old person-wait declaration, obtain a current unfinished handoff and acknowledge it. The coordinator then performs or delegates the authorized fix under its existing authority. If the loop is actually paused, stopped or awaiting-user, that runtime hold remains until separately released by an authorized person. A metadata review alone neither dispatches the fix nor verifies progress.
+For a fictional example, an idle docs lane was parked for merge approval. The owner subsequently authorizes its independent documentation fix. Review that newer authorization explicitly, retire the old person-wait declaration, obtain a current unfinished handoff and acknowledge it. The coordinator then performs or delegates the authorized fix under its existing authority. If the loop is paused, stopped or held by a person, that restriction remains. An owner-set awaiting-user may be withdrawn only through the guarded command below; an assignment review or newer instruction never releases controls itself. A metadata review alone neither dispatches the fix nor verifies progress.
 
 The CLI regression covers changed authorization, retained unfinished history, old-handoff replay refusal, current handoff acknowledgement, privacy and unchanged runtime holds. Actual agent reconciliation/dispatch and host-disconnect recovery acceptance remain open; prompt guidance is not a host-enforced turn-end hook or an automatic scheduler.
 ## Use lanes to advance independent work
@@ -57,11 +57,14 @@ source, a failed check or an unresolved concern warrants it. Required checks on 
 changed merge head or base still apply. An idle lane with an unfinished assignment
 needs reconciliation, not an automatic completion claim.
 
-New setup prompts contain this guidance. Updating a binary or restarting a daemon
-does not rewrite existing saved prompts. Existing coordinators need an explicit,
-reviewed prompt update preserving their task, limits and holds. Guidance does not
-make looptender create conversations, dispatch work, grant permission, infer
-completion from transcripts or clear a runtime hold.
+New setup prompts contain this guidance. Recorded, unchanged prompt files follow
+the running build’s current wording at a permitted wake without rewriting the
+saved file. Edited, unrecorded, custom and inline prompts are sent as written;
+a person can review `looptender prompt-policy apply -c CONFIG` to update a
+generated file, preserving its task and existing authority. Updating a binary or prompt
+never releases controls or wakes a held loop. Guidance does not make looptender
+create conversations, dispatch work, grant permission or infer completion from
+transcripts.
 
 Acceptance remains open: observe a coordinator assign two authorized independent
 deliverables to visible child lanes, advance a third while they run, reconcile a
@@ -154,9 +157,21 @@ The unreleased opt-in [PR backlog safeguard](pr-backlog.md) consults structured 
 
 ## Approval-dependent work
 
-Hold the action that needs approval and continue independent authorized tasks. Repeat an approval question only when material new information arrives or the decision changes. Enter awaiting-user only when all remaining authorized work requires a person. A recorded pending approval is neither an approval nor a reason to abandon unrelated work.
+Hold the action that needs approval and continue independent authorized tasks under existing controls. Before whole-loop `await-user`, inventory remaining objective obligations, including coordinator-owned and undelegated work, their current source/revisions, acceptance evidence, dependencies and person gates. Assignment rows cover declared lanes, not the entire backlog. Missing, partial or stale obligation evidence requires reconciliation; it cannot prove that all work needs a person. Where explicit current captures exist, use the [read-only coverage command](../integrations/bb-plugin-keepgoing/skills/keepgoing/references/coordinator-coverage.md) at the phase/wait boundary; it neither authenticates authority nor enforces a host turn-end hook. Keep known independent work visible beside unrelated unknown coverage.
 
-For example, fictional PR42 awaits the owner's merge approval, while PR43 has an already-authorized independent review and PR44 has an already-authorized test fix. Keep PR42's merge held, perform the PR43 review and PR44 fix, then report their evidence. Do not repeatedly ask to merge PR42 without new information. Ask a person when only approval-dependent work remains. A runtime hold already in place still wins: the supervised session must never clear it or resume itself to perform this scenario.
+Repeat an approval question only when material new information arrives or the decision changes. Enter awaiting-user only when all remaining authorized work requires a person. A recorded pending approval is neither an approval nor a reason to abandon unrelated work. Use each obligation’s actual repositories and artifact revisions: unchanged root Git history cannot establish whether a child’s deployment or documentation work is accepted. A child handoff is stage evidence, not whole-objective acceptance.
+
+For example, fictional PR42 awaits the owner's merge approval, while PR43 has an already-authorized independent review and PR44 has an already-authorized test fix. Keep PR42's merge held, perform the PR43 review and PR44 fix, then report their evidence. Do not repeatedly ask to merge PR42 without new information. Ask a person when only approval-dependent work remains. A runtime hold already in place still wins, subject only to the existing narrow owner-question withdrawal below; general resume is not available to the supervised session.
+
+If the owner thread set a whole-loop `await-user` question that is now obsolete, it may run:
+
+```sh
+looptender await-user --withdraw -c /private/example-loop/looptender.yaml --note 'The question is obsolete; independent authorized review remains'
+```
+
+The [withdrawal guard](operations.md#withdrawing-the-sessions-own-question) requires the same owner/generation, exact unchanged control record, matching last control-history evidence and an unarchived loop. The command restores the record from before that question, including any underlying person, pause, stop, disabled or completion restriction and retained history. Withdrawal is not approval of the original action or a general resume. If it refuses, or restores another hold, leave that restriction intact and report the precise remaining person-owned action. Do not unset caller identity or edit runtime records. Chat replies, deployment receipts and new instructions never automatically answer a pending interaction or release a hold.
+
+A completed lane, an idle coordinator and a completed supervision loop are different states. App relaunch, a bounded child result or roadmap continuation does not withdraw completion. Current source has no completion-only renewal: a person must review the broader effects of ordinary resume, which clears multiple holds and retained question/note state. This guidance adds no renewal operation and never restores history by editing runtime files.
 
 This is a separate coordination acceptance case. Observed coordinator stalling is not proof of a looptender runtime defect. The backlog safeguard does not inspect assignments or approval text, decide which work is independent, set awaiting-user based on this scenario, infer permission from transcripts, or bypass self-resume restrictions. Automatic child dispatch/approval and host handoff compliance remain open. The separate [explicit independent-work coordinator wake](assignments.md#opt-in-coordinator-wake-for-independent-work) uses typed readiness, existing gates and durable attempt consumption; the assignment record alone does not supply those capabilities.
 

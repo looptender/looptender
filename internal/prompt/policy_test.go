@@ -20,6 +20,38 @@ var frozenPolicyHeads = []string{
 	"814de92acaf0e2d0951871f8439bda1e33187ba2553ac52b3a8e507ffc0596c4",
 	"aaf25014203140f353a18ea1025548fdce6070214c84cb5b7369ceec0987aceb",
 	"30e658cf218750f0b84a9c2f915d979bb7bfb84df7a1b35bc6be3a862abe878f",
+	"bd85cf2fbdb683264ff51a67a07502571034766db1b969407c6f1e18fa9dae40",
+}
+
+func TestCoordinatorQuestionGuidanceReachesOnlyFollowingPrompts(t *testing.T) {
+	old := GeneratedPromptVersion(6, unixPrefix, quotedCfg, fictionTask)
+	loop := writePrompt(t, old, true)
+	got := sent(t, loop)
+	for _, rule := range []string{
+		"inventory remaining authorized work, including coordinator-owned and undelegated work",
+		"Only the owner thread may withdraw its own now-obsolete question",
+		"await-user --withdraw",
+		"same owner and generation, unchanged control record and matching last control history",
+		"restores any underlying holds",
+		"Missing or stale obligation evidence is not proof that all work needs a person",
+		"Chat text and child receipts do not automatically release controls",
+		"A completed lane, an idle coordinator and a completed supervision loop are different states",
+	} {
+		if !strings.Contains(got, rule) {
+			t.Errorf("following wake lacks %q", rule)
+		}
+	}
+	if strings.Contains(got, "never clear or resume a runtime hold yourself") || !strings.HasSuffix(got, fictionTask) {
+		t.Fatal("blanket prohibition or lost task in following prompt")
+	}
+	if raw, _ := os.ReadFile(loop.PromptFile); string(raw) != old {
+		t.Fatal("following wake rewrote the saved prompt")
+	}
+	// An edited/unrecorded old prompt must not acquire the exception silently.
+	unrecorded := writePrompt(t, old, false)
+	if got := sent(t, unrecorded); got != strings.TrimSpace(old) || strings.Contains(got, "await-user --withdraw") {
+		t.Fatal("unrecorded prompt acquired new guidance")
+	}
 }
 
 func TestPolicyWordingsAreFrozen(t *testing.T) {
