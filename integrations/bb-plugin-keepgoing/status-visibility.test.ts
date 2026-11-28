@@ -32,7 +32,7 @@ test("deadline, send allowance and a low disk reach the card's details; an ok di
     assert.deepEqual(d.sends, { max: 40, used: 40, remaining: 0, reached: true });
     assert.equal(d.disk?.level, "low");
     assert.deepEqual(reasonLines("enabled", null, d), [
-      `Deadline reached (${new Date("2026-01-01T00:00:00Z").toLocaleString()}); evaluated on the next check`,
+      `Deadline reached (${new Date("2026-01-01T00:00:00Z").toLocaleString()}); review loop.limits.deadline before resuming`,
       "Send limit reached: 40/40 attempts reserved; 0 remaining",
       "State-volume disk: low (measurement evidence unavailable) · measurement time/provenance unavailable · source unavailable. the volume that holds the state directory is filling (900 MiB free of 100 GiB, below 2.0 GiB): free space on it before records fail to save",
     ]);
