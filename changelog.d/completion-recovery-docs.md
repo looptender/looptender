@@ -1,1 +1,1 @@
-- Correct the completion recovery documentation to distinguish unreleased external completion-only renewal from v0.3.0 and native Resume, and make the unsupported delegated-operator recovery path explicit. No control behavior changes.
+- Correct the completion recovery documentation and coordinator guidance to distinguish unreleased external completion-only renewal from v0.3.0 and native Resume, and make the unsupported delegated-operator recovery path explicit. No control behavior changes.
