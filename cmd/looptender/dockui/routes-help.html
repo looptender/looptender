@@ -13,13 +13,15 @@
 <main class="route-help">
 <a href="./#/routes">Back to Routes</a>
 <h1>Configure preferred routes</h1>
-<p>The standard list is one order of routes for loops that follow it. Each change has a preview before it is saved. Existing holds, budgets, ownership, handoff settings and permission to create conversations stay in place.</p>
-<h2>Open an owner panel</h2>
-<p>Run these commands in an ordinary terminal outside BB. A running panel keeps its startup caller; reopening a window cannot turn a BB-started panel into a person-started panel.</p>
+<p>Preferred routes can be edited in two places when full panel mode is active: on a loop's own page for that loop, or on the Routes page for the standard list followed by standard-list loops. Each change shows a preview before it is saved. Existing holds, budgets, ownership, handoff settings and permission to create conversations stay in place.</p>
+<h2>Panel modes and full-mode entry</h2>
+<p>The panel starts in one of three modes: read-only (<code>looptender panel --read-only</code> or <code>looptender dock</code>), Controls mode (default <code>looptender panel</code> for pause, stop and resume only), or Full mode (<code>looptender panel --allow-changes</code>) needed for route and account edits. Run these commands in an ordinary terminal outside BB. A running panel keeps its startup caller; reopening a window cannot turn a BB-started panel or Controls panel into a person-started full-mode panel.</p>
 <pre><code>looptender panel stop
 looptender panel --allow-changes</code></pre>
-<p>The first command stops the panel, not supervision. Closing this page leaves supervision running. A read-only panel and <code>looptender dock</code> offer no route editor. This is the existing environment-based caller rule, not human authentication.</p>
-<h2>Add and arrange routes</h2>
+<p>The first command stops the panel, not supervision. Closing this page leaves supervision running. This is the existing environment-based caller rule, not human authentication.</p>
+<h2>Edit one loop's Preferred routes</h2>
+<p>On a loop's page in Full mode, use <strong>+ Add route</strong> to add a headless CLI route (Claude Code or Codex, inherited login or explicit directory), choose an order position and limit label, optionally load BB's read-only model list without calling a model or checking quota, and review before saving. Use <strong>Manage order</strong> to move, turn off, turn on or remove standby routes in that loop's own list (the active current route cannot be switched off). Loops following the standard list offer <strong>Edit standard list</strong> and <strong>Use own list...</strong> to copy resolved standard routes into <code>fallbacks.yaml</code> first. Route probes, handoff toggles, effort overrides and BB conversation route adds remain in collapsed Terminal commands.</p>
+<h2>Add and arrange standard routes</h2>
 <p>Read the current configuration. Choose an existing account selection, model and optional effort. Loading models is optional: it asks BB for a read-only structured listing and does not call a model. A missing listing requires manual names from your provider's supported settings.</p>
 <p>Choose how the route runs and which recorded limit it shares. These are your statements, not verified account identity, access, available quota or independent subscriptions. Conversation routes keep their existing login. CLI routes keep each loop's executable and working directory, with an inherited login or a selected existing directory. Headless Codex has no effort override.</p>
 <p>A route that may start a conversation requires explicit permission. Each loop must also already opt in; existing caps and spacing apply. Move routes earlier or later, turn them on or off, or remove them using the reviewed actions.</p>

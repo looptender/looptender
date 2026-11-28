@@ -1,0 +1,2 @@
+- Added a per-loop Preferred routes editor and reviewed headless route addition flow on each loop's panel page (unreleased UI over the per-loop routes API under `--allow-changes`), honest panel mode indicators with Terminal full-mode entry guidance, and collapsed advanced Terminal command blocks.
+- Preserve uncertain route saves when the selected list is unreadable, and keep unfamiliar warning suffixes visible during review.
