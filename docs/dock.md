@@ -606,7 +606,9 @@ unreleased Accounts clarity cleanup shows a pre-click mode bar (`Full mode`,
 `Controls mode`, `Read-only mode`, or `Read-only dock`), replaces non-full-mode
 dead-end sign-in buttons with management-mode guidance (**Open Management
 Panel…** / **Manage Account in Panel…** on macOS and copyable terminal restart
-commands), folds top help and manual CLI footnotes into disclosures, keeps
+commands), renders mode/device-appropriate sign-in actions independently alongside
+retained active, ended, or rejected historical quota without discarding cached
+readings or provenance, folds top help and manual CLI footnotes into disclosures, keeps
 secondary card identity/model/another-account forms inside nested card details,
 and states platform sign-in limits when Full mode lacks connect support on the
 host device. No live login flow, backend capability, or native app behavior is

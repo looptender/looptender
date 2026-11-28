@@ -243,6 +243,7 @@ loop:
 
 	ctrlOpen := startPanelMode("controls", false, true)
 	roOpen := startPanelMode("readonly", false, false)
+	fullOpen := startPanelMode("full", true, false)
 
 	script := `
 const assert = require("node:assert/strict");
@@ -534,6 +535,274 @@ const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));
       dom.window.close();
     }
   }
+
+  // 4. P2 regression matrix: retained active/ended/malformed quota + expired/absent sign-in across Controls, Read-only, Actual Full handler (real api/v1/server), and Unsupported Full
+  const activeIso = new Date(Date.now() - 120 * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const resetFutureIso = new Date(Date.now() + 2 * 3600 * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+  function makeRetainedCards() {
+    return [
+      {
+        id: cfg.codexID, label: "Expired Active Codex", provider: "codex", selection: "explicit_directory",
+        localAuth: "file_expired",
+        auth: { text: "Not checked", state: "unchecked", freshness: "unavailable" },
+        plan: { text: "Not checked", state: "unavailable", freshness: "unavailable", missing: "not_checked" },
+        configuredModel: { missing: "not_recorded" }, observedModel: { missing: "not_recorded" }, routes: "none",
+        quota: {
+          state: "reported", source: "codex account/rateLimits/read", freshness: "fresh",
+          summary: {
+            state: "reported", text: "Saved selected-context quota", source: "codex account/rateLimits/read",
+            observedAt: activeIso, freshness: "fresh",
+            provenance: { version: 1, retrievedAt: activeIso, providerObservedAt: null },
+            rows: [{ name: "5-hour", text: "38% used \u00B7 62% remaining", usedPercent: 38, remainingPercent: 62, resetsAt: resetFutureIso }]
+          }
+        },
+        usageUpdating: { state: "off", text: "Keep usage updated: off" }
+      },
+      {
+        id: cfg.claudeID, label: "Absent Ended Claude", provider: "claude-code", selection: "inherited",
+        auth: { text: "Selected CLI reports no login", state: "reported_absent", freshness: "fresh", observedAt: activeIso, source: "claude status" },
+        plan: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        configuredModel: { missing: "not_recorded" }, observedModel: { missing: "not_recorded" }, routes: "none", needsPerson: true, attention: "no_login",
+        quota: {
+          state: "reported", source: "claude:get_usage", freshness: "provider_unknown",
+          summary: {
+            state: "reported", text: "Retrieved", source: "claude:get_usage",
+            retrievedAt: "2020-01-01T09:00:00Z", freshness: "provider_unknown",
+            provenance: { version: 1, retrievedAt: "2020-01-01T09:00:00Z", providerObservedAt: null },
+            rows: [{ name: "7-day", text: "70% used \u00B7 30% remaining", usedPercent: 70, remainingPercent: 30, resetsAt: "2020-01-01T10:00:00Z", ended: true }]
+          }
+        },
+        usageUpdating: { state: "off", text: "Keep usage updated: off" }
+      },
+      {
+        id: "77777777777777777777777777777777", label: "Absent Rejected Codex", provider: "codex", selection: "explicit_directory",
+        auth: { text: "Selected CLI reports no login", state: "reported_absent", freshness: "fresh", observedAt: activeIso, source: "codex login status" },
+        plan: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        configuredModel: { missing: "not_recorded" }, observedModel: { missing: "not_recorded" }, routes: "none", needsPerson: true, attention: "no_login",
+        quota: {
+          state: "reported", source: "codex account/rateLimits/read", freshness: "fresh",
+          summary: {
+            state: "reported", text: "SHOULD_NOT_SHOW", source: "codex account/rateLimits/read",
+            observedAt: activeIso, freshness: "fresh",
+            provenance: { version: 2, retrievedAt: activeIso, providerObservedAt: null },
+            rows: [{ name: "5-hour", text: "88% used", usedPercent: 88, remainingPercent: 12, resetsAt: resetFutureIso }]
+          }
+        }
+      },
+      {
+        id: "88888888888888888888888888888888", label: "Drift With Retained Quota", provider: "codex", selection: "explicit_directory",
+        auth: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        plan: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        configuredModel: { missing: "not_recorded" }, observedModel: { missing: "not_recorded" }, routes: "none",
+        attention: "context_changed", reason: "context_changed", failedCheckAt: activeIso, needsPerson: true,
+        quota: {
+          state: "reported", reason: "selection_review_required", source: "codex account/rateLimits/read", freshness: "fresh",
+          summary: {
+            state: "reported", text: "SHOULD_BE_WITHHELD", source: "codex account/rateLimits/read",
+            observedAt: activeIso, freshness: "fresh",
+            provenance: { version: 1, retrievedAt: activeIso, providerObservedAt: null },
+            rows: [{ name: "5-hour", text: "44% used", usedPercent: 44, remainingPercent: 56, resetsAt: resetFutureIso }]
+          }
+        }
+      }
+    ];
+  }
+
+  // 4a. Controls & Read-only with retained active, ended, malformed, and drift quota
+  for (const modeSpec of [{ name: "controls", sess: ctrl, labelWant: "Needs Full mode" }, { name: "readonly", sess: ro, labelWant: "Read-only \u00B7 needs Full mode" }]) {
+    const posts = [];
+    const dom = new JSDOM(modeSpec.sess.html, { url: modeSpec.sess.sBase + "#/accounts", runScripts: "outside-only", pretendToBeVisual: true });
+    try {
+      const w = dom.window;
+      w.TextEncoder = TextEncoder; w.scrollTo = () => {};
+      w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      w.Element.prototype.scrollIntoView = () => {};
+      const rCards = makeRetainedCards();
+      w.fetch = async (url, init = {}) => {
+        if (init.method === "POST") { posts.push(url); return new Response("{}", { status: 403 }); }
+        const rel = String(url).split("?")[0];
+        if (rel === "api/v1/saved-accounts") {
+          return new Response(JSON.stringify({ schemaVersion: 1, reference: "ref_ret_" + modeSpec.name, accounts: { state: "available", complete: true, cards: rCards } }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        const target = new URL(String(url), modeSpec.sess.sBase).toString();
+        const headers = Object.assign({}, init.headers || {}, {
+          Cookie: modeSpec.sess.cookiePair, Origin: modeSpec.sess.origin, "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"
+        });
+        if (rel === "api/v1/dock") {
+          const realDock = await (await fetch(target, { headers })).json();
+          realDock.accountsReference = "ref_ret_" + modeSpec.name;
+          realDock.selectedAccounts = rCards.length;
+          realDock.accounts = { state: "available", complete: true, cards: [] };
+          return new Response(JSON.stringify(realDock), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return fetch(target, { headers });
+      };
+      w.eval(modeSpec.sess.js);
+      await settle(80);
+      const cardEls = [...w.document.querySelectorAll("#pane .account-card")];
+      assert.equal(cardEls.length, 4);
+      // Active retained quota + file_expired Codex
+      assert(cardEls[0].textContent.includes("38% used") && cardEls[0].textContent.includes("62% remaining"), modeSpec.name + " dropped retained active quota");
+      assert(cardEls[0].textContent.includes("Provider freshness unknown") && cardEls[0].textContent.includes(modeSpec.labelWant), modeSpec.name + " lost provenance or mode cue");
+      const codexHelp = cardEls[0].querySelector('[data-focus="account-connect-help-' + cfg.codexID + '"]');
+      assert(codexHelp && codexHelp.textContent.includes("How to reconnect"), modeSpec.name + " retained active quota hid How to reconnect…");
+      // Ended retained quota + reported_absent Claude
+      assert(cardEls[1].textContent.includes("Window ended \u00B7 current quota unknown"), modeSpec.name + " dropped ended quota label");
+      assert(cardEls[1].querySelector('[data-focus="account-connect-help-' + cfg.claudeID + '"]'), modeSpec.name + " retained ended quota hid How to reconnect…");
+      // Rejected malformed retained quota + reported_absent Codex
+      assert(cardEls[2].textContent.includes("Quota provenance rejected") && !cardEls[2].textContent.includes("88%"), modeSpec.name + " leaked rejected quota");
+      assert(cardEls[2].querySelector('[data-focus="account-connect-help-77777777777777777777777777777777"]'), modeSpec.name + " rejected quota hid How to reconnect…");
+      // Context drift still withholds 44% and shows How to review… (never reconnect)
+      assert(cardEls[3].textContent.includes("Prior quota withheld") && !cardEls[3].textContent.includes("44%"), modeSpec.name + " drift card leaked withheld quota");
+      assert(cardEls[3].querySelector('[data-focus="account-review-help-88888888888888888888888888888888"]'), modeSpec.name + " drift missing How to review");
+      assert.equal(cardEls[3].querySelector('[data-focus^="account-connect-"]'), null, modeSpec.name + " drift card offered reconnect");
+      // Clicking How to reconnect… on active-quota Codex opens mgmt panel with 0 POSTs
+      codexHelp.click();
+      await settle();
+      assert(w.document.querySelector(".acct-mgmt-panel")?.textContent.includes("Open Full mode to reconnect Expired Active Codex"), modeSpec.name + " mgmt panel wrong heading");
+      assert.equal(posts.length, 0, modeSpec.name + " issued POST");
+    } finally {
+      dom.window.close();
+    }
+  }
+
+  // 4b. Actual separately started Full-mode HTTP handler (real api/v1/server) with retained active/ended/rejected quota + waiting/lost single-attempt checks
+  const fullSess = await openSession(cfg.fullOpen);
+  {
+    const posts = [];
+    const dom = new JSDOM(fullSess.html, { url: fullSess.sBase + "#/accounts", runScripts: "outside-only", pretendToBeVisual: true });
+    try {
+      const w = dom.window;
+      w.TextEncoder = TextEncoder; w.scrollTo = () => {};
+      w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      w.Element.prototype.scrollIntoView = () => {};
+      const rCards = makeRetainedCards();
+      const attempt = "d".repeat(32);
+      let startStep = "waiting";
+      w.fetch = async (url, init = {}) => {
+        const rel = String(url).split("?")[0];
+        const target = new URL(String(url), fullSess.sBase).toString();
+        const headers = Object.assign({}, init.headers || {}, {
+          Cookie: fullSess.cookiePair, Origin: fullSess.origin, "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"
+        });
+        if (init.method === "POST") {
+          posts.push(rel);
+          if (rel.startsWith("api/v1/account-checks/")) {
+            return new Response(JSON.stringify({ schemaVersion: 1, result: { outcome: "done", text: "Checked" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+          }
+          if (rel === "api/v1/account-connect/" + cfg.codexID + "/prepare") {
+            return new Response(JSON.stringify({
+              schemaVersion: 1,
+              preview: {
+                attemptId: attempt, action: "connect_account", key: cfg.codexID, title: "Reconnect Expired Active Codex?", confirm: "Open Codex sign-in",
+                form: "e".repeat(64), expiresAt: "2035-01-01T00:00:00Z", lines: [[{ t: "Reconnects only Expired Active Codex." }]], lost: "Lost", refused: "Refused"
+              }
+            }), { status: 200, headers: { "Content-Type": "application/json" } });
+          }
+          if (rel === "api/v1/account-connect/" + cfg.codexID + "/start") {
+            if (startStep === "waiting") {
+              return new Response(JSON.stringify({ schemaVersion: 1, connect: { id: attempt, accountId: cfg.codexID, provider: "codex", state: "waiting", expiresAt: "2035-01-01T00:00:00Z" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+            }
+            return new Response("broken", { status: 500 });
+          }
+          if (rel === "api/v1/account-connect/" + cfg.codexID + "/cancel") {
+            return new Response(JSON.stringify({ schemaVersion: 1, connect: { id: attempt, accountId: cfg.codexID, provider: "codex", state: "cancelled", expiresAt: "2035-01-01T00:00:00Z" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+          }
+          return new Response("{}", { status: 404 });
+        }
+        if (rel === "api/v1/saved-accounts") {
+          return new Response(JSON.stringify({ schemaVersion: 1, reference: "ref_actual_full", accounts: { state: "available", complete: true, cards: rCards } }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (rel === "api/v1/dock") {
+          const realDock = await (await fetch(target, { headers })).json();
+          realDock.accountsReference = "ref_actual_full";
+          realDock.selectedAccounts = rCards.length;
+          realDock.accounts = { state: "available", complete: true, cards: [] };
+          return new Response(JSON.stringify(realDock), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        // Real api/v1/server from actual Full-mode panelHandler
+        return fetch(target, { headers });
+      };
+      w.eval(fullSess.js);
+      await settle(100);
+      assert(w.document.querySelector(".acct-mode-bar")?.textContent.includes("Full mode"), "actual Full handler missing Full mode bar");
+      const cardEls = [...w.document.querySelectorAll("#pane .account-card")];
+      assert(cardEls[0].textContent.includes("38% used") && cardEls[0].textContent.includes("62% remaining"), "actual Full handler dropped retained quota");
+      const codexBtn = cardEls[0].querySelector('[data-focus="account-connect-' + cfg.codexID + '"]');
+      assert(codexBtn && codexBtn.textContent.includes("Reconnect Codex"), "ACTUAL_FULL_HANDLER retained quota hid Reconnect Codex");
+      // Retained ended quota + platform support check on Absent Ended Claude + rejected Codex + drift card
+      assert(cardEls[1].textContent.includes("Window ended \u00B7 current quota unknown"), "actual Full dropped ended quota");
+      assert(cardEls[1].querySelector('[data-focus="account-connect-' + cfg.claudeID + '"]') || cardEls[1].textContent.includes("macOS Apple Silicon"), "actual Full missing ended-quota Claude sign-in/platform UI");
+      assert(cardEls[2].textContent.includes("Quota provenance rejected") && !cardEls[2].textContent.includes("88%"));
+      assert(cardEls[2].querySelector('[data-focus="account-connect-77777777777777777777777777777777"]'), "actual Full rejected quota hid Reconnect");
+      assert(cardEls[3].querySelector('[data-focus="selection-review-summary-88888888888888888888888888888888"]') && !cardEls[3].textContent.includes("44%"), "actual Full drift failed");
+
+      // Single-attempt waiting + no duplicate POST + provenance preserved while connecting
+      codexBtn.click();
+      await settle(60);
+      w.document.querySelector('[data-focus="connect-start-' + cfg.codexID + '"]').click();
+      await settle(60);
+      const waitBtn = w.document.querySelector('[data-focus="account-connect-' + cfg.codexID + '"]');
+      assert(waitBtn && waitBtn.textContent.includes("Sign-in waiting"), "waiting button label missing with retained quota");
+      assert(cardEls[0].textContent.includes("Provider observation time is unavailable (provenance v1; local retrieval time only)"), "expanded retained quota provenance notice lost during reconnect");
+      const beforeDupCount = posts.filter((p) => p.includes("/account-connect/")).length;
+      waitBtn.click();
+      await settle(40);
+      assert.equal(posts.filter((p) => p.includes("/account-connect/")).length, beforeDupCount, "clicking Sign-in waiting started duplicate connect attempt");
+
+      // Cancel -> close -> lost start still keeps single-attempt waiting guard
+      w.document.querySelector('[data-focus="connect-cancel-' + cfg.codexID + '"]').click();
+      await settle(40);
+      w.document.querySelector('[data-focus="connect-close-' + cfg.codexID + '"]').click();
+      await settle(40);
+      startStep = "lost";
+      w.document.querySelector('[data-focus="account-connect-' + cfg.codexID + '"]').click();
+      await settle(60);
+      w.document.querySelector('[data-focus="connect-start-' + cfg.codexID + '"]').click();
+      await settle(60);
+      assert(w.document.querySelector('[data-focus="connect-result-' + cfg.codexID + '"]')?.textContent.includes("Sign-in may still be running"));
+      assert(w.document.querySelector('[data-focus="account-connect-' + cfg.codexID + '"]')?.textContent.includes("Sign-in waiting"), "lost start with retained quota did not keep Sign-in waiting single-attempt guard");
+    } finally {
+      dom.window.close();
+    }
+  }
+
+  // 4c. Unsupported Full mode + retained ended Claude quota (deterministic non-arm64 check)
+  {
+    const dom = new JSDOM(ctrl.html, { url: ctrl.sBase + "#/accounts", runScripts: "outside-only", pretendToBeVisual: true });
+    try {
+      const w = dom.window;
+      w.TextEncoder = TextEncoder; w.scrollTo = () => {};
+      w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      w.Element.prototype.scrollIntoView = () => {};
+      const rCards = [makeRetainedCards()[1]];
+      w.fetch = async (url, init = {}) => {
+        const rel = String(url).split("?")[0];
+        if (rel === "api/v1/server") {
+          return new Response(JSON.stringify({
+            schemaVersion: 1, servedBy: "panel", version: "v0.3.0-dev", changes: "on", form: "f".repeat(64),
+            routeChanges: "person", accountQuota: true, accountQuotaProviders: ["codex"], accountSelectionReview: true,
+            accountUsageUpdating: true, accountCheck: true, accountRemove: true, accountConnectProviders: ["codex"]
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (rel === "api/v1/saved-accounts") {
+          return new Response(JSON.stringify({ schemaVersion: 1, reference: "ref_unsup_end", accounts: { state: "available", complete: true, cards: rCards } }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (rel === "api/v1/dock") {
+          return new Response(JSON.stringify({ schemaVersion: 1, readAt: activeIso, refreshSeconds: 3600, complete: true, registry: { availability: "available" }, loops: [], needsYou: [], selectedAccounts: 1, accountsReference: "ref_unsup_end", accounts: { state: "available", complete: true, cards: [] } }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+      };
+      w.eval(ctrl.js);
+      await settle(80);
+      const cardEl = w.document.querySelector("#pane .account-card");
+      assert(cardEl.textContent.includes("Window ended \u00B7 current quota unknown"), "unsupported ended Claude dropped ended quota");
+      assert(cardEl.textContent.includes("macOS Apple Silicon") && !cardEl.textContent.includes("--allow-changes"), "unsupported ended Claude wrong guidance");
+      assert(cardEl.querySelector('[data-focus="account-check-summary-' + cfg.claudeID + '"]'), "unsupported ended Claude missing Check login now");
+    } finally {
+      dom.window.close();
+    }
+  }
   console.log("ACCOUNTS_CLARITY_WIRING_OK");
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -541,6 +810,7 @@ const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));
 	cfgBytes, _ := json.Marshal(map[string]string{
 		"ctrlOpen": ctrlOpen,
 		"roOpen":   roOpen,
+		"fullOpen": fullOpen,
 		"claudeID": claudeID,
 		"codexID":  codexID,
 	})

@@ -28,7 +28,9 @@ separates per-card secondary identity/model details behind disclosure. In
 controls or read-only modes, unavailable sign-in and selection-review actions
 offer an explicit guidance panel naming macOS menu entry (**Open Management
 Panel…** or **Manage Account in Panel…**) and terminal restart commands rather
-than dead-end action buttons. Unreleased source can service explicitly enabled
+than dead-end action buttons. Sign-in actions and non-full guidance also render
+independently alongside any retained active, ended, or rejected historical quota
+without discarding cached readings or provenance. Unreleased source can service explicitly enabled
 [automatic usage](#automatic-selected-context-usage-unreleased) through the running updated menu or a non-offline panel/dock process, including a read-only panel; the prior per-selection authorization permits
 only these model-free reads and does not enable any account or loop controls. In a panel started with `--allow-changes` (`Full mode`), supported sign-in offers **Connect…** / **Reconnect…** (showing **Sign-in waiting…** without re-starting while active), unavailable platform sign-in states device support limits directly, and an explicit reviewed
 **Refresh subscription quota** action contacts the selected Codex CLI without a

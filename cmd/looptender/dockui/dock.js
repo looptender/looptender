@@ -3839,7 +3839,10 @@
     box.appendChild(el("p", "sub", "Saved for this selection; separate from route readings. Live thread account binding is not verified."));
     var saved = accountQuotaSummary(c) || {};
     var rejectedProv = accountQuotaMalformedProvenance(c);
-    if (saved.state === "reported") {
+    var needsSelectionReview = q.reason === "selection_review_required" || q.reason === "context_changed" || c.attention === "context_changed" || c.reason === "context_changed";
+    if (needsSelectionReview) {
+      box.appendChild(el("p", "sub", accountQuotaReason(q.reason || "selection_review_required")));
+    } else if (saved.state === "reported") {
       box.appendChild(accountQuotaStamp(saved));
       if (saved.provenance) {
         box.appendChild(el("p", "sub", c.provider === "codex"
@@ -3885,7 +3888,7 @@
     } else if (rejectedProv) {
       box.appendChild(el("p", "sub", "Quota provenance metadata was invalid or unsupported. No usage is assumed."));
     } else box.appendChild(el("p", "sub", (q.summary && q.summary.state !== "reported" && q.summary.text) || accountQuotaReason(q.reason || "schema_unavailable")));
-    if (!rejectedProv && saved.failedRefreshAt) box.appendChild(el("p", "sub", "Refresh failed " + when({ at: saved.failedRefreshAt }) + ". " + saved.failedRefreshText + " Any earlier reading retains its original time."));
+    if (!needsSelectionReview && !rejectedProv && saved.failedRefreshAt) box.appendChild(el("p", "sub", "Refresh failed " + when({ at: saved.failedRefreshAt }) + ". " + saved.failedRefreshText + " Any earlier reading retains its original time."));
     if (c.provider !== "codex" && c.provider !== "claude-code" && c.provider !== "antigravity") return box;
     var change = state.accountQuotaChange, current = change && change.id === c.id ? change : null;
     if (current) {
@@ -3903,7 +3906,6 @@
       } else review.appendChild(el("p", "sub", current.recovery ? "Preparing selection review…" : "Preparing quota review…"));
       box.appendChild(review);
     }
-    var needsSelectionReview = q.reason === "selection_review_required" || q.reason === "context_changed" || c.attention === "context_changed";
     if (needsSelectionReview) {
       if (changesOn() && state.server.accountSelectionReview) {
         if (!current) box.appendChild(button("Review selection for this panel…", "selection-review-" + c.id, "", function () { accountQuotaRequest(c, false, true); }));
@@ -4274,25 +4276,9 @@
       summary.appendChild(plan);
       var qs = accountQuotaSummary(c);
       var compact = el("span", "quota-compact");
-      if (qs && qs.state === "reported" && bucketKind !== "drift") {
-        var qsRows = list(qs.rows), nowSummary = Date.now();
-        var sumAllEnded = qsRows.length > 0 && qsRows.every(function (w) { return accountWindowEnded(w.resetsAt, w.ended, nowSummary); });
-        if (sumAllEnded) {
-          compact.appendChild(el("strong", null, "Window ended \u00B7 current quota unknown"));
-          compact.appendChild(accountQuotaStamp(qs, true));
-        } else {
-          qsRows.filter(function (w) { return typeof w.usedPercent === "number"; }).slice(0, 2).forEach(function (w) {
-            var item = el("span", "quota-chip"); item.appendChild(el("span", "sub", w.name));
-            accountWindowValue(item, w, true);
-            if (w.resetsAt) item.appendChild(accountClock("span", "sub quota-countdown", "reset", w.resetsAt));
-            else item.appendChild(el("span", "sub", "Reset time unavailable"));
-            compact.appendChild(item);
-          });
-          if (!compact.childNodes.length) compact.appendChild(el("span", "sub", qs.partial ? "Partial quota evidence" : "Quota details recorded"));
-          compact.appendChild(accountQuotaStamp(qs, true));
-          compact.title = "Saved account quota; expand for all recorded detail";
-        }
-      } else if (c.attention === "context_changed" && changesOn() && state.server && state.server.accountSelectionReview && (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity")) {
+      var needsSignInAction = bucketKind !== "drift" && (c.provider === "codex" || c.provider === "claude-code") && accountSignInNeeded(c);
+      var hasQuotaBlock = false;
+      if (c.attention === "context_changed" && changesOn() && state.server && state.server.accountSelectionReview && (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity")) {
         var reviewBtn = button("Review selection\u2026", "selection-review-summary-" + c.id, "", function (event) {
           event.preventDefault(); event.stopPropagation();
           state.accountOpen[c.id] = true;
@@ -4311,52 +4297,79 @@
           reviewHelp.setAttribute("aria-label", "How to review selection for " + c.label);
           compact.appendChild(reviewHelp);
         }
-      } else if ((c.provider === "codex" || c.provider === "claude-code") && accountSignInNeeded(c)) {
+      } else if (qs && qs.state === "reported") {
+        hasQuotaBlock = true;
+        var qsRows = list(qs.rows), nowSummary = Date.now();
+        var sumAllEnded = qsRows.length > 0 && qsRows.every(function (w) { return accountWindowEnded(w.resetsAt, w.ended, nowSummary); });
+        if (sumAllEnded) {
+          compact.appendChild(el("strong", null, "Window ended \u00B7 current quota unknown"));
+          compact.appendChild(accountQuotaStamp(qs, true));
+        } else {
+          qsRows.filter(function (w) { return typeof w.usedPercent === "number"; }).slice(0, 2).forEach(function (w) {
+            var item = el("span", "quota-chip"); item.appendChild(el("span", "sub", w.name));
+            accountWindowValue(item, w, true);
+            if (w.resetsAt) item.appendChild(accountClock("span", "sub quota-countdown", "reset", w.resetsAt));
+            else item.appendChild(el("span", "sub", "Reset time unavailable"));
+            compact.appendChild(item);
+          });
+          if (!compact.childNodes.length) compact.appendChild(el("span", "sub", qs.partial ? "Partial quota evidence" : "Quota details recorded"));
+          compact.appendChild(accountQuotaStamp(qs, true));
+          compact.title = "Saved account quota; expand for all recorded detail";
+        }
+      } else if (bucketKind === "rejected") {
+        hasQuotaBlock = true;
+        compact.appendChild(el("strong", null, "Quota reading rejected"));
+        compact.appendChild(el("span", "sub", "Quota provenance metadata was invalid or unsupported. No usage is assumed."));
+      } else if (!needsSignInAction) {
+        compact.appendChild(el("strong", null, "No saved quota reading"));
+        compact.appendChild(el("span", "sub", (c.quota && c.quota.summary && c.quota.summary.state !== "reported" && c.quota.summary.text) || accountQuotaReason((c.quota && c.quota.summary && c.quota.summary.state === "reported" ? "schema_unavailable" : (c.quota && c.quota.reason)) || "not_checked")));
+      }
+      if (needsSignInAction) {
+        var signInWrap = el("div", "acct-signin-action" + (hasQuotaBlock ? " has-quota" : ""));
         var ongoingConn = accountConnections[c.id];
         var isReconnect = (c.auth && c.auth.state === "reported_absent") || c.localAuth === "file_expired";
         if (accountConnectSupported(c)) {
           if (ongoingConn && ongoingConn.busy) {
             var busyBtn = button("Connecting\u2026", "account-connect-" + c.id, "", function (event) { event.preventDefault(); event.stopPropagation(); }, true);
             busyBtn.setAttribute("aria-label", "Connecting " + connectProvider(c) + " for " + c.label);
-            compact.appendChild(busyBtn);
+            signInWrap.appendChild(busyBtn);
           } else if (ongoingConn && ongoingConn.connect && ongoingConn.connect.state === "waiting") {
             var waitBtn = button("Sign-in waiting\u2026", "account-connect-" + c.id, "", function (event) { event.preventDefault(); event.stopPropagation(); accountConnectOpen(c); });
             waitBtn.setAttribute("aria-label", "View pending " + connectProvider(c) + " sign-in for " + c.label);
-            compact.appendChild(waitBtn);
+            signInWrap.appendChild(waitBtn);
           } else {
             var connectLabel = (isReconnect ? "Reconnect " : "Connect ") + connectProvider(c) + "\u2026";
             var connect = button(connectLabel, "account-connect-" + c.id, "is-primary", function (event) { event.preventDefault(); event.stopPropagation(); accountConnectOpen(c); });
             connect.setAttribute("aria-label", (isReconnect ? "Reconnect " : "Connect ") + connectProvider(c) + " for " + c.label);
-            compact.appendChild(connect);
+            signInWrap.appendChild(connect);
           }
-          if (c.auth && c.auth.state === "reported_absent") compact.appendChild(el("span", "sub", "Sign-in required"));
+          if (hasQuotaBlock) {
+            signInWrap.appendChild(uiBadge("attn", c.auth && c.auth.state === "reported_absent" ? "Sign-in required" : "Local login unavailable"));
+          } else if (c.auth && c.auth.state === "reported_absent") {
+            signInWrap.appendChild(el("span", "sub", "Sign-in required"));
+          }
         } else if (acctMode === "full") {
-          compact.appendChild(uiBadge("attn", c.auth && c.auth.state === "reported_absent" ? "Sign-in required" : "Login unavailable"));
-          compact.appendChild(el("span", "sub", accountConnectUnsupportedNote(c)));
+          signInWrap.appendChild(uiBadge("attn", c.auth && c.auth.state === "reported_absent" ? "Sign-in required" : "Login unavailable"));
+          signInWrap.appendChild(el("span", "sub", accountConnectUnsupportedNote(c)));
           if (accountCheckSupported(c) && accountCheckEligible(c)) {
             var quickCheck = button(accountChecks.active ? "Checking\u2026" : "Check login now", "account-check-summary-" + c.id, "", function (event) {
               event.preventDefault(); event.stopPropagation();
               delete accountChecks.attempted[c.id];
               runAccountChecks([c], true);
             }, accountChecks.active);
-            compact.appendChild(quickCheck);
+            signInWrap.appendChild(quickCheck);
           }
         } else {
-          compact.appendChild(uiBadge("attn", c.auth && c.auth.state === "reported_absent" ? "Sign-in required" : "Local login unavailable"));
-          compact.appendChild(el("span", "sub", acctMode === "controls" ? "Needs Full mode" : "Read-only \u00B7 needs Full mode"));
+          signInWrap.appendChild(uiBadge("attn", c.auth && c.auth.state === "reported_absent" ? "Sign-in required" : "Local login unavailable"));
+          signInWrap.appendChild(el("span", "sub", acctMode === "controls" ? "Needs Full mode" : "Read-only \u00B7 needs Full mode"));
           var connectHelp = button("How to reconnect\u2026", "account-connect-help-" + c.id, "", function (event) {
             event.preventDefault(); event.stopPropagation();
             openAccountMgmtPanel(c, "reconnect", "account-connect-help-" + c.id);
           });
           connectHelp.setAttribute("aria-label", "How to reconnect " + connectProvider(c) + " for " + c.label);
-          compact.appendChild(connectHelp);
+          signInWrap.appendChild(connectHelp);
         }
-      } else if (bucketKind === "rejected") {
-        compact.appendChild(el("strong", null, "Quota reading rejected"));
-        compact.appendChild(el("span", "sub", "Quota provenance metadata was invalid or unsupported. No usage is assumed."));
-      } else {
-        compact.appendChild(el("strong", null, "No saved quota reading"));
-        compact.appendChild(el("span", "sub", (c.quota && c.quota.summary && c.quota.summary.state !== "reported" && c.quota.summary.text) || accountQuotaReason((c.quota && c.quota.summary && c.quota.summary.state === "reported" ? "schema_unavailable" : (c.quota && c.quota.reason)) || "not_checked")));
+        compact.appendChild(signInWrap);
       }
       if (c.usageUpdating) {
         var updatingLabel = ({ enabled: "Updates on", off: "Updates off", backoff: "Fetch failed \u00B7 retrying", waiting: "Updates paused \u00B7 scheduler not running", paused: "Updates paused \u00B7 selection changed", unavailable: "Update settings unavailable" })[c.usageUpdating.state];
