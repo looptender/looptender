@@ -244,8 +244,18 @@ func TestPanelRouteEndpointUsesExistingNetworkAndSessionGuards(t *testing.T) {
 		t.Run(map[bool]string{false: "read-only", true: "changes-on"}[changes], func(t *testing.T) {
 			w := newPanelChangeWorld(t, changes)
 			resp, body := dockRequest(t, http.MethodGet, w.page+"routes-help.html", withCookie(w.cookie))
-			if resp.StatusCode != 200 || !strings.Contains(body, "Open an owner panel") {
-				t.Fatal("local route help unavailable")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("local route help status=%d want=%d", resp.StatusCode, http.StatusOK)
+			}
+			for _, want := range []string{
+				"<h2>Panel modes and full-mode entry</h2>",
+				"looptender panel --allow-changes",
+				"Run these commands in an ordinary terminal outside BB.",
+				"<h2>Edit one loop's Preferred routes</h2>",
+			} {
+				if !strings.Contains(body, want) {
+					t.Fatalf("local route help missing %q", want)
+				}
 			}
 			for _, bad := range []string{"none", "origin", "session", "form", "content"} {
 				resp, _ := w.post(t, "ignored", "prepare", w.form, `{"op":"own","loop":"l000000000000"}`, func(req *http.Request) {
