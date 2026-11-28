@@ -7,6 +7,20 @@ import { continuityEnrollmentSchema, continuityHostInput, continuityHostOutput }
 type Call = (input: ReturnType<typeof continuityHostInput.parse>, options: { hostId: string; signal: AbortSignal; timeoutMs: number }) => Promise<unknown>;
 const unknown = (): ContinuityInspection => ({ verdict: "cannot_assess", objectiveComplete: false });
 const unresolved = () => new Promise<ContinuityInspection>(() => {});
+// Only a known-settled logical read may finish on cancellation. Never wrap host IO here.
+function logicalRead(signal: AbortSignal, read: () => Promise<void>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const abort = () => { signal.removeEventListener("abort", abort); reject(Error()); };
+    if (signal.aborted) { abort(); return; }
+    signal.addEventListener("abort", abort, { once: true });
+    void Promise.resolve().then(() => {
+      if (signal.aborted) throw Error();
+      return read();
+    }).then(() => { signal.removeEventListener("abort", abort); resolve(); }, () => {
+      signal.removeEventListener("abort", abort); reject(Error());
+    }); // Both late success and rejection are contained; neither can change host ownership.
+  });
+}
 const number = (x: string | undefined) => { if (!x || !/^(0|[1-9]\d*)$/.test(x) || !Number.isSafeInteger(Number(x))) throw Error(); return Number(x); };
 
 /** Registers only explicit advisory enrollment. A persisted guard fences CHECKS, never work or session instructions. */
@@ -51,18 +65,30 @@ export function registerContinuity(bb: BbPluginApi, call: Call, onWorkerExit: (f
       const attempt = randomUUID(), input = continuityHostInput.parse({ attempt, enrollment: e });
       // All pre-dispatch validation/resolution precedes the atomic durable guard.
       try { store!.begin(epoch, e, attempt); } catch { return unknown(); }
+      let result: ReturnType<typeof continuityHostOutput.parse>;
       try {
-        const result = continuityHostOutput.parse(await call(input, { hostId: binding.hostId, signal, timeoutMs: 20_000 }));
-        if (result.attempt !== attempt || !valid()) throw Error();
-        // Revalidate live metadata after IO too. No database transaction spans SDK awaits.
-        await resolve(binding);
-        if (!valid()) throw Error();
-        store!.settled(binding.hostId, attempt, epoch, e);
-        return result.inspection;
+        result = continuityHostOutput.parse(await call(input, { hostId: binding.hostId, signal, timeoutMs: 20_000 }));
+        if (result.attempt !== attempt) throw Error();
       } catch {
-        // Rejection/abort is NOT child close. Keep the durable host fence across replacement/reload.
+        // Rejection/abort is NOT child close. Unknown physical settlement keeps the durable fence.
         blocked.add(binding.hostId); return unresolved();
       }
+      try {
+        // Physical settlement belongs to the original host/token, even after enrollment changes.
+        // No SDK awaits or old observation-freshness gates belong in this atomic removal.
+        store!.settled(binding.hostId, attempt);
+      } catch {
+        // No acknowledged removal: fence this instance and refuse evidence. A rollback retains
+        // the token; an ambiguous post-COMMIT exception does not prove persistence across reload.
+        blocked.add(binding.hostId); return unknown();
+      }
+      try {
+        if (!valid()) return unknown();
+        // Bound only logical metadata after physical settlement and acknowledged token removal.
+        // Late metadata cannot re-block the host or remove a newer attempt.
+        await logicalRead(signal, () => resolve(binding));
+        return valid() ? result.inspection : unknown();
+      } catch { return unknown(); }
     },
   });
   const replace = () => {

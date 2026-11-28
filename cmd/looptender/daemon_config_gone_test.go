@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
+	"github.com/looptender/looptender/internal/lock"
 	"github.com/looptender/looptender/internal/session"
 	"github.com/looptender/looptender/internal/state"
 )
@@ -238,22 +240,113 @@ func TestADryRunDaemonDoesNotStopFromTheLastConfiguration(t *testing.T) {
 // moved to another BB thread since that configuration was read is not
 // stopped on the old one.
 func TestAStopFromTheLastConfigurationKeepsTheTransferRule(t *testing.T) {
-	g := startGoneDaemon(t)
-	if _, err := control.Update(filepath.Join(g.f.dir, "state"), func(f *control.File) { f.BBTarget = "thr_moved" }); err != nil {
-		t.Fatal(err)
+	for _, journal := range []string{"ordinary", "locked"} {
+		t.Run(journal, func(t *testing.T) {
+			g := startGoneDaemon(t)
+			dir := filepath.Join(g.f.dir, "state")
+			if _, err := control.Update(dir, func(f *control.File) { f.BBTarget = "thr_moved" }); err != nil {
+				t.Fatal(err)
+			}
+			var out, errb safeBuffer
+			code := func() int {
+				if journal == "locked" {
+					var held *lock.Lock
+					// The first check may still be finishing its history write.
+					// Wait only for the journal lock, never retry the stop.
+					waitFor(t, func() bool {
+						var err error
+						held, err = lock.AcquireNamed(dir, "incident")
+						if err != nil && !errors.Is(err, lock.ErrHeld) {
+							t.Fatal(err)
+						}
+						return err == nil
+					}, "journal lock")
+					defer held.Release() // Release before waiting for refusal checks or daemon cleanup.
+				}
+				if err := os.Rename(g.f.cfg, g.moved); err != nil {
+					t.Fatal(err)
+				}
+				return run(context.Background(), []string{"stop", "-c", g.moved}, &out, &errb)
+			}()
+			if journal == "locked" && code != exitFailed {
+				t.Fatalf("locked history: got exit %d, want %d", code, exitFailed)
+			}
+			if !transferredStopWasSaved(dir, code, errb.String()) {
+				t.Fatalf("stop was not saved for the transferred target: exit %d, stderr %q", code, errb.String())
+			}
+			waitFor(t, func() bool {
+				return strings.Count(g.errb.String(), "does not match the transferred BB target; use the current loop configuration; no stop performed") >= 2
+			}, "refused stops")
+			if strings.Contains(g.f.read("calls"), "thread stop") {
+				t.Fatal("stopped a thread the loop was moved away from")
+			}
+		})
 	}
-	if err := os.Rename(g.f.cfg, g.moved); err != nil {
-		t.Fatal(err)
+}
+
+// A history failure is acceptable here only after the stop request was saved.
+// Always read control again: the exit status alone cannot establish that.
+func transferredStopWasSaved(dir string, code int, stderr string) bool {
+	if !((code == 0 && stderr == "") ||
+		(code == exitFailed && stderr == "warning: "+errControlHistory.Error()+"\n")) {
+		return false
 	}
-	var out, errb safeBuffer
-	if code := run(context.Background(), []string{"stop", "-c", g.moved}, &out, &errb); code != 0 {
-		t.Fatal(errb.String())
+	c, err := control.Load(dir)
+	return err == nil && c.Stop && c.BBTarget == "thr_moved"
+}
+
+func TestTransferredStopResultRequiresSavedControl(t *testing.T) {
+	warning := "warning: " + errControlHistory.Error() + "\n"
+	for _, result := range []struct {
+		name   string
+		code   int
+		stderr string
+	}{
+		{"success", 0, ""},
+		{"history-warning", exitFailed, warning},
+	} {
+		t.Run(result.name, func(t *testing.T) {
+			for _, record := range []struct {
+				name string
+				raw  string
+				want bool
+			}{
+				{"saved", `{"stop":true,"bbTarget":"thr_moved"}`, true},
+				{"unsaved", `{"stop":false,"bbTarget":"thr_moved"}`, false},
+				{"wrong-target", `{"stop":true,"bbTarget":"thr_primary"}`, false},
+				{"missing", "", false},
+				{"unreadable-record", `{`, false},
+			} {
+				t.Run(record.name, func(t *testing.T) {
+					dir := t.TempDir()
+					if record.raw != "" {
+						write(t, filepath.Join(dir, control.FileName), record.raw, 0o600)
+					}
+					if got := transferredStopWasSaved(dir, result.code, result.stderr); got != record.want {
+						t.Fatalf("saved stop accepted = %v, want %v", got, record.want)
+					}
+				})
+			}
+		})
 	}
-	waitFor(t, func() bool {
-		return strings.Count(g.errb.String(), "does not match the transferred BB target; use the current loop configuration; no stop performed") >= 2
-	}, "refused stops")
-	if strings.Contains(g.f.read("calls"), "thread stop") {
-		t.Fatal("stopped a thread the loop was moved away from")
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, control.FileName), `{"stop":true,"bbTarget":"thr_moved"}`, 0o600)
+	for _, result := range []struct {
+		name   string
+		code   int
+		stderr string
+	}{
+		{"unknown-exit", 99, warning},
+		{"failure-without-warning", exitFailed, ""},
+		{"unknown-warning", exitFailed, "warning: something else\n"},
+		{"extra-warning", exitFailed, warning + "warning: something else\n"},
+		{"success-with-warning", 0, warning},
+	} {
+		t.Run(result.name, func(t *testing.T) {
+			if transferredStopWasSaved(dir, result.code, result.stderr) {
+				t.Fatal("unexpected stop result accepted")
+			}
+		})
 	}
 }
 

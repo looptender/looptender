@@ -65,9 +65,9 @@ export function createContinuityRegistry(db: Database) {
         s.pending.push({ hostId: e.binding.hostId, attempt });
       });
     },
-    settled(hostId: string, attempt: string, epoch: number, e: ContinuityEnrollment) {
+    settled(hostId: string, attempt: string) {
       return change(s => {
-        if (s.epoch !== epoch || !s.enrollments.some(x => enrollmentDigest(x) === enrollmentDigest(e)) || !s.pending.some(p => p.hostId === hostId && p.attempt === attempt)) throw Error("continuity_check_quarantined");
+        if (!s.pending.some(p => p.hostId === hostId && p.attempt === attempt)) throw Error("continuity_check_quarantined");
         s.pending = s.pending.filter(p => p.hostId !== hostId);
       });
     },
