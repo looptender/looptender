@@ -269,11 +269,17 @@ func renewalBinding(entry registry.Entry, cfg *config.Config, caller string, req
 		if !ok || route.Disabled {
 			return "", ctl, review, errRenewal
 		}
-		agent = route.Agent
+		agent, ok = st.CandidateAgent(route)
+		if !ok {
+			return "", ctl, review, errRenewal
+		}
 	}
 	thread := ""
 	if agent.Adapter == "bb" && agent.BB != nil {
 		thread = agent.BB.Thread
+		if !transferThreadID.MatchString(thread) {
+			return "", ctl, review, errRenewal
+		}
 	}
 	if control.CheckHoldClearer(control.HoldClearer{Caller: caller, TargetThread: thread, Supervised: supervisedBy(entry.StateDir)}) != nil {
 		return "", ctl, review, control.ErrSupervisedSession
@@ -292,8 +298,10 @@ func renewalBinding(entry registry.Entry, cfg *config.Config, caller string, req
 			return "", ctl, review, errRenewal
 		}
 	}
-	a, aerr := control.LoadArchive(entry.StateDir)
-	if aerr != nil || a != nil {
+	// Renewal never reads archive contents: only verified absence is eligible.
+	// In particular, opening a FIFO here would block with all three locks held.
+	_, aerr := os.Lstat(filepath.Join(entry.StateDir, control.ArchiveFileName))
+	if !errors.Is(aerr, os.ErrNotExist) {
 		return "", ctl, review, errRenewal
 	}
 	class, err := control.CompletionRenewalClass(ctl)

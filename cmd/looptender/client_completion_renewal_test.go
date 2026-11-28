@@ -562,3 +562,117 @@ func TestCompletionRenewalNoContainerLossAndMapAliases(t *testing.T) {
 		t.Fatal("legitimate distinct map data rejected")
 	}
 }
+
+// A new_thread candidate has no configured BB thread: the current supervised
+// target is the created identity in the strictly loaded state snapshot.
+func renewalCreatedTargetFixture(t *testing.T, owner bool) renewalFixture {
+	t.Helper()
+	f := newRenewalFixture(t)
+	raw := resumeBytes(t, f.entry.ConfigPath)
+	resumeWrite(t, f.entry.ConfigPath, append(raw, []byte("  fallbacks: fallbacks.yaml\n")...))
+	resumeWrite(t, filepath.Join(filepath.Dir(f.entry.ConfigPath), "fallbacks.yaml"), []byte(`version: 1
+candidates:
+  - id: alternative
+    adapter: bb
+    provider: example
+    bb: {new_thread: true, cli: nonexistent-fixture}
+    probe: {kind: command, command: [nonexistent-probe]}
+`))
+	st := state.File{ActiveTarget: "alternative", NewThreads: map[string]state.CreatedThread{"alternative": {Thread: "thr_created_target", CreatedAt: f.at}}}
+	if err := state.Save(f.entry.StateDir, st); err != nil {
+		t.Fatal(err)
+	}
+	if owner {
+		f.update(t, func(c *control.File) { c.Ownership = &control.Ownership{ThreadID: "thr_created_target", Generation: 2} })
+	}
+	cfg, ok := clientConfig(f.entry)
+	if !ok {
+		t.Fatal("invalid created-target fixture")
+	}
+	a := activeAgent(cfg) // only for the regular-file fixture equivalence assertion
+	if a.BB == nil || a.BB.Thread != "thr_created_target" {
+		t.Fatal("fixture did not establish created target")
+	}
+	return f
+}
+
+func TestCompletionRenewalCreatedTargetActor(t *testing.T) {
+	for _, owned := range []bool{false, true} {
+		for _, op := range []string{"prepare-completion-renewal", "apply-completion-renewal"} {
+			name := op + "/absent_owner"
+			if owned {
+				name = op + "/matching_owner"
+			}
+			t.Run(name, func(t *testing.T) {
+				f := renewalCreatedTargetFixture(t, owned)
+				ticket, review := "", ""
+				if op == "apply-completion-renewal" {
+					p := f.prepare(t)
+					ticket, review = p.Ticket, p.ReviewDigest
+				}
+				t.Setenv("BB_THREAD_ID", "thr_created_target")
+				before := resumeBytes(t, filepath.Join(f.entry.StateDir, control.FileName))
+				// A configured route lookup is insufficient even when the owner is the
+				// caller. Assert the actual guard independently of ticket staleness.
+				cfg, _ := clientConfig(f.entry)
+				var req renewalRequest
+				_ = json.Unmarshal(resumeBytes(t, f.request), &req)
+				if _, _, _, err := renewalBinding(f.entry, cfg, "thr_created_target", req); !errors.Is(err, control.ErrSupervisedSession) {
+					t.Fatal("created target was not refused by actor guard", err)
+				}
+				r, c := f.call(op, ticket, review, renewalFaults{})
+				if c == 0 || !bytes.Equal(before, resumeBytes(t, filepath.Join(f.entry.StateDir, control.FileName))) {
+					t.Fatal("self renewal", c, r)
+				}
+				if op == "prepare-completion-renewal" {
+					if r.Ticket != "" || len(r.Issues) != 1 || r.Issues[0] != "supervised_session" {
+						t.Fatal(r)
+					}
+				} else {
+					saved, err := loadRenewalTicket(f.entry.StateDir)
+					if err != nil || saved.Consumed {
+						t.Fatal("actor refusal consumed ticket", saved, err)
+					}
+				}
+			})
+		}
+	}
+	for _, owned := range []bool{false, true} {
+		t.Run(map[bool]string{false: "external_absent_owner", true: "external_matching_target_owner"}[owned], func(t *testing.T) {
+			f := renewalCreatedTargetFixture(t, owned)
+			p := f.prepare(t)
+			r, c := f.call("apply-completion-renewal", p.Ticket, p.ReviewDigest, renewalFaults{})
+			if c != 0 || r.Outcome != "completion_withdrawn" {
+				t.Fatal("external operator refused", c, r)
+			}
+		})
+	}
+}
+
+func TestCompletionRenewalCreatedTargetUnknown(t *testing.T) {
+	for _, thread := range []string{"", "invalid"} {
+		for _, op := range []string{"prepare-completion-renewal", "apply-completion-renewal"} {
+			t.Run(op+"/"+thread, func(t *testing.T) {
+				f := renewalCreatedTargetFixture(t, false)
+				ticket, review := "", ""
+				if op == "apply-completion-renewal" {
+					p := f.prepare(t)
+					ticket, review = p.Ticket, p.ReviewDigest
+				}
+				st, err := state.Load(f.entry.StateDir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				st.NewThreads["alternative"] = state.CreatedThread{Thread: thread, CreatedAt: f.at}
+				if err = state.Save(f.entry.StateDir, st); err != nil {
+					t.Fatal(err)
+				}
+				before := resumeBytes(t, filepath.Join(f.entry.StateDir, control.FileName))
+				r, c := f.call(op, ticket, review, renewalFaults{})
+				if c == 0 || !bytes.Equal(before, resumeBytes(t, filepath.Join(f.entry.StateDir, control.FileName))) {
+					t.Fatal("unknown created identity accepted", c, r)
+				}
+			})
+		}
+	}
+}
