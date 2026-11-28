@@ -1,7 +1,7 @@
 import Foundation
 
 // Pause, stop and resume of one loop from the menu. Every sentence a
-// confirmation shows comes from `keepgoing client review`, which is built by
+// confirmation summarizes comes from `keepgoing client review`, which is built by
 // the code that builds the panel page's review, so the menu and the page
 // cannot say different things. Confirming runs `keepgoing client apply` with
 // the review's `expect` value, so it acts only on the control record that
@@ -226,13 +226,13 @@ public enum ConfirmationBuilder {
     /// (the conversation, or it and its lanes), carried out at once when the
     /// CLI says it can be; otherwise the one stop, which waits for the loop's
     /// next check and stops the conversation only, as the review itself says.
-    public static func build(_ review: Review) -> Confirmation {
-        let name = Contract.text(review.confirm)
+    public static func build(_ review: Review, loop: PanelLoop? = nil) -> Confirmation {
+        let name = review.action == "resume" ? "Resume" : Contract.text(review.confirm)
         var buttons = [ConfirmButton(title: "Cancel", destructive: false, command: nil)]
         guard let action = LoopAction(rawValue: review.action) else {
             return Confirmation(messageText: Contract.text(review.title), informativeText: "", buttons: buttons)
         }
-        let lines = review.lines.map(Contract.text)
+        let lines = review.action == "resume" ? resumeLines(review.lines) : review.lines.map(Contract.text)
         if action == .stop {
             let immediately = review.stop?.immediately ?? false
             if let options = review.stop?.offered, !options.isEmpty {
@@ -248,7 +248,41 @@ public enum ConfirmationBuilder {
             buttons.append(ConfirmButton(title: name, destructive: false,
                                          command: .apply(action, key: review.key, expect: review.expect, lanes: false, immediately: false)))
         }
-        return Confirmation(messageText: Contract.text(review.title), informativeText: lines.joined(separator: "\n\n"), buttons: buttons)
+        var title = Contract.text(review.title)
+        // The cached name is presentation only, never authority or control state.
+        if action == .resume, let loop, loop.key == review.key {
+            let verb = review.title.hasPrefix("Resume checking ") ? "Resume checking" : "Resume"
+            title = "\(verb) \(MenuBuilder.shortened(MenuBuilder.displayName(loop), to: 80))?"
+        }
+        return Confirmation(messageText: title, informativeText: lines.joined(separator: action == .resume ? "\n" : "\n\n"), buttons: buttons)
+    }
+
+    /// Compact only recognized display boilerplate. Unknown/new consequences
+    /// remain visible; none of these strings is used to authorize an action.
+    static func resumeLines(_ raw: [String]) -> [String] {
+        let omitted: Set<String> = [
+            "Confirming prepares this resume's own ticket, so a resume another client prepared and has not used yet can no longer be used.",
+            "If the loop's control record changes before you confirm, nothing is changed and you are asked to review again.",
+            "Its current route: BB thread · model not configured."
+        ]
+        let replacements = [
+            "Resume does not turn supervision on or start a turn; the next check decides what to send.": "No turn starts now; the next check decides what to send.",
+            "This loop is supervised for a conversation. Resuming here clears the holds that conversation or looptender set; it does not answer any question the conversation asked.": "This does not answer a question in the conversation.",
+            "It also removes the record of the question that was open for a person when the loop was marked finished.": "The saved pending-question record is also cleared. This does not answer the question."
+        ]
+        return raw.compactMap { value in
+            let text = Contract.text(value)
+            // Never recognize boilerplate from a truncated/sanitized variant.
+            // Unknown suffixes and unfamiliar formats must remain visible.
+            guard value == text else { return text }
+            if omitted.contains(text) { return nil }
+            let supported = [
+                #"\ANow: (?:Waiting for you|Supervising|Paused|Stopped|Off|Finished)\. Last check: checked; sent nothing · (?:just now|(?:[1-9]|[1-5][0-9]) min ago)\.\z"#,
+                #"\AThis review expires in (?:under a minute|(?:[1-9]|[1-5][0-9]) min) \((?:[01][0-9]|2[0-3]):[0-5][0-9] (?:UTC|[+-](?:0[0-9]|1[0-4])(?::[0-5][0-9])?)\)\.\z"#
+            ]
+            if supported.contains(where: { text.range(of: $0, options: .regularExpression) != nil }) { return nil }
+            return replacements[text] ?? text
+        }
     }
 
     /// Whether a review may still be confirmed. Past its time the change is

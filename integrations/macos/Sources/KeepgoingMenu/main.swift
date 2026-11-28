@@ -459,7 +459,11 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     tell("Nothing was changed", Contract.text(result.text))
                     busy.end(work)
                 case .review(let review):
-                    guard let command = ask(ConfirmationBuilder.build(review)) else { busy.end(work); return }
+                    let namedLoop: PanelLoop?
+                    if case .read(let list, _) = self.reading {
+                        namedLoop = list.loops.first { $0.key == review.key }
+                    } else { namedLoop = nil }
+                    guard let command = ask(ConfirmationBuilder.build(review, loop: namedLoop)) else { busy.end(work); return }
                     guard ConfirmationBuilder.current(review, now: Date()) else {
                         tell("Nothing was changed", Contract.text(review.expired))
                         busy.end(work)
