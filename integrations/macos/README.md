@@ -319,3 +319,16 @@ XCTest or runtime state. `QuotaClockSmoke.swift` and `UsageUpdatingSmoke.swift`
 cover advancing quota/collection clocks and ordering with fictional evidence.
 Swift compilation, standalone fixture execution, hosted XCTest and physical
 menu acceptance are separate checks; a rendered fixture is not live acceptance.
+
+### Compact Resume review (unreleased)
+
+Resume keeps its confirmation because it clears the recorded holds and may let
+later checks send work. The native review names the loop with the menu's same-key
+display name, shows the actual holds cleared, relevant consequences and supplied
+next-check timing, and uses Cancel / Resume. It does not start a turn, answer a
+conversation's question, enable disabled supervision or extend a deadline.
+Recognized route/ticket/review boilerplate is omitted from this primary alert;
+unknown consequences remain visible. Expiry, identity, unchanged-control and
+single-use checks still run. Refusals, changed/expired reviews and unknown outcomes
+remain actionable messages when they occur. This is a presentation change, not
+installed or physical accessibility acceptance.
