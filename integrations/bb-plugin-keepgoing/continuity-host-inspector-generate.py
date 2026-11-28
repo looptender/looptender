@@ -36,9 +36,11 @@ def generate():
                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and re.fullmatch('[a-z][a-z0-9_]*', node.value):
                     tokens.add(node.value)
             info = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+            info.create_system = 3  # Stable Unix metadata even when drift checks run on Windows.
             info.external_attr = 0o100600 << 16
             archive.writestr(info, raw)
         info = zipfile.ZipInfo('__main__.py', (1980, 1, 1, 0, 0, 0))
+        info.create_system = 3
         info.external_attr = 0o100600 << 16
         archive.writestr(info, b'import project_work\nraise SystemExit(project_work.main())\n')
     raw = stream.getvalue()
