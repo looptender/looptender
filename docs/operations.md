@@ -875,7 +875,19 @@ A hold set by a person, a terminal, a client or another thread, a stop and a pau
 
 The withdrawal restores exactly the control record from before that await-user: a person's hold underneath (an await-user, a pause, a stop) stays, so re-running await-user on top of a person's hold and withdrawing it changes nothing a person set. It is journalled as `await-user_withdrawn` by the owner thread, never as a person's resume, and `status` says `question:  the session withdrew its own question: WHY` until the next await-user. It can be done once per await-user. Before setting a whole-loop question, [reconcile the authorized backlog](coordinating-lanes.md#approval-dependent-work); a gate on one action does not block independent work. Withdrawal is appropriate only when that owner-set question no longer stands, not because a chat reply or child receipt is itself a runtime approval. If withdrawal refuses or restores another hold, preserve it and report the remaining restriction.
 
-Completion is a separate control gate. Withdrawal cannot reopen a completed loop; app relaunch, new instructions and finished lane results do not renew it. Current source offers ordinary person-controlled `resume`, whose broader effects clear pause/stop/awaiting-user/completion and retained note/question state (with the documented stop-preserving variant). There is no completion-only, history-preserving renewal command. Review those effects rather than substituting withdrawal or editing runtime files.
+Completion is a separate control gate. Withdrawal cannot reopen a completed loop;
+app relaunch, new instructions and finished lane results do not renew it.
+Ordinary person-controlled `resume`, including native Dock/menu Resume, has broader
+effects: it clears pause/stop/awaiting-user/completion and retained note/question
+state (with the documented stop-preserving variant). Unreleased Darwin/Linux
+source also provides [completion-only renewal](#completion-only-renewal), an
+external person-operated command that preserves historical evidence and refuses
+conflicting holds. An installed v0.3.0 binary does not provide those commands,
+and renewal is not a Dock, panel or plugin action. Current source has no supported
+delegated-operator renewal path, even when a person has authorized delegation;
+existing ownership and self-resume guards still apply. Verify the selected build
+and review the operation's effects rather than substituting withdrawal or editing
+runtime files.
 
 ## Situations that need a person
 
