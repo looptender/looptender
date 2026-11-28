@@ -651,6 +651,52 @@ async function fillAddForm(s, acctId, modelVal, limitVal) {
   limInput.dispatchEvent(new s.window.Event("input", { bubbles: true }));
 }
 
+// Use a real read of a temporarily unreadable selected standard list, then prove
+// that restoring the own/empty selection permits reconciliation despite that
+// unrelated standard-list error. Only fictional fixture files are changed.
+async function assertUnreadableReadKeepsSave(s, kind) {
+  const originalConfig = fs.readFileSync(cfg.edgeCfgPath, "utf8");
+  const originalStandard = fs.readFileSync(cfg.routesPath, "utf8");
+  const originalFetch = s.window.fetch.bind(s.window);
+  let observedRead = null;
+  s.window.fetch = async (url, init = {}) => {
+    const response = await originalFetch(url, init);
+    if (String(url).includes("api/v1/routes/read")) observedRead = await response.clone().json();
+    return response;
+  };
+  try {
+    const following = originalConfig.includes("fallbacks:")
+      ? originalConfig.replace(/fallbacks:.*$/m, "routes: standard")
+      : originalConfig.replace("loop:\n", "loop:\n  routes: standard\n");
+    fs.writeFileSync(cfg.edgeCfgPath, following);
+    fs.writeFileSync(cfg.routesPath, "invalid: [\n");
+    s.doc.querySelector('[data-focus="loop-route-read-again"]').click();
+    await s.settle(() => {
+      const heading = s.doc.querySelector("#loop-route-feedback h4");
+      return observedRead && heading && heading.textContent !== "Working...";
+    });
+    const selected = observedRead.editor.loops.find(l => l.key === cfg.edgeLoopKey).view;
+    assert.equal(selected.listUnreadable, true, "actual selected list must be unreadable");
+    assert(s.doc.querySelector(".loop-route-result.is-" + kind), "unreadable selected list must retain " + kind);
+    assert(!s.doc.querySelector(".loop-route-result.is-reconciled"), "unreadable selected list is not reconciliation");
+    assert(!s.doc.body.textContent.includes("Nothing was changed"));
+    assert(s.doc.querySelector(".loop-route-reconcile-err").textContent.includes("incomplete or unavailable"));
+
+    fs.writeFileSync(cfg.edgeCfgPath, originalConfig);
+    observedRead = null;
+    s.doc.querySelector('[data-focus="loop-route-read-again"]').click();
+    await s.settle(() => observedRead && s.doc.querySelector(".loop-route-result.is-reconciled"));
+    assert.equal(observedRead.editor.standard.state, "unreadable", "unrelated standard-list failure remains");
+    const restored = observedRead.editor.loops.find(l => l.key === cfg.edgeLoopKey).view;
+    assert(["own", "none"].includes(restored.list));
+    assert(!s.doc.querySelector(".loop-route-result.is-" + kind), "usable selected list reconciles " + kind);
+  } finally {
+    fs.writeFileSync(cfg.edgeCfgPath, originalConfig);
+    fs.writeFileSync(cfg.routesPath, originalStandard);
+    s.window.fetch = originalFetch;
+  }
+}
+
 // 8: P2 stale prepare across navigate-away/back same loop + P1 unknown warning stays outside <details>
 {
   const s = await openSession(cfg.allStaleOpen);
@@ -660,6 +706,10 @@ async function fillAddForm(s, acctId, modelVal, limitVal) {
   let releasePrepare;
   const prepGate = new Promise(r => { releasePrepare = r; });
   let injectWarning = false;
+  const suffixWarnings = [
+    "Account selection: Alt Codex (codex). Warning: quota status unknown until verified.",
+    "Account selection: Alt Codex (codex). Model: gpt-5.1-codex. Recorded limit label: pool-warn-check. Warning: quota status unknown until verified."
+  ];
   s.window.fetch = async (url, init = {}) => {
     if (String(url).includes("api/v1/routes/prepare") && holdPrepare) {
       prepStarted = true;
@@ -671,7 +721,7 @@ async function fillAddForm(s, acctId, modelVal, limitVal) {
     if (String(url).includes("api/v1/routes/prepare") && injectWarning) {
       const data = await res.json();
       if (data && Array.isArray(data.lines)) {
-        data.lines.push("Account capacity warning: status unknown until verified.");
+        data.lines.push("Account capacity warning: status unknown until verified.", ...suffixWarnings);
       }
       return new Response(JSON.stringify(data), { status: res.status, headers: { "Content-Type": "application/json" } });
     }
@@ -712,6 +762,11 @@ async function fillAddForm(s, acctId, modelVal, limitVal) {
   const revDetails = s.doc.querySelector(".loop-route-review details.loop-route-details");
   assert(s.doc.querySelector(".loop-route-review").textContent.includes(warnText), "unknown warning line must be visible on review");
   assert(!revDetails.textContent.includes(warnText), "unknown warning line must not be folded into collapsed details");
+  for (const warning of suffixWarnings) {
+    assert(s.doc.querySelector(".loop-route-review").textContent.includes(warning));
+    assert(!revDetails.textContent.includes(warning), "unknown account suffix must stay outside details");
+  }
+  assert(revDetails.textContent.includes("Account selection: Alt Codex (codex). Model: gpt-5.1-codex. Recorded limit label: pool-warn-check."), "exact known account line remains collapsed");
   s.destroy();
 }
 
@@ -805,6 +860,8 @@ async function fillAddForm(s, acctId, modelVal, limitVal) {
   assert(s.doc.querySelector(".loop-route-result.is-partial"), "failed read must preserve partial card");
   assert(s.doc.querySelector(".loop-route-reconcile-err"), "failed read must show reconcile error");
   assert(!s.doc.body.textContent.includes("Nothing was changed"), "failed read after partial must never claim Nothing was changed");
+  readMode = "normal";
+  await assertUnreadableReadKeepsSave(s, "partial");
   assert.equal(confirmCalls, 1, "confirm must not replay");
   s.destroy();
 }
@@ -873,8 +930,7 @@ async function fillAddForm(s, acctId, modelVal, limitVal) {
   assert.equal(confirmCalls, 1, "confirm must not replay after refused read");
 
   readMode = "normal";
-  s.doc.querySelector('[data-focus="loop-route-read-again"]').click();
-  await s.settle(() => s.doc.querySelector(".loop-route-result.is-reconciled"));
+  await assertUnreadableReadKeepsSave(s, "unknown");
   assert(!s.doc.querySelector(".loop-route-result.is-unknown"), "authoritative read clears unknown state");
   assert(s.doc.querySelector(".loop-route-result.is-reconciled").textContent.includes("Current list loaded"));
   assert(s.doc.body.textContent.includes("gpt-5.1-codex"), "authoritative read refreshes route list");
@@ -901,6 +957,8 @@ console.log("LOOP_ROUTES_JSDOM_OK");
 		"extFirstOpen":   extURLs[0],
 		"firstLoopKey":   dockKey(firstEntry.ID),
 		"edgeLoopKey":    dockKey(edgeEntry.ID),
+		"edgeCfgPath":    edgeEntry.ConfigPath,
+		"routesPath":     routesPath,
 		"claudeID":       claudeID,
 		"codexID":        codexID,
 		"modelsLog":      modelsLog,

@@ -4636,6 +4636,15 @@
     }
     return null;
   }
+  function loopRouteReadableView(ed, key) {
+    var view = loopRouteView(ed, key);
+    if (!view || view.problem || view.listUnreadable || view.canReason === "list_unreadable" || !Array.isArray(view.routes)) return null;
+    if (view.list !== "own" && view.list !== "none" && view.list !== "standard") return null;
+    // An unrelated standard-list failure does not invalidate an own-list read.
+    if (view.list === "standard" && (!ed.standard || ed.standard.problem ||
+        (ed.standard.state !== "ok" && ed.standard.state !== "missing"))) return null;
+    return view;
+  }
   function loopRouteEligibleAccounts(ed) {
     return list(ed && ed.accounts).filter(function (acct) {
       return (acct.provider === "claude-code" || acct.provider === "codex") &&
@@ -4682,7 +4691,18 @@
   ];
   function loopRouteIsBoilerplate(lnText) {
     if (!lnText) return false;
-    if (lnText.indexOf("Account selection: ") === 0) return true;
+    if (loopRouteEdit.pendingOp === "add") {
+      var draft = loopRouteEdit.draft;
+      var accts = loopRouteEligibleAccounts(loopRouteEdit.data);
+      var limit = draft.limitChoice && draft.limitChoice !== "new" ? draft.limitChoice : (draft.limit || "").trim();
+      for (var i = 0; i < accts.length; i++) {
+        if (accts[i].id !== draft.account) continue;
+        // Collapse only the complete known producer line. New suffixes stay visible.
+        var accountLine = "Account selection: " + accts[i].label + " (" + accts[i].provider +
+          "). Model: " + (draft.model || "").trim() + ". Recorded limit label: " + limit + ".";
+        if (lnText === accountLine) return true;
+      }
+    }
     return LOOP_ROUTE_BOILERPLATE_LINES.indexOf(lnText) >= 0;
   }
   function loopRoutePartitionLines(rawLines) {
@@ -4759,7 +4779,7 @@
           return;
         }
         if (step === "read") {
-          if (res && res.editor && loopRouteView(res.editor, loopKey)) {
+          if (res && res.editor && loopRouteReadableView(res.editor, loopKey)) {
             loopRouteEdit.data = res.editor;
             if (loopRouteEdit.unresolvedSave) {
               loopRouteEdit.unresolvedSave = null;
@@ -4771,7 +4791,7 @@
               load(true);
             }
           } else if (loopRouteEdit.unresolvedSave) {
-            loopRouteEdit.reconcileError = "Could not verify the earlier save because reading the current route list failed" +
+            loopRouteEdit.reconcileError = "Could not verify the earlier save because the current route list is incomplete or unavailable" +
               (res && res.text ? " (" + res.text + ")" : "") +
               ". The earlier save outcome is still " + loopRouteEdit.unresolvedSave.kind + "; nothing is retried automatically.";
           } else {
