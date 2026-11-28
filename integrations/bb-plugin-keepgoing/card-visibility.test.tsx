@@ -27,7 +27,7 @@ test("deadline reached, send limit reached, low disk and a held note are visible
   const ui = card([loop({ controlState: "awaiting user", note: "Needs a decision on scope." }, { deadline: { at: "2026-01-01T00:00:00Z", reached: true }, sends: { max: 40, used: 40, remaining: 0, reached: true }, disk: { level: "low", message: "the volume that holds the state directory is filling (900 MiB free of 100 GiB, below 2.0 GiB): free space on it before records fail to save" }, schedule: { overdue: true, message: "No check has run for 3 hours." } })]);
   try {
     const why = within(await ui.findByRole("list", { name: "Why" }));
-    for (const re of [/^Deadline reached \(.*\); evaluated on the next check$/, /^Send limit reached: 40\/40 attempts reserved; 0 remaining$/, /^State-volume disk:.*the volume that holds the state directory is filling/, /^Needs you: No check has run for 3 hours\.$/, /^Note: Needs a decision on scope\.$/]) assert.ok(why.getByText(re), String(re));
+    for (const re of [/^Deadline reached \(.*\); review loop\.limits\.deadline before resuming$/, /^Send limit reached: 40\/40 attempts reserved; 0 remaining$/, /^State-volume disk:.*the volume that holds the state directory is filling/, /^Needs you: No check has run for 3 hours\.$/, /^Note: Needs a decision on scope\.$/]) assert.ok(why.getByText(re), String(re));
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
 

@@ -431,7 +431,7 @@ Declaring completion also ends a wait on a person, so `status` shows the loop as
 
 To reopen the task, or continue with a revised `prompt` or `prompt_file`, run `keepgoing resume`. The supervised session cannot run it on its own loop ([why](#the-supervised-session-cannot-clear-its-own-hold)). Resume explicitly clears completion along with pause, stop, and awaiting-user, and clears the old note. It preserves the current target and session; it does not create a fresh conversation. It also does not enable a disabled loop: use `enable` separately in that case. `enable` alone never clears completion. Manual commands such as `fallbacks check` remain explicit operations and can still run while a task is completed.
 
-Use `await-user` when unfinished work needs a person, and `complete` when all authorized work is done. If the task is an entire roadmap, completing one item is not completion of the task.
+Use `await-user` only when all remaining authorized work needs a person, and `complete` when all authorized work is done. If the task is an entire roadmap, completing one item is not completion of the task.
 
 ## Archiving a loop
 
@@ -705,7 +705,7 @@ Each ordinary tick compares its start time with the deadline. At equality or lat
 
 An in-flight check may finish past the deadline, and an already-running or queued agent turn is not cancelled. This is a cutoff for future supervision checks, not a real-time execution timeout, total-turn cap or monetary budget. It relies on the host clock; clock changes can move an unreached cutoff. After a hold is persisted, a clock rollback or deadline edit does not clear it. Stop retains precedence and can still cancel a running turn through its adapter.
 
-To continue, revise or remove the deadline under the task's existing authorization and explicitly `resume`. Resume alone with an expired deadline causes another hold on the next check. Enable, restart, retarget and ownership takeover do not extend the configured deadline. Existing disabled/pause/stop/completion/awaiting-user holds retain precedence. Manual operations, including `fallbacks check`, `retarget` activation and read-only `doctor` queries, remain explicit operations outside this automatic cutoff. Existing config-snapshot and ownership checks still apply.
+To continue, revise or remove the deadline under the task's existing authorization and explicitly `resume`. Unreleased source refuses `resume` before clearing any hold when the configured deadline has already been reached. The CLI reports the configuration field to review; registered clients report `deadline_reached`, and the panel/menu review refuses before offering a confirmation. The BB card uses the structured reached flag to show the same next step instead of a futile resume command. Editing the deadline alone never clears a hold. A deadline reached after admission is still enforced on the next check. Older builds may report resume success and then hold again at that check. Enable, restart, retarget and ownership takeover do not extend the configured deadline. Existing disabled/pause/stop/completion/awaiting-user holds retain precedence. Manual operations, including `fallbacks check`, `retarget` activation and read-only `doctor` queries, remain explicit operations outside this automatic cutoff. Existing config-snapshot and ownership checks still apply.
 
 Available in v0.1.3 or newer. Verification uses decision tables, CLI and supervisor fixtures; no live provider or service deadline was exercised.
 
@@ -873,7 +873,9 @@ A hold set by a person, a terminal, a client or another thread, a stop and a pau
 - nothing changed the control record since, by anyone;
 - the loop is not archived.
 
-The withdrawal restores exactly the control record from before that await-user: a person's hold underneath (an await-user, a pause, a stop) stays, so re-running await-user on top of a person's hold and withdrawing it changes nothing a person set. It is journalled as `await-user_withdrawn` by the owner thread, never as a person's resume, and `status` says `question:  the session withdrew its own question: WHY` until the next await-user. It can be done once per await-user.
+The withdrawal restores exactly the control record from before that await-user: a person's hold underneath (an await-user, a pause, a stop) stays, so re-running await-user on top of a person's hold and withdrawing it changes nothing a person set. It is journalled as `await-user_withdrawn` by the owner thread, never as a person's resume, and `status` says `question:  the session withdrew its own question: WHY` until the next await-user. It can be done once per await-user. Before setting a whole-loop question, [reconcile the authorized backlog](coordinating-lanes.md#approval-dependent-work); a gate on one action does not block independent work. Withdrawal is appropriate only when that owner-set question no longer stands, not because a chat reply or child receipt is itself a runtime approval. If withdrawal refuses or restores another hold, preserve it and report the remaining restriction.
+
+Completion is a separate control gate. Withdrawal cannot reopen a completed loop; app relaunch, new instructions and finished lane results do not renew it. Current source offers ordinary person-controlled `resume`, whose broader effects clear pause/stop/awaiting-user/completion and retained note/question state (with the documented stop-preserving variant). There is no completion-only, history-preserving renewal command. Review those effects rather than substituting withdrawal or editing runtime files.
 
 ## Situations that need a person
 
@@ -1611,7 +1613,7 @@ A lane that has a [successor thread](transfer.md#replace-blocked-child-lanes-unr
 
 A reply in a conversation does not release an awaiting-user hold. Use explicit Resume in the menu/panel or `keepgoing resume -c <config>` from an ordinary terminal outside BB. In unreleased source, a resume carrying a different `BB_THREAD_ID` explains this recovery path instead of recommending `enable --take-over`. Older builds may still suggest takeover; resuming the existing loop does not require transferring its owner. The visible status can lag until the next client refresh.
 
-Unreleased source. Supervision never clears a hold; a person does. On top of the ownership rule above, `resume`, `retarget`, `client prepare-resume`, `client resume`, and the panel's and `client review`'s resume refuse two callers, even when they own the loop:
+Unreleased source. General resume remains person-controlled; [condition waits and owner-question withdrawal](#withdrawing-the-sessions-own-question) end only their own recorded holds under their separate guards. On top of the ownership rule above, `resume`, `retarget`, `client prepare-resume`, `client resume`, and the panel's and `client review`'s resume refuse two callers, even when they own the loop:
 
 - **The loop's current target thread.** `BB_THREAD_ID` equals the BB thread of the route the loop is on now. Every command the session runs, and a BB terminal opened on that thread, carries that ID.
 - **Anything this loop's supervisor started.** `tick` and `daemon` put `LOOPTENDER_SUPERVISED_LOOP`, set to the loop's state directory, in their own environment. A headless Claude Code, Codex or Cursor turn, a process-adapter command, a probe and every program those start inherit it. A process carrying another loop's state directory there is not refused for this loop.
@@ -1918,3 +1920,101 @@ rename a settled successor in BB and looptender will not overwrite it. Existing
 threads titled `Continue from ...` are not swept or renamed by this change.
 This is source-only fixture evidence, not a change to an installed supervisor
 or released BB plugin; live BB creation acceptance remains unverified.
+
+
+## Completion-only renewal
+
+Unreleased Darwin/Linux source provides an external person-operated withdrawal
+of one reviewed completion gate. This differs from owner question withdrawal
+(which preserves any underlying completion) and ordinary resume (which clears
+several holds and question history). No panel, HTTP or plugin action is added.
+The supervised target and processes marked as started by its supervisor cannot
+prepare or apply renewal. These are cooperative checks, not authentication
+against hostile local processes; do not unset markers to bypass them.
+
+Create a private, mode-0600 JSON request using an absolute path. All keys and
+acknowledgements below are required; references remain opaque and are never
+fetched or interpreted as permission:
+
+```json
+{
+  "version": 1,
+  "requestId": "request_example",
+  "effect": "withdraw_exact_completion",
+  "historical": {
+    "class": "legacy_unbound",
+    "acknowledgeIndependentCurrentScope": true
+  },
+  "currentScope": {
+    "id": "scope_example",
+    "revision": 1,
+    "summary": "Continue the already authorized delivery work",
+    "refs": ["authorization:example", "objective:example"]
+  },
+  "acknowledge": {
+    "onlyCompletion": true,
+    "laterChecksMayWake": true,
+    "historicalEvidenceNotAcceptance": true
+  }
+}
+```
+
+Use `legacy_unbound` for an omitted Completion or a valid declaration without
+historical goal identity; use `bound` for a valid bound declaration. No old
+identity, time, authority or acceptance is manufactured. The current scope is
+an independent operator declaration, not a new Goal or proof of permission.
+Existing work authorization can be referenced without granting it again.
+
+```sh
+looptender client prepare-completion-renewal --id loop_example \
+  --request-file /private/example/renewal-request.json --json
+# Review the returned historical class, current goal relationship and effect.
+# --private additionally shows bounded private scope and historical control.
+looptender client apply-completion-renewal --id loop_example \
+  --request-file /private/example/renewal-request.json \
+  --ticket renewal_REPLACE_WITH_PREPARED_ID --expect-review REPLACE_WITH_REVIEW_DIGEST --json
+```
+
+Both commands support `--directory` for the existing private registry. Tickets
+expire after five minutes, are operation-specific and single-use, and bind the
+complete registration/config/control/state/current-goal snapshot and request.
+Any change needs fresh preparation, including owner generation, scope, goal
+revision or an unrelated recorded check. Missing owner and missing current goal
+are explicitly pinned and retained as absent. Invalid present records, unknown
+fields, ambiguous/duplicate keys, partial identity pairs and present-null
+historical records refuse. Existing goal revisions are never rewritten. A representation that ordinary
+control serialization would collapse (such as an explicitly empty omitted slice)
+also refuses rather than losing its container distinction.
+
+Enabled and completed must both be true. Pause, stop, awaiting-user, episode or
+brief holds, an active question, stop-lane intent, transfer, supersession and
+archive/unknown archive refuse. Historical Note, OpenQuestion and Completion
+remain unchanged, including omission; ownership and other supported semantic
+fields also remain unchanged. JSON formatting can change. Only Completed=false
+and normal UpdatedAt change. No budgets, counters, goal, assignments, question
+or selfhold records are reset. No send, start, enable or dispatch occurs during
+apply. Later ordinary checks **may wake the existing authorized target** and
+still enforce all normal limits and restrictions. `completion_withdrawn` does
+not mean ready, running, accepted or objectively complete.
+
+Coverage is an optional read-only aid; `coverage_not_assessed` is not evidence
+of no work and does not block this explicitly reviewed flag withdrawal.
+Completed lanes do not establish whole-objective acceptance. No inventory,
+source discovery, dependency engine or transcript interpretation is introduced.
+
+Ticket consumption is published before the control save. Tested process-crash
+behavior after successful close/rename does not establish OS-crash or power-loss
+durability or exactly-once execution. An uncertain ticket publication or
+consumption does not permit a control save. A consumed ticket is never retried;
+there is no automatic recovery, rollback or refunded attempt. Inspect current
+records and deliberately prepare a new review after uncertainty. A control-save
+error reports `control_save_unknown`; a confirmed save with failed diagnostics
+reports `completion_withdrawn_with_history_gap`; a lost acknowledgement remains
+unknown. Diagnostic history is bounded, not an indefinite archive.
+
+Request inputs are limited to 32 KiB, tickets to 4 KiB, and records to their
+existing bounded sizes. Symlinks, nonregular files, public input permissions and
+oversize records refuse. Darwin/Linux use nonblocking, no-follow descriptor
+acquisition; unsupported platforms refuse before ticket/control writes. Native
+Windows support, Linux native acceptance, installed adoption and live renewal
+remain separate verification. No roadmap acceptance is closed by this command.

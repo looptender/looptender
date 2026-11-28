@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -38,30 +39,33 @@ type fallbackAddOptions struct {
 	position, probeCap                                             int
 	enableHandoff, nonInteractive, dryRun, asJSON                  bool
 	set                                                            map[string]bool // flags given on the command line
+	panelReviewed                                                  bool            // require actual planner reads to match loaded snapshots
+	panelScheduledDisabled                                         bool            // creation-only panel policy; CLI default stays false
 }
 
 // fallbackAddPlan is the resolved change. Nothing in it has been written.
 type fallbackAddPlan struct {
-	accountEntry  *accounts.Entry // the catalog entry the person named; nil for none
-	cfg           *config.Config
-	cfgPath       string
-	fallbacksPath string
-	createFile    bool
-	candidate     config.Candidate
-	written       bool               // the fallback was written
-	historyFailed bool               // ...but not recorded in the loop's timeline
-	order         []config.Candidate // resulting handoff order, new candidate included
-	position      int                // 1-based position of the new candidate
-	rules         *config.Fallbacks  // redundancy and probe policy that will apply
-	wasLive       bool               // handoff could already happen before this change
-	failoverOn    []string           // resulting errors.failover_on
-	failoverWrite bool               // this command writes errors.failover_on
-	failoverWas   string             // the setting being replaced, for the preview
-	warnings      []string
-	notes         []string
-	bb            *fallbackAddBBDetail // set for a BB candidate
-	fallbacksYAML []byte
-	configYAML    []byte // nil when keepgoing.yaml is left untouched
+	accountEntry             *accounts.Entry // the catalog entry the person named; nil for none
+	cfg                      *config.Config
+	cfgPath                  string
+	fallbacksPath            string
+	createFile               bool
+	candidate                config.Candidate
+	written                  bool               // the fallback was written
+	historyFailed            bool               // ...but not recorded in the loop's timeline
+	order                    []config.Candidate // resulting handoff order, new candidate included
+	position                 int                // 1-based position of the new candidate
+	rules                    *config.Fallbacks  // redundancy and probe policy that will apply
+	wasLive                  bool               // handoff could already happen before this change
+	failoverOn               []string           // resulting errors.failover_on
+	failoverWrite            bool               // this command writes errors.failover_on
+	failoverWas              string             // the setting being replaced, for the preview
+	warnings                 []string
+	notes                    []string
+	bb                       *fallbackAddBBDetail // set for a BB candidate
+	fallbacksYAML            []byte
+	configYAML               []byte // nil when keepgoing.yaml is left untouched
+	configRead, fallbackRead fallbackAddPreimage
 }
 
 // Success-only integration contract. Account-directory paths, environment
@@ -805,6 +809,20 @@ func fallbackAddSlug(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+type fallbackAddPreimage struct {
+	Path    string
+	Present bool
+	Size    int
+	Sum     [sha256.Size]byte
+}
+
+func fallbackAddBefore(path string, raw []byte) fallbackAddPreimage {
+	return fallbackAddPreimage{Path: path, Present: raw != nil, Size: len(raw), Sum: sha256.Sum256(raw)}
+}
+
+// Injected only by tests; this is the actual planner read, not a later reread.
+var fallbackAddReadFile = os.ReadFile
+
 func planFallbackAdd(cfg *config.Config, o fallbackAddOptions, lookPath func(string) (string, error)) (*fallbackAddPlan, error) {
 	if err := fallbackAddAgentSupported(o.agent); err != nil {
 		return nil, err
@@ -883,10 +901,12 @@ func planFallbackAdd(cfg *config.Config, o fallbackAddOptions, lookPath func(str
 
 	// Handoff is a choice of this command, never a side effect of adding the
 	// first fallback: an absent errors.failover_on defaults to rate_limit.
-	rawCfg, err := os.ReadFile(p.cfgPath)
+	rawCfg, err := fallbackAddReadFile(p.cfgPath)
 	if err != nil {
 		return nil, errors.New("The configuration is unreadable.")
 	}
+	p.configRead = fallbackAddBefore(p.cfgPath, rawCfg)
+	var rawFallback []byte
 	keySet := yamlMapValue(yamlMapValue(yamlMapValue(yamlDocRoot(rawCfg), "loop"), "errors"), "failover_on") != nil
 	p.wasLive = !p.createFile && len(current) > 0
 	p.failoverWas = "default " + strings.Join(current, ", ")
@@ -909,20 +929,22 @@ func planFallbackAdd(cfg *config.Config, o fallbackAddOptions, lookPath func(str
 
 	if p.createFile {
 		fb := config.Fallbacks{Version: 1, Redundancy: config.Redundancy{MinHealthy: 1, Span: "group"},
-			Probe:      config.ProbePolicy{Every: config.Duration{Duration: 12 * time.Hour}, TTL: config.Duration{Duration: 24 * time.Hour}, DailyCap: o.probeCap},
+			Probe:      config.ProbePolicy{Every: config.Duration{Duration: 12 * time.Hour}, TTL: config.Duration{Duration: 24 * time.Hour}, DailyCap: o.probeCap, Disabled: o.panelScheduledDisabled},
 			Candidates: []config.Candidate{p.candidate}}
 		if p.fallbacksYAML, err = yaml.Marshal(fb); err != nil {
 			return nil, err
 		}
 	} else {
-		raw, err := os.ReadFile(p.fallbacksPath)
+		raw, err := fallbackAddReadFile(p.fallbacksPath)
 		if err != nil {
 			return nil, errors.New("The fallbacks file is unreadable.")
 		}
+		rawFallback = raw
 		if p.fallbacksYAML, err = insertCandidateYAML(raw, p.candidate, p.position-1); err != nil {
 			return nil, err
 		}
 	}
+	p.fallbackRead = fallbackAddBefore(p.fallbacksPath, rawFallback)
 	parsed, err := config.ParseFallbacks(p.fallbacksYAML)
 	if err != nil {
 		return nil, fmt.Errorf("The resulting fallbacks file would be invalid: %w", err)
@@ -945,6 +967,14 @@ func planFallbackAdd(cfg *config.Config, o fallbackAddOptions, lookPath func(str
 		}
 		if p.createFile && next.Loop.Fallbacks != "fallbacks.yaml" || strings.Join(next.Loop.Errors.FailoverOn, ",") != strings.Join(p.failoverOn, ",") {
 			return nil, errors.New("Could not update the configuration file safely; edit it by hand.")
+		}
+	}
+	if o.panelReviewed {
+		if err := cfg.CheckSourceBytes(rawCfg, rawFallback); err != nil {
+			return nil, err
+		}
+		if err := cfg.CheckSources(); err != nil {
+			return nil, err
 		}
 	}
 	return p, nil
@@ -1131,45 +1161,201 @@ func writeFallbackAdd(p *fallbackAddPlan) (int, error) {
 	if code, err := fallbackAddAllowed(p.cfg); err != nil {
 		return code, fmt.Errorf("%w; nothing written", err)
 	}
-	// Recorded once the files are written; a record that cannot be written
-	// leaves the change standing and says so.
+	_, err = commitFallbackAddLocked(p, caller)
+	if err != nil {
+		return exitFailed, err
+	}
+	return exitOK, nil
+}
+
+type fallbackAddWriteResult struct {
+	Outcome string
+	Stage   string
+}
+type fallbackAddFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+	Stat() (os.FileInfo, error)
+}
+
+var fallbackAddCreate = func(path string) (fallbackAddFile, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+}
+var fallbackAddRemove = os.Remove
+var fallbackAddHistory = recordRouteChange
+
+// commitFallbackAddLocked publishes an already validated plan. Caller must
+// hold tick and validate ownership/sources; reviewed callers also retain their
+// registry/accounts locks. No planning, lookup or lock acquisition occurs here.
+func commitFallbackAddLocked(p *fallbackAddPlan, caller string) (result fallbackAddWriteResult, err error) {
 	defer func() {
 		if p.written {
-			p.historyFailed = recordRouteChange(p.cfg.Loop.StateDir, "add", p.candidate.ID, caller) != nil
+			p.historyFailed = fallbackAddHistory(p.cfg.Loop.StateDir, "add", p.candidate.ID, caller) != nil
 		}
 	}()
 	if p.createFile {
-		f, err := os.OpenFile(p.fallbacksPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		f, err := fallbackAddCreate(p.fallbacksPath)
 		if err != nil {
-			return exitFailed, errors.New("could not create the fallbacks file; nothing written")
+			return fallbackAddWriteResult{"failed", "not_published"}, errors.New("could not create the fallbacks file; nothing written")
 		}
-		_, err = f.Write(p.fallbacksYAML)
-		if err == nil {
-			err = f.Sync()
+		owned, statErr := f.Stat()
+		if statErr == nil {
+			n, writeErr := f.Write(p.fallbacksYAML)
+			err = writeErr
+			if err == nil && n != len(p.fallbacksYAML) {
+				err = io.ErrShortWrite
+			}
+			if err == nil {
+				err = f.Sync()
+			}
+		} else {
+			err = statErr
 		}
-		if cerr := f.Close(); err == nil {
-			err = cerr
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
 		}
 		if err == nil {
 			err = fallbackAddReplace(p.cfgPath, p.configYAML)
 		}
 		if err != nil {
-			_ = os.Remove(p.fallbacksPath) // created above, by this command
-			return exitFailed, errors.New("could not update the configuration file; nothing written")
+			// Only the still-matching exclusively created regular file is ours to
+			// remove. This coordinates cooperative writers, not hostile path races.
+			current, inspectErr := os.Lstat(p.fallbacksPath)
+			cleaned := errors.Is(inspectErr, os.ErrNotExist)
+			if inspectErr == nil && owned != nil && current.Mode().IsRegular() && os.SameFile(owned, current) {
+				cleaned = fallbackAddRemove(p.fallbacksPath) == nil
+			}
+			if !cleaned {
+				return fallbackAddWriteResult{"partial", "fallback_file_retained"}, errors.New("could not update the configuration; a fallback file may remain; inspect before reviewing again")
+			}
+			return fallbackAddWriteResult{"failed", "not_retained"}, errors.New("could not update the configuration file; nothing written")
 		}
 		p.written = true
-		return exitOK, nil
+		return fallbackAddWriteResult{"changed", "published"}, nil
 	}
 	if err := fallbackAddReplace(p.fallbacksPath, p.fallbacksYAML); err != nil {
-		return exitFailed, errors.New("could not update the fallbacks file; nothing written")
+		return fallbackAddWriteResult{"failed", "not_published"}, errors.New("could not update the fallbacks file; nothing written")
 	}
 	p.written = true
 	if p.configYAML != nil {
 		if err := fallbackAddReplace(p.cfgPath, p.configYAML); err != nil {
-			return exitFailed, errors.New("the fallback was added, but errors.failover_on could not be updated in the configuration file; automatic handoff is unchanged")
+			return fallbackAddWriteResult{"partial", "fallback_saved_config_unchanged"}, errors.New("the fallback was added, but errors.failover_on could not be updated in the configuration file; automatic handoff is unchanged")
 		}
 	}
-	return exitOK, nil
+	return fallbackAddWriteResult{"changed", "published"}, nil
+}
+
+// fallbackAddReview is private, detached form state. Its positive position
+// and opaque ID never use the planner's default append/suffix logic again.
+type fallbackAddReview struct {
+	options                            fallbackAddOptions
+	configPath, stateDir, name, expect string
+}
+
+func planReviewedFallbackAdd(cfg *config.Config, o fallbackAddOptions, lookPath func(string) (string, error)) (*fallbackAddPlan, string, error) {
+	if !o.panelReviewed || o.id == "" || cfg.Path() == "" || cfg.Loop.FollowsStandard() {
+		return nil, "", errors.New("unsupported reviewed add")
+	}
+	if err := cfg.CheckSources(); err != nil {
+		return nil, "", err
+	}
+	for _, path := range []string{cfg.Path(), cfg.Loop.Fallbacks} {
+		if path == "" {
+			continue
+		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return nil, "", errors.New("reviewed source is not a regular file")
+		}
+	}
+
+	st, err := state.Load(cfg.Loop.StateDir)
+	if err != nil {
+		return nil, "", err
+	}
+	p, err := planFallbackAdd(cfg, o, lookPath)
+	if err != nil {
+		return nil, "", err
+	}
+	cli := ""
+	if p.candidate.Claude != nil {
+		cli = p.candidate.Claude.CLI
+	} else if p.candidate.Codex != nil {
+		cli = p.candidate.Codex.CLI
+	}
+	resolvedCLI, err := canonicalFuturePath(cli)
+	if err != nil || cli == "" {
+		return nil, "", errors.New("reviewed executable unavailable")
+	}
+	// Exported payload fields are deliberate: options itself has private Go
+	// fields and would otherwise serialize to {}, losing the frozen inputs.
+	payload := struct {
+		Domain, Sources, Active, ID, Agent, Model, Group, Account, ConfigPath, Destination, ResolvedCLI string
+		Position, ProbeCap                                                                              int
+		Create, FailoverWrite, ScheduledDisabled                                                        bool
+		ConfigRead, FallbackRead                                                                        fallbackAddPreimage
+		Candidate                                                                                       config.Candidate
+		Order                                                                                           []config.Candidate
+		Rules                                                                                           *config.Fallbacks
+		ConfigYAML, FallbackYAML                                                                        []byte
+	}{
+		Domain: "reviewed_fallback_add/1", Sources: cfg.SourcesDigest(), Active: st.Target(),
+		ID: o.id, Agent: o.agent, Model: o.model, Group: o.group, Account: o.accountID,
+		ConfigPath: p.cfgPath, Destination: p.fallbacksPath, ResolvedCLI: resolvedCLI,
+		Position: p.position, ProbeCap: o.probeCap, Create: p.createFile,
+		FailoverWrite: p.failoverWrite, ScheduledDisabled: o.panelScheduledDisabled,
+		ConfigRead: p.configRead, FallbackRead: p.fallbackRead, Candidate: p.candidate,
+		Order: p.order, Rules: p.rules, ConfigYAML: p.configYAML, FallbackYAML: p.fallbacksYAML,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, "", err
+	}
+	sum := sha256.Sum256(raw)
+	return p, fmt.Sprintf("%x", sum), nil
+}
+
+var fallbackAddTickLock = lock.Acquire
+
+// Registry and selected-account writer locks must already be held by the
+// panel. This takes tick exactly once and commits only a freshly matching plan.
+func writeReviewedFallbackAdd(review fallbackAddReview, caller string, lookPath func(string) (string, error), contextCurrent func(*fallbackAddPlan) bool) (*fallbackAddPlan, fallbackAddWriteResult) {
+	again := fallbackAddWriteResult{"review_again", "not_published"}
+	if review.options.position < 1 {
+		return nil, again
+	}
+	held, err := fallbackAddTickLock(review.stateDir)
+	if err != nil {
+		return nil, fallbackAddWriteResult{"refused", "busy"}
+	}
+	defer held.Release()
+	cfg, err := config.Load(review.configPath)
+	if err != nil {
+		return nil, again
+	}
+	dir, err := canonicalFuturePath(cfg.Loop.StateDir)
+	if err != nil || dir != review.stateDir || cfg.Loop.Name != review.name {
+		return nil, again
+	}
+	if ownListAuthority(cfg.Loop.StateDir, caller) != nil {
+		return nil, fallbackAddWriteResult{"refused", "authority"}
+	}
+	if _, err := fallbackAddAllowed(cfg); err != nil {
+		return nil, fallbackAddWriteResult{"refused", "authority_or_sources"}
+	}
+	p, digest, err := planReviewedFallbackAdd(cfg, review.options, lookPath)
+	if err != nil || digest != review.expect {
+		return nil, again
+	}
+	if err := cfg.CheckSources(); err != nil {
+		return nil, again
+	}
+	if contextCurrent == nil || !contextCurrent(p) {
+		return nil, again
+	}
+	result, _ := commitFallbackAddLocked(p, caller)
+	return p, result
 }
 
 // replaceFile swaps in new contents through a synced private sibling file,

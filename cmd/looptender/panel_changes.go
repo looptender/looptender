@@ -471,6 +471,11 @@ func panelReviewForCaller(ctx context.Context, registryDir string, reader *dockR
 	if (action == "resume" || action == "archive" || action == "unarchive") && entryHoldClearer(entry, caller) != nil {
 		return panelReviewed{}, &panelResult{Outcome: "refused", Text: panelSupervisedSession + " Nothing was changed."}
 	}
+	if action == "resume" {
+		if cfg, ok := clientConfig(entry); ok && resumeDeadlineRefusal(cfg, now) != nil {
+			return panelReviewed{}, &panelResult{Outcome: "refused", Text: resumeDeadlineMessage + " Nothing was changed."}
+		}
+	}
 	// The rest of the loop as it is now, read the way the page reads it.
 	loop := panelLoopNow(ctx, reader, dir, entry, all, now)
 	if action == "archive" && loop.Archived != nil {
@@ -905,6 +910,8 @@ func panelOutcome(action string, r clientHoldReport) panelResult {
 	if len(r.Issues) > 0 {
 		// The first issue is the reason; later ones are diagnostics.
 		switch code := r.Issues[0]; code {
+		case "deadline_reached":
+			why = resumeDeadlineMessage
 		case "resume_evidence_unavailable":
 			why = "Its records could not be read and checked the way a resume requires."
 		case "supervised_session":

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -255,6 +256,92 @@ func TestOwnerThreadWithdrawsItsOwnQuestion(t *testing.T) {
 	// Once only.
 	if code, _, _ := f.run("await-user", "--withdraw", "--note", "again"); code != exitFailed {
 		t.Fatal("withdrew twice")
+	}
+}
+
+// Withdrawing an obsolete approval question is not a general resume, even when
+// independent work remains. Restore every underlying gate and retained receipt.
+func TestOwnerQuestionWithdrawalPreservesUnderlyingControls(t *testing.T) {
+	for _, kind := range []string{"disabled", "paused", "stop", "completed", "person-question", "combined"} {
+		t.Run(kind, func(t *testing.T) {
+			f := ownedFixture(t)
+			dir := archiveFixtureDir(t, f)
+			before := ctlOf(t, f)
+			before.Note = "fictional underlying restriction"
+			before.OpenQuestion = &control.OpenQuestion{Note: "fictional retained history", At: time.Now().UTC()}
+			if kind == "disabled" || kind == "combined" {
+				before.Enabled = false
+			}
+			if kind == "paused" || kind == "combined" {
+				before.Paused = true
+			}
+			if kind == "stop" || kind == "combined" {
+				before.Stop = true
+			}
+			if kind == "person-question" || kind == "combined" {
+				before.AwaitingUser = true
+			}
+			if kind == "completed" || kind == "combined" {
+				before.Completed = true
+				before.Completion = &control.Completion{DeclaredAt: time.Now().UTC()}
+			}
+			if err := control.Save(dir, before); err != nil {
+				t.Fatal(err)
+			}
+			before = ctlOf(t, f)
+			if code, _, errs := f.run("await-user", "--note", "fictional deployment approval question"); code != exitOK {
+				t.Fatal(code, errs)
+			}
+			if code, _, errs := f.run("await-user", "--withdraw", "--note", "question obsolete; independent review remains"); code != exitOK {
+				t.Fatal(code, errs)
+			}
+			after := ctlOf(t, f)
+			if !after.UpdatedAt.After(before.UpdatedAt) {
+				t.Fatal("withdrawal did not save a new control revision")
+			}
+			after.UpdatedAt = before.UpdatedAt
+			if !reflect.DeepEqual(before, after) {
+				t.Fatalf("underlying controls/history changed:\nbefore: %+v\nafter: %+v", before, after)
+			}
+			if f.read("calls") != "" || f.read("probes") != "" {
+				t.Fatal("withdrawal performed provider work")
+			}
+		})
+	}
+}
+
+func TestOwnerQuestionWithdrawalRefusesChangedCompletionAndOwner(t *testing.T) {
+	for _, kind := range []string{"completed", "owner-generation"} {
+		t.Run(kind, func(t *testing.T) {
+			f := ownedFixture(t)
+			dir := archiveFixtureDir(t, f)
+			if code, _, errs := f.run("await-user", "--note", "fictional approval question"); code != exitOK {
+				t.Fatal(code, errs)
+			}
+			c := ctlOf(t, f)
+			if kind == "completed" {
+				c.Completed = true
+			} else {
+				c.Ownership.Generation++
+			}
+			if err := control.Save(dir, c); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(filepath.Join(dir, control.FileName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if code, _, _ := f.run("await-user", "--withdraw", "--note", "new instruction is not a control release"); code != exitFailed {
+				t.Fatal("changed record accepted")
+			}
+			after, err := os.ReadFile(filepath.Join(dir, control.FileName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Fatal("refused withdrawal changed control bytes")
+			}
+		})
 	}
 }
 

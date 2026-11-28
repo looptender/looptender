@@ -583,7 +583,7 @@ func clean(r Record) Record {
 				// A wait for a condition the supervisor checks (looptender
 				// wait), its end when the condition held or its time ran out,
 				// and the owner thread taking back its own await-user.
-				"wait", "wait_cleared", "wait_expired", "await-user_withdrawn")
+				"wait", "wait_cleared", "wait_expired", "await-user_withdrawn", "completion_renewal")
 			c.Caller = oneOf(c.Caller, "unavailable", "owner_thread", "other_thread", "terminal", "client")
 			c.NewEpisode = c.NewEpisode && (c.Operation == "resume" || c.Operation == "panel_resume")
 			if !questionIDPattern.MatchString(c.QuestionID) {

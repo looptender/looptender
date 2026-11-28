@@ -1,0 +1,1 @@
+- Reconcile coordinator wake guidance and documentation with guarded owner-question withdrawal: inventory independent authorized work before whole-loop awaiting-user, preserve underlying and changed holds, and distinguish child completion from loop completion. No runtime control or completion-renewal behavior changes.

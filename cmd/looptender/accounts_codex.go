@@ -103,10 +103,16 @@ func accountCodexRPC(ctx context.Context, cli string, env []string, workdir, met
 	if err = send(map[string]any{"method": "initialized"}); err != nil {
 		return nil, err
 	}
+	ticket := beginQuotaRequest(ctx, cli, env, workdir, method, params)
 	if err = send(map[string]any{"id": 2, "method": method, "params": params}); err != nil {
 		return nil, err
 	}
-	return await(2)
+	ticket.wrote()
+	raw, err = await(2)
+	if err == nil {
+		ticket.received(raw)
+	}
+	return raw, err
 }
 
 func accountCodexPlan(raw []byte, err error) (string, string) {

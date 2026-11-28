@@ -8,10 +8,10 @@ import Foundation
   let list=try Contract.panelList(data,exit:0)
   guard let q=list.accountQuotas,q.accounts.map(\.label).prefix(2)==["Example Codex","Example Claude"] else {fatalError("Not the fictional quota fixture")}
   let model=MenuBuilder.build(.read(list,at:Date()),now:Date())
-  guard let account=(model.rows+model.rows.flatMap(\.submenu)).first(where:{$0.title=="Example Codex"}),account.detail.contains("18.0% left"),account.submenu.contains(where:{$0.accessibilityLabel.contains("currency not reported")}),account.submenu.compactMap(\.command)==[q.accounts[0].id.map { .openAccount(id:$0) } ?? .openPanel] else {fatalError("Native quota menu lost units or authority boundary")}
+  guard let account=(model.rows+model.rows.flatMap(\.submenu)).first(where:{$0.title=="Example Codex"}),account.detail.contains("18.0% left"),account.submenu.contains(where:{$0.accessibilityLabel.contains("currency not reported")}),account.submenu.compactMap(\.command)==(q.accounts[0].id.map { [.openAccount(id:$0), .connectAccount(id:$0)] } ?? [.openPanel]) else {fatalError("Native quota menu lost units or authority boundary")}
   guard let claude=(model.rows+model.rows.flatMap(\.submenu)).first(where:{$0.title=="Example Claude"}),claude.detail=="Quota unavailable",!claude.submenu.contains(where:{$0.title.contains("0%")}) else {fatalError("Unsupported provider became zero")}
   if let id=q.accounts[1].id {
-   guard claude.command == nil, claude.submenu.compactMap(\.command) == [.openAccount(id:id)], MenuBuilder.arguments(.openAccountWithChanges(id:id)) == ["panel","--allow-changes","--account",id], MenuBuilder.arguments(.openAccountWithChanges(id:"../other")) == nil else {fatalError("Account page lost scoped navigation")}
+   guard claude.command == nil, claude.submenu.compactMap(\.command) == [.openAccount(id:id), .connectAccount(id:id)], MenuBuilder.arguments(.openAccountWithChanges(id:id)) == ["panel","--allow-changes","--account",id], MenuBuilder.arguments(.openAccountWithChanges(id:"../other")) == nil else {fatalError("Account page lost scoped navigation")}
   }
   var object=try JSONSerialization.jsonObject(with:data) as! [String:Any]
   var quotas=object["accountQuotas"] as! [String:Any]
