@@ -520,7 +520,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Opens the panel so its page can make changes. Starting one, or
-    /// restarting a read-only one, is asked first, with the footer's own
+    /// restarting a weaker or unknown one, is asked first, with the footer's own
     /// statement of who can then make changes. Whether the panel runs, and in
     /// which mode, is read again first, off the main thread: the menu's last
     /// read can be minutes old, and a panel may have stopped by itself since.
@@ -542,7 +542,7 @@ final class MenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let confirmation = ConfirmationBuilder.openWithControls(status) {
                     guard ask(confirmation) != nil else { busy.end(work); return }
                 }
-                let restart = status.running && status.changesAllowed != true
+                let restart = status.requiresManagementRestart
                 DispatchQueue.global(qos: .userInitiated).async { [self] in
                     if restart, (try? client.open(.stopPanel)) == nil {
                         DispatchQueue.main.async { [self] in

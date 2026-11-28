@@ -31,6 +31,11 @@ with tempfile.TemporaryDirectory(prefix="keepgoing-menu-smoke-") as temporary:
     subprocess.run(["swiftc", *map(str, sorted((root / "Sources/KeepgoingMenuCore").glob("*.swift"))),
                     str(root / "scripts/MenuUsageWorkerSmoke.swift"), "-o", str(worker_smoke)], check=True)
     subprocess.run([str(worker_smoke), str(worker_fixture), str(work / "worker-lifetime")], check=True, timeout=15)
+    management = work / "management-mode-smoke"
+    subprocess.run(["swiftc", *map(str, sorted((root / "Sources/KeepgoingMenuCore").glob("*.swift"))),
+                    str(root / "Tests/KeepgoingMenuCoreTests/ManagementModeFixture.swift"),
+                    str(root / "scripts/ManagementModeSmoke.swift"), "-o", str(management)], check=True)
+    subprocess.run([str(management)], check=True, timeout=10)
     trap = work / "provider-trap"
     trap.write_text('#!/bin/sh\n: > "$0.called"\nexit 99\n')
     trap.chmod(0o700)
