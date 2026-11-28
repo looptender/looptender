@@ -1,0 +1,1 @@
+- Add an internal pure one-job observation preview with explicit missing/contradictory caller evidence and preserved restrictions. All effects remain unavailable; no reader, command, adoption, persistence or runtime scheduling is added.
