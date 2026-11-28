@@ -1,0 +1,1 @@
+- Add explicit macOS menu entries for panel and account management through the existing confirmed launcher. Reuse requires the panel's explicit full mode; loop-controls and unknown legacy modes require confirmation before restart. Opening does not sign in or run a model probe.

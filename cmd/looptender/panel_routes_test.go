@@ -16,11 +16,30 @@ import (
 	"github.com/looptender/looptender/internal/accounts"
 	"github.com/looptender/looptender/internal/config"
 	"github.com/looptender/looptender/internal/control"
+	"github.com/looptender/looptender/internal/registry"
 )
 
 func routePanelFixture(t *testing.T) (*routesFixture, *panelChanges, accounts.Entry) {
 	t.Helper()
 	r := newRoutesFixture(t)
+	// newRoutesFixture calls registry.Add directly; the CLI canonicalizes
+	// runtime paths first. Match that contract for exact panel bindings on
+	// macOS, where the temporary directory can have a /var alias.
+	registered, err := registry.Load(r.registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range registered.Entries {
+		registered.Entries[i].StateDir, err = canonicalFuturePath(registered.Entries[i].StateDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := json.Marshal(registered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(r.registry, registry.FileName), string(raw), 0600)
 	dir, a := accountFixture(t, "claude-code")
 	c, err := newPanelChanges(context.Background(), r.registry, &dockReader{}, time.Now(), time.Now)
 	if err != nil {
@@ -40,7 +59,7 @@ func TestPanelRoutePreviewSaveAndSingleUse(t *testing.T) {
 	if _, err := os.Stat(r.list); !os.IsNotExist(err) {
 		t.Fatal("preview wrote route list")
 	}
-	out := c.confirmRoutes("page", p.Form, "add")
+	out := c.confirmRoutes("page", p.Form, "add", "")
 	if out.Outcome != "changed" || out.AccountLabels[out.Changes[0].Route] != a.Label {
 		t.Fatalf("save: %+v", out)
 	}
@@ -48,7 +67,7 @@ func TestPanelRoutePreviewSaveAndSingleUse(t *testing.T) {
 	if !strings.Contains(saved, "account: "+a.ID) || !strings.Contains(saved, "group: owner-selected-limit") {
 		t.Fatal(saved)
 	}
-	if again := c.confirmRoutes("page", p.Form, "add"); again.Outcome != "review_again" || r.read() != saved {
+	if again := c.confirmRoutes("page", p.Form, "add", ""); again.Outcome != "review_again" || r.read() != saved {
 		t.Fatalf("replay: %+v", again)
 	}
 	after, _ := os.ReadFile(r.own.cfg)
@@ -90,7 +109,7 @@ func TestPanelRouteCallerStaleAccountAndListRefuseWrites(t *testing.T) {
 				c.now = func() time.Time { return time.Now().Add(3 * time.Minute) }
 			}
 			old, _ := os.ReadFile(r.list)
-			out := c.confirmRoutes(page, p.Form, "add")
+			out := c.confirmRoutes(page, p.Form, "add", "")
 			if out.Outcome != "review_again" {
 				t.Fatalf("%s: %+v", change, out)
 			}
@@ -113,7 +132,7 @@ func TestPanelRouteMoveReviewBindsFollowingLoopConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, r.follower, string(b)+"# concurrent edit\n", 0600)
-	out := c.confirmRoutes("page", p.Form, "move")
+	out := c.confirmRoutes("page", p.Form, "move", "")
 	if out.Outcome != "review_again" || r.read() != routesStandardList {
 		t.Fatalf("stale loop: %+v", out)
 	}
@@ -197,7 +216,7 @@ func TestPanelRouteFollowPreservesSettingsAndConcurrentChange(t *testing.T) {
 			if stale {
 				write(t, r.own.cfg, string(before)+"# concurrent configuration edit\n", 0600)
 			}
-			out := c.confirmRoutes("page", p.Form, "follow_standard")
+			out := c.confirmRoutes("page", p.Form, "follow_standard", "")
 			if stale {
 				if out.Outcome != "review_again" {
 					t.Fatalf("stale %+v", out)
@@ -229,7 +248,7 @@ func TestPanelRouteEndpointUsesExistingNetworkAndSessionGuards(t *testing.T) {
 				t.Fatal("local route help unavailable")
 			}
 			for _, bad := range []string{"none", "origin", "session", "form", "content"} {
-				resp, _ := w.post(t, "ignored", "prepare", w.form, `{"op":"unsupported"}`, func(req *http.Request) {
+				resp, _ := w.post(t, "ignored", "prepare", w.form, `{"op":"own","loop":"l000000000000"}`, func(req *http.Request) {
 					req.URL.Path = strings.Replace(req.URL.Path, "api/v1/loops/ignored/prepare", panelRoutesPrefix+"prepare", 1)
 					switch bad {
 					case "origin":

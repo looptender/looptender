@@ -4,7 +4,7 @@
 
 What exists in this build: the list's file format, how a loop follows it, what happens when the list cannot be read or a route is removed while in use, the read side (`keepgoing routes list`), the commands that change the list (`routes add`, `move`, `remove`, `off`, `on` and `check`), and the commands that make a loop follow it or leave it (`routes follow-standard` and `routes own`, and the offer in `init`). When you keep a list and want your coordinators to hand off to a new conversation on another provider, put a new-conversation route in it and follow the list: `init` offers that first, and offers its own [takeover](setup.md#a-takeover-for-a-bb-loop-unreleased) only when the list is not followed. Nothing ever creates a list for you.
 
-Unreleased source also offers a [standard-route GUI](dock.md#configure-routes-in-the-panel) in a panel started outside BB with changes allowed. It reviews one list operation at a time and enrolls selected loops through separate per-loop saves; it does not change holds, budgets, handoff settings or conversation opt-in. Model lists load only on request and do not establish account access. Custom loop lists remain in the CLI.
+Unreleased source also offers a [standard-route GUI](dock.md#configure-routes-in-the-panel) in a panel started outside BB with changes allowed. It reviews one list operation at a time and enrolls selected loops through separate per-loop saves; it does not change holds, budgets, handoff settings or conversation opt-in. Model lists load only on request and do not establish account access. The browser still uses terminal guidance for custom loop lists; the backend now supports the bounded [per-loop API](#per-loop-panel-api-unreleased).
 
 ## The file
 
@@ -190,3 +190,78 @@ The object carries model, group and loop names only. It never includes a convers
 ## What is verified
 
 Offline fixtures only: resolution for conversation and headless loops, which settings carry over and the budget case, every reason a route is left out, file validation and the file checks, a list that is missing or invalid at load and repaired later, the single pair of reports and an unsettled one, no handoff while unreadable, staying on a removed or switched-off route through a stop, a handoff or a retarget followed at once by a removal, an unreadable list or a stop, refusing saved records the list could not have produced, the read side through the real commands, and the editing commands through the real commands: the exact bytes after each change of a hand-written list with comments, flow and block entries, a symbolic link kept, a refused open file and flow-style list, id reuse refused (also with an unreadable history), person-only changes, `review_again` after the list or a following loop's current route changed, a loop's own list switched off and moved, `routes check`, the timeline note at the next check through `runs.jsonl` and `timeline --json`, the staged write leaving no history after a failed write, dangling links, links into a checkout and a directory folded into one by a link refused, with nothing created there, a torn history record skipped, ids kept by a following loop's records or by the route it is on, also for a loop whose configuration cannot be loaded, and refused when those records cannot be read, a history line with trailing content refused and a spaced torn record still counted, a dry-run check recording nothing, `can` on an empty list and with an unreadable history, an agent refused on an unowned loop's own list and the owner's change in its timeline, and, on every platform including Windows in CI, the edits with `\r\n` line endings and the list replaced 20 times while it is being read. For following and leaving the list: `follow-standard` and `own` there and back with the exact keepgoing.yaml lines, stale results under a shared id cleared, `routes_allow` removed, refusal off the first route, and the `init` offer (asked and defaulting to yes; never in a script without `--routes standard`). No live provider.
+
+## Per-loop panel API (unreleased)
+
+A panel started with `--allow-changes` accepts an optional `loop` field on
+`api/v1/routes/read`, `prepare`, and `confirm`. Its value is the opaque loop
+key returned in the editor's `loops` list, never a loop name or file path.
+Without it, the existing standard-list contract is unchanged. With it, `read`
+returns only that loop in `editor.loops`; unknown keys refuse instead of
+falling back to all loops. Ambiguous loop names and stale configuration/state
+directory bindings also refuse rather than selecting a different registration.
+
+For a selected loop, existing-list operations are `move`, `remove`, `off`,
+and `on` on its own list, plus a separately reviewed `own` conversion from
+the standard list. `own` copies the currently resolved routes into
+`fallbacks.yaml` beside the loop configuration and refuses if that file
+already exists. The preview includes the core writer's effect and warnings.
+Confirm sends the same `op` and `loop` with the single-use form returned by
+prepare in `X-Keepgoing-Form`. The review expires after two minutes and binds
+the registration identity, route operation, configuration sources and active
+route. Replacement registrations or changed sources require a new review.
+
+These endpoints retain full panel mode, session and same-origin guards. A
+person or the loop's recorded owning BB thread may edit the loop's list;
+a different thread or a thread without a recorded owner cannot. Saving does
+not run a provider, load models, test a route, change automatic handoff or
+conversation-creation settings, or clear holds and spent allowances. An
+already enabled supervisor can use the changed list on its next check.
+
+This is backend support tested with fictional local fixtures, without new
+browser controls or installed/live acceptance. The bounded headless `add` operation below is also backend-only; route probes,
+handoff toggles and primary replacement are not offered by this API.
+
+### Add a headless route through the API (unreleased)
+
+Selected-loop `prepare` also accepts `op: "add"`, `account`, `model`, `limit`,
+`behavior: "headless"`, and optional `at`. The account must be an existing
+Claude Code or Codex catalog selection using inherited login or an explicit
+existing directory. The selected CLI and work directory must match the
+context resolved from the loop, and the saved account context must still be
+current. Missing executables/directories, unavailable contexts, or a loop
+without an inferable project refuse without starting anything. A loop that
+follows standard routes must first complete a separate `own` review.
+
+`at` counts fallback positions starting at 1, after the primary; omitted or 0
+means append as seen at prepare. The generated route ID, positive insertion
+position, account revision/context, configuration sources, current route and
+planned output are frozen in the form. Confirmation sends only `op` and
+`loop`, with that form in `X-Keepgoing-Form`. Changed bindings, list contents,
+source reads or resolved CLI paths require a new review. The source checks
+also reject temporary changed bytes consumed during planning even when the
+file is restored before the check ends.
+
+There is no effort override in this initial headless add path: nonempty
+`effort` is refused for both providers. Browser-supplied IDs, paths, provider
+substitutions, probe settings, handoff settings and conversation-creation
+options are not accepted. Account consistency is configuration evidence;
+login identity, model access, credential contents and quota are not verified.
+
+A panel-created first fallback file has scheduled probes disabled and keeps
+automatic handoff off, including when an absent setting would otherwise
+default to rate-limit handoff. Existing fallback files retain their probe
+policy and configured failover classes: later ordinary checks may test or
+select the added candidate. Saving itself runs no model, model discovery,
+probe or quota request. The CLI's existing first-file probe defaults are
+unchanged.
+
+A failed first-file save removes only its still-matching owned file, and
+checks cleanup success. If cleanup fails or a different file occupies the
+path, `partial` with stage `fallback_file_retained` requires inspection;
+it does not claim rollback or retry automatically. A successful save with a
+history error remains `changed` with a diagnostic warning. Forms prevent
+process-local replay, not durable exactly-once publication across crashes:
+a lost reply requires reading and reconciling the current files before a
+new explicit review. These are fictional local fixture guarantees, without
+installed/browser, live-provider, power-loss or hostile-writer certification.
