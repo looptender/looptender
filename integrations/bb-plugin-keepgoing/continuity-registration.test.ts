@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
+import { getEventListeners } from "node:events";
 import assert from "node:assert/strict";
 import { createFakePluginHost, makeThreadResponse, makeHostResponse, makePluginAgentConfigurationContext } from "@get-bb/plugin-sdk/testing";
 import { registerContinuity } from "./continuity-registration.ts";
@@ -35,10 +36,11 @@ test("SQLite whole registry CAS, path revisions, tombstones and guard ownership 
     assert.equal(a.read().epoch, 1);
     const attempt = "00000000-0000-4000-8000-000000000001"; a.begin(1, entry(), attempt);
     assert.throws(() => b.begin(1, entry(), "00000000-0000-4000-8000-000000000002"));
-    assert.throws(() => a.settled(identity.hostId, "00000000-0000-4000-8000-000000000002", 1, entry()));
+    assert.throws(() => a.settled(identity.hostId, "00000000-0000-4000-8000-000000000002"));
     assert.equal(a.detach(1, "work_example", 1), 2); assert.throws(() => a.attach(2, entry()));
     const e = entry(); e.binding.revision = 2; assert.equal(a.attach(2, e), 3);
-    assert.throws(() => a.settled(identity.hostId, attempt, 1, entry())); assert.equal(b.read().pending.length, 1);
+    b.settled(identity.hostId, attempt); assert.equal(a.read().pending.length, 0);
+    assert.throws(() => a.settled(identity.hostId, attempt));
     assert.throws(() => a.attach(3, { ...e, extra: true }));
   } finally { await harness.lifecycle.dispose(); }
 });
@@ -105,22 +107,16 @@ test("synchronous invalidation precedes slow tuple reads; superseded resolver ca
   } finally { await harness.lifecycle.dispose(); }
 });
 
-test("atomic prepared guard survives crash-before-dispatch, late stale reply, and settlement persistence failure", async () => {
-  for (const scenario of ["prepared", "stale", "settlement-write", "begin-write"] as const) {
+test("atomic prepared guard survives crash-before-dispatch and settlement persistence failure", async () => {
+  for (const scenario of ["prepared", "settlement-write", "begin-write"] as const) {
     const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", agentSkillIds: ["keepgoing"], sdk: sdk() });
     try {
       const base = createContinuityRegistry(bb.storage.database()); let calls = 0;
-      const reply = deferred<unknown>();
       const fault: ContinuityRegistryStore = { ...base,
         begin(...a) { if (scenario === "begin-write") throw Error("private failure"); base.begin(...a); if (scenario === "prepared") throw Error("crash before dispatch"); },
         settled(...a) { if (scenario === "settlement-write") throw Error("private database failure"); base.settled(...a); } };
-      const handle = registerContinuity(bb, async input => { calls++; if (scenario === "stale") return reply.promise; return { attempt: input.attempt, settled: true, inspection: summary }; }, () => () => {}, fault);
+      const handle = registerContinuity(bb, async input => { calls++; return { attempt: input.attempt, settled: true, inspection: summary }; }, () => () => {}, fault);
       assert.equal((await handle.cli(args())).exitCode, 0); await tick();
-      if (scenario === "stale") {
-        const e = entry(); e.binding.revision = 2; e.paths.work = "/private/example/next-WORK.md";
-        assert.equal((await handle.cli(args(1, e))).exitCode, 0);
-        reply.resolve({ attempt: base.read().pending[0].attempt, settled: true, inspection: summary }); await tick();
-      }
       assert.equal(calls, scenario === "prepared" || scenario === "begin-write" ? 0 : 1);
       assert.equal(base.read().pending.length, scenario === "begin-write" ? 0 : 1);
       assert.notEqual(handle.status().enrollments[0].observation?.phase, "available");
@@ -202,22 +198,6 @@ test("real SDK enrollment -> real host handler -> packaged Python -> lifecycle s
   } finally { await harness.lifecycle.dispose(); await rm(dir, { recursive: true, force: true }); }
 });
 
-test("a physically settled but lifecycle-stale reply cannot remove its persisted guard", async () => {
-  const reply = deferred<unknown>(); let input: any, calls = 0;
-  const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", agentSkillIds: ["keepgoing"], sdk: sdk() });
-  try {
-    const store = createContinuityRegistry(bb.storage.database());
-    const handle = registerContinuity(bb, async value => { input = value; calls++; return reply.promise; }, () => () => {}, store);
-    await handle.cli(args()); await until(() => calls === 1);
-    await harness.behavior.emitThreadEvent("thread.idle", { thread: thread(), lastAssistantText: "ignored" });
-    reply.resolve({ attempt: input.attempt, settled: true, inspection: summary }); await tick();
-    assert.equal(store.read().pending.length, 1); assert.equal(calls, 1);
-    assert.notEqual(handle.status().enrollments[0].observation?.phase, "available");
-    assert.equal(handle.status().enrollments[0].automaticCheck, "unavailable_pending_or_unknown");
-  } finally { await harness.lifecycle.dispose(); }
-});
-
-
 test("all lifecycle handlers precede startup persistence reconciliation", async () => {
   const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", agentSkillIds: ["keepgoing"], sdk: sdk() });
   try {
@@ -230,5 +210,228 @@ test("all lifecycle handlers precede startup persistence reconciliation", async 
     } };
     registerContinuity(bb, async () => assert.fail("empty registry cannot dispatch"), () => () => {}, store);
     assert.equal(read, true);
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+const flush = () => new Promise<void>(r => setImmediate(r));
+async function flushedUntil(fn: () => boolean) {
+  for (let i = 0; i < 100; i++) { if (fn()) return; await flush(); }
+  assert.fail("fixture did not settle");
+}
+
+test("known settlement releases original token after idle, replacement, detach or worker exit", async () => {
+  for (const change of ["idle", "replace", "detach", "worker-exit"] as const) {
+    const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", sdk: sdk() });
+    try {
+      const store = createContinuityRegistry(bb.storage.database()), reply = deferred<unknown>();
+      let calls = 0, firstAttempt = "", exit!: (id: string) => void;
+      const handle = registerContinuity(bb, async input => {
+        calls++;
+        if (calls === 1) { firstAttempt = input.attempt; return reply.promise; }
+        return { attempt: input.attempt, settled: true, inspection: { ...summary, registerRevision: 2 } };
+      }, fn => { exit = fn; return () => {}; }, store);
+      await handle.cli(args()); await flushedUntil(() => calls === 1);
+      if (change === "idle") {
+        await harness.behavior.emitThreadEvent("thread.idle", { thread: thread(), lastAssistantText: null });
+        await harness.behavior.emitThreadEvent("thread.active", { thread: thread() });
+      } else if (change === "replace") {
+        const e = entry(); e.binding.revision = 2; e.paths.work = "/private/example/replacement.md";
+        assert.equal((await handle.cli(args(1, e))).exitCode, 0);
+      } else if (change === "detach") await handle.cli(["detach", "1", "work_example", "1"]);
+      else if (change === "worker-exit") exit(identity.hostId);
+      assert.equal(store.read().pending[0].attempt, firstAttempt);
+      reply.resolve({ attempt: firstAttempt, settled: true, inspection: summary });
+      await flushedUntil(() => store.read().pending.length === 0);
+      {
+        if (change === "idle" || change === "replace") {
+          await flushedUntil(() => handle.status().enrollments[0]?.observation?.phase === "available");
+          assert.equal(calls, 2, "only the existing coalesced trigger dispatches");
+          assert.equal(handle.status().enrollments[0].observation?.summary?.registerRevision, 2);
+        } else assert.equal(calls, 1);
+        assert.ok(!handle.status().enrollments.some(e => e.observation?.summary?.registerRevision === 1));
+      }
+    } finally { await harness.lifecycle.dispose(); }
+  }
+});
+
+test("known settlement bounds never-settling logical metadata and permits coalesced current work", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let reads = 0, calls = 0, capturedSignal!: AbortSignal;
+  const hanging = deferred<ReturnType<typeof thread>>();
+  const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", sdk: {
+    ...sdk(), threads: { get: async () => ++reads === 3 ? hanging.promise : thread() },
+  } });
+  try {
+    const store = createContinuityRegistry(bb.storage.database());
+    const handle = registerContinuity(bb, async (input, options) => { capturedSignal = options.signal; calls++; return { attempt: input.attempt, settled: true, inspection: summary }; }, () => () => {}, store);
+    await handle.cli(args()); await flushedUntil(() => reads === 3);
+    assert.equal(store.read().pending.length, 0);
+    assert.equal(getEventListeners(capturedSignal, "abort").length, 1);
+    const oldSignal = capturedSignal;
+    await harness.behavior.emitThreadEvent("thread.idle", { thread: thread(), lastAssistantText: null });
+    await harness.behavior.emitThreadEvent("thread.active", { thread: thread() });
+    assert.equal(calls, 1);
+    t.mock.timers.tick(15_001);
+    await flushedUntil(() => calls === 2);
+    await flushedUntil(() => handle.status().enrollments[0]?.observation?.phase === "available");
+    assert.equal(calls, 2); assert.equal(store.read().pending.length, 0);
+    assert.equal(getEventListeners(oldSignal, "abort").length, 0);
+    assert.equal(getEventListeners(capturedSignal, "abort").length, 0);
+    hanging.reject(Error("private late metadata")); await flush(); await flush();
+    assert.equal(handle.status().enrollments[0].automaticCheck, "eligible");
+    assert.equal(handle.status().enrollments[0].observation?.phase, "available");
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+test("known settlement metadata failure cannot block or delete a newer token from another handle", async () => {
+  let reads = 0, oldAttempt = "";
+  const gate = deferred<ReturnType<typeof thread>>();
+  const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", sdk: {
+    ...sdk(), threads: { get: async () => ++reads === 3 ? gate.promise : thread() },
+  } });
+  try {
+    const a = createContinuityRegistry(bb.storage.database()), b = createContinuityRegistry(bb.storage.database());
+    const next = "00000000-0000-4000-8000-000000000002";
+    const handle = registerContinuity(bb, async input => { oldAttempt = input.attempt; return { attempt: input.attempt, settled: true, inspection: summary }; }, () => () => {}, a);
+    await handle.cli(args()); await flushedUntil(() => reads === 3);
+    assert.equal(a.read().pending.length, 0);
+    b.begin(1, entry(), next);
+    gate.reject(Error("private metadata failure"));
+    await flushedUntil(() => handle.status().enrollments[0]?.observation?.phase === "unavailable");
+    assert.deepEqual(a.read().pending, [{ hostId: identity.hostId, attempt: next }]);
+    assert.throws(() => a.settled(identity.hostId, oldAttempt));
+    b.settled(identity.hostId, next);
+    assert.equal(handle.status().enrollments[0].automaticCheck, "eligible");
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+test("known settlement distinguishes rollback from ambiguous post-commit removal and fences this instance", async () => {
+  for (const outcome of ["rollback", "post-commit"] as const) {
+    const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", sdk: sdk() });
+    let currentHarness = harness, calls = 0;
+    try {
+      const store = createContinuityRegistry(bb.storage.database());
+      const fault: ContinuityRegistryStore = { ...store, settled(...a) {
+        if (outcome === "post-commit") store.settled(...a);
+        throw Error("private acknowledgement failure");
+      } };
+      let handle = registerContinuity(bb, async input => { calls++; return { attempt: input.attempt, settled: true, inspection: summary }; }, () => () => {}, fault);
+      await handle.cli(args()); await flushedUntil(() => handle.status().enrollments[0]?.observation?.phase === "unavailable");
+      assert.equal(store.read().pending.length, outcome === "rollback" ? 1 : 0);
+      assert.equal(handle.status().enrollments[0].automaticCheck, "unavailable_pending_or_unknown");
+      await handle.cli(["check", "work_example", "1"]); await flush(); await flush(); assert.equal(calls, 1);
+      const reloaded = await harness.lifecycle.reload(newBB => {
+        handle = registerContinuity(newBB, async input => { calls++; return { attempt: input.attempt, settled: true, inspection: summary }; }, () => () => {});
+      });
+      currentHarness = reloaded.harness;
+      await flushedUntil(() => outcome === "rollback" ? handle.status().enrollments[0]?.observation?.phase === "unavailable" : calls === 2);
+      assert.equal(calls, outcome === "rollback" ? 1 : 2, "ambiguous commit has no durable reload fence guarantee");
+    } finally { await currentHarness.lifecycle.dispose(); }
+  }
+});
+
+test("physical unknown replies never release token even when freshness changes", async () => {
+  for (const variant of ["wrong-attempt", "missing-settled", "false-settled", "extra", "invalid-inspection", "reject"] as const) {
+    const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", sdk: sdk() });
+    try {
+      const store = createContinuityRegistry(bb.storage.database()), gate = deferred<unknown>(); let input: any, calls = 0;
+      const handle = registerContinuity(bb, async value => { input = value; calls++; return gate.promise; }, () => () => {}, store);
+      await handle.cli(args()); await flushedUntil(() => calls === 1);
+      await harness.behavior.emitThreadEvent("thread.idle", { thread: thread(), lastAssistantText: null });
+      const reply: any = { attempt: input.attempt, settled: true, inspection: summary };
+      if (variant === "wrong-attempt") reply.attempt = "00000000-0000-4000-8000-000000000001";
+      if (variant === "missing-settled") delete reply.settled;
+      if (variant === "false-settled") reply.settled = false;
+      if (variant === "extra") reply.private = "private fixture";
+      if (variant === "invalid-inspection") reply.inspection = { ...summary, objectiveComplete: true };
+      if (variant === "reject") gate.reject(Error("private transport")); else gate.resolve(reply);
+      await flush(); await flush();
+      assert.equal(store.read().pending[0].attempt, input.attempt);
+      assert.equal(handle.status().enrollments[0].automaticCheck, "unavailable_pending_or_unknown");
+      assert.equal(calls, 1);
+    } finally { await harness.lifecycle.dispose(); }
+  }
+});
+
+test("actual packaged child close survives lifecycle supersession without accepting its stale summary", { skip: process.platform === "win32" }, async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "example-settled-host-")));
+  const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", sdk: sdk() });
+  const closed = deferred<any>(), deliver = deferred<void>(); let calls = 0;
+  try {
+    const e = entry(); e.paths.work = join(dir, "Fictional WORK.md");
+    const value = { version: 1, id: "example", revision: 1, binding: null, assignmentRecord: null, assignmentRevision: null,
+      scopeComplete: false, workSources: [], authoritySources: [], items: [] };
+    await writeFile(e.paths.work, '# Fictional\n```looptender-work\n' + JSON.stringify(value) + '\n```\n', { mode: 0o600 });
+    const before = await readFile(e.paths.work), store = createContinuityRegistry(bb.storage.database());
+    const handle = registerContinuity(bb, async (input, options) => {
+      assert.equal(options.hostId, identity.hostId);
+      if (++calls > 1) return { attempt: input.attempt, settled: true, inspection: summary };
+      const result = await hostEntry.handlers.continuityCheck(input, { signal: options.signal } as any);
+      closed.resolve(result); await deliver.promise; return result;
+    }, () => () => {}, store);
+    await handle.cli(args(0, e)); const actual = await closed.promise;
+    assert.equal(actual.settled, true); assert.equal(actual.inspection.verdict, "reconciliation_required");
+    assert.equal(store.read().pending.length, 1, "not released until the correlated response arrives");
+    await harness.behavior.emitThreadEvent("thread.active", { thread: thread() });
+    await harness.behavior.emitThreadEvent("thread.idle", { thread: thread(), lastAssistantText: null });
+    deliver.resolve();
+    await until(() => handle.status().enrollments[0]?.observation?.phase === "available");
+    assert.equal(calls, 2); assert.equal(store.read().pending.length, 0);
+    assert.equal(handle.status().enrollments[0].observation?.summary?.itemCount, summary.itemCount);
+    assert.deepEqual(await readFile(e.paths.work), before);
+  } finally { await harness.lifecycle.dispose(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test("known settlement post-metadata reentrancy preserves a newly acquired host token", async () => {
+  let reads = 0, b!: ContinuityRegistryStore;
+  const next = "00000000-0000-4000-8000-000000000002";
+  const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", sdk: {
+    ...sdk(), threads: { get: async () => {
+      if (++reads === 3) { b.begin(1, entry(), next); throw Error("private reentrant metadata failure"); }
+      return thread();
+    } },
+  } });
+  try {
+    const a = createContinuityRegistry(bb.storage.database()); b = createContinuityRegistry(bb.storage.database());
+    const handle = registerContinuity(bb, async input => ({ attempt: input.attempt, settled: true, inspection: summary }), () => () => {}, a);
+    await handle.cli(args()); await flushedUntil(() => handle.status().enrollments[0]?.observation?.phase === "unavailable");
+    assert.deepEqual(a.read().pending, [{ hostId: identity.hostId, attempt: next }]);
+    b.settled(identity.hostId, next);
+    assert.equal(handle.status().enrollments[0].automaticCheck, "eligible");
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+test("timeout is not physical settlement; a later exact settled reply releases without automatic retry", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", sdk: sdk() });
+  const reply = deferred<unknown>(); let attempt = "", calls = 0;
+  try {
+    const store = createContinuityRegistry(bb.storage.database());
+    const handle = registerContinuity(bb, async input => { attempt = input.attempt; calls++; return reply.promise; }, () => () => {}, store);
+    await handle.cli(args()); await flushedUntil(() => calls === 1);
+    t.mock.timers.tick(15_001); await flush();
+    assert.equal(store.read().pending[0].attempt, attempt);
+    assert.equal(handle.status().enrollments[0].observation?.reason, "inspection_timeout");
+    reply.resolve({ attempt, settled: true, inspection: summary });
+    await flushedUntil(() => store.read().pending.length === 0); await flush();
+    assert.equal(calls, 1); assert.equal(handle.status().enrollments[0].automaticCheck, "eligible");
+    assert.notEqual(handle.status().enrollments[0].observation?.phase, "available");
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+test("exact settled removal preserves unrelated epoch, enrollment, history and host tokens", async () => {
+  const { bb, harness } = createFakePluginHost({ pluginId: "example-continuity", sdk: sdk() });
+  try {
+    const a = createContinuityRegistry(bb.storage.database()), b = createContinuityRegistry(bb.storage.database());
+    a.attach(0, entry());
+    const first = "00000000-0000-4000-8000-000000000001", other = "00000000-0000-4000-8000-000000000002";
+    a.begin(1, entry(), first);
+    const e = entry(); e.binding.id = "other_example"; e.binding.threadId = "thr_other_example"; e.binding.hostId = "host_other_example";
+    b.attach(1, e); b.begin(2, e, other);
+    const before = b.read();
+    assert.throws(() => a.settled(e.binding.hostId, first)); assert.deepEqual(a.read(), before);
+    a.settled(identity.hostId, first);
+    assert.deepEqual(b.read(), { ...before, pending: [{ hostId: e.binding.hostId, attempt: other }] });
+    assert.throws(() => a.settled(identity.hostId, first));
   } finally { await harness.lifecycle.dispose(); }
 });
