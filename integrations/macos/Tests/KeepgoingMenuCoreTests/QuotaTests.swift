@@ -132,7 +132,7 @@ final class QuotaTests: XCTestCase {
         let row = try XCTUnwrap(MenuBuilder.build(.read(list, at: quotaNow), now: quotaNow).accountRow("Example Codex"))
         XCTAssertEqual(row.detail, "Quota unavailable")
         XCTAssertNil(row.command)
-        XCTAssertEqual(row.submenu.compactMap(\.command), [.openAccount(id: id)])
+        XCTAssertEqual(row.submenu.compactMap(\.command), [.openAccount(id: id), .connectAccount(id: id)])
         XCTAssertEqual(MenuBuilder.arguments(.openAccount(id: id)), ["panel", "--account", id])
         XCTAssertNil(MenuBuilder.arguments(.openAccount(id: "../other")))
         XCTAssertThrowsError(try Contract.panelList(Data(raw.replacingOccurrences(of: id, with: "../other").utf8), exit: 0))

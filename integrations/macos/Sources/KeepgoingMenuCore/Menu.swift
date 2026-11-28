@@ -173,8 +173,13 @@ public struct PanelStatus: Decodable, Equatable {
     let schemaVersion: Int
     public let running: Bool
     public let idleRemainingSeconds: Int?
-    /// Started with --allow-changes.
+    /// Legacy loop-control flag: true does not imply account/route management.
     public var changesAllowed: Bool? = nil
+    /// CLI wire values: read_only, controls, all. Missing/unknown stays unknown.
+    public var mode: String? = nil
+    /// Only explicit full mode can be reused for management without an upgrade.
+    public var runningInFullMode: Bool { running && mode == "all" }
+    public var requiresManagementRestart: Bool { running && !runningInFullMode }
     /// The page footer's statement about allowing changes. Absent from a CLI
     /// that predates it, and then the menu does not offer to allow them.
     public var exposure: String? = nil
@@ -574,11 +579,11 @@ public enum MenuBuilder {
             if let installed = list.installedBuild.map(Contract.text), !installed.isEmpty { line += " · looptender " + installed }
         }
         rows.append(separator)
-        // One panel item: Open looptender Panel opens the panel in which a
-        // person can pause, stop and resume loops, each after a review. The
-        // separate "with controls" item is gone; .openPanelWithChanges still
-        // runs keepgoing panel --allow-changes for what needs it (connecting
-        // an account).
+        // Management is distinct from the ordinary loop-controls panel.
+        // Only offer the confirmed launcher with the CLI's complete disclosure.
+        if let exposure = panel?.exposure, Contract.panelAuthority(exposure) != nil {
+            rows.append(action("Open Management Panel…", .openPanelWithChanges, symbol: "slider.horizontal.3", help: "Review account connections, usage settings and preferred routes. Opening does not sign in or run a model probe."))
+        }
         if let panel, panel.running {
             // Named for what it stops, the page, so it is not taken for
             // stopping a loop; what happens to the loops is in the help.

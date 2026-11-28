@@ -216,8 +216,11 @@ extension MenuBuilder {
     }
     static func quotaAccountRow(_ a: AccountQuota, now: Date = Date()) -> MenuRow {
         let q = a.summary
-        let open = MenuRow(kind: .action, title: "Open Account in Panel…", detail: "", symbol: "macwindow", accessibilityLabel: "Open account \(a.label) in panel", accessibilityHelp: "Review quota refresh or automatic usage settings in Accounts with changes allowed. Opening this page does not refresh usage or sign in.", toolTip: "", command: a.id.map { .openAccount(id: $0) } ?? .openPanel)
+        let open = MenuRow(kind: .action, title: "Open Account in Panel…", detail: "", symbol: "macwindow", accessibilityLabel: "Open account \(a.label) in panel", accessibilityHelp: "View saved account details; sign-in and usage controls are separate.", toolTip: "", command: a.id.map { .openAccount(id: $0) } ?? .openPanel)
         var children = [open]
+        if let id = a.id {
+            children.append(MenuRow(kind: .action, title: "Manage Account in Panel…", detail: "", symbol: "slider.horizontal.3", accessibilityLabel: "Manage account \(a.label) in panel", accessibilityHelp: "Opens this account through the confirmed management launcher. Sign-in and changes require their own reviews.", toolTip: "", command: .connectAccount(id: id)))
+        }
         // Collection facts precede quota history, without granting new authority.
         if let u = a.usageUpdating {
             children.append(quotaStatus(u.text))

@@ -162,29 +162,28 @@ final class ControlsTests: XCTestCase {
         }
     }
 
-    // Starting the panel with controls, or restarting a read-only one, is
-    // asked first, with the footer's exposure statement; opening one that
-    // already allows changes is not.
+    // Management requires explicit full mode, not just loop controls.
     func testOpenWithControlsAsksFirstAndSaysWhoCanMakeChanges() throws {
         let exposure = "While changes are allowed, anyone who can use this browser window can pause, stop and resume loops."
         let reply = "{\"schemaVersion\":1,\"running\":true,\"changesAllowed\":false,\"exposure\":\"\(exposure)\"}"
         let readOnly = try Contract.panelStatus(Data(reply.utf8), exit: 0)
         XCTAssertEqual(readOnly.exposure, exposure)
         let restart = try XCTUnwrap(ConfirmationBuilder.openWithControls(readOnly))
-        XCTAssertEqual(restart.messageText, "Restart the panel with controls?")
-        XCTAssertTrue(restart.informativeText.hasPrefix("The read-only panel that is running is stopped first"))
+        XCTAssertEqual(restart.messageText, "Restart the panel for management?")
+        XCTAssertTrue(restart.informativeText.hasPrefix("The current panel is stopped first"))
         XCTAssertTrue(restart.informativeText.contains(exposure))
-        XCTAssertEqual(restart.buttons.map(\.title), ["Cancel", "Restart with Controls"])
+        XCTAssertEqual(restart.buttons.map(\.title), ["Cancel", "Restart for Management"])
         XCTAssertNil(restart.defaultButton.command)
         XCTAssertEqual(restart.buttons[1].command, .openPanelWithChanges)
         var stopped = PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil)
         stopped.exposure = exposure
         let open = try XCTUnwrap(ConfirmationBuilder.openWithControls(stopped))
-        XCTAssertEqual(open.messageText, "Open the panel with controls?")
+        XCTAssertEqual(open.messageText, "Open the management panel?")
         XCTAssertTrue(open.informativeText.contains(exposure))
         XCTAssertFalse(open.informativeText.contains("read-only"))
         var allowing = readOnly
         allowing.changesAllowed = true
+        allowing.mode = "all"
         XCTAssertNil(ConfirmationBuilder.openWithControls(allowing))
         XCTAssertNil(ConfirmationBuilder.openWithControls(PanelStatus(schemaVersion: 1, running: false, idleRemainingSeconds: nil)))
     }
