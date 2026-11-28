@@ -1970,6 +1970,12 @@ func controlCmdLanes(e env, cfg *config.Config, cmd, note string, lanes, dropQue
 			if err := checkHoldClearer(cfg, os.Getenv("BB_THREAD_ID")); err != nil {
 				return err
 			}
+			if err := cfg.CheckSources(); err != nil {
+				return fmt.Errorf("resume refused: configuration changed or unavailable; reload it before resuming: %w", err)
+			}
+			if err := resumeDeadlineRefusal(cfg, time.Now().UTC()); err != nil {
+				return fmt.Errorf("resume refused; nothing changed: %w", err)
+			}
 			if err := resumeEpisode(cfg.Loop.StateDir, f.EpisodeHold, time.Now().UTC(), cfg.Loop.Errors.MaxReprompts, f.BriefHold...); err != nil {
 				return fmt.Errorf("%w, so nothing was changed and the loop is still %s: %v", errEpisodeState, f.Summary(), err)
 			}
