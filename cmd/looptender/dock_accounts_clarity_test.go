@@ -36,6 +36,7 @@ func TestDockAccountsClarityStaticInvariants(t *testing.T) {
 
 	newHelpers := []string{
 		"panelAccountMode",
+		"accountNeedsSelectionReview",
 		"accountProviderLabel",
 		"accountConnectUnsupportedNote",
 		"openAccountMgmtPanel",
@@ -737,20 +738,29 @@ const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));
       assert(cardEls[2].querySelector('[data-focus="account-connect-77777777777777777777777777777777"]'), "actual Full rejected quota hid Reconnect");
       assert(cardEls[3].querySelector('[data-focus="selection-review-summary-88888888888888888888888888888888"]') && !cardEls[3].textContent.includes("44%"), "actual Full drift failed");
 
-      // Single-attempt waiting + no duplicate POST + provenance preserved while connecting
+      const liveCard = (id) => w.document.querySelector('[data-focus="account-' + id + '"]')?.closest(".account-card");
+
+      // Single-attempt waiting + no duplicate POST + live-DOM provenance preserved while connecting
       codexBtn.click();
       await settle(60);
       w.document.querySelector('[data-focus="connect-start-' + cfg.codexID + '"]').click();
       await settle(60);
       const waitBtn = w.document.querySelector('[data-focus="account-connect-' + cfg.codexID + '"]');
       assert(waitBtn && waitBtn.textContent.includes("Sign-in waiting"), "waiting button label missing with retained quota");
-      assert(cardEls[0].textContent.includes("Provider observation time is unavailable (provenance v1; local retrieval time only)"), "expanded retained quota provenance notice lost during reconnect");
+      const liveWaitCard = liveCard(cfg.codexID);
+      assert(liveWaitCard && liveWaitCard.isConnected, "waiting Codex card missing from current DOM");
+      assert(
+        liveWaitCard.textContent.includes("38% used") &&
+          liveWaitCard.textContent.includes("62% remaining") &&
+          liveWaitCard.textContent.includes("Provider observation time is unavailable (provenance v1; local retrieval time only)"),
+        "expanded retained quota provenance notice lost during reconnect"
+      );
       const beforeDupCount = posts.filter((p) => p.includes("/account-connect/")).length;
       waitBtn.click();
       await settle(40);
       assert.equal(posts.filter((p) => p.includes("/account-connect/")).length, beforeDupCount, "clicking Sign-in waiting started duplicate connect attempt");
 
-      // Cancel -> close -> lost start still keeps single-attempt waiting guard
+      // Cancel -> close -> lost start still keeps single-attempt waiting guard and live provenance
       w.document.querySelector('[data-focus="connect-cancel-' + cfg.codexID + '"]').click();
       await settle(40);
       w.document.querySelector('[data-focus="connect-close-' + cfg.codexID + '"]').click();
@@ -761,7 +771,227 @@ const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));
       w.document.querySelector('[data-focus="connect-start-' + cfg.codexID + '"]').click();
       await settle(60);
       assert(w.document.querySelector('[data-focus="connect-result-' + cfg.codexID + '"]')?.textContent.includes("Sign-in may still be running"));
-      assert(w.document.querySelector('[data-focus="account-connect-' + cfg.codexID + '"]')?.textContent.includes("Sign-in waiting"), "lost start with retained quota did not keep Sign-in waiting single-attempt guard");
+      const liveLostCard = liveCard(cfg.codexID);
+      assert(liveLostCard && liveLostCard.isConnected, "lost-reply Codex card missing from current DOM");
+      assert(
+        liveLostCard.textContent.includes("38% used") &&
+          liveLostCard.textContent.includes("62% remaining") &&
+          liveLostCard.textContent.includes("Provider observation time is unavailable (provenance v1; local retrieval time only)"),
+        "expanded retained quota provenance lost after failed start reply"
+      );
+      const lostWaitBtn = w.document.querySelector('[data-focus="account-connect-' + cfg.codexID + '"]');
+      assert(lostWaitBtn && lostWaitBtn.textContent.includes("Sign-in waiting"), "lost start with retained quota did not keep Sign-in waiting single-attempt guard");
+      const beforeLostDupCount = posts.filter((p) => p.includes("/account-connect/")).length;
+      lostWaitBtn.click();
+      await settle(40);
+      assert.equal(posts.filter((p) => p.includes("/account-connect/")).length, beforeLostDupCount, "clicking lost-reply Sign-in waiting started duplicate connect attempt");
+    } finally {
+      dom.window.close();
+    }
+  }
+
+  function makeDriftVariantCards() {
+    return [
+      {
+        id: "99999999999999999999999999999991", label: "Quota-Only Drift Codex", provider: "codex", selection: "explicit_directory",
+        auth: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        plan: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        configuredModel: { missing: "not_recorded" }, observedModel: { missing: "not_recorded" }, routes: "none", needsPerson: true,
+        quota: {
+          state: "unavailable", reason: "context_changed", source: "codex account/rateLimits/read", freshness: "fresh",
+          summary: {
+            state: "reported", text: "SHOULD_BE_WITHHELD", source: "codex account/rateLimits/read",
+            observedAt: activeIso, freshness: "fresh",
+            provenance: { version: 1, retrievedAt: activeIso, providerObservedAt: null },
+            rows: [{ name: "5-hour", text: "44% used", usedPercent: 44, remainingPercent: 56, resetsAt: resetFutureIso }]
+          }
+        }
+      },
+      {
+        id: "99999999999999999999999999999992", label: "Quota Selection Review Claude", provider: "claude-code", selection: "inherited",
+        auth: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        plan: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        configuredModel: { missing: "not_recorded" }, observedModel: { missing: "not_recorded" }, routes: "none", needsPerson: true,
+        quota: { state: "unavailable", reason: "selection_review_required" }
+      },
+      {
+        id: "99999999999999999999999999999993", label: "Reason-Only Drift Codex", provider: "codex", selection: "explicit_directory",
+        auth: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        plan: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        configuredModel: { missing: "not_recorded" }, observedModel: { missing: "not_recorded" }, routes: "none",
+        reason: "context_changed", failedCheckAt: activeIso, needsPerson: true,
+        quota: { state: "unavailable", reason: "not_checked" }
+      },
+      {
+        id: "99999999999999999999999999999994", label: "Quota Drift Custom Provider", provider: "other-provider", selection: "inherited",
+        auth: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        plan: { text: "Unavailable", state: "unavailable", freshness: "unavailable" },
+        configuredModel: { missing: "not_recorded" }, observedModel: { missing: "not_recorded" }, routes: "none", needsPerson: true,
+        quota: { state: "unavailable", reason: "context_changed" }
+      }
+    ];
+  }
+
+  // 4d. Actual Full-mode handler: quota-only & card-reason-only context drift get live Review selection… while retaining provider gate
+  {
+    const reviewPosts = [];
+    const dom = new JSDOM(fullSess.html, { url: fullSess.sBase + "#/accounts", runScripts: "outside-only", pretendToBeVisual: true });
+    try {
+      const w = dom.window;
+      w.TextEncoder = TextEncoder; w.scrollTo = () => {};
+      w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      w.Element.prototype.scrollIntoView = () => {};
+      const dCards = makeDriftVariantCards();
+      w.fetch = async (url, init = {}) => {
+        const rel = String(url).split("?")[0];
+        const target = new URL(String(url), fullSess.sBase).toString();
+        const headers = Object.assign({}, init.headers || {}, {
+          Cookie: fullSess.cookiePair, Origin: fullSess.origin, "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"
+        });
+        if (init.method === "POST") {
+          const m = /^api\/v1\/account-selections\/([^/]+)\/prepare$/.exec(rel);
+          if (m) {
+            const reqBody = JSON.parse(String(init.body || "{}"));
+            assert.equal(reqBody.action, "review_selection", "unexpected selection review action");
+            reviewPosts.push(m[1]);
+            return new Response(JSON.stringify({
+              schemaVersion: 1,
+              preview: {
+                action: "review_selection", key: m[1], title: "Review selection for " + m[1], confirm: "Update saved selection",
+                form: "a".repeat(64), expiresAt: "2035-01-01T00:00:00Z", lines: [[{ t: "Reviews local selection context only." }]], lost: "Lost", refused: "Refused"
+              }
+            }), { status: 200, headers: { "Content-Type": "application/json" } });
+          }
+          return new Response("{}", { status: 404 });
+        }
+        if (rel === "api/v1/saved-accounts") {
+          return new Response(JSON.stringify({ schemaVersion: 1, reference: "ref_drift_full", accounts: { state: "available", complete: true, cards: dCards } }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (rel === "api/v1/dock") {
+          const realDock = await (await fetch(target, { headers })).json();
+          realDock.accountsReference = "ref_drift_full";
+          realDock.selectedAccounts = dCards.length;
+          realDock.accounts = { state: "available", complete: true, cards: [] };
+          return new Response(JSON.stringify(realDock), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return fetch(target, { headers });
+      };
+      w.eval(fullSess.js);
+      await settle(100);
+      assert(w.document.querySelector(".acct-mode-bar")?.textContent.includes("Full mode"), "drift matrix missing Full mode bar");
+      const liveCard = (id) => w.document.querySelector('[data-focus="account-' + id + '"]')?.closest(".account-card");
+
+      for (const driftID of ["99999999999999999999999999999991", "99999999999999999999999999999992", "99999999999999999999999999999993"]) {
+        const card = liveCard(driftID);
+        assert(card && card.textContent.includes("Context review needed"), "Full drift badge missing for " + driftID);
+        assert(!card.textContent.includes("44%"), "Full drift leaked withheld quota for " + driftID);
+        assert.equal(card.querySelector('[data-focus^="account-review-help-"]'), null, "Full mode rendered inert How to review for " + driftID);
+        assert.equal(card.querySelector('[data-focus^="account-connect-"]'), null, "Full drift offered reconnect for " + driftID);
+        const offeredBtn = card.querySelector(".quota-compact button");
+        assert(offeredBtn && offeredBtn.dataset.focus === "selection-review-summary-" + driftID && offeredBtn.textContent.includes("Review selection"), "Full drift lacked clickable Review selection summary button for " + driftID);
+        offeredBtn.click();
+        await settle(60);
+        assert(reviewPosts.includes(driftID), "Full-mode drift button did not trigger selection review prepare for " + driftID);
+        const liveReviewed = liveCard(driftID);
+        assert(liveReviewed?.querySelector(".account-quota-review")?.textContent.includes("Review selection for " + driftID), "Selection review preview did not render for " + driftID);
+        assert.equal(w.document.querySelector(".acct-mgmt-panel"), null, "Full mode opened non-full guidance panel for " + driftID);
+        w.document.querySelector('[data-focus="quota-cancel-' + driftID + '"]').click();
+        await settle(40);
+      }
+
+      const customCard = liveCard("99999999999999999999999999999994");
+      assert(customCard && customCard.textContent.includes("Prior quota withheld"), "Custom-provider drift badge/withheld copy missing");
+      assert.equal(customCard.querySelector(".quota-compact button"), null, "Provider gate allowed summary review button on unsupported provider");
+    } finally {
+      dom.window.close();
+    }
+  }
+
+  // 4e. Controls & Read-only quota-only/card-reason-only drift + Full mode without accountSelectionReview permission
+  for (const modeSpec of [{ name: "controls", sess: ctrl }, { name: "readonly", sess: ro }]) {
+    const posts = [];
+    const dom = new JSDOM(modeSpec.sess.html, { url: modeSpec.sess.sBase + "#/accounts", runScripts: "outside-only", pretendToBeVisual: true });
+    try {
+      const w = dom.window;
+      w.TextEncoder = TextEncoder; w.scrollTo = () => {};
+      w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      w.Element.prototype.scrollIntoView = () => {};
+      const dCards = makeDriftVariantCards().slice(0, 3);
+      w.fetch = async (url, init = {}) => {
+        if (init.method === "POST") { posts.push(url); return new Response("{}", { status: 403 }); }
+        const rel = String(url).split("?")[0];
+        if (rel === "api/v1/saved-accounts") {
+          return new Response(JSON.stringify({ schemaVersion: 1, reference: "ref_drift_" + modeSpec.name, accounts: { state: "available", complete: true, cards: dCards } }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        const target = new URL(String(url), modeSpec.sess.sBase).toString();
+        const headers = Object.assign({}, init.headers || {}, {
+          Cookie: modeSpec.sess.cookiePair, Origin: modeSpec.sess.origin, "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"
+        });
+        if (rel === "api/v1/dock") {
+          const realDock = await (await fetch(target, { headers })).json();
+          realDock.accountsReference = "ref_drift_" + modeSpec.name;
+          realDock.selectedAccounts = dCards.length;
+          realDock.accounts = { state: "available", complete: true, cards: [] };
+          return new Response(JSON.stringify(realDock), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return fetch(target, { headers });
+      };
+      w.eval(modeSpec.sess.js);
+      await settle(80);
+      for (const dCard of dCards) {
+        const card = w.document.querySelector('[data-focus="account-' + dCard.id + '"]')?.closest(".account-card");
+        assert(card && card.textContent.includes("Prior quota withheld") && !card.textContent.includes("44%"), modeSpec.name + " drift wrong quota handling for " + dCard.id);
+        const helpBtn = card.querySelector('[data-focus="account-review-help-' + dCard.id + '"]');
+        assert(helpBtn && helpBtn.textContent.includes("How to review"), modeSpec.name + " drift missing How to review for " + dCard.id);
+      }
+      w.document.querySelector('[data-focus="account-review-help-99999999999999999999999999999991"]').click();
+      await settle();
+      assert(w.document.querySelector(".acct-mgmt-panel")?.textContent.includes("Open Full mode to review Quota-Only Drift Codex"), modeSpec.name + " mgmt panel wrong heading");
+      assert.equal(posts.length, 0, modeSpec.name + " drift issued unexpected POST");
+    } finally {
+      dom.window.close();
+    }
+  }
+
+  {
+    const posts = [];
+    const dom = new JSDOM(ctrl.html, { url: ctrl.sBase + "#/accounts", runScripts: "outside-only", pretendToBeVisual: true });
+    try {
+      const w = dom.window;
+      w.TextEncoder = TextEncoder; w.scrollTo = () => {};
+      w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+      w.Element.prototype.scrollIntoView = () => {};
+      const dCards = [makeDriftVariantCards()[0]];
+      w.fetch = async (url, init = {}) => {
+        if (init.method === "POST") { posts.push(url); return new Response("{}", { status: 403 }); }
+        const rel = String(url).split("?")[0];
+        if (rel === "api/v1/server") {
+          return new Response(JSON.stringify({
+            schemaVersion: 1, servedBy: "panel", version: "v0.3.0-dev", changes: "on", form: "f".repeat(64),
+            routeChanges: "person", accountQuota: true, accountQuotaProviders: ["codex"], accountSelectionReview: false,
+            accountUsageUpdating: true, accountCheck: true, accountRemove: true, accountConnectProviders: ["codex"]
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (rel === "api/v1/saved-accounts") {
+          return new Response(JSON.stringify({ schemaVersion: 1, reference: "ref_drift_norev", accounts: { state: "available", complete: true, cards: dCards } }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (rel === "api/v1/dock") {
+          return new Response(JSON.stringify({ schemaVersion: 1, readAt: activeIso, refreshSeconds: 3600, complete: true, registry: { availability: "available" }, loops: [], needsYou: [], selectedAccounts: 1, accountsReference: "ref_drift_norev", accounts: { state: "available", complete: true, cards: [] } }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+      };
+      w.eval(ctrl.js);
+      await settle(80);
+      assert(w.document.querySelector(".acct-mode-bar")?.textContent.includes("Full mode"), "Full no-selection-review missing Full mode bar");
+      const card = w.document.querySelector('[data-focus="account-99999999999999999999999999999991"]')?.closest(".account-card");
+      assert(card && !card.textContent.includes("44%"), "Full no-selection-review leaked withheld quota");
+      assert.equal(card.querySelector('[data-focus^="selection-review-"]'), null, "Permission gate leaked Review selection action");
+      assert.equal(card.querySelector('[data-focus^="account-review-help-"]'), null, "Full no-selection-review rendered inert summary How to review button");
+      assert.equal(card.querySelector('[data-focus^="selection-review-help-"]'), null, "Full no-selection-review rendered inert expanded How to review button");
+      const wantFallback = "Selection review is unavailable on this panel build. Run looptender accounts update in a terminal.";
+      assert(card.querySelector(".quota-compact")?.textContent.includes(wantFallback), "Summary missing terminal fallback when Full mode lacks selection review");
+      assert(card.querySelector(".account-quota")?.textContent.includes(wantFallback), "Expanded quota box missing terminal fallback when Full mode lacks selection review");
+      assert.equal(posts.length, 0, "Full no-selection-review issued POST");
     } finally {
       dom.window.close();
     }

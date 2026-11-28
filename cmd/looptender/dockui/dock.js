@@ -3570,6 +3570,12 @@
         list(s.accountConnectProviders).length || s.routeChanges === "person" || s.routeChanges === "bb_caller") return "full";
     return "controls";
   }
+  function accountNeedsSelectionReview(c) {
+    if (!c) return false;
+    var q = c.quota || {};
+    return c.attention === "context_changed" || c.reason === "context_changed" ||
+      q.reason === "selection_review_required" || q.reason === "context_changed";
+  }
   function accountProviderLabel(provider) {
     if (provider === "claude-code") return "Claude Code";
     if (provider === "codex") return "Codex";
@@ -3839,7 +3845,7 @@
     box.appendChild(el("p", "sub", "Saved for this selection; separate from route readings. Live thread account binding is not verified."));
     var saved = accountQuotaSummary(c) || {};
     var rejectedProv = accountQuotaMalformedProvenance(c);
-    var needsSelectionReview = q.reason === "selection_review_required" || q.reason === "context_changed" || c.attention === "context_changed" || c.reason === "context_changed";
+    var needsSelectionReview = accountNeedsSelectionReview(c);
     if (needsSelectionReview) {
       box.appendChild(el("p", "sub", accountQuotaReason(q.reason || "selection_review_required")));
     } else if (saved.state === "reported") {
@@ -3907,11 +3913,13 @@
       box.appendChild(review);
     }
     if (needsSelectionReview) {
-      if (changesOn() && state.server.accountSelectionReview) {
+      if (changesOn() && state.server && state.server.accountSelectionReview) {
         if (!current) box.appendChild(button("Review selection for this panel…", "selection-review-" + c.id, "", function () { accountQuotaRequest(c, false, true); }));
-      } else {
+      } else if (panelAccountMode() !== "full") {
         box.appendChild(el("p", "sub", "Reviewing this selection requires Full mode."));
         box.appendChild(button("How to review…", "selection-review-help-" + c.id, "", function () { openAccountMgmtPanel(c, "review", "selection-review-help-" + c.id); }));
+      } else {
+        box.appendChild(el("p", "sub", "Selection review is unavailable on this panel build. Run looptender accounts update in a terminal."));
       }
       return box;
     }
@@ -4112,8 +4120,7 @@
     }
     var acctCounts = { recentLocal: 0, olderLocal: 0, atLimit: 0, endedOrNone: 0, drift: 0 }, provCounts = Object.create(null), nowAc = Date.now();
     function classifyAccountCard(cCard) {
-      var isDr = cCard.attention === "context_changed" || cCard.reason === "context_changed" || (cCard.quota && (cCard.quota.reason === "selection_review_required" || cCard.quota.reason === "context_changed"));
-      if (isDr) return "drift";
+      if (accountNeedsSelectionReview(cCard)) return "drift";
       if (accountQuotaMalformedProvenance(cCard)) return "rejected";
       var qSum = accountQuotaSummary(cCard);
       if (!qSum || qSum.state !== "reported") return "endedOrNone";
@@ -4278,7 +4285,7 @@
       var compact = el("span", "quota-compact");
       var needsSignInAction = bucketKind !== "drift" && (c.provider === "codex" || c.provider === "claude-code") && accountSignInNeeded(c);
       var hasQuotaBlock = false;
-      if (c.attention === "context_changed" && changesOn() && state.server && state.server.accountSelectionReview && (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity")) {
+      if (bucketKind === "drift" && changesOn() && state.server && state.server.accountSelectionReview && (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity")) {
         var reviewBtn = button("Review selection\u2026", "selection-review-summary-" + c.id, "", function (event) {
           event.preventDefault(); event.stopPropagation();
           state.accountOpen[c.id] = true;
@@ -4290,12 +4297,16 @@
         compact.appendChild(el("strong", null, "Prior quota withheld"));
         compact.appendChild(el("span", "sub", "Context validation changed; not a quota limit."));
         if (c.provider === "codex" || c.provider === "claude-code" || c.provider === "antigravity") {
-          var reviewHelp = button("How to review\u2026", "account-review-help-" + c.id, "", function (event) {
-            event.preventDefault(); event.stopPropagation();
-            openAccountMgmtPanel(c, "review", "account-review-help-" + c.id);
-          });
-          reviewHelp.setAttribute("aria-label", "How to review selection for " + c.label);
-          compact.appendChild(reviewHelp);
+          if (acctMode !== "full") {
+            var reviewHelp = button("How to review\u2026", "account-review-help-" + c.id, "", function (event) {
+              event.preventDefault(); event.stopPropagation();
+              openAccountMgmtPanel(c, "review", "account-review-help-" + c.id);
+            });
+            reviewHelp.setAttribute("aria-label", "How to review selection for " + c.label);
+            compact.appendChild(reviewHelp);
+          } else {
+            compact.appendChild(el("span", "sub", "Selection review is unavailable on this panel build. Run looptender accounts update in a terminal."));
+          }
         }
       } else if (qs && qs.state === "reported") {
         hasQuotaBlock = true;
