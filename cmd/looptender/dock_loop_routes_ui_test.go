@@ -52,11 +52,24 @@ func TestDockLoopRoutesUIStaticInvariants(t *testing.T) {
 	if !strings.Contains(fbBody, `loopRouteRequest("confirm", { op: opName, loop: l.key }`) {
 		t.Error("confirm payload does not match strict { op, loop } contract")
 	}
+	// Request lifetime counters and unresolved save tracking exist in dock.js.
+	reqBody := funcBody(t, js, "loopRouteRequest")
+	for _, tok := range []string{"editorSeq", "reqSeq", "modelSeq", "unresolvedSave"} {
+		if !strings.Contains(reqBody, tok) && !strings.Contains(js, tok) {
+			t.Errorf("dock.js missing lifetime/reconciliation guard %q", tok)
+		}
+	}
+	// Progressive disclosure summaries and boilerplate partitioning exist in dock.js.
+	for _, tok := range []string{"loop-route-details", "How headless routes and limit labels work", "Policy and verification details", "loopRoutePartitionLines"} {
+		if !strings.Contains(js, tok) {
+			t.Errorf("dock.js missing P1 progressive disclosure element %q", tok)
+		}
+	}
 	// Terminal commands remain collapsed inside .how-advanced.
 	if !strings.Contains(js, `el("details", "how-advanced")`) || !strings.Contains(js, `Terminal commands (advanced)`) {
 		t.Error("dock.js missing collapsed Terminal commands (advanced) wrapper")
 	}
-	if !strings.Contains(css, ".loop-route-bar") || !strings.Contains(css, ".how-advanced") {
+	if !strings.Contains(css, ".loop-route-bar") || !strings.Contains(css, ".how-advanced") || !strings.Contains(css, ".loop-route-details") || !strings.Contains(css, ".loop-route-result.is-reconciled") {
 		t.Error("dock.css missing per-loop route editor styles")
 	}
 }
@@ -309,6 +322,35 @@ loop:
 		t.Fatal(err)
 	}
 
+	// Loop 4: dedicated fictional loop for P1/P2 async lifetime and unknown-save regressions
+	edgeDir := filepath.Join(root, "loops", "edge-loop")
+	_ = os.MkdirAll(edgeDir, 0o700)
+	edgeCfgPath := filepath.Join(edgeDir, config.FileName)
+	write(t, edgeCfgPath, `version: 1
+loop:
+  name: edge-loop
+  state_dir: state
+  adapter: claude
+  provider: claude-code
+  group: pool-edge-primary
+  claude:
+    cli: `+filepath.Join(binDir, "claude")+`
+    workdir: `+project+`
+    model: claude-opus-4-5
+  prompt: Continue fictional edge loop.
+  errors:
+    failover_on: []
+`, 0o600)
+	edgeCfg := loadFixture(t, edgeCfgPath)
+	edgeStateCanon, _ := canonicalFuturePath(edgeCfg.Loop.StateDir)
+	if err := control.Save(edgeCfg.Loop.StateDir, control.File{Enabled: true, Paused: true}); err != nil {
+		t.Fatal(err)
+	}
+	edgeEntry, err := registry.Add(regDir, edgeCfg.Loop.Name, edgeCfgPath, edgeStateCanon)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	panelRoot := filepath.Join(root, "panel-dirs")
 	_ = os.MkdirAll(panelRoot, 0o700)
 
@@ -367,7 +409,15 @@ loop:
 	defer stopCtrl()
 	bbURLs, _, stopBB := startServer("bb_caller", catalogMain, []string{dockKey(ownEntry.ID)})
 	defer stopBB()
-	allURLs, _, stopAll := startServer("all", catalogMain, []string{dockKey(firstEntry.ID), dockKey(ownEntry.ID), dockKey(stdEntry.ID)})
+	allURLs, _, stopAll := startServer("all", catalogMain, []string{
+		dockKey(firstEntry.ID),
+		dockKey(ownEntry.ID),
+		dockKey(stdEntry.ID),
+		dockKey(edgeEntry.ID),
+		dockKey(edgeEntry.ID),
+		dockKey(edgeEntry.ID),
+		dockKey(edgeEntry.ID),
+	})
 	defer stopAll()
 	extURLs, _, stopExt := startServer("all", catalogExtOnly, []string{dockKey(firstEntry.ID)})
 	defer stopExt()
@@ -470,6 +520,9 @@ for (const [label, url, wantText] of [
   s.doc.querySelector('[data-focus="loop-route-add-open"]').click();
   await s.settle(() => s.doc.querySelector("#loop-route-account"));
   assert(!fs.existsSync(cfg.modelsLog), "models lookup must not run before button click");
+  const addDetails = s.doc.querySelector(".loop-route-panel details.loop-route-details");
+  assert(addDetails && !addDetails.open, "Add form caveats disclosure must start collapsed");
+  assert(addDetails.textContent.includes("How headless routes and limit labels work"));
 
   const acctSel = s.doc.querySelector("#loop-route-account");
   acctSel.value = cfg.codexID;
@@ -503,7 +556,15 @@ for (const [label, url, wantText] of [
 
   s.doc.querySelector(".loop-route-form").dispatchEvent(new s.window.Event("submit", { bubbles: true, cancelable: true }));
   await s.settle(() => s.doc.querySelector('[data-focus="loop-route-save"]'));
-  assert(s.doc.querySelector(".loop-route-review").textContent.includes("Alt Codex"));
+  const reviewEl = s.doc.querySelector(".loop-route-review");
+  assert(reviewEl.textContent.includes("Alt Codex"));
+  const effectMain = reviewEl.querySelector(".loop-route-effect-main");
+  assert(effectMain && effectMain.textContent.includes("New route:") && effectMain.textContent.includes("(Choice "), "Review must show chosen route and order first");
+  assert(reviewEl.textContent.includes("Before:") && reviewEl.textContent.includes("After:"));
+  const revDetails = reviewEl.querySelector("details.loop-route-details");
+  assert(revDetails && !revDetails.open, "Review policy disclosure must start collapsed");
+  assert(revDetails.textContent.includes("Policy and verification details"));
+  assert(effectMain.compareDocumentPosition(revDetails) & s.window.Node.DOCUMENT_POSITION_FOLLOWING, "Review effect summary must precede collapsed details");
 
   s.doc.querySelector('[data-focus="loop-route-save"]').click();
   await s.settle(() => s.doc.querySelector(".loop-route-result.is-changed"));
@@ -571,24 +632,280 @@ for (const [label, url, wantText] of [
   s.destroy();
 }
 
+async function fillAddForm(s, acctId, modelVal, limitVal) {
+  const acctSel = s.doc.querySelector("#loop-route-account");
+  acctSel.value = acctId;
+  acctSel.dispatchEvent(new s.window.Event("change", { bubbles: true }));
+  await s.settle(() => s.doc.querySelector("#loop-route-model"));
+  const modInput = s.doc.querySelector("#loop-route-model");
+  modInput.value = modelVal;
+  modInput.dispatchEvent(new s.window.Event("input", { bubbles: true }));
+  const limChoice = s.doc.querySelector("#loop-route-limit-choice");
+  if (limChoice) {
+    limChoice.value = "new";
+    limChoice.dispatchEvent(new s.window.Event("change", { bubbles: true }));
+    await s.settle(() => s.doc.querySelector("#loop-route-limit"));
+  }
+  const limInput = s.doc.querySelector("#loop-route-limit");
+  limInput.value = limitVal;
+  limInput.dispatchEvent(new s.window.Event("input", { bubbles: true }));
+}
+
+// 8: P2 stale prepare across navigate-away/back same loop + P1 unknown warning stays outside <details>
+{
+  const s = await openSession(cfg.allStaleOpen);
+  const origFetch = s.window.fetch.bind(s.window);
+  let holdPrepare = true;
+  let prepStarted = false;
+  let releasePrepare;
+  const prepGate = new Promise(r => { releasePrepare = r; });
+  let injectWarning = false;
+  s.window.fetch = async (url, init = {}) => {
+    if (String(url).includes("api/v1/routes/prepare") && holdPrepare) {
+      prepStarted = true;
+      const realRes = await origFetch(url, init);
+      await prepGate;
+      return realRes;
+    }
+    const res = await origFetch(url, init);
+    if (String(url).includes("api/v1/routes/prepare") && injectWarning) {
+      const data = await res.json();
+      if (data && Array.isArray(data.lines)) {
+        data.lines.push("Account capacity warning: status unknown until verified.");
+      }
+      return new Response(JSON.stringify(data), { status: res.status, headers: { "Content-Type": "application/json" } });
+    }
+    return res;
+  };
+
+  await s.settle(() => s.doc.querySelector('[data-focus="loop-route-add-open"]'));
+  s.doc.querySelector('[data-focus="loop-route-add-open"]').click();
+  await s.settle(() => s.doc.querySelector("#loop-route-account"));
+  await fillAddForm(s, cfg.codexID, "gpt-5.1-codex", "pool-stale-check");
+  s.doc.querySelector(".loop-route-form").dispatchEvent(new s.window.Event("submit", { bubbles: true, cancelable: true }));
+  await s.settle(() => prepStarted);
+
+  // Navigate away to overview, return to the SAME loop, and open a fresh Add form before prepare resolves.
+  s.window.location.hash = "#/";
+  s.window.dispatchEvent(new s.window.HashChangeEvent("hashchange"));
+  await s.settle(() => !s.doc.querySelector(".loop-route-panel"));
+  s.window.location.hash = "#/loop/" + cfg.edgeLoopKey;
+  s.window.dispatchEvent(new s.window.HashChangeEvent("hashchange"));
+  await s.settle(() => s.doc.querySelector('[data-focus="loop-route-add-open"]'));
+  holdPrepare = false;
+  s.doc.querySelector('[data-focus="loop-route-add-open"]').click();
+  await s.settle(() => s.doc.querySelector("#loop-route-account"));
+
+  releasePrepare();
+  await new Promise(r => setTimeout(r, 80));
+  assert(!s.doc.querySelector(".loop-route-review"), "superseded prepare must not attach review after navigate-away/back same loop");
+  assert(!s.doc.querySelector('[data-focus="loop-route-save"]'), "superseded prepare must not attach Save action");
+  assert(s.doc.querySelector("#loop-route-account"), "fresh Add form must stay open");
+  assert(!s.doc.querySelector('[data-focus="loop-route-review"]').disabled, "fresh Add form must not remain stuck busy");
+
+  // Verify unknown warning lines on the new review stay outside collapsed <details>.
+  injectWarning = true;
+  await fillAddForm(s, cfg.codexID, "gpt-5.1-codex", "pool-warn-check");
+  s.doc.querySelector(".loop-route-form").dispatchEvent(new s.window.Event("submit", { bubbles: true, cancelable: true }));
+  await s.settle(() => s.doc.querySelector(".loop-route-review"));
+  const warnText = "Account capacity warning: status unknown until verified.";
+  const revDetails = s.doc.querySelector(".loop-route-review details.loop-route-details");
+  assert(s.doc.querySelector(".loop-route-review").textContent.includes(warnText), "unknown warning line must be visible on review");
+  assert(!revDetails.textContent.includes(warnText), "unknown warning line must not be folded into collapsed details");
+  s.destroy();
+}
+
+// 9: P2 delayed Codex models reply must not attach after switching to Claude
+{
+  const s = await openSession(cfg.allModelsOpen);
+  const origFetch = s.window.fetch.bind(s.window);
+  let codexStarted = false;
+  let modelsCalls = 0;
+  let releaseCodexModels;
+  const codexModelsGate = new Promise(r => { releaseCodexModels = r; });
+  s.window.fetch = async (url, init = {}) => {
+    if (String(url).includes("api/v1/routes/models") && String((init && init.body) || "").includes('"codex"')) {
+      codexStarted = true;
+      modelsCalls++;
+      const realRes = await origFetch(url, init);
+      await codexModelsGate;
+      return realRes;
+    }
+    return origFetch(url, init);
+  };
+
+  await s.settle(() => s.doc.querySelector('[data-focus="loop-route-add-open"]'));
+  s.doc.querySelector('[data-focus="loop-route-add-open"]').click();
+  await s.settle(() => s.doc.querySelector("#loop-route-account"));
+
+  const acctSel = s.doc.querySelector("#loop-route-account");
+  acctSel.value = cfg.codexID;
+  acctSel.dispatchEvent(new s.window.Event("change", { bubbles: true }));
+  await s.settle(() => s.doc.querySelector('[data-focus="loop-route-load-models"]') && !s.doc.querySelector('[data-focus="loop-route-load-models"]').disabled);
+
+  s.doc.querySelector('[data-focus="loop-route-load-models"]').click();
+  await s.settle(() => codexStarted);
+
+  // Switch selected account to Claude while Codex model lookup is still in flight.
+  acctSel.value = cfg.claudeID;
+  acctSel.dispatchEvent(new s.window.Event("change", { bubbles: true }));
+  await s.settle(() => s.doc.querySelector("#loop-route-account").value === cfg.claudeID);
+
+  releaseCodexModels();
+  await new Promise(r => setTimeout(r, 80));
+
+  assert.equal(modelsCalls, 1, "expected exactly 1 codex models lookup in flight");
+  assert(!s.doc.querySelector("select#loop-route-model"), "delayed Codex models must not replace Claude model input with select");
+  assert(!s.doc.querySelector(".loop-route-panel").textContent.includes("gpt-5.2-codex"), "delayed Codex model id must not appear under Claude");
+  assert(!s.doc.querySelector('[data-focus="loop-route-load-models"]').disabled, "load models button under Claude must stay enabled");
+  s.destroy();
+}
+
+// 10: P2 partial outcome preserved across failed reconciliation read
+{
+  const s = await openSession(cfg.allPartialOpen);
+  const origFetch = s.window.fetch.bind(s.window);
+  let readMode = "normal";
+  let confirmCalls = 0;
+  let readCalls = 0;
+  s.window.fetch = async (url, init = {}) => {
+    if (String(url).includes("api/v1/routes/confirm")) {
+      confirmCalls++;
+      return new Response(JSON.stringify({ schemaVersion: 1, outcome: "partial", text: "Simulated partial route save" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    if (String(url).includes("api/v1/routes/read")) {
+      readCalls++;
+      if (readMode === "network_fail") {
+        throw new Error("simulated read failure after partial");
+      }
+    }
+    return origFetch(url, init);
+  };
+
+  await s.settle(() => s.doc.querySelector('[data-focus="loop-route-add-open"]'));
+  s.doc.querySelector('[data-focus="loop-route-add-open"]').click();
+  await s.settle(() => s.doc.querySelector("#loop-route-account"));
+  await fillAddForm(s, cfg.codexID, "gpt-5.1-codex", "pool-partial-check");
+  s.doc.querySelector(".loop-route-form").dispatchEvent(new s.window.Event("submit", { bubbles: true, cancelable: true }));
+  await s.settle(() => s.doc.querySelector('[data-focus="loop-route-save"]'));
+
+  s.doc.querySelector('[data-focus="loop-route-save"]').click();
+  await s.settle(() => s.doc.querySelector(".loop-route-result.is-partial"));
+
+  readMode = "network_fail";
+  const prevRead = readCalls;
+  s.doc.querySelector('[data-focus="loop-route-read-again"]').click();
+  await s.settle(() => {
+    const h = s.doc.querySelector("#loop-route-feedback h4");
+    return readCalls > prevRead && h && h.textContent !== "Working...";
+  });
+  assert(s.doc.querySelector(".loop-route-result.is-partial"), "failed read must preserve partial card");
+  assert(s.doc.querySelector(".loop-route-reconcile-err"), "failed read must show reconcile error");
+  assert(!s.doc.body.textContent.includes("Nothing was changed"), "failed read after partial must never claim Nothing was changed");
+  assert.equal(confirmCalls, 1, "confirm must not replay");
+  s.destroy();
+}
+
+// 11: P2 lost confirm reply preserves unknown across failed and refused reads, never replays confirm, reconciles on authoritative read
+{
+  const s = await openSession(cfg.allUnknownOpen);
+  const origFetch = s.window.fetch.bind(s.window);
+  let readMode = "normal";
+  let confirmCalls = 0;
+  let readCalls = 0;
+  s.window.fetch = async (url, init = {}) => {
+    if (String(url).includes("api/v1/routes/confirm")) {
+      confirmCalls++;
+      await origFetch(url, init);
+      throw new Error("simulated dropped confirm reply");
+    }
+    if (String(url).includes("api/v1/routes/read")) {
+      readCalls++;
+      if (readMode === "network_fail") {
+        throw new Error("simulated read failure");
+      }
+      if (readMode === "refused") {
+        return new Response(JSON.stringify({ schemaVersion: 1, outcome: "refused", text: "Simulated read refusal" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+    return origFetch(url, init);
+  };
+
+  await s.settle(() => s.doc.querySelector('[data-focus="loop-route-add-open"]'));
+  s.doc.querySelector('[data-focus="loop-route-add-open"]').click();
+  await s.settle(() => s.doc.querySelector("#loop-route-account"));
+  await fillAddForm(s, cfg.codexID, "gpt-5.1-codex", "pool-unknown-check");
+  s.doc.querySelector(".loop-route-form").dispatchEvent(new s.window.Event("submit", { bubbles: true, cancelable: true }));
+  await s.settle(() => s.doc.querySelector('[data-focus="loop-route-save"]'));
+
+  s.doc.querySelector('[data-focus="loop-route-save"]').click();
+  await s.settle(() => s.doc.querySelector(".loop-route-result.is-unknown"));
+  assert(!s.doc.body.textContent.includes("Nothing was changed"));
+
+  readMode = "network_fail";
+  const prevRead1 = readCalls;
+  s.doc.querySelector('[data-focus="loop-route-read-again"]').click();
+  await s.settle(() => {
+    const h = s.doc.querySelector("#loop-route-feedback h4");
+    return readCalls > prevRead1 && h && h.textContent !== "Working...";
+  });
+  assert(s.doc.querySelector(".loop-route-result.is-unknown"), "failed read must keep unknown save state");
+  assert(s.doc.querySelector(".loop-route-reconcile-err"), "failed read must show reconcile error");
+  assert(!s.doc.body.textContent.includes("Nothing was changed"), "failed read must not claim Nothing was changed");
+  assert.equal(confirmCalls, 1, "confirm must not replay after failed read");
+
+  readMode = "refused";
+  const prevRead2 = readCalls;
+  s.doc.querySelector('[data-focus="loop-route-read-again"]').click();
+  await s.settle(() => {
+    const h = s.doc.querySelector("#loop-route-feedback h4");
+    return readCalls > prevRead2 && h && h.textContent !== "Working...";
+  });
+  assert(s.doc.querySelector(".loop-route-result.is-unknown"), "refused read must keep unknown save state");
+  assert(s.doc.querySelector(".loop-route-reconcile-err"), "refused read must show reconcile error");
+  assert(!s.doc.body.textContent.includes("Nothing was changed"), "refused read must not claim Nothing was changed");
+  assert.equal(confirmCalls, 1, "confirm must not replay after refused read");
+
+  readMode = "normal";
+  s.doc.querySelector('[data-focus="loop-route-read-again"]').click();
+  await s.settle(() => s.doc.querySelector(".loop-route-result.is-reconciled"));
+  assert(!s.doc.querySelector(".loop-route-result.is-unknown"), "authoritative read clears unknown state");
+  assert(s.doc.querySelector(".loop-route-result.is-reconciled").textContent.includes("Current list loaded"));
+  assert(s.doc.body.textContent.includes("gpt-5.1-codex"), "authoritative read refreshes route list");
+  assert.equal(confirmCalls, 1, "confirm must never have replayed");
+  s.destroy();
+}
+
 console.log("LOOP_ROUTES_JSDOM_OK");
 `
 	scriptPath := filepath.Join(root, "run.mjs")
 	cfgPath := filepath.Join(root, "cfg.json")
 	write(t, scriptPath, script, 0o600)
 	cfgBytes, _ := json.Marshal(map[string]any{
-		"roOpen":       roURLs[0],
-		"ctrlOpen":     ctrlURLs[0],
-		"bbOpen":       bbURLs[0],
-		"allFirstOpen": allURLs[0],
-		"allOwnOpen":   allURLs[1],
-		"allStdOpen":   allURLs[2],
-		"extFirstOpen": extURLs[0],
-		"firstLoopKey": dockKey(firstEntry.ID),
-		"codexID":      codexID,
-		"modelsLog":    modelsLog,
-		"ownFbPath":    ownFbPath,
-		"stdFbPath":    filepath.Join(stdDir, "fallbacks.yaml"),
+		"roOpen":         roURLs[0],
+		"ctrlOpen":       ctrlURLs[0],
+		"bbOpen":         bbURLs[0],
+		"allFirstOpen":   allURLs[0],
+		"allOwnOpen":     allURLs[1],
+		"allStdOpen":     allURLs[2],
+		"allStaleOpen":   allURLs[3],
+		"allModelsOpen":  allURLs[4],
+		"allPartialOpen": allURLs[5],
+		"allUnknownOpen": allURLs[6],
+		"extFirstOpen":   extURLs[0],
+		"firstLoopKey":   dockKey(firstEntry.ID),
+		"edgeLoopKey":    dockKey(edgeEntry.ID),
+		"claudeID":       claudeID,
+		"codexID":        codexID,
+		"modelsLog":      modelsLog,
+		"ownFbPath":      ownFbPath,
+		"stdFbPath":      filepath.Join(stdDir, "fallbacks.yaml"),
 	})
 	write(t, cfgPath, string(cfgBytes), 0o600)
 
@@ -622,5 +939,14 @@ console.log("LOOP_ROUTES_JSDOM_OK");
 	ownAfter := loadFixture(t, ownCfgPath)
 	if ids := candidateIDs(ownAfter.FallbackSet); len(ids) != 2 || ids[0] != "standby-codex" || ids[1] != "standby-claude" {
 		t.Fatalf("expected moved order [standby-codex standby-claude], got %v", ids)
+	}
+
+	// Verify edge-loop persisted exactly once (lost confirm never replayed, stale prepare never wrote).
+	edgeAfter := loadFixture(t, edgeCfgPath)
+	if edgeAfter.FallbackSet == nil || len(edgeAfter.FallbackSet.Candidates) != 1 {
+		t.Fatalf("expected exactly 1 candidate in edge-loop (no confirm replay), got %+v", edgeAfter.FallbackSet)
+	}
+	if edgeAfter.FallbackSet.Candidates[0].Group != "pool-unknown-check" {
+		t.Fatalf("expected group pool-unknown-check in edge-loop, got %+v", edgeAfter.FallbackSet.Candidates[0].Group)
 	}
 }

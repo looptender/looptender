@@ -4377,6 +4377,9 @@
   var loopRouteEdit = {
     loopKey: "",
     panel: "",
+    editorSeq: 0,
+    reqSeq: 0,
+    modelSeq: 0,
     data: null,
     busy: false,
     loadingModels: false,
@@ -4390,7 +4393,10 @@
     pendingAccountLabel: "",
     reply: null,
     message: "",
-    unknownOutcome: false
+    unknownOutcome: false,
+    unresolvedSave: null,
+    reconcileError: "",
+    reconciledNote: ""
   };
   var ROUTE_DOCS = "routes-help.html";
   function routeButton(text, id, run) {
@@ -4575,6 +4581,9 @@
   }
 
   function loopRouteReset(loopKey, nextPanel) {
+    loopRouteEdit.editorSeq += 1;
+    loopRouteEdit.reqSeq += 1;
+    loopRouteEdit.modelSeq += 1;
     loopRouteEdit.loopKey = loopKey || "";
     loopRouteEdit.panel = nextPanel || "";
     loopRouteEdit.data = null;
@@ -4591,6 +4600,28 @@
     loopRouteEdit.reply = null;
     loopRouteEdit.message = "";
     loopRouteEdit.unknownOutcome = false;
+    loopRouteEdit.unresolvedSave = null;
+    loopRouteEdit.reconcileError = "";
+    loopRouteEdit.reconciledNote = "";
+  }
+  function loopRouteSwitchPanel(nextPanel) {
+    loopRouteEdit.editorSeq += 1;
+    loopRouteEdit.reqSeq += 1;
+    loopRouteEdit.modelSeq += 1;
+    loopRouteEdit.panel = nextPanel || "";
+    loopRouteEdit.busy = false;
+    loopRouteEdit.loadingModels = false;
+    loopRouteEdit.modelsText = "";
+    loopRouteEdit.pendingOp = "";
+    loopRouteEdit.pendingAccountLabel = "";
+    loopRouteEdit.reply = null;
+    loopRouteEdit.message = "";
+    loopRouteEdit.reconcileError = "";
+    loopRouteEdit.reconciledNote = "";
+    if (!nextPanel) {
+      loopRouteEdit.unresolvedSave = null;
+      loopRouteEdit.unknownOutcome = false;
+    }
   }
   function panelRouteMode() {
     if (!state.server || !changesOn()) return "read_only";
@@ -4644,42 +4675,140 @@
     btn.addEventListener("click", onClick);
     return btn;
   }
-  function loopRouteRequest(step, bodyObj, formToken, loopKey, nextFocus) {
+  var LOOP_ROUTE_BOILERPLATE_LINES = [
+    "Headless route uses the selected account context as configured; login, model access and quota are not verified. Effort uses the CLI default.",
+    "Saving runs no model or probe and does not enable handoff or clear holds and allowances.",
+    "Review before saving. Holds, budgets, ownership and conversation-creation limits stay in place. This does not run a model or check account access."
+  ];
+  function loopRouteIsBoilerplate(lnText) {
+    if (!lnText) return false;
+    if (lnText.indexOf("Account selection: ") === 0) return true;
+    return LOOP_ROUTE_BOILERPLATE_LINES.indexOf(lnText) >= 0;
+  }
+  function loopRoutePartitionLines(rawLines) {
+    var primary = [], details = [];
+    list(rawLines).forEach(function (lnText) {
+      if (!lnText) return;
+      if (loopRouteIsBoilerplate(lnText)) details.push(lnText);
+      else primary.push(lnText);
+    });
+    return { primary: primary, details: details };
+  }
+  function loopRouteRequest(step, bodyObj, formToken, loopKey, nextFocus, reqOpts) {
     if (!state.server || !state.server.form) return Promise.resolve();
-    if (step === "models") loopRouteEdit.loadingModels = true;
-    else loopRouteEdit.busy = true;
-    loopRouteEdit.message = "";
-    if (step !== "models") loopRouteEdit.unknownOutcome = false;
-    render(false, true);
-    return post("api/v1/routes/" + step, formToken || state.server.form, bodyObj)
-      .then(function (res) {
-        if (loopRouteEdit.loopKey !== loopKey) return;
-        if (step === "read") {
-          if (res.editor) loopRouteEdit.data = res.editor;
-          else {
-            loopRouteEdit.reply = res;
-            loopRouteEdit.message = res.text || "Could not read route configuration.";
-          }
-        } else if (step === "models") {
+    if (step === "models") {
+      var mEditor = loopRouteEdit.editorSeq;
+      var mSeq = ++loopRouteEdit.modelSeq;
+      var reqAcctId = (reqOpts && reqOpts.accountId) || "";
+      var reqProvider = (reqOpts && reqOpts.provider) || "";
+      function modelsAlive() {
+        if (loopRouteEdit.loopKey !== loopKey || loopRouteEdit.editorSeq !== mEditor || loopRouteEdit.modelSeq !== mSeq) return false;
+        if (loopRouteEdit.draft.account !== reqAcctId) return false;
+        var acctsNow = loopRouteEligibleAccounts(loopRouteEdit.data);
+        for (var mIdx = 0; mIdx < acctsNow.length; mIdx++) {
+          if (acctsNow[mIdx].id === reqAcctId) return acctsNow[mIdx].provider === reqProvider;
+        }
+        return false;
+      }
+      loopRouteEdit.loadingModels = true;
+      loopRouteEdit.modelsText = "";
+      render(false, true);
+      return post("api/v1/routes/models", formToken || state.server.form, bodyObj)
+        .then(function (res) {
+          if (!modelsAlive()) return;
           loopRouteEdit.models = list(res.models);
           loopRouteEdit.modelsText = res.text || "";
           loopRouteEdit.manualModel = !loopRouteEdit.models.length;
+        })
+        .catch(function () {
+          if (!modelsAlive()) return;
+          loopRouteEdit.models = [];
+          loopRouteEdit.manualModel = true;
+          loopRouteEdit.modelsText = "The model list did not answer. Enter a model name manually from your provider's supported settings.";
+        })
+        .then(function () {
+          if (!modelsAlive()) return;
+          loopRouteEdit.loadingModels = false;
+          render(false, true);
+          focusOn(nextFocus || "loop-route-model");
+          if (loopRouteEdit.modelsText) announce(loopRouteEdit.modelsText);
+        });
+    }
+
+    var rEditor = loopRouteEdit.editorSeq;
+    var rSeq = ++loopRouteEdit.reqSeq;
+    function reqAlive() {
+      return loopRouteEdit.loopKey === loopKey && loopRouteEdit.editorSeq === rEditor && loopRouteEdit.reqSeq === rSeq;
+    }
+    loopRouteEdit.busy = true;
+    loopRouteEdit.reconcileError = "";
+    loopRouteEdit.reconciledNote = "";
+    if (!loopRouteEdit.unresolvedSave) loopRouteEdit.message = "";
+    render(false, true);
+    return post("api/v1/routes/" + step, formToken || state.server.form, bodyObj)
+      .then(function (res) {
+        if (!reqAlive()) {
+          if (step === "confirm") {
+            load(true);
+            if (res && res.outcome === "partial") {
+              notice("loop-route-bg", "An earlier route save finished partially. Inspect files and read the current list before preparing another change.", true);
+            } else if (res && res.outcome === "changed") {
+              announce("An earlier route save completed.");
+            }
+          }
+          return;
+        }
+        if (step === "read") {
+          if (res && res.editor && loopRouteView(res.editor, loopKey)) {
+            loopRouteEdit.data = res.editor;
+            if (loopRouteEdit.unresolvedSave) {
+              loopRouteEdit.unresolvedSave = null;
+              loopRouteEdit.unknownOutcome = false;
+              loopRouteEdit.reconcileError = "";
+              loopRouteEdit.reply = null;
+              loopRouteEdit.message = "";
+              loopRouteEdit.reconciledNote = "Current route list loaded. Check whether the earlier save took effect before preparing another change.";
+              load(true);
+            }
+          } else if (loopRouteEdit.unresolvedSave) {
+            loopRouteEdit.reconcileError = "Could not verify the earlier save because reading the current route list failed" +
+              (res && res.text ? " (" + res.text + ")" : "") +
+              ". The earlier save outcome is still " + loopRouteEdit.unresolvedSave.kind + "; nothing is retried automatically.";
+          } else {
+            loopRouteEdit.reply = res;
+            loopRouteEdit.message = (res && res.text) || "Could not read route configuration.";
+          }
         } else {
           loopRouteEdit.reply = res;
           if (step === "confirm") {
-            if (res.outcome === "changed" || res.outcome === "unchanged" || res.outcome === "partial" || res.outcome === "review_again") {
+            if (res && res.outcome === "partial") {
+              loopRouteEdit.unresolvedSave = {
+                kind: "partial",
+                op: (bodyObj && bodyObj.op) || loopRouteEdit.pendingOp,
+                stage: res.stage || "",
+                text: res.text || "A fallback file may remain without the configuration update; inspect files before reviewing again. Nothing is retried automatically.",
+                reply: res
+              };
+              loopRouteEdit.unknownOutcome = false;
+              loopRouteEdit.reconcileError = "";
+            } else {
+              loopRouteEdit.unresolvedSave = null;
+              loopRouteEdit.unknownOutcome = false;
+              loopRouteEdit.reconcileError = "";
+            }
+            if (res && (res.outcome === "changed" || res.outcome === "unchanged" || res.outcome === "partial" || res.outcome === "review_again")) {
               loopRouteEdit.data = null;
               load(true);
             }
-            if (res.outcome === "changed" && (loopRouteEdit.panel === "manage" || loopRouteEdit.panel === "own")) {
+            if (res && res.outcome === "changed" && (loopRouteEdit.panel === "manage" || loopRouteEdit.panel === "own")) {
               post("api/v1/routes/read", state.server.form, { op: "read", loop: loopKey }).then(function (rd) {
-                if (loopRouteEdit.loopKey === loopKey && rd && rd.editor) {
+                if (loopRouteEdit.loopKey === loopKey && loopRouteEdit.editorSeq === rEditor && loopRouteEdit.reqSeq === rSeq && rd && rd.editor && loopRouteView(rd.editor, loopKey)) {
                   loopRouteEdit.data = rd.editor;
                   render(false, true);
                 }
               }).catch(function () {});
             }
-            if (res.outcome === "changed" && loopRouteEdit.pendingOp === "add") {
+            if (res && res.outcome === "changed" && loopRouteEdit.pendingOp === "add") {
               loopRouteEdit.draft = { account: "", model: "", at: "0", limitChoice: "", limit: "" };
               loopRouteEdit.touched = Object.create(null);
               loopRouteEdit.submitTried = false;
@@ -4691,29 +4820,50 @@
         }
       })
       .catch(function () {
-        if (loopRouteEdit.loopKey !== loopKey) return;
+        if (!reqAlive()) {
+          if (step === "confirm") {
+            load(true);
+            notice("loop-route-bg", "An earlier route save lost its reply (outcome unknown). Read the current route list before preparing another change; nothing is retried automatically.", true);
+          }
+          return;
+        }
         if (step === "confirm") {
+          loopRouteEdit.unresolvedSave = {
+            kind: "unknown",
+            op: (bodyObj && bodyObj.op) || loopRouteEdit.pendingOp,
+            stage: "",
+            text: "The save result is unknown. Read the current route list before preparing another change; this save will not be retried automatically.",
+            reply: null
+          };
           loopRouteEdit.unknownOutcome = true;
           loopRouteEdit.reply = null;
           loopRouteEdit.data = null;
-          loopRouteEdit.message = "The save result is unknown. Read the current route list before preparing another change; this save will not be retried automatically.";
-        } else if (step === "models") {
-          loopRouteEdit.models = [];
-          loopRouteEdit.manualModel = true;
-          loopRouteEdit.modelsText = "The model list did not answer. Enter a model name manually from your provider's supported settings.";
+          loopRouteEdit.reconcileError = "";
+          loopRouteEdit.message = loopRouteEdit.unresolvedSave.text;
+        } else if (loopRouteEdit.unresolvedSave) {
+          loopRouteEdit.reconcileError = "The panel did not answer while reading the current route list. The earlier save may still have taken effect (outcome still " +
+            loopRouteEdit.unresolvedSave.kind + "). Try reading the list again before preparing another change; nothing is retried automatically.";
         } else {
           loopRouteEdit.reply = null;
           loopRouteEdit.message = "The panel did not answer. Nothing was changed. Try reading the route list again.";
         }
       })
       .then(function () {
-        if (loopRouteEdit.loopKey !== loopKey) return;
+        if (!reqAlive()) return;
         loopRouteEdit.busy = false;
-        loopRouteEdit.loadingModels = false;
         render(false, true);
-        if (nextFocus) focusOn(nextFocus);
-        else if (step !== "read" || loopRouteEdit.message) focusOn(step === "models" ? "loop-route-model" : "loop-route-feedback");
-        var spoken = loopRouteEdit.message || (step === "models" && loopRouteEdit.modelsText) || (loopRouteEdit.reply && loopRouteEdit.reply.text) || "";
+        if (loopRouteEdit.unresolvedSave || loopRouteEdit.reconcileError || loopRouteEdit.reconciledNote) {
+          focusOn("loop-route-feedback");
+        } else if (nextFocus) {
+          focusOn(nextFocus);
+        } else if (step !== "read" || loopRouteEdit.message) {
+          focusOn("loop-route-feedback");
+        }
+        var spoken = loopRouteEdit.reconcileError ||
+          (loopRouteEdit.unresolvedSave && loopRouteEdit.unresolvedSave.text) ||
+          loopRouteEdit.reconciledNote ||
+          loopRouteEdit.message ||
+          (loopRouteEdit.reply && loopRouteEdit.reply.text) || "";
         if (spoken) announce(spoken);
       });
   }
@@ -4746,7 +4896,8 @@
       return arr.map(function (id) { return source[id] || (id === "primary" ? "First route" : "Configured route"); }).join(" -> ");
     }
     if (chg.op === "add" && chg.route && labelsAfter[chg.route]) {
-      parent.appendChild(el("p", "loop-route-effect-main", "New route: " + labelsAfter[chg.route]));
+      var posNote = chg.to > 0 ? " (Choice " + (chg.to + 1) + ")" : "";
+      parent.appendChild(el("p", "loop-route-effect-main", "New route: " + labelsAfter[chg.route] + posNote));
     }
     parent.appendChild(el("p", "sub", "Before: " + joinOrder(chg.before, labelsBefore)));
     parent.appendChild(el("p", null, "After: " + joinOrder(chg.after, labelsAfter)));
@@ -4765,10 +4916,12 @@
     if (chg.refusal && chg.refusal.text) parent.appendChild(el("p", "c-warn", chg.refusal.text));
   }
   function loopRouteFeedbackCard(l, c) {
-    var res = loopRouteEdit.reply;
-    if (!res && !loopRouteEdit.message && !loopRouteEdit.unknownOutcome && !loopRouteEdit.busy) return null;
-    var isPreview = !!(res && res.outcome === "preview" && res.form);
-    var outcome = res && res.outcome ? res.outcome : (loopRouteEdit.unknownOutcome ? "unknown" : "refused");
+    var unres = loopRouteEdit.unresolvedSave;
+    var res = unres ? (unres.reply || null) : loopRouteEdit.reply;
+    var recNote = !unres ? loopRouteEdit.reconciledNote : "";
+    if (!unres && !recNote && !res && !loopRouteEdit.message && !loopRouteEdit.unknownOutcome && !loopRouteEdit.busy) return null;
+    var isPreview = !unres && !!(res && res.outcome === "preview" && res.form);
+    var outcome = unres ? unres.kind : (recNote ? "reconciled" : (res && res.outcome ? res.outcome : (loopRouteEdit.unknownOutcome ? "unknown" : "refused")));
     var boxCls = isPreview ? "loop-route-review" : "loop-route-result is-" + outcome;
     var card = el("section", boxCls);
     card.id = "loop-route-feedback";
@@ -4777,23 +4930,41 @@
     card.setAttribute("aria-labelledby", "loop-route-feedback-title");
 
     var headText = "Route update";
-    if (loopRouteEdit.busy) headText = "Working...";
-    else if (isPreview) headText = "Review route change";
+    if (unres) headText = unres.kind === "partial" ? "Partial save: inspect files" : "Save result unknown";
+    else if (recNote) headText = "Current list loaded";
+    else if (loopRouteEdit.busy) headText = "Working...";
+    else if (isPreview) headText = loopRouteEdit.pendingOp === "add" ? "Review new route" : "Review route change";
     else if (loopRouteEdit.unknownOutcome) headText = "Save result unknown";
     else if (outcome === "changed") headText = "Saved";
     else if (outcome === "unchanged") headText = "Already up to date";
     else if (outcome === "review_again") headText = "Review again before saving";
     else if (outcome === "partial") headText = "Partial save: inspect files";
-    else if (outcome === "refused") headText = "Nothing was changed";
+    else if (outcome === "refused") headText = "Update refused";
     var head = el("h4", null, headText);
     head.id = "loop-route-feedback-title";
     card.appendChild(head);
 
-    var summaryText = loopRouteEdit.busy ? "Waiting for the panel..." : (loopRouteEdit.message || (res && res.text) || "");
-    if (summaryText) card.appendChild(el("p", null, summaryText));
-    if (res) {
-      list(res.lines).forEach(function (ln) { card.appendChild(el("p", "sub", ln)); });
-      list(res.changes).forEach(function (chg) { loopRouteEffects(card, chg, l.key); });
+    if (unres) {
+      card.appendChild(el("p", null, unres.text));
+      if (loopRouteEdit.busy) card.appendChild(el("p", "sub", "Reading current route list..."));
+      if (loopRouteEdit.reconcileError) card.appendChild(el("p", "c-warn loop-route-reconcile-err", loopRouteEdit.reconcileError));
+      if (res) list(res.changes).forEach(function (chg) { loopRouteEffects(card, chg, l.key); });
+    } else if (recNote) {
+      card.appendChild(el("p", null, recNote));
+    } else {
+      var rawText = loopRouteEdit.busy ? "Waiting for the panel..." : (loopRouteEdit.message || (res && res.text) || "");
+      var partitioned = res ? loopRoutePartitionLines(res.lines) : { primary: [], details: [] };
+      var primaryTextLines = partitioned.primary.slice();
+      var detailTextLines = partitioned.details.slice();
+      if (isPreview && rawText) {
+        if (loopRouteIsBoilerplate(rawText)) detailTextLines.unshift(rawText);
+        else primaryTextLines.unshift(rawText);
+      } else if (rawText) {
+        card.appendChild(el("p", null, rawText));
+      }
+
+      if (res) list(res.changes).forEach(function (chg) { loopRouteEffects(card, chg, l.key); });
+      primaryTextLines.forEach(function (lnText) { card.appendChild(el("p", "sub", lnText)); });
     }
 
     var acts = el("div", "loop-route-actions");
@@ -4807,41 +4978,57 @@
         loopRouteRequest("confirm", { op: opName, loop: l.key }, token, l.key, "loop-route-feedback");
       }, loopRouteEdit.busy));
       acts.appendChild(loopRouteButton("Cancel review", "loop-route-review-cancel", "btn", function () {
+        loopRouteEdit.reqSeq += 1;
         loopRouteEdit.reply = null;
         loopRouteEdit.message = "";
         render(false, true);
         focusOn(loopRouteEdit.panel === "manage" ? "loop-route-refresh" : loopRouteEdit.panel === "own" ? "loop-route-own-prepare" : "loop-route-account");
       }, loopRouteEdit.busy));
     } else if (!loopRouteEdit.busy) {
-      if (outcome === "review_again" || outcome === "partial" || loopRouteEdit.unknownOutcome) {
+      if (unres || outcome === "review_again" || outcome === "partial" || loopRouteEdit.unknownOutcome) {
+        var isReconcile = !!(unres || outcome === "partial" || loopRouteEdit.unknownOutcome);
         var againLabel = outcome === "review_again" ? "Read current list & review again" : "Read current list";
         var againFocus = outcome === "review_again" ? "loop-route-review-again" : "loop-route-read-again";
         acts.appendChild(loopRouteButton(againLabel, againFocus, "btn is-primary", function () {
-          loopRouteEdit.reply = null;
-          loopRouteEdit.message = "";
-          loopRouteEdit.unknownOutcome = false;
-          loopRouteRequest("read", { op: "read", loop: l.key }, null, l.key, loopRouteEdit.panel === "manage" ? "loop-route-refresh" : "loop-route-account");
+          if (!isReconcile) {
+            loopRouteEdit.reply = null;
+            loopRouteEdit.message = "";
+          }
+          loopRouteRequest("read", { op: "read", loop: l.key }, null, l.key, loopRouteEdit.panel === "manage" ? "loop-route-refresh" : "loop-route-account", { reconcile: isReconcile });
         }, false));
       }
       acts.appendChild(loopRouteButton("Dismiss", "loop-route-dismiss", "btn", function () {
         loopRouteEdit.reply = null;
         loopRouteEdit.message = "";
         loopRouteEdit.unknownOutcome = false;
+        loopRouteEdit.unresolvedSave = null;
+        loopRouteEdit.reconcileError = "";
+        loopRouteEdit.reconciledNote = "";
         render(false, true);
         focusOn(loopRouteEdit.panel === "add" ? "loop-route-add-open" : loopRouteEdit.panel === "manage" ? "loop-route-manage-open" : "loop-route-own-open");
       }, false));
-      if (outcome === "changed" && loopRouteEdit.panel === "add") {
+      if (!unres && outcome === "changed" && loopRouteEdit.panel === "add") {
         acts.appendChild(loopRouteButton("Add another route", "loop-route-add-another", "btn", function () {
           loopRouteEdit.reply = null;
           loopRouteEdit.message = "";
           loopRouteEdit.unknownOutcome = false;
+          loopRouteEdit.reconciledNote = "";
           loopRouteRequest("read", { op: "read", loop: l.key }, null, l.key, "loop-route-account");
         }, false));
       }
     }
     if (acts.childNodes.length) card.appendChild(acts);
 
-    if (outcome === "changed" && loopRouteEdit.pendingOp === "add") {
+    if (!unres && !recNote && isPreview && detailTextLines.length) {
+      var det = el("details", "loop-route-details");
+      det.appendChild(el("summary", "loop-route-details-summary", "Policy and verification details"));
+      var detBody = el("div", "loop-route-details-body");
+      detailTextLines.forEach(function (lnText) { detBody.appendChild(el("p", "sub", lnText)); });
+      det.appendChild(detBody);
+      card.appendChild(det);
+    }
+
+    if (!unres && outcome === "changed" && loopRouteEdit.pendingOp === "add") {
       var savedChg = res && res.changes && res.changes[0];
       var nextBox = el("div", "loop-route-next");
       nextBox.appendChild(el("p", "sub", "Optional Terminal checks (not run automatically):"));
@@ -4915,6 +5102,7 @@
     var wrap = el("div", "loop-route-panel");
     var feedback = loopRouteFeedbackCard(l, l.chain || {});
     if (feedback) wrap.appendChild(feedback);
+    if (loopRouteEdit.unresolvedSave) return wrap;
     if (loopRouteEdit.reply && ((loopRouteEdit.reply.outcome === "preview" && loopRouteEdit.reply.form) || loopRouteEdit.reply.outcome === "changed")) return wrap;
     if (!ed && loopRouteEdit.busy) {
       wrap.appendChild(el("p", "sub", "Loading loop configuration and eligible accounts..."));
@@ -4984,6 +5172,8 @@
     });
     acctSel.value = loopRouteEdit.draft.account || "";
     acctSel.addEventListener("change", function () {
+      loopRouteEdit.modelSeq += 1;
+      loopRouteEdit.loadingModels = false;
       loopRouteEdit.draft.account = acctSel.value;
       loopRouteEdit.touched.account = true;
       loopRouteEdit.models = [];
@@ -4999,7 +5189,6 @@
       loopRouteSyncFieldErr(acctDiv, acctSel, "account", hasGroups);
     });
     acctDiv.appendChild(acctSel);
-    acctDiv.appendChild(el("p", "sub loop-route-hint", "Headless CLI route matching this loop's executable and project folder. Selection does not verify login, access or quota."));
     loopRouteSyncFieldErr(acctDiv, acctSel, "account", hasGroups);
     formEl.appendChild(acctDiv);
 
@@ -5011,7 +5200,7 @@
     var modelTools = el("div", "loop-route-model-tools");
     var loadBtn = loopRouteButton(loopRouteEdit.loadingModels ? "Loading models..." : "Load models from BB", "loop-route-load-models", "btn", function () {
       if (!chosen) return;
-      loopRouteRequest("models", { op: "models", provider: chosen.provider }, null, l.key, "loop-route-model");
+      loopRouteRequest("models", { op: "models", provider: chosen.provider }, null, l.key, "loop-route-model", { accountId: chosen.id, provider: chosen.provider });
     }, loopRouteEdit.busy || loopRouteEdit.loadingModels || !chosen);
     modelTools.appendChild(loadBtn);
     if (loopRouteEdit.models.length) {
@@ -5065,8 +5254,7 @@
       loopRouteSyncFieldErr(modelDiv, modelCtrl, "model", hasGroups);
     });
     modelDiv.appendChild(modelCtrl);
-    var mHint = loopRouteEdit.modelsText || "Effort uses the CLI default. Model lookup is optional and read-only; access and quota are not checked.";
-    modelDiv.appendChild(el("p", "sub loop-route-hint", mHint));
+    if (loopRouteEdit.modelsText) modelDiv.appendChild(el("p", "sub loop-route-hint", loopRouteEdit.modelsText));
     loopRouteSyncFieldErr(modelDiv, modelCtrl, "model", hasGroups);
     formEl.appendChild(modelDiv);
 
@@ -5155,12 +5343,11 @@
         loopRouteSyncFieldErr(limDiv, limInput, "limit", hasGroups);
       });
       limDiv.appendChild(limInput);
-      limDiv.appendChild(el("p", "sub loop-route-hint", "Use letters, digits, dots, underscores or hyphens. Labels record your configuration and do not verify separate quota."));
       loopRouteSyncFieldErr(limDiv, limInput, "limit", hasGroups);
       formEl.appendChild(limDiv);
     }
 
-    formEl.appendChild(el("p", "sub loop-route-guarantee", "Saving adds a headless CLI route only. It runs no model or probe, leaves automatic handoff unchanged, and keeps holds and allowances in place."));
+    formEl.appendChild(el("p", "sub loop-route-guarantee", "Headless CLI route; runs no probe and leaves handoff and holds unchanged."));
 
     var subRow = el("div", "loop-route-actions");
     var subBtn = el("button", "btn is-primary", "Review route");
@@ -5169,13 +5356,20 @@
     subBtn.disabled = loopRouteEdit.busy;
     subRow.appendChild(subBtn);
     subRow.appendChild(loopRouteButton("Cancel", "loop-route-cancel", "btn", function () {
-      loopRouteEdit.panel = "";
-      loopRouteEdit.reply = null;
-      loopRouteEdit.message = "";
+      loopRouteSwitchPanel("");
       render(false, true);
       focusOn("loop-route-add-open");
     }, loopRouteEdit.busy));
     formEl.appendChild(subRow);
+
+    var addDet = el("details", "loop-route-details");
+    addDet.appendChild(el("summary", "loop-route-details-summary", "How headless routes and limit labels work"));
+    var addDetBody = el("div", "loop-route-details-body");
+    addDetBody.appendChild(el("p", "sub", "Uses this loop's executable and project folder without verifying login, model access or quota."));
+    addDetBody.appendChild(el("p", "sub", "Loading models from BB is optional and read-only; effort uses the CLI default."));
+    addDetBody.appendChild(el("p", "sub", "Limit labels use letters, digits, dots, underscores or hyphens to record your configuration and do not verify separate quota."));
+    addDet.appendChild(addDetBody);
+    formEl.appendChild(addDet);
 
     formEl.addEventListener("submit", function (ev) {
       ev.preventDefault();
@@ -5220,9 +5414,7 @@
       loopRouteRequest("read", { op: "read", loop: l.key }, null, l.key, "loop-route-refresh");
     }, loopRouteEdit.busy));
     headActs.appendChild(loopRouteButton("Close", "loop-route-manage-close", "btn", function () {
-      loopRouteEdit.panel = "";
-      loopRouteEdit.reply = null;
-      loopRouteEdit.message = "";
+      loopRouteSwitchPanel("");
       render(false, true);
       focusOn("loop-route-manage-open");
     }, loopRouteEdit.busy));
@@ -5231,6 +5423,7 @@
 
     var feedback = loopRouteFeedbackCard(l, l.chain || {});
     if (feedback) wrap.appendChild(feedback);
+    if (loopRouteEdit.unresolvedSave) return wrap;
     if (!ed && loopRouteEdit.busy) {
       wrap.appendChild(el("p", "sub", "Reading this loop's routes..."));
       return wrap;
@@ -5309,6 +5502,7 @@
     wrap.appendChild(el("h3", null, "Copy standard routes to this loop's own list"));
     var feedback = loopRouteFeedbackCard(l, l.chain || {});
     if (feedback) wrap.appendChild(feedback);
+    if (loopRouteEdit.unresolvedSave) return wrap;
     if (loopRouteEdit.reply && ((loopRouteEdit.reply.outcome === "preview" && loopRouteEdit.reply.form) || loopRouteEdit.reply.outcome === "changed")) return wrap;
     if (!ed && loopRouteEdit.busy) {
       wrap.appendChild(el("p", "sub", "Reading this loop's route eligibility..."));
@@ -5330,9 +5524,7 @@
       loopRouteRequest("prepare", { op: "own", loop: l.key }, null, l.key, "loop-route-feedback");
     }, loopRouteEdit.busy));
     acts.appendChild(loopRouteButton("Cancel", "loop-route-own-cancel", "btn", function () {
-      loopRouteEdit.panel = "";
-      loopRouteEdit.reply = null;
-      loopRouteEdit.message = "";
+      loopRouteSwitchPanel("");
       render(false, true);
       focusOn("loop-route-own-open");
     }, loopRouteEdit.busy));
@@ -5386,7 +5578,7 @@
 
       var barActs = el("div", "loop-route-bar-actions");
       barActs.appendChild(loopRouteButton("Enable route editing...", "loop-route-mgmt-open", "btn", function () {
-        loopRouteEdit.panel = loopRouteEdit.panel === "mgmt" ? "" : "mgmt";
+        loopRouteSwitchPanel(loopRouteEdit.panel === "mgmt" ? "" : "mgmt");
         render(false, true);
         focusOn("loop-route-mgmt-open");
       }, false, loopRouteEdit.panel === "mgmt"));
@@ -5406,14 +5598,11 @@
       acts.appendChild(link("#/routes", "Edit standard list", "btn"));
       acts.appendChild(loopRouteButton("Use own list...", "loop-route-own-open", "btn", function () {
         if (loopRouteEdit.panel === "own") {
-          loopRouteEdit.panel = "";
-          loopRouteEdit.reply = null;
+          loopRouteSwitchPanel("");
           render(false, true);
           return;
         }
-        loopRouteEdit.panel = "own";
-        loopRouteEdit.reply = null;
-        loopRouteEdit.message = "";
+        loopRouteSwitchPanel("own");
         if (!loopRouteEdit.data) loopRouteRequest("read", { op: "read", loop: l.key }, null, l.key, "loop-route-own-prepare");
         else { render(false, true); focusOn("loop-route-own-prepare"); }
       }, loopRouteEdit.busy, loopRouteEdit.panel === "own"));
@@ -5427,29 +5616,21 @@
 
     acts.appendChild(loopRouteButton("+ Add route", "loop-route-add-open", "btn is-primary", function () {
       if (loopRouteEdit.panel === "add") {
-        loopRouteEdit.panel = "";
-        loopRouteEdit.reply = null;
+        loopRouteSwitchPanel("");
         render(false, true);
         return;
       }
-      loopRouteEdit.panel = "add";
-      loopRouteEdit.reply = null;
-      loopRouteEdit.message = "";
-      loopRouteEdit.unknownOutcome = false;
+      loopRouteSwitchPanel("add");
       if (!loopRouteEdit.data) loopRouteRequest("read", { op: "read", loop: l.key }, null, l.key, "loop-route-account");
       else { render(false, true); focusOn("loop-route-account"); }
     }, loopRouteEdit.busy, loopRouteEdit.panel === "add"));
     acts.appendChild(loopRouteButton("Manage order", "loop-route-manage-open", "btn", function () {
       if (loopRouteEdit.panel === "manage") {
-        loopRouteEdit.panel = "";
-        loopRouteEdit.reply = null;
+        loopRouteSwitchPanel("");
         render(false, true);
         return;
       }
-      loopRouteEdit.panel = "manage";
-      loopRouteEdit.reply = null;
-      loopRouteEdit.message = "";
-      loopRouteEdit.unknownOutcome = false;
+      loopRouteSwitchPanel("manage");
       if (!loopRouteEdit.data) loopRouteRequest("read", { op: "read", loop: l.key }, null, l.key, "loop-route-refresh");
       else { render(false, true); focusOn("loop-route-refresh"); }
     }, loopRouteEdit.busy, loopRouteEdit.panel === "manage"));
@@ -6217,9 +6398,9 @@
       if (ev.key === "Escape") {
         if (state.change && state.change.preview && !state.change.busy) { ev.preventDefault(); cancelChange(); }
         else if (loopRouteEdit.reply && loopRouteEdit.reply.form && !loopRouteEdit.busy) {
-          ev.preventDefault(); loopRouteEdit.reply = null; loopRouteEdit.message = ""; render(false, true);
+          ev.preventDefault(); loopRouteEdit.reqSeq += 1; loopRouteEdit.reply = null; loopRouteEdit.message = ""; render(false, true);
         } else if (loopRouteEdit.panel && !loopRouteEdit.busy) {
-          ev.preventDefault(); loopRouteEdit.panel = ""; loopRouteEdit.reply = null; loopRouteEdit.message = ""; render(false, true);
+          ev.preventDefault(); loopRouteSwitchPanel(""); render(false, true);
         }
         else if (state.activeDrawer) { ev.preventDefault(); state.activeDrawer = null; render(false, true); }
         else if (state.mapSelected) { ev.preventDefault(); state.mapSelected = null; render(false, true); }
