@@ -323,7 +323,7 @@ test("an existing loop, an unverified status, a missing program and a full plugi
 
   const empty = fixture();
   empty.c.dispatched(empty.dispatch(await empty.arm(), { text: "   " })); await empty.c.advance("thr_new");
-  assert.equal(empty.w.setups.length, 0); assert.match((await empty.outcome()).message, /no text looptender can use/);
+  assert.equal(empty.w.setups.length, 0); assert.match((await empty.outcome()).message, /Enter a task and its completion criteria/);
 
   const noPreview = fixture(); noPreview.w.previewOk = false;
   noPreview.c.dispatched(noPreview.dispatch(await noPreview.arm())); await noPreview.c.advance("thr_new");
@@ -492,5 +492,22 @@ test("new thread setup works with a CLI that names the configuration looptender.
     ok.c.dispatched(ok.dispatch(await ok.arm())); await ok.c.advance("thr_new");
     assert.deepEqual(ok.w.setups.map(s => s.action), ["preview", "create"]);
     assert.equal((await ok.outcome()).state, "ready", name);
+  }
+});
+
+test("new-thread task import uses the same UTF-8 limit and never redirects oversized text to the same limit", async () => {
+  for (const task of ["界".repeat(349525) + "x", "🙂".repeat(262144)]) {
+    const f = fixture(); const event = f.dispatch(await f.arm(), { text: task });
+    f.c.dispatched(event); await f.c.advance("thr_new");
+    assert.deepEqual(f.w.setups.map(s => s.action), ["preview", "create"]);
+    assert.ok(f.w.setups.every(s => s.task === task)); assert.equal(event.text, task);
+  }
+  for (const task of ["界".repeat(400000), "🙂".repeat(262144) + "x", "bad\ud800text"]) {
+    const f = fixture(); const event = f.dispatch(await f.arm(), { text: task });
+    f.c.dispatched(event); await f.c.advance("thr_new");
+    const o = await f.outcome();
+    assert.equal(f.w.setups.length, 0); assert.equal(event.text, task);
+    assert.match(o.message, /1048576|Unicode/);
+    assert.doesNotMatch(o.message, /Use Add to Looptender/);
   }
 });

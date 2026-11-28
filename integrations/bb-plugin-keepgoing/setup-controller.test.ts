@@ -500,3 +500,28 @@ test("start reports service persistence when command returns method service", as
   assert.equal(started.started, true);
   assert.match(started.message, /user service installed; survives reboot/);
 });
+
+test("task UTF-8 boundary is shared by preview and create without changing any bytes", async () => {
+  for (const task of ["a".repeat(1048576), "界".repeat(349525) + "x", "🙂".repeat(262144), "\n" + "\u0001".repeat(1048573) + "x\n"]) {
+    const f = fixture(); const inputs: string[] = [];
+    f.d.init = async (_bin, _target, _name, text) => { inputs.push(text); return { plan: structuredClone(f.plan) }; };
+    const input = { action: "preview" as const, threadId: f.target.threadId, name: "example-loop", task };
+    const p = await f.controller.call(input);
+    assert.equal(p.ok, true, p.message);
+    const c = await f.controller.call({ ...input, action: "create", ticket: p.ticket });
+    assert.equal(c.ok, true, c.message); assert.equal(inputs.length, 3); assert.ok(inputs.every(text => text === task));
+    assert.ok(!f.calls.includes("start"));
+  }
+});
+
+test("oversized or malformed task rejection retains input and creates no setup", async () => {
+  for (const task of ["a".repeat(1048577), "界".repeat(349526), "🙂".repeat(262144) + "x", "bad\ud800text", "bad\udc00text"]) {
+    const f = fixture(); let initCalls = 0;
+    f.d.init = async () => { initCalls++; return { plan: f.plan }; };
+    const input = { action: "preview" as const, threadId: f.target.threadId, name: "example-loop", task };
+    const r = await f.controller.call(input);
+    assert.equal(r.ok, false); assert.match(r.message, /1048576|Unicode/);
+    assert.equal(input.task, task); assert.equal(initCalls, 0); assert.equal(f.records().length, 0);
+    assert.ok(!r.message.includes("bad"));
+  }
+});

@@ -561,3 +561,36 @@ test("startServiceOnHost installs user service + enables on macOS/Linux, and fal
   assert.equal(rb.code, 1);
   assert.deepEqual(rbSeen, [["service", "install"], ["enable", "-c"], ["service", "remove"]]);
 });
+
+test("built CLI and plugin agree at the 1 MiB UTF-8 stdin boundary without invoking BB", { skip: !process.env.KEEPGOING_TEST_BINARY }, async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "looptender-task-boundary-")));
+  const exec = promisify(execFile);
+  try {
+    const project = join(root, "project"); const bins = join(root, "bin"); const destination = join(root, "setup");
+    const trap = join(root, "unexpected-bb");
+    await mkdir(project); await mkdir(bins);
+    await writeFile(join(bins, "bb"), `#!/bin/sh\nprintf called > '${trap}'\nexit 1\n`, { mode: 0o700 });
+    const env = { ...process.env, PATH: bins + delimiter + process.env.PATH, LOOPTENDER_REGISTRY_DIR: join(root, "registry"), GIT_AUTHOR_NAME: "Example", GIT_AUTHOR_EMAIL: "example@example.com", GIT_COMMITTER_NAME: "Example", GIT_COMMITTER_EMAIL: "example@example.com" };
+    await exec("git", ["init", "-q", project], { env });
+    await exec("git", ["-C", project, "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + join(root, "no-hooks"), "commit", "--allow-empty", "-qm", "test: initialize fixture"], { env });
+    const target = { threadId: "thr_example", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project, provider: "codex" };
+    let called = 0;
+    const run: Execute = (bin, args, input, threadId) => new Promise(resolve => {
+      called++;
+      const child = execFile(bin, [...args, "--directory", destination], { env: { ...env, BB_THREAD_ID: threadId }, timeout: 20_000, maxBuffer: 1 << 20 }, (error, stdout, stderr) => {
+        let data: unknown = null; try { data = JSON.parse(stdout); } catch { /* unavailable */ }
+        resolve({ code: error ? 1 : 0, data, stderr });
+      });
+      child.stdin?.on("error", () => {}); child.stdin?.end(input);
+    });
+    for (const task of ["a".repeat(1048576), "界".repeat(349525) + "x", "🙂".repeat(262144)]) {
+      planned(await setupOnHost({ bin: process.env.KEEPGOING_TEST_BINARY!, target, name: "task-boundary", task, dryRun: true, withGoal: true }, undefined, run));
+      const before = called;
+      await assert.rejects(setupOnHost({ bin: process.env.KEEPGOING_TEST_BINARY!, target, name: "task-boundary", task: task + "x", dryRun: true }, undefined, run), /1048576/);
+      assert.equal(called, before, "plugin rejects before invoking the CLI");
+      const cli = await run(process.env.KEEPGOING_TEST_BINARY!, ["init", "--non-interactive", "--json", "--dry-run", "--name", "task-boundary", "--agent", "bb", "--thread", target.threadId, "--provider", target.provider, "--project", project, "--task-file", "-", "--with-goal"], task + "x", target.threadId);
+      assert.notEqual(cli.code, 0); assert.match(cli.stderr!, /stdin task exceeds 1 MiB/);
+    }
+    await assert.rejects(access(destination)); await assert.rejects(access(trap));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
