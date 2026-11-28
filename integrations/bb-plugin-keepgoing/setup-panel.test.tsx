@@ -588,3 +588,51 @@ test("Refresh diagnostics on Supervision started view preserves user service lab
     assert.ok(ui.getByText("ok: Stopped externally"));
   } finally { cleanup(); }
 });
+
+test("large pasted tasks remain whole, use UTF-8 bytes, and recover after validation and RPC failures", async () => {
+  const sent: string[] = [];
+  const ui = render(<SetupPanel threadId="thr_example" onChanged={() => {}} call={async input => {
+    if (input.action === "preview") { sent.push(input.task!); throw new Error("fictional RPC refusal"); }
+    return { ok: true, conversation: "none", message: "Write a fictional task." };
+  }} />);
+  try {
+    await ui.findByText("Write a fictional task.");
+    const field = ui.getByLabelText("Task and completion criteria") as HTMLTextAreaElement;
+    // jsdom does not enforce browser paste maxlength: check the native
+    // constraint explicitly as well as exercising the controlled input.
+    assert.equal(field.hasAttribute("maxlength"), false, "native paste must not discard the tail");
+    const paste = (value: string) => {
+      fireEvent.paste(field, { clipboardData: { getData: () => value } });
+      fireEvent.change(field, { target: { value } });
+      assert.equal(field.value, value);
+    };
+    const ascii = "a".repeat(300 * 1024) + " end of fictional task";
+    paste(ascii);
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await waitFor(() => assert.equal(sent.length, 1));
+    await ui.findByRole("alert");
+    assert.equal(sent[0], ascii); assert.equal(field.value, ascii);
+    const oversized = "界".repeat(400_000);
+    paste(oversized);
+    assert.match(ui.container.textContent!, /1200000.*1048576.*UTF-8 bytes/);
+    assert.equal(field.getAttribute("aria-invalid"), "true");
+    assert.equal((ui.getByRole("button", { name: "Preview setup" }) as HTMLButtonElement).disabled, true);
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    assert.equal(sent.length, 1); assert.equal(field.value, oversized);
+    const exact = "🙂".repeat(262144);
+    paste(exact);
+    assert.match(ui.container.textContent!, /1048576.*1048576.*UTF-8 bytes/);
+    assert.equal((ui.getByRole("button", { name: "Preview setup" }) as HTMLButtonElement).disabled, false);
+    fireEvent.click(ui.getByRole("button", { name: "Preview setup" }));
+    await waitFor(() => assert.equal(sent.length, 2));
+    await ui.findByRole("alert");
+    assert.equal(sent[1], exact); assert.equal(field.value, exact);
+    paste(exact + "x");
+    assert.equal((ui.getByRole("button", { name: "Preview setup" }) as HTMLButtonElement).disabled, true);
+    assert.equal(field.value, exact + "x");
+    const whitespace = " ".repeat(1048577);
+    paste(whitespace);
+    assert.match(ui.getByRole("alert").textContent!, /1048576 UTF-8 bytes/);
+    assert.equal(field.value, whitespace);
+  } finally { cleanup(); }
+});

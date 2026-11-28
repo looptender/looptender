@@ -190,7 +190,7 @@ test("built CLI creates the goal through the host contract without running BB", 
     // test failure, not a provider status response or a real model invocation.
     const trap = join(root, "unexpected-provider-call");
     await writeFile(join(bins, "bb"), `#!/bin/sh\nprintf called > '${trap}'\nexit 1\n`, { mode: 0o700 });
-    const env = { ...process.env, PATH: bins + delimiter + process.env.PATH, GIT_AUTHOR_NAME: "Example", GIT_AUTHOR_EMAIL: "example@example.com", GIT_COMMITTER_NAME: "Example", GIT_COMMITTER_EMAIL: "example@example.com" };
+    const env = { ...process.env, PATH: bins + delimiter + process.env.PATH, LOOPTENDER_REGISTRY_DIR: join(root, "registry"), GIT_AUTHOR_NAME: "Example", GIT_AUTHOR_EMAIL: "example@example.com", GIT_COMMITTER_NAME: "Example", GIT_COMMITTER_EMAIL: "example@example.com" };
     await exec("git", ["init", "-q", project], { env });
     await exec("git", ["-C", project, "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + join(root, "no-hooks"), "commit", "--allow-empty", "-qm", "test: initialize fixture"], { env });
     // Scope the host's normal OS-default setup destination to this fixture.
@@ -202,7 +202,7 @@ test("built CLI creates the goal through the host contract without running BB", 
       child.stdin?.on("error", () => {}); child.stdin?.end(input);
     });
     const target = { threadId: "thr_goal_contract", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project, provider: "codex" };
-    const input = { bin: binary, target, name: "goal-contract", task: "Fictional task. Acceptance: verify the example.", dryRun: true, withGoal: true, bounds: { maxSends: 40, noProgressTimeout: "24h" as const } };
+    const input = { bin: binary, target, name: "goal-contract", task: " \t\nFictional 界🙂 task.\n  Acceptance: verify the example.\n\t ", dryRun: true, withGoal: true, bounds: { maxSends: 40, noProgressTimeout: "24h" as const } };
     const preview = planned(await setupOnHost(input, undefined, run));
     await assert.rejects(access(destination));
     const created = planned(await setupOnHost({ ...input, dryRun: false }, undefined, run));
@@ -219,7 +219,7 @@ test("built CLI creates the goal through the host contract without running BB", 
     const goal = JSON.parse(await readFile(join(destination, "state", "goal.json"), "utf8"));
     assert.equal(goal.revisions[0].spec.title, "goal-contract");
     assert.equal(goal.revisions[0].spec.objectiveRefs[0], join(destination, "task.md"));
-    assert.equal(await readFile(join(destination, "task.md"), "utf8"), input.task + "\n");
+    assert.equal(await readFile(join(destination, "task.md"), "utf8"), input.task);
     assert.ok(!(await readFile(join(destination, "prompt.md"), "utf8")).includes(input.task));
     await assert.rejects(access(join(destination, "state", "control.json")));
     await assert.rejects(access(trap));
@@ -560,4 +560,45 @@ test("startServiceOnHost installs user service + enables on macOS/Linux, and fal
   });
   assert.equal(rb.code, 1);
   assert.deepEqual(rbSeen, [["service", "install"], ["enable", "-c"], ["service", "remove"]]);
+});
+
+test("built CLI and plugin agree at the 1 MiB UTF-8 stdin boundary without invoking BB", { skip: !process.env.KEEPGOING_TEST_BINARY }, async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "looptender-task-boundary-")));
+  const exec = promisify(execFile);
+  try {
+    const project = join(root, "project"); const bins = join(root, "bin"); let destination = join(root, "setup");
+    const trap = join(root, "unexpected-bb");
+    await mkdir(project); await mkdir(bins);
+    await writeFile(join(bins, "bb"), `#!/bin/sh\nprintf called > '${trap}'\nexit 1\n`, { mode: 0o700 });
+    const env = { ...process.env, PATH: bins + delimiter + process.env.PATH, LOOPTENDER_REGISTRY_DIR: join(root, "registry"), GIT_AUTHOR_NAME: "Example", GIT_AUTHOR_EMAIL: "example@example.com", GIT_COMMITTER_NAME: "Example", GIT_COMMITTER_EMAIL: "example@example.com" };
+    await exec("git", ["init", "-q", project], { env });
+    await exec("git", ["-C", project, "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + join(root, "no-hooks"), "commit", "--allow-empty", "-qm", "test: initialize fixture"], { env });
+    const target = { threadId: "thr_example", environmentId: "env_example", projectId: "proj_example", hostId: "host_example", project, provider: "codex" };
+    let called = 0;
+    const run: Execute = (bin, args, input, threadId) => new Promise(resolve => {
+      called++;
+      const child = execFile(bin, [...args, "--directory", destination], { env: { ...env, BB_THREAD_ID: threadId }, timeout: 20_000, maxBuffer: 1 << 20 }, (error, stdout, stderr) => {
+        let data: unknown = null; try { data = JSON.parse(stdout); } catch { /* unavailable */ }
+        resolve({ code: error ? 1 : 0, data, stderr });
+      });
+      child.stdin?.on("error", () => {}); child.stdin?.end(input);
+    });
+    for (const [index, task] of ["a".repeat(1048576), "界".repeat(349525) + "x", "🙂".repeat(262144), " " + "界".repeat(349524) + "\n\t "].entries()) {
+      destination = join(root, `setup-${index}`);
+      const request = { bin: process.env.KEEPGOING_TEST_BINARY!, target, name: "task-boundary", task, dryRun: true, withGoal: true };
+      const preview = planned(await setupOnHost(request, undefined, run));
+      await assert.rejects(access(destination));
+      const created = planned(await setupOnHost({ ...request, dryRun: false }, undefined, run));
+      assert.deepEqual(created.plan, preview.plan);
+      assert.ok((await readFile(join(destination, "task.md"))).equals(Buffer.from(task, "utf8")), "created task snapshot must equal the entire input");
+      destination = join(root, `refused-${index}`);
+      const before = called;
+      await assert.rejects(setupOnHost({ bin: process.env.KEEPGOING_TEST_BINARY!, target, name: "task-boundary", task: task + "x", dryRun: true }, undefined, run), /1048576/);
+      assert.equal(called, before, "plugin rejects before invoking the CLI");
+      const cli = await run(process.env.KEEPGOING_TEST_BINARY!, ["init", "--non-interactive", "--json", "--name", "task-boundary", "--agent", "bb", "--thread", target.threadId, "--provider", target.provider, "--project", project, "--task-file", "-", "--with-goal"], task + "x", target.threadId);
+      assert.notEqual(cli.code, 0); assert.match(cli.stderr!, /stdin task exceeds 1 MiB/);
+      await assert.rejects(access(destination));
+    }
+    await assert.rejects(access(destination)); await assert.rejects(access(trap));
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

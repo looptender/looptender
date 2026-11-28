@@ -1,3 +1,4 @@
+import { taskTextProblem } from "./task-text.ts";
 import { publicationMessage, type Publication } from "./registry-contract.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -83,6 +84,11 @@ export function createSetupController(d: SetupDependencies) {
     return { ok: true, record: r, ...goal, checks, canStart, message: r.registryId ? "Imported loop reference saved. This panel does not start imported loops; inspect check evidence and use the host CLI separately when appropriate." : canStart ? "Review the diagnostics, then start background supervision when ready." : "Setup is saved. Existing holds, a responding daemon, or diagnostic failures prevent another start here." };
   };
   const handle = async (raw: z.infer<typeof setupInput>, bounds?: Bounds): Promise<SetupResult> => {
+    // Direct callers get the same recoverable task error as the RPC schema.
+    if (typeof raw.task === "string") {
+      const problem = taskTextProblem(raw.task);
+      if (problem) throw new SetupPolicyError(problem);
+    }
     const input = setupInput.parse(raw);
     const bin = await d.binary();
     const records = await d.records();
@@ -130,7 +136,8 @@ export function createSetupController(d: SetupDependencies) {
     // A takeover is opt-in ("off" by default) so non-Claude threads never
     // silently default to another provider's model.
     const takeover = followStandard ? "off" : input.takeover ?? "off";
-    if (!task.trim() || Buffer.byteLength(task) > 262144) throw new SetupPolicyError("Enter a task of at most 256 KiB.");
+    const taskProblem = taskTextProblem(task);
+    if (taskProblem) throw new SetupPolicyError(taskProblem);
     if (input.action === "preview") {
       if (!input.name) throw new SetupPolicyError("Enter a loop name using lowercase letters, digits, and hyphens.");
       for (const [key, p] of previews) if (p.expires < Date.now()) previews.delete(key);
