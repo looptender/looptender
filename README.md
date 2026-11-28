@@ -226,6 +226,9 @@ pair. It withdraws one pinned completion while retaining historical notes,
 questions and completion evidence, including legacy records without a goal.
 It refuses other active holds and stale evidence. Ordinary later checks may
 wake the existing target; this is neither acceptance nor a general resume.
+An installed v0.3.0 binary does not provide these commands; native Dock/menu
+Resume uses the broader resume operation. Current source has no supported
+delegated-operator renewal path.
 No installed-loop, Windows execution or power-loss durability is claimed.
 
 ## Where it stands
