@@ -40,6 +40,17 @@ merge approval, provider status, dispatch permission or proof of live idleness.
 `--boundary phase` uses the same evidence and emits an availability finding in
 place of a waiting finding. `objectiveComplete` is always false.
 
+## Markdown input bridge
+
+Unreleased source also supplies `scripts/project_work.py` beside this command.
+Its coordinator-owned `WORK.md` register supports explicit `init`, `read`, `check`
+and `checkpoint` operations. `check` strips only documented presentation fields
+and invokes this same projection when bindings/captures are available; otherwise
+it keeps local work findings visible with unavailable runtime coverage. It never
+calls the spawn workflow or changes holds. The source repository's
+`docs/project-work.md` describes the schema, complete example, private snapshot
+history and adoption limits. The JSON interface below remains unchanged.
+
 ## Structured evidence and schema
 
 The complete fictional fixture is `fixture()` in
