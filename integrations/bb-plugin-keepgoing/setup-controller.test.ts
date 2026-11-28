@@ -525,3 +525,22 @@ test("oversized or malformed task rejection retains input and creates no setup",
     assert.ok(!r.message.includes("bad"));
   }
 });
+
+test("preview digest binds task whitespace and unchanged creation receives every byte", async () => {
+  for (const change of ["", " ", "\n"]) {
+    const f = fixture();
+    const task = " \t\nFictional 界🙂 task\n  Acceptance: verify the example.\n\t ";
+    const seen: string[] = [];
+    f.d.init = async (_bin, _target, _name, value, dry) => {
+      seen.push(value); f.calls.push(dry ? "preview" : "create");
+      return { plan: structuredClone(f.plan) };
+    };
+    const request = { threadId: f.target.threadId, name: "example-loop", task };
+    const preview = await f.controller.call({ ...request, action: "preview" });
+    assert.equal(preview.ok, true); assert.ok(preview.ticket);
+    const created = await f.controller.call({ ...request, action: "create", ticket: preview.ticket, task: task + change });
+    assert.equal(created.ok, change === "");
+    assert.deepEqual(seen, change === "" ? [task, task, task] : [task]);
+    assert.ok(!f.calls.includes("start"));
+  }
+});

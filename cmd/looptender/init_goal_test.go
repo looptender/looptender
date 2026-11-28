@@ -74,7 +74,7 @@ func TestInitGoalPreviewCreateAndRevisedPrompt(t *testing.T) {
 				t.Fatal(err)
 			}
 			saved, err := os.ReadFile(created.TaskPath)
-			if err != nil || string(saved) != task+"\n" {
+			if err != nil || string(saved) != task {
 				t.Fatal("snapshot changed with its original input")
 			}
 			scaffold, err := cfg.Loop.PromptText()
