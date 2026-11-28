@@ -1,0 +1,1 @@
+- Preserve all local per-item WORK references within the existing whole-register byte budget instead of rejecting a 33rd reference. Keep string, uniqueness and required-list validation, checkpoint/source preservation and unchanged runtime coverage bounds; an unsupported shared reference list makes the complete bridge unavailable, never a prefix.

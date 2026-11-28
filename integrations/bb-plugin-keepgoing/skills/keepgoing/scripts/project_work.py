@@ -56,6 +56,21 @@ def valid_id(value):
     return isinstance(value, str) and ID.fullmatch(value) is not None
 
 
+def local_refs(value, required=False):
+    """No local count ceiling; the complete WORK byte budget still applies."""
+    return isinstance(value, list) and (not required or bool(value)) and all(coverage.workflow.text(v, 256) for v in value) and len(set(value)) == len(value)
+
+
+def reference_lists(row):
+    """Local-only lists first, then the unchanged coverage schema's lists."""
+    values = [(row["acceptanceRefs"], True), (row["evidenceRefs"], False),
+              (row["scopeRefs"], True), (row["waitRefs"], False),
+              (row["authorization"]["refs"], False), (row["personGate"]["refs"], False)]
+    if row["acceptance"] is not None:
+        values.append((row["acceptance"]["evidenceRefs"], True))
+    return values
+
+
 def inventory(work):
     result = copy.deepcopy(work)
     result["items"] = [{k: v for k, v in row.items() if k not in EXTRA} for row in result["items"]]
@@ -92,7 +107,18 @@ def validate(work):
         seen.add(row.get("id"))
         require(set(row) == set(out) | EXTRA, "work_item_schema")
         require(valid_id(row["id"]) and coverage.workflow.text(row["title"], 256) and bool(row["title"].strip()) and coverage.workflow.text(row["nextAction"], 2048) and bool(row["nextAction"].strip()), "work_item_text")
-        require(coverage.refs(row["acceptanceRefs"], True) and coverage.refs(row["evidenceRefs"]), "work_item_refs")
+        require(coverage.keys(row["authorization"], "state refs"), "authorization_schema")
+        require(coverage.keys(row["personGate"], "state refs"), "gate_schema")
+        require(row["acceptance"] is None or coverage.keys(row["acceptance"], "accepted itemRevision workSourceRevision workSourceDigest evidenceRefs"), "acceptance_schema")
+        require(all(local_refs(value, required) for value, required in reference_lists(row)), "work_item_refs")
+        # Only this deep-copied schema-validation view uses placeholders. Never
+        # export it, retain it in a checkpoint, or send it to runtime projection.
+        out["scopeRefs"] = ["unavailable"]
+        out["waitRefs"] = []
+        out["authorization"]["refs"] = []
+        out["personGate"]["refs"] = []
+        if out["acceptance"] is not None:
+            out["acceptance"]["evidenceRefs"] = ["unavailable"]
         owner = row["owner"]
         require(owner is None or coverage.keys(owner, "kind id") and owner["kind"] in {"coordinator", "assignment"} and coverage.workflow.text(owner["id"], 256), "owner_schema")
         if row["assignment"] is not None:
@@ -299,7 +325,7 @@ def reconcile(work, work_sha, pins, context=None, assignments=None, previous=Non
 
     bridge = None
     ready = work["binding"] is not None and work["assignmentRecord"] is not None and all(r["workSource"] for r in rows.values())
-    bridge_supported = len(rows) <= coverage.MAX_ITEMS and all(len(src["itemIds"]) <= 32 for src in work["workSources"]) and all(row["dependsOn"] is None or len(row["dependsOn"]) <= coverage.MAX_ITEMS for row in rows.values())
+    bridge_supported = len(rows) <= coverage.MAX_ITEMS and all(len(src["itemIds"]) <= 32 for src in work["workSources"]) and all(row["dependsOn"] is None or len(row["dependsOn"]) <= coverage.MAX_ITEMS for row in rows.values()) and all(len(value) <= 32 for row in rows.values() for value, _ in reference_lists(row)[2:])
     if not bridge_supported:
         finding("runtime_coverage_capacity_unavailable", "register", "review_all_local_obligations_and_use_existing_assignment_evidence_without_a_partial_projection", True)
     if bridge_supported and ready and context is not None and assignments is not None:

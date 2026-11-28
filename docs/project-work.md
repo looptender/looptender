@@ -346,17 +346,23 @@ its text and edges. A fictional compact 256-item chain exercises the full comman
 and checkpoint round-trip, including an unresolved last item. Dependency analysis
 uses an iterative O(items + edges) pass; source membership is indexed.
 
-Other field bounds remain explicit: each reference list has at most 32 entries,
-titles are at most 256 UTF-8 bytes, next actions 2048 bytes and references 256
-bytes. Existing coverage bounds apply to source records and captures: source
-bytes together at most 1 MiB; work plus current captures at most 1 MiB.
+Local per-item reference lists have no count ceiling within the complete WORK
+byte budget: acceptance/evidence, scope/wait, authorization/person-gate and nested
+acceptance evidence are all retained. Lists remain unique, required lists remain
+nonempty, and every reference must be a nonempty control-free string of at most
+256 UTF-8 bytes. Titles are at most 256 UTF-8 bytes and next actions 2048 bytes.
+Existing coverage bounds apply to source records and captures: source bytes together at most 1 MiB; work plus current captures at most 1 MiB.
 
 The existing runtime coverage projection still accepts at most 32 items, 32 IDs
-per source and 32 dependencies per item. Exceeding any of these produces
+per source, 32 dependencies per item and 32 entries in each shared per-item
+reference list. Exceeding any of these produces
 `runtime_coverage_capacity_unavailable` for the entire bridge. It never projects a
 prefix or claims complete runtime coverage: every local obligation and local
 finding remains present. This compatibility limit does not restrict the register
-or require splitting it into competing files.
+or require splitting it into competing files. Local-only acceptance/evidence
+lists are not exported to that existing bridge. References are declarations, not
+automatically traversed documents; linking an evidence index does not cause its
+contents to be read or replace an explicit read/check.
 
 Checkpoints are at most 4 MiB and never discard text to fit. Input/source reads use existing nonblocking no-follow descriptor opens and regular-file
 validation. Files are reread to detect changes during inspection. This is not an

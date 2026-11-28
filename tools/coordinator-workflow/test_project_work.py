@@ -1,5 +1,8 @@
 """Fictional continuity journeys. No provider, service, runtime or host calls."""
 import copy
+import base64
+import re
+import zipfile
 from datetime import datetime, timezone
 import json
 import os
@@ -396,6 +399,121 @@ class ProjectWorkTests(unittest.TestCase):
             else: value['report']['unexpected'] = True
             with self.subTest(mutation=mutation), self.assertRaises(Refused):
                 work.parse_checkpoint(work.markdown(value, 'looptender-handoff', '# Snapshot'))
+
+    def reference_fields(self, row):
+        return [(row, 'acceptanceRefs', True), (row, 'evidenceRefs', False),
+                (row, 'scopeRefs', True), (row, 'waitRefs', False),
+                (row['authorization'], 'refs', False), (row['personGate'], 'refs', False),
+                (row['acceptance'], 'evidenceRefs', True)]
+
+    def test_long_local_reference_lists_roundtrip_and_checkpoint_without_bridge_subset(self):
+        # All seven lists, including nested acceptance, survive the original bytes.
+        row = self.i['items'][0]
+        for n, (owner, key, _) in enumerate(self.reference_fields(row)):
+            if key == 'waitRefs':
+                owner = self.i['items'][1]  # The existing declared wait remains linked.
+            owner[key] = ['example:reference/%d/%d' % (n, k) for k in range(33 + n)]
+        self.write_work(); raw = self.path.read_bytes(); before = copy.deepcopy(self.i)
+        sources = {Path(src['path']): Path(src['path']).read_bytes() for name in ('workSources', 'authoritySources') for src in self.i[name]}
+        self.assertEqual(work.parse_work(raw), before)
+        with patch.object(work.coverage, 'project', side_effect=AssertionError('no partial shared reference projection')):
+            report = self.project()
+        self.assertIsNone(report['coverage'])
+        self.assertIn('runtime_coverage_capacity_unavailable', self.codes(report))
+        self.assertEqual(len(report['items']), len(before['items']))
+        output = self.root / 'HANDOFF.md'
+        result = self.cli('checkpoint', '--work', self.path, '--output', output)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        retained, retained_raw = work.parse_checkpoint(output.read_bytes())
+        self.assertEqual(retained, before); self.assertEqual(retained_raw, raw)
+        self.assertEqual(self.path.read_bytes(), raw); self.assertEqual(self.i, before)
+        self.assertEqual({path: path.read_bytes() for path in sources}, sources)
+
+    def test_each_shared_long_reference_list_disables_the_whole_bridge(self):
+        for index in range(2, 7):
+            saved = copy.deepcopy(self.i)
+            row = self.i['items'][0]
+            owner, key, _ = self.reference_fields(row)[index]
+            if key == 'waitRefs': owner = self.i['items'][1]
+            owner[key] = ['example:ref/%d' % n for n in range(33)]
+            with self.subTest(field=index), patch.object(work.coverage, 'project', side_effect=AssertionError('bridge must not receive placeholders or a subset')):
+                report = self.project()
+                self.assertIsNone(report['coverage']); self.assertIn('runtime_coverage_capacity_unavailable', self.codes(report))
+            owner[key] = owner[key][:32]
+            expected_inventory = work.inventory(self.i)
+            with patch.object(work.coverage, 'project', wraps=work.coverage.project) as bridge:
+                report = self.project()
+            self.assertIsNotNone(report['coverage'])
+            self.assertEqual(bridge.call_args.args[0], expected_inventory)
+            self.i = saved
+        # Local-only refs are omitted by the existing inventory contract, without
+        # making otherwise supported shared evidence unavailable.
+        for key in ('acceptanceRefs', 'evidenceRefs'):
+            self.i['items'][0][key] = ['example:local/%d' % n for n in range(65)]
+        original = work.inventory(self.i)
+        with patch.object(work.coverage, 'project', wraps=work.coverage.project) as bridge:
+            report = self.project()
+        self.assertEqual(bridge.call_args.args[0], original)
+        self.assertIsNotNone(report['coverage'])
+
+    def test_packaged_helper_retains_long_local_refs_with_canonical_parity(self):
+        row = self.i['items'][0]
+        for n, (owner, key, _) in enumerate(self.reference_fields(row)):
+            if key == 'waitRefs': owner = self.i['items'][1]
+            owner[key] = ['example:packaged/%d/%d' % (n, k) for k in range(40)]
+        self.write_work(); before = self.path.read_bytes()
+        asset = SCRIPTS.parents[2] / 'continuity-host-inspector-asset.ts'
+        encoded = re.search(r'export const continuityHelperBase64 = ("[^";]+");', asset.read_text()).group(1)
+        archive = self.root / 'fictional-helper.pyz'
+        archive.write_bytes(base64.b64decode(json.loads(encoded))); archive.chmod(0o600)
+        with zipfile.ZipFile(archive) as saved:
+            self.assertEqual(saved.read('project_work.py'), (SCRIPTS / 'project_work.py').read_bytes())
+        direct = self.cli('check', '--work', self.path, '--private')
+        packaged = subprocess.run([sys.executable, '-I', '-B', str(archive), 'check', '--work', str(self.path), '--private'],
+                                  env=self.env, text=True, capture_output=True, timeout=3)
+        self.assertEqual(direct.returncode, 1); self.assertEqual(packaged.returncode, 1)
+        self.assertEqual(json.loads(packaged.stdout), json.loads(direct.stdout))
+        self.assertEqual(json.loads(packaged.stdout)['verdict'], 'reconciliation_required')
+        self.assertEqual(work.parse_work(self.path.read_bytes()), self.i)
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_reference_validation_and_failed_checkpoint_preserve_prior_bytes(self):
+        output = self.root / 'HANDOFF.md'
+        self.assertEqual(self.cli('checkpoint', '--work', self.path, '--output', output).returncode, 0)
+        prior = output.read_bytes(); original = copy.deepcopy(self.i)
+        invalid = [None, 'example:not-list', [None], [{}], [False], [''], ['example:duplicate'] * 2,
+                   ['x' * 257], ['é' * 129], ['example:new\nline'], ['example:null\x00'], ['example:delete\x7f']]
+        for index in range(7):
+            for bad in invalid:
+                self.i = copy.deepcopy(original); row = self.i['items'][0]
+                owner, key, _ = self.reference_fields(row)[index]
+                if key == 'waitRefs': owner = self.i['items'][1]
+                owner[key] = bad
+                with self.subTest(field=index, bad=bad), self.assertRaises(Refused): work.validate(self.i)
+            self.i = copy.deepcopy(original)
+            owner, key, required = self.reference_fields(self.i['items'][0])[index]
+            if key != 'waitRefs':
+                owner[key] = []
+                if required:
+                    with self.assertRaises(Refused): work.validate(self.i)
+                else: work.validate(self.i)
+            self.i = copy.deepcopy(original)
+            owner, key, _ = self.reference_fields(self.i['items'][0])[index]
+            if key == 'waitRefs': owner = self.i['items'][1]
+            owner[key] = ['é' * 128]  # Exact 256 UTF-8-byte reference boundary.
+            work.validate(self.i)
+        self.i = copy.deepcopy(original); self.i['items'][0]['evidenceRefs'] = ['example:duplicate'] * 33
+        self.write_work(); invalid_raw = self.path.read_bytes()
+        result = self.cli('checkpoint', '--work', self.path, '--output', output, '--expect-previous', work.sha(prior))
+        self.assertEqual(result.returncode, 1); self.assertEqual(output.read_bytes(), prior)
+        self.assertEqual(self.path.read_bytes(), invalid_raw)
+        self.assertFalse((self.root / ('HANDOFF.md.' + work.sha(prior) + '.md')).exists())
+        # Over-budget input refuses whole; no reference prefix replaces history.
+        self.i = copy.deepcopy(original); self.i['items'][0]['evidenceRefs'] = ['example:%05d/' % n + 'x' * 220 for n in range(1200)]
+        self.write_work(); oversized = self.path.read_bytes()
+        result = self.cli('checkpoint', '--work', self.path, '--output', output, '--expect-previous', work.sha(prior))
+        self.assertEqual(result.returncode, 1); self.assertEqual(json.loads(result.stdout)['reason'], 'input_bound')
+        self.assertEqual(output.read_bytes(), prior); self.assertEqual(self.path.read_bytes(), oversized)
 
     def large_register(self, count=256, dense=False):
         base = copy.deepcopy(self.i['items'][2])
