@@ -6,6 +6,10 @@ A thin [BB](https://getbb.app) plugin for [looptender](../../README.md). It show
 
 The plugin reports its version with `--client bb-plugin@VERSION` when it reads a loop's status, so the looptender panel's Versions view can say which plugin and which looptender build it runs. The version is a constant in `client-flag.ts`, kept equal to `package.json` by a test. A looptender too old to know the flag answers with a usage error. The plugin then asks again without it, and stops sending it to that executable only if that second call succeeds. It sends the flag again once the executable changes: a different path, size or modification time, as after an upgrade. A plugin reload also resets this.
 
+## Project continuity foundation
+
+Unreleased source includes a disconnected [continuity observation controller](../../docs/project-work.md#continuity-observation-foundation). Injected fixtures verify immediate invalidation, stale-result rejection and single pending inspection through timeout. It is not registered with BB: installing this source does not automatically read a work register, inject a session pointer or enforce a turn-end check. The explicit [project work workflow](../../docs/project-work.md) remains separate.
+
 ## Install
 
 Use **CLI v0.3.0 + plugin v0.4.0** (matching `looptender`). Verify that the [v0.3.0 tag and release](https://github.com/looptender/looptender/releases/tag/v0.3.0) are available before using this pinned installation command:

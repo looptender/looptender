@@ -1,0 +1,1 @@
+- Add a disconnected BB continuity observation controller with immediate invalidation, stale-result rejection and timeout exclusion. It preserves supplied helper verdicts and publishes only fixed metadata and counts. Host inspection, lifecycle registration and automatic session instructions remain unimplemented; the explicit project work workflow is unchanged.
