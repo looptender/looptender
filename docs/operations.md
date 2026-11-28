@@ -1918,3 +1918,101 @@ rename a settled successor in BB and looptender will not overwrite it. Existing
 threads titled `Continue from ...` are not swept or renamed by this change.
 This is source-only fixture evidence, not a change to an installed supervisor
 or released BB plugin; live BB creation acceptance remains unverified.
+
+
+## Completion-only renewal
+
+Unreleased Darwin/Linux source provides an external person-operated withdrawal
+of one reviewed completion gate. This differs from owner question withdrawal
+(which preserves any underlying completion) and ordinary resume (which clears
+several holds and question history). No panel, HTTP or plugin action is added.
+The supervised target and processes marked as started by its supervisor cannot
+prepare or apply renewal. These are cooperative checks, not authentication
+against hostile local processes; do not unset markers to bypass them.
+
+Create a private, mode-0600 JSON request using an absolute path. All keys and
+acknowledgements below are required; references remain opaque and are never
+fetched or interpreted as permission:
+
+```json
+{
+  "version": 1,
+  "requestId": "request_example",
+  "effect": "withdraw_exact_completion",
+  "historical": {
+    "class": "legacy_unbound",
+    "acknowledgeIndependentCurrentScope": true
+  },
+  "currentScope": {
+    "id": "scope_example",
+    "revision": 1,
+    "summary": "Continue the already authorized delivery work",
+    "refs": ["authorization:example", "objective:example"]
+  },
+  "acknowledge": {
+    "onlyCompletion": true,
+    "laterChecksMayWake": true,
+    "historicalEvidenceNotAcceptance": true
+  }
+}
+```
+
+Use `legacy_unbound` for an omitted Completion or a valid declaration without
+historical goal identity; use `bound` for a valid bound declaration. No old
+identity, time, authority or acceptance is manufactured. The current scope is
+an independent operator declaration, not a new Goal or proof of permission.
+Existing work authorization can be referenced without granting it again.
+
+```sh
+looptender client prepare-completion-renewal --id loop_example \
+  --request-file /private/example/renewal-request.json --json
+# Review the returned historical class, current goal relationship and effect.
+# --private additionally shows bounded private scope and historical control.
+looptender client apply-completion-renewal --id loop_example \
+  --request-file /private/example/renewal-request.json \
+  --ticket renewal_REPLACE_WITH_PREPARED_ID --expect-review REPLACE_WITH_REVIEW_DIGEST --json
+```
+
+Both commands support `--directory` for the existing private registry. Tickets
+expire after five minutes, are operation-specific and single-use, and bind the
+complete registration/config/control/state/current-goal snapshot and request.
+Any change needs fresh preparation, including owner generation, scope, goal
+revision or an unrelated recorded check. Missing owner and missing current goal
+are explicitly pinned and retained as absent. Invalid present records, unknown
+fields, ambiguous/duplicate keys, partial identity pairs and present-null
+historical records refuse. Existing goal revisions are never rewritten. A representation that ordinary
+control serialization would collapse (such as an explicitly empty omitted slice)
+also refuses rather than losing its container distinction.
+
+Enabled and completed must both be true. Pause, stop, awaiting-user, episode or
+brief holds, an active question, stop-lane intent, transfer, supersession and
+archive/unknown archive refuse. Historical Note, OpenQuestion and Completion
+remain unchanged, including omission; ownership and other supported semantic
+fields also remain unchanged. JSON formatting can change. Only Completed=false
+and normal UpdatedAt change. No budgets, counters, goal, assignments, question
+or selfhold records are reset. No send, start, enable or dispatch occurs during
+apply. Later ordinary checks **may wake the existing authorized target** and
+still enforce all normal limits and restrictions. `completion_withdrawn` does
+not mean ready, running, accepted or objectively complete.
+
+Coverage is an optional read-only aid; `coverage_not_assessed` is not evidence
+of no work and does not block this explicitly reviewed flag withdrawal.
+Completed lanes do not establish whole-objective acceptance. No inventory,
+source discovery, dependency engine or transcript interpretation is introduced.
+
+Ticket consumption is published before the control save. Tested process-crash
+behavior after successful close/rename does not establish OS-crash or power-loss
+durability or exactly-once execution. An uncertain ticket publication or
+consumption does not permit a control save. A consumed ticket is never retried;
+there is no automatic recovery, rollback or refunded attempt. Inspect current
+records and deliberately prepare a new review after uncertainty. A control-save
+error reports `control_save_unknown`; a confirmed save with failed diagnostics
+reports `completion_withdrawn_with_history_gap`; a lost acknowledgement remains
+unknown. Diagnostic history is bounded, not an indefinite archive.
+
+Request inputs are limited to 32 KiB, tickets to 4 KiB, and records to their
+existing bounded sizes. Symlinks, nonregular files, public input permissions and
+oversize records refuse. Darwin/Linux use nonblocking, no-follow descriptor
+acquisition; unsupported platforms refuse before ticket/control writes. Native
+Windows support, Linux native acceptance, installed adoption and live renewal
+remain separate verification. No roadmap acceptance is closed by this command.

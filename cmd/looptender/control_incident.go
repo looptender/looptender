@@ -48,6 +48,11 @@ func updateControlFromAnnotated(dir, operation, origin string, fn func(*control.
 	}
 	var r incident.Record
 	update := control.UpdateChecked
+	if operation == "completion_renewal" && origin == "" {
+		update = func(dir string, fn func(*control.File) error) (control.File, error) {
+			return control.UpdateCheckedValidated(dir, freezeWireLimit, validateRenewalControl, fn)
+		}
+	}
 	if operation == "pause" && origin == "" {
 		// Preflight selects the freeze path only. A cooperating writer can replace
 		// healthy control before this transaction, so validate current bytes here.

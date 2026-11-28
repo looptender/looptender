@@ -212,6 +212,16 @@ looptender complete -c /private/example-loop/looptender.yaml --note "Task verifi
 
 Unreleased source includes a read-only [`pr-ready` helper](docs/pr-ready.md) beside `ci-wait`. It prints a commit to pin only for its conservative supported evidence subset; queue policy and head-only CI evidence remain unsupported.
 
+### Withdraw only a reviewed completion
+
+Unreleased Darwin/Linux source adds an external person-operated
+[`client prepare-completion-renewal` / `client apply-completion-renewal`](docs/operations.md#completion-only-renewal)
+pair. It withdraws one pinned completion while retaining historical notes,
+questions and completion evidence, including legacy records without a goal.
+It refuses other active holds and stale evidence. Ordinary later checks may
+wake the existing target; this is neither acceptance nor a general resume.
+No installed-loop, Windows execution or power-loss durability is claimed.
+
 ## Where it stands
 
 - **Latest release:** v0.3.0 (26 November 2026; [notes](docs/releases/v0.3.0.md), folding the earlier unpublished v0.2.1 preparation).
