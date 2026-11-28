@@ -126,6 +126,9 @@ type clientGoalDisplay struct {
 type clientDaemonQuery func(context.Context, string, string, bool) daemonStatus
 
 func clientCommand(e env, args []string) int {
+	if len(args) > 0 && (args[0] == "prepare-completion-renewal" || args[0] == "apply-completion-renewal") {
+		return completionRenewalCommand(e, args)
+	}
 	if len(args) > 0 && (args[0] == "prepare-resume" || args[0] == "resume") {
 		return clientResumeCommand(e, args)
 	}
@@ -136,7 +139,7 @@ func clientCommand(e env, args []string) int {
 		return clientReviewCommand(e, args)
 	}
 	if len(args) == 0 || args[0] != "status" {
-		e.errf("usage: looptender client status|pause|stop|prepare-resume|resume --id ID, or client review|apply pause|stop|resume --loop KEY [--directory private-registry] [--json]; see each command --help")
+		e.errf("usage: looptender client status|pause|stop|prepare-resume|resume|prepare-completion-renewal|apply-completion-renewal --id ID, or client review|apply pause|stop|resume --loop KEY [--directory private-registry] [--json]; see each command --help")
 		return exitUsage
 	}
 	fs := flag.NewFlagSet("client status", flag.ContinueOnError)
