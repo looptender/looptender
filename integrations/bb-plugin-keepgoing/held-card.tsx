@@ -17,6 +17,7 @@ export const isObserved = (loop: LoopView): boolean => !!loop.details?.observed 
 
 /** One plain sentence for a held loop, true for its own state. Null for a loop that is not held. */
 export function heldSentence(loop: LoopView): string | null {
+  if (loop.details?.deadline?.reached === true && loop.controlState !== "enabled") return "Deadline reached. Review loop.limits.deadline in this loop's configuration before resuming. Resume cannot change the deadline; existing holds remain.";
   // A wait is saved as an awaiting-user hold but needs nobody: it carries on by itself.
   if (loop.details?.wait && loop.controlState === "awaiting user") return `Waiting for ${waitFor(loop.details.wait.until)}. It carries on by itself; nothing to do.`;
   if (isObserved(loop)) {

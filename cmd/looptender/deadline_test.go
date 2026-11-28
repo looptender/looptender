@@ -3,8 +3,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,11 +26,26 @@ func TestDeadlineCLIHoldResumeAndStatus(t *testing.T) {
 	if got := f.tick(); got["action"] != "await_user" {
 		t.Fatalf("deadline did not hold: %v", got)
 	}
-	for _, cmd := range []string{"enable", "resume"} {
-		if code, _, err := f.run(cmd); code != 0 {
-			t.Fatal(err)
+	// Enable still cannot bypass the deadline. Resume now refuses before
+	// clearing the hold, including when the caller would retain stop.
+	if code, _, err := f.run("enable"); code != 0 {
+		t.Fatal(err)
+	}
+	f.tick()
+	cfg, err := config.Load(f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controlPath := filepath.Join(cfg.Loop.StateDir, "control.json")
+	before := resumeBytes(t, controlPath)
+	for _, args := range [][]string{{"resume"}, {"resume", "--keep-stop"}} {
+		code, _, errs := f.run(args...)
+		if code == 0 || !strings.Contains(errs, "loop.limits.deadline") {
+			t.Fatalf("expired resume: %d %s", code, errs)
 		}
-		f.tick()
+		if !bytes.Equal(before, resumeBytes(t, controlPath)) {
+			t.Fatal("refused resume changed holds")
+		}
 	}
 	code, out, errs := f.run("status", "--json")
 	var status statusOut

@@ -87,6 +87,9 @@ func clientResumeCommand(e env, args []string) int {
 		}
 		for _, issue := range r.Issues {
 			fmt.Fprintf(e.stdout, "issue: %s\n", issue)
+			if issue == "deadline_reached" {
+				fmt.Fprintln(e.stdout, resumeDeadlineMessage)
+			}
 		}
 	}
 	return code
@@ -261,6 +264,9 @@ func clientResume(ctx context.Context, directory, id, operation, ticket string, 
 			if err != nil {
 				return fail("resume_evidence_unavailable")
 			}
+			if resumeDeadlineRefusal(cfg, now().UTC()) != nil {
+				return fail("deadline_reached")
+			}
 			if a, aerr := control.LoadArchive(entry.StateDir); (a != nil || aerr != nil) && !checked.Supervising() {
 				return fail("archived")
 			}
@@ -282,6 +288,9 @@ func clientResume(ctx context.Context, directory, id, operation, ticket string, 
 				return fail("ticket_unavailable")
 			}
 			at := now().UTC()
+			if resumeDeadlineRefusal(cfg, at) != nil {
+				return fail("deadline_reached")
+			}
 			t := clientResumeTicket{Version: 1, ID: "resume_" + hex.EncodeToString(random[:]), Binding: after, IssuedAt: at, ExpiresAt: at.Add(clientResumeTTL)}
 			if saveClientTicket(entry.StateDir, t) != nil {
 				return fail("ticket_unavailable")
@@ -314,6 +323,9 @@ func clientResume(ctx context.Context, directory, id, operation, ticket string, 
 			if current != t.Binding {
 				return fail("observation_changed")
 			}
+			if resumeDeadlineRefusal(cfg, at) != nil {
+				return fail("deadline_reached")
+			}
 			// A crash after this save sacrifices the ticket, never resumes implicitly.
 			t.Consumed = true
 			if saveClientTicket(entry.StateDir, t) != nil {
@@ -333,6 +345,9 @@ func clientResume(ctx context.Context, directory, id, operation, ticket string, 
 			at = now().UTC()
 			if at.Before(t.IssuedAt) || !at.Before(t.ExpiresAt) {
 				return fail("ticket_unavailable_or_expired")
+			}
+			if resumeDeadlineRefusal(cfg, at) != nil {
+				return fail("deadline_reached")
 			}
 			// Before the holds are cleared: if the counts cannot be reset the
 			// resume fails with the holds intact, like any failure after the

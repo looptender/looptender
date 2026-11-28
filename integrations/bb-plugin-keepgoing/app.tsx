@@ -480,7 +480,7 @@ const TECHNICAL = ["Reference", "Last explicit CLI menu publication", "CLI menu 
 /** The details of one loop: plain lines, the technical ones apart, and the resume command a held loop's person runs. */
 function splitDetails(l: LoopView, reasons: string[]) {
   const all = detailLines(l, reasons);
-  const command = needsResume(l) && !isWait(l) && heldSentence(l) ? resumeCommand(l) : undefined;
+  const command = needsResume(l) && l.details?.deadline?.reached !== true && !isWait(l) && heldSentence(l) ? resumeCommand(l) : undefined;
   return { lines: all.filter(x => !TECHNICAL.some(p => x.startsWith(p))), technical: all.filter(x => TECHNICAL.some(p => x.startsWith(p))), command };
 }
 
