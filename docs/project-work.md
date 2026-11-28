@@ -61,20 +61,80 @@ rejected: acknowledged settlement is not permission to publish stale evidence.
 After removal, logical metadata revalidation is bounded by the observer's existing
 cancellation deadline; a late result cannot remove or block newer host work.
 Transport rejection, malformed or uncorrelated replies and unknown physical
-settlement retain the token across reload, detach and path replacement. A prepared
-token can survive a crash before dispatch, so it does not prove a child is running.
-A failed removal acknowledgement refuses the summary and fences this plugin
-instance. A guaranteed rollback retains the durable token; an ambiguous exception
-after commit may already have removed it, so the current schema cannot guarantee
-that local fence across reload. No stronger uncertainty persistence is claimed.
-There is no supported unknown-attempt clear/retry or automatic reconnect
-reconciliation. A source update cannot clear a pre-existing token without its
-original correlated settlement proof. Do not edit the database to retry.
+settlement retain the host exclusion token. A token can survive a crash before
+dispatch, so it does not prove that a child is running. New source uses the
+prospective receipt protocol below; a source update cannot clear a legacy token
+without its original correlated settlement proof. Never edit the database to retry.
 This quarantine affects **automatic observation only**: agent turns,
 session pointers, other authorized work and manual file-backed reconciliation
 remain usable. It sets no loop hold and does not mean a person must act before
 work continues. Database failure refuses dispatch; host identity reads never
 hold a database transaction open.
+
+#### Prospective lost-reply reconciliation (unreleased)
+
+Rebuild both plugin entries together. New checks reserve an exact attempt in the
+host's private plugin data directory before spawning the fixed read-only helper.
+The request binds registry namespace, original enrollment tuple/revision, path
+digest and packaged helper digest. Only that invocation can publish a terminal
+receipt, after no child was started or its owned child closed. A receipt proves
+physical settlement, never WORK acceptance or current observation freshness.
+
+The authoritative registry migrates to version 2. Older strict readers refuse it;
+legacy pending records remain opaque quarantines, with no invented original
+binding. There is no fallback to an unreceipted check if the host capability is
+missing. Installation, old-token recovery and live adoption are not established
+by source fixtures.
+
+Use the actual contributed namespace. These commands inspect only the exact
+saved attempt; they do not start a helper or scan processes:
+
+```sh
+bb looptender continuity status
+bb looptender continuity attempt-status host_example 00000000-0000-4000-8000-000000000001
+# Use the requestDigest and receiptDigest returned by the exact lookup:
+bb looptender continuity reconcile host_example 00000000-0000-4000-8000-000000000001 REQUEST_DIGEST RECEIPT_DIGEST
+```
+
+`attempt-status` reports `receipt_available` only for a complete matching host
+receipt; absence, malformed storage or unsupported execution stays unavailable.
+`legacy_receipt_unavailable` has no supported clear/retry path. Lookup may start
+an SDK worker, but never the continuity helper. It does not consume anything.
+`reconcile` re-fetches the exact receipt and atomically retains its consumed
+identity while removing only its original pending token. Wrong digests, changed
+ownership or unknown settlement refuse. An uncertain commit is checked against
+that exact consumed identity; repeated apply reports `already_consumed` and never
+replays the helper. Receipt identities and fixed reasons are shown without task
+text or paths. Existing status tuple fields remain private CLI detail.
+
+Reconciliation also retires the exact in-memory flight and suppresses queued
+checks across the same host's bindings. It publishes no old summary and starts
+nothing. `reconciled_observation_unavailable` means a later explicit
+`continuity check BINDING_ID REVISION` or ordinary authorized lifecycle event
+must resolve the current enrollment afresh. Independent work, session pointers
+and manual reconciliation remain available throughout. No controls, holds,
+deadlines, budgets, grants or provider sessions change.
+
+The host store accepts only private owned regular records and non-symlink
+directories on macOS/Linux. Exclusive reservations persist across worker changes;
+an existing, corrupt or partial reservation never admits another spawn. Each
+record is capped at 16 KiB. An 8 MiB aggregate budget charges three record slots
+(48 KiB) per retained attempt, including the temporary publication slot, and
+refuses further reservations when exhausted. The registry retains its 256 KiB
+bound. There is no automatic eviction, pruning or reset: capacity failure retains
+all prior evidence and leaves automatic checking unavailable. These metadata
+bounds do not remove or truncate WORK obligations or checkpoints.
+
+A crash during admission can leave the admission gate closed; exact receipt reads
+remain possible but new reservations refuse. A crash after reservation and before
+a durable terminal receipt remains unknown, even if execution never started or
+already closed. A durable receipt followed by reply loss is recoverable. Storage
+loss, copied/reset directories, hostile same-user replacement, orphan reaping and
+power-loss guarantees on untested filesystems are outside this protocol. Worker
+exit, timeout, cancellation, idle or a later successful check never substitute for
+a receipt. Windows remains unsupported. Native fictional macOS tests cover owned
+child close, concurrent reservation and process/storage fault windows; they do not
+certify an installed transport, Linux native execution or live project adoption.
 
 The controller accepts normalized lifecycle events for a configured coordinator
 and an injected inspector. Each trigger invalidates the prior observation

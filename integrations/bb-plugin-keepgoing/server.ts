@@ -267,8 +267,9 @@ export default async function plugin(bb: BbPluginApi) {
   };
   const intents = async () => z.array(moveIntentSchema).max(32).parse(await bb.storage.kv.get("moves.v1") ?? []);
   const host = bb.hosts.experimental_client({ contract: hostContract });
-  const continuity = registerContinuity(bb, (input, options) => host.call("continuityCheck", input, options),
-    listener => host.experimental_onWorkerExit(({ hostId }) => listener(hostId)));
+  const continuity = registerContinuity(bb, (input, options) => host.call("continuityCheckV2", input, options),
+    listener => host.experimental_onWorkerExit(({ hostId }) => listener(hostId)), undefined,
+    (request, options) => host.call("continuityAttemptStatus", request, options));
   const records = async () => z.array(recordSchema).max(32).parse(await bb.storage.kv.get("setups.v1") ?? []);
   const hostCommand = (bin: string, record: z.infer<typeof recordSchema>, operation: "status" | "doctor" | "start" | "startChecks" | "pause" | "resume" | "stop", json?: true) =>
     host.call("command", { bin, record, operation, ...(json ? { json } : {}) }, { hostId: record.hostId, signal: AbortSignal.timeout(30_000) });
@@ -692,7 +693,7 @@ export default async function plugin(bb: BbPluginApi) {
     name: "looptender",
     summary: "Show and control the looptender loops this plugin is configured for",
     commands: [
-      { name: "continuity", summary: "Explicit advisory project-work attach/status/check/detach", usage: "bb looptender continuity <attach|status|check|detach> …" },
+      { name: "continuity", summary: "Advisory project-work enrollment, checks and exact receipt reconciliation", usage: "bb looptender continuity <attach|status|check|detach|attempt-status|reconcile> …" },
       { name: "usage-events", summary: "Bounded exact-thread structured usage metadata for configured collectors", usage: "bb looptender usage-events <thread> <latest|after-seq>" },
       { name: "status", summary: "List configured loops with their control state and target", usage: "bb looptender status" },
       { name: "pause", summary: "Pause a loop by name", usage: "bb looptender pause <loop>" },
