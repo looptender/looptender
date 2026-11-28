@@ -146,3 +146,26 @@ test("Goal and Loop completion are plain facts in Details, not under Technical d
     assert.equal(tech.queryByText(/^Goal: /), null); assert.equal(tech.queryByText(/^Loop completion: /), null);
   } finally { ui.lifecycle.unmount(); cleanup(); }
 });
+
+test("an explicitly reached deadline replaces futile resume guidance without changing holds", async () => {
+  for (const controlState of ["paused", "awaiting user", "completed", "stop requested"]) {
+    const value = loop({ controlState }, { deadline: { at: "2000-01-01T00:00:00Z", reached: true } });
+    const ui = details([value]);
+    try {
+      await ui.findByRole("region", { name: "Loop example-loop" });
+      assert.match(heldSentence(value as never)!, /^Deadline reached\. Review loop\.limits\.deadline/);
+      assert.match(ui.container.textContent!, /Resume cannot change the deadline; existing holds remain/);
+      assert.equal(ui.container.textContent!.includes('looptender resume -c'), false);
+      assert.equal(ui.queryByRole("button", { name: /resume/i }), null);
+      assert.equal(value.controlState, controlState);
+    } finally { ui.lifecycle.unmount(); cleanup(); }
+  }
+  // Neither an old timestamp alone nor an unknown flag invents a current hold.
+  for (const reached of [false, null, undefined]) {
+    assert.match(heldSentence(loop({ controlState: "paused" }, { deadline: { at: "2000-01-01T00:00:00Z", reached } }) as never)!, /^Paused\. Resume/);
+  }
+  const waiting = loop({ controlState: "awaiting user" }, { deadline: { reached: true }, wait: { until: "network" } });
+  assert.match(heldSentence(waiting as never)!, /^Deadline reached/);
+  const observed = loop({ controlState: "paused" }, { deadline: { reached: true }, observed: true, targetAdapter: "sessionpipe" });
+  assert.match(heldSentence(observed as never)!, /^Deadline reached/);
+});

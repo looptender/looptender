@@ -284,7 +284,7 @@ export function reasonLines(controlState: string, note: string | null, d: Status
   if (recordsUnreadable(d) && !d?.unreadable?.length) out.push("status reported records it could not read, and their details could not be read");
   if (d?.unparsed?.length) out.push(unparsedLine(d.unparsed));
   if (d?.sendRecord) out.push(`Send record: ${firstSentence(d.sendRecord)}`);
-  if (d?.deadline?.reached === true) out.push(`Deadline reached (${dateLabel(d.deadline.at)}); evaluated on the next check`);
+  if (d?.deadline?.reached === true) out.push(`Deadline reached (${dateLabel(d.deadline.at)}); review loop.limits.deadline before resuming`);
   if (d?.sends?.reached) out.push(`Send limit reached: ${sendsText(d.sends)}`);
   if (d?.disk) out.push(diskLine(d, refreshFailed));
   const wait = d?.limitWait;
