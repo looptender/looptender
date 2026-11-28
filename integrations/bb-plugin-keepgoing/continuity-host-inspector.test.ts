@@ -103,7 +103,7 @@ test("deterministic asset is exact canonical source, drift checker and isolated 
   try {
     const generated = spawnSync("python3", ["-I", "-B", join(root, "continuity-host-inspector-generate.py"), "--check"], { encoding: "utf8" }); assert.equal(generated.status, 0, generated.stderr);
     for (const [name, digest] of Object.entries(continuityHelperSources)) assert.equal(createHash("sha256").update(await readFile(join(root, "skills/keepgoing/scripts", name))).digest("hex"), digest);
-    const helper = join(dir, "helper.pyz"), work = join(dir, "WORK.md"); await writeFile(helper, Buffer.from(continuityHelperBase64, "base64"), { mode: 0o600 });
+    const helper = join(dir, "helper.pyz"), work = join(dir, "Exámple 工作 WORK.md"); await writeFile(helper, Buffer.from(continuityHelperBase64, "base64"), { mode: 0o600 });
     const archive = spawnSync("python3", ["-I", "-B", "-c", "import pathlib,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); root=pathlib.Path(sys.argv[2]); names=['project_work.py','coordinator_coverage.py','coordinator.py','coordinator_state.py']; assert set(z.namelist())==set(names+['__main__.py']); assert all(z.read(n)==(root/n).read_bytes() for n in names)", helper, join(root, "skills/keepgoing/scripts")], { encoding: "utf8" }); assert.equal(archive.status, 0, archive.stderr);
     const init = spawnSync("python3", ["-I", "-B", helper, "init", "--work", work, "--id", "example"], { encoding: "utf8" }); assert.equal(init.status, 0, init.stdout + init.stderr);
     const before = await readFile(work), names = await readdir(dir);
