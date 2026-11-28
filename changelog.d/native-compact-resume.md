@@ -1,0 +1,1 @@
+Compact the macOS Resume confirmation around the loop's display name, actual holds and next-check consequences, with concise Cancel/Resume buttons; retain identity, expiry and stale-review safeguards and actionable refusal messages.

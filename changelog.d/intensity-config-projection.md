@@ -1,0 +1,1 @@
+- Add an internal, detached projection of selected configuration declarations with fixed redaction and explicit coverage limits. This foundation has no caller, command, profile controls or enforcement; full configuration validation remains the caller's responsibility.
