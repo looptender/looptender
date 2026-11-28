@@ -1,3 +1,4 @@
+import { taskTextProblem } from "./task-text.ts";
 import { publishReference } from "./registry-host.ts";
 import type { Publication } from "./registry-contract.ts";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -147,6 +148,8 @@ export async function standardRoutesOnHost(input: { bin: string; target: SetupTa
 }
 export async function setupOnHost(input: { bin: string; target: SetupTarget; name: string; task: string; dryRun: boolean; withGoal?: boolean; bounds?: Bounds; followStandard?: true; takeover?: TakeoverChoice; succeeds?: string }, signal?: AbortSignal, run: Execute = execute): Promise<{ plan: z.infer<typeof planSchema>; registration?: Publication; warnings?: string[] } | { refused: Refusal } | { noRoutes: true } | { failed: SetupFailure }> {
   const { bin, target, name, task, dryRun, withGoal = false, bounds, followStandard, takeover, succeeds } = input;
+  const taskProblem = taskTextProblem(task);
+  if (taskProblem) throw new Error(taskProblem);
   const project = await realpath(target.project);
   const args = ["init", "--non-interactive", "--json", "--name", name, "--agent", "bb", "--thread", target.threadId, "--provider", target.provider, "--project", project, "--task-file", "-"];
   if (withGoal) args.push("--with-goal");

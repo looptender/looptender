@@ -1,3 +1,4 @@
+import { TASK_MAX_BYTES, taskBytes, taskTextProblem } from "./task-text.ts";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { goalLabel } from "./status-details.ts";
 import { fallbackSlug, slugFromPredecessor, slugFromTitle, type ContinuationCandidate, type SetupResult, type ThreadSetupMeta } from "./setup-contract.ts";
@@ -83,6 +84,8 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
   const mode = chosen ?? (empty ? "own" : "conversation");
   const nameOk = NAME.test(name);
   const taskNeeded = mode === "own" && !task.trim();
+  const taskProblem = mode === "own" ? taskTextProblem(task) : null;
+  const taskByteCount = taskBytes(task);
   const continueMissing = intent === "continue" && !succeedsPath;
   const selectedCandidate = candidates.find(c => c.configPath === succeedsPath);
 
@@ -117,6 +120,7 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
   }
 
   async function act(action: Action) {
+    if ((action === "preview" || action === "create") && taskProblem) return;
     setBusy(true); setPending(action);
     const began = Date.now();
     try {
@@ -313,7 +317,9 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
         ? <div className="field"><label htmlFor={`kgs-note-${threadId}`}>Anything to add? <span className="help">(optional, one line)</span></label>
           <input id={`kgs-note-${threadId}`} type="text" aria-label="Anything to add?" value={note} disabled={busy} maxLength={300} onChange={e => { setNote(e.target.value.replace(/[\r\n]/g, " ")); edit(); }} /></div>
         : <div className="field"><label htmlFor={`kgs-task-${threadId}`}>Task and completion criteria</label>
-          <textarea id={`kgs-task-${threadId}`} aria-label="Task and completion criteria" value={task} disabled={busy} maxLength={262144} rows={3} onChange={e => { setTask(e.target.value); edit(); }} /></div>}
+          <textarea id={`kgs-task-${threadId}`} aria-label="Task and completion criteria" aria-invalid={!!taskProblem && task.length > 0} aria-describedby={`kgs-task-size-${threadId}${taskProblem && task.length > 0 ? ` kgs-task-error-${threadId}` : ""}`} value={task} disabled={busy} rows={3} onChange={e => { setTask(e.target.value); edit(); }} />
+          <span id={`kgs-task-size-${threadId}`} className="help">{taskByteCount} / {TASK_MAX_BYTES} UTF-8 bytes (1 MiB maximum). Text is never cut to fit.</span>
+          {taskProblem && task.length > 0 && <span id={`kgs-task-error-${threadId}`} className="err" role="alert">{taskProblem} Your text remains in this field.</span>}</div>}
     </fieldset>
     <details>
       <summary>Options ({optionSummary})</summary>
@@ -331,7 +337,7 @@ export function SetupPanel({ threadId, call, onChanged, onClose, hideStart = fal
       </fieldset>
     </details>
     {!result?.plan && <div className="actions">
-      <div className="row"><button type="button" className="btn primary" disabled={busy || taskNeeded || !nameOk || continueMissing} aria-describedby={taskNeeded ? `kgs-why-${threadId}` : continueMissing ? `kgs-why-cont-${threadId}` : undefined} onClick={() => void act("preview")}>Preview setup</button></div>
+      <div className="row"><button type="button" className="btn primary" disabled={busy || !!taskProblem || !nameOk || continueMissing} aria-describedby={taskNeeded ? `kgs-why-${threadId}` : continueMissing ? `kgs-why-cont-${threadId}` : undefined} onClick={() => void act("preview")}>Preview setup</button></div>
       {continueMissing && <span id={`kgs-why-cont-${threadId}`} className="help">Choose a loop to continue.</span>}
       {!continueMissing && taskNeeded && <span id={`kgs-why-${threadId}`} className="help">Write the task to preview the setup.</span>}
     </div>}
