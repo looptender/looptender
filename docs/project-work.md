@@ -53,13 +53,24 @@ and the existing keepgoing skill; children, forks and other tuple members do not
 inherit it. Existing live sessions are not updated retroactively.
 
 Before dispatch, an atomic plugin-private database transaction saves a host check
-token. Only a valid correlated, current response after physical inspector
-settlement can remove it. Transport rejection, cancellation, worker exit, stale
-results or uncertain storage leave automatic checking unavailable across reload,
-detach and path replacement. A prepared token can survive a crash before dispatch,
-so it does not prove a child is running. There is no supported unknown-attempt
-clear/retry or automatic reconnect reconciliation. Do not edit the database to
-retry. This quarantine affects **automatic observation only**: agent turns,
+token. Only an entirely valid response from the selected host, correlated to that
+exact token and proving physical inspector settlement, can remove it atomically.
+Removal uses the latest registry and exact host/token ownership, independently of
+an old enrollment, epoch or lifecycle event. A superseded observation is still
+rejected: acknowledged settlement is not permission to publish stale evidence.
+After removal, logical metadata revalidation is bounded by the observer's existing
+cancellation deadline; a late result cannot remove or block newer host work.
+Transport rejection, malformed or uncorrelated replies and unknown physical
+settlement retain the token across reload, detach and path replacement. A prepared
+token can survive a crash before dispatch, so it does not prove a child is running.
+A failed removal acknowledgement refuses the summary and fences this plugin
+instance. A guaranteed rollback retains the durable token; an ambiguous exception
+after commit may already have removed it, so the current schema cannot guarantee
+that local fence across reload. No stronger uncertainty persistence is claimed.
+There is no supported unknown-attempt clear/retry or automatic reconnect
+reconciliation. A source update cannot clear a pre-existing token without its
+original correlated settlement proof. Do not edit the database to retry.
+This quarantine affects **automatic observation only**: agent turns,
 session pointers, other authorized work and manual file-backed reconciliation
 remain usable. It sets no loop hold and does not mean a person must act before
 work continues. Database failure refuses dispatch; host identity reads never
