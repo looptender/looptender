@@ -2,6 +2,7 @@
 """Coordinator-owned Markdown work register; explicit IO, no runtime actions."""
 import argparse
 import copy
+from collections import deque
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -67,14 +68,28 @@ def validate(work):
     require(work["binding"] is None or coverage.binding(work["binding"]), "register_binding")
     require((work["assignmentRecord"] is None) == (work["assignmentRevision"] is None), "assignment_binding_pair")
     require(work["assignmentRecord"] is None or coverage.workflow.text(work["assignmentRecord"], 256) and coverage.positive(work["assignmentRevision"]), "assignment_binding")
-    require(isinstance(work["items"], list) and len(work["items"]) <= coverage.MAX_ITEMS, "item_bound")
+    require(isinstance(work["items"], list), "items_schema")
+    require(len(json.dumps(work, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= WORK_LIMIT, "input_bound")
     projected = inventory(work)
     # Reuse coverage's exact row/source/edge schemas. Placeholders are ONLY for
     # validation of nullable metadata, never exported or passed to projection.
     projected["binding"] = work["binding"] or {k: 1 if k in {"generation", "goalRevision"} else "unavailable" for k in coverage.BINDING}
     projected["assignmentRecord"] = work["assignmentRecord"] or "unavailable"
     projected["assignmentRevision"] = work["assignmentRevision"] or 1
+    # Validate shared metadata once. Local work IDs/edges are byte-bounded, not
+    # count-bounded; coverage's source/row schemas are reused without projecting
+    # any subset. These schema-only copies never become runtime evidence.
+    require(isinstance(projected["workSources"], list), "source_schema")
+    metadata = dict(projected, items=[], workSources=[])
+    for src in projected["workSources"]:
+        require(isinstance(src, dict) and isinstance(src.get("itemIds"), list) and all(valid_id(k) for k in src["itemIds"]) and len(src["itemIds"]) == len(set(src["itemIds"])), "source_items")
+        metadata["workSources"].append(dict(src, itemIds=[]))
+    coverage.validate_inventory(metadata)
+    row_schema = dict(metadata, workSources=[], authoritySources=[])
+    seen = set()
     for row, out in zip(work["items"], projected["items"]):
+        require(row.get("id") not in seen, "duplicate_item_id")
+        seen.add(row.get("id"))
         require(set(row) == set(out) | EXTRA, "work_item_schema")
         require(valid_id(row["id"]) and coverage.workflow.text(row["title"], 256) and bool(row["title"].strip()) and coverage.workflow.text(row["nextAction"], 2048) and bool(row["nextAction"].strip()), "work_item_text")
         require(coverage.refs(row["acceptanceRefs"], True) and coverage.refs(row["evidenceRefs"]), "work_item_refs")
@@ -86,7 +101,12 @@ def validate(work):
             require(owner["kind"] == "coordinator", "owner_assignment_missing")
         if owner and owner["kind"] == "coordinator" and work["binding"]:
             require(owner["id"] == work["binding"]["coordinator"], "owner_binding_conflict")
-        require(row["dependsOn"] is None or isinstance(row["dependsOn"], list) and all(isinstance(d, dict) and valid_id(d.get("id")) for d in row["dependsOn"]), "dependency_identity")
+        require(row["dependsOn"] is None or isinstance(row["dependsOn"], list), "dependency_schema")
+        dependencies = set()
+        for dep in row["dependsOn"] or []:
+            require(coverage.keys(dep, "id revision") and valid_id(dep["id"]) and coverage.positive(dep["revision"]) and dep["id"] not in dependencies, "dependency_schema")
+            dependencies.add(dep["id"])
+        out["dependsOn"] = [] if row["dependsOn"] is not None else None
         block = row["blockingObligation"]
         require(block is None or coverage.keys(block, "id revision") and valid_id(block["id"]) and coverage.positive(block["revision"]) and block["id"] != row["id"], "blocking_obligation_schema")
         require((row["state"] == "waiting") == (block is not None), "waiting_requires_linked_obligation")
@@ -96,7 +116,7 @@ def validate(work):
         if row["workSource"] is None:
             require(row["acceptance"] is None, "acceptance_source_missing")
             out["workSource"] = {"id": "unavailable", "revision": 1, "sha256": "0" * 64}
-    coverage.validate_inventory(projected)
+        coverage.validate_inventory(dict(row_schema, items=[out]))
     mapped = [r["assignment"]["id"] for r in work["items"] if r["assignment"]]
     require(len(mapped) == len(set(mapped)), "duplicate_assignment_mapping")
     return work
@@ -136,12 +156,74 @@ def source_ready(row, sources, pins):
     return bool(declared and source == {k: declared[k] for k in ("id", "revision", "sha256")} and row["id"] in declared["itemIds"] and coverage.pin_state(pins, "workSources", source["id"]) == "current")
 
 
+def dependency_projection(rows, accepted):
+    """Leaves first, O(items + edges); no recursive walk or ancestor copying.
+
+    Unprocessed vertices are cycles or depend on cycles. Missing/stale edges
+    retain explicit reasons; they never supply an accepted dependency result.
+    """
+    dependencies, parents, pending, problems, settled = {}, {k: [] for k in rows}, {}, {}, {}
+    for key, row in rows.items():
+        targets, seen = [], set()
+        reason = "dependency_evidence_unavailable" if row["dependsOn"] is None else None
+        edges = (row["dependsOn"] or []) + ([row["blockingObligation"]] if row["blockingObligation"] else [])
+        for edge in edges:
+            target = rows.get(edge["id"])
+            if target is None or target["revision"] != edge["revision"]:
+                reason = reason or ("dependency_missing" if target is None else "dependency_revision_changed")
+            elif edge["id"] not in seen:
+                seen.add(edge["id"])
+                targets.append(edge["id"])
+                parents[edge["id"]].append(key)
+        dependencies[key], pending[key], problems[key] = targets, len(targets), reason
+    ready = deque(k for k in rows if pending[k] == 0)
+    while ready:
+        key = ready.popleft()
+        row = rows[key]
+        problems[key] = problems[key] or next((problems[d] for d in dependencies[key] if problems[d]), None)
+        settled[key] = bool(not problems[key] and accepted(row) and row["personGate"]["state"] == "none" and all(settled[d["id"]] for d in row["dependsOn"]))
+        for parent in parents[key]:
+            pending[parent] -= 1
+            if pending[parent] == 0:
+                ready.append(parent)
+    for key in rows:
+        if key not in settled:
+            problems[key] = problems[key] or "dependency_cycle"
+            settled[key] = False
+    return problems, settled
+
+
+def validate_assignment_capture(record):
+    """Validate consumed capture structure even without a local runtime binding.
+
+    This is not Go's full lifecycle validator or current-host authentication.
+    Partial/unknown observations remain valid but unavailable coverage evidence.
+    """
+    require(coverage.keys(record, "version id revisions") and type(record["version"]) is int and record["version"] in (1, 2) and coverage.workflow.text(record["id"], 256) and isinstance(record["revisions"], list) and 1 <= len(record["revisions"]) <= 32, "assignment_capture_schema")
+    for revision in record["revisions"]:
+        require(isinstance(revision, dict) and coverage.positive(revision.get("revision")) and coverage.binding(revision.get("binding")) and isinstance(revision.get("inventory"), dict) and isinstance(revision.get("rows"), list) and len(revision["rows"]) <= 200, "assignment_capture_schema")
+        observed = revision["inventory"]
+        require(observed.get("coverage") in {"observed_direct_children", "partial"} and coverage.workflow.text(observed.get("observedAt"), 64) and isinstance(observed.get("lanes"), list) and len(observed["lanes"]) <= 200, "assignment_capture_schema")
+        seen = set()
+        for lane in observed["lanes"]:
+            require(isinstance(lane, dict) and coverage.workflow.text(lane.get("thread"), 256) and lane["thread"] not in seen and lane.get("execution") in {"idle", "active", "error", "pending", "starting", "stopping", "unknown"} and type(lane.get("archived")) is bool, "assignment_capture_schema")
+            seen.add(lane["thread"])
+        seen = set()
+        for row in revision["rows"]:
+            require(isinstance(row, dict) and isinstance(row.get("spec"), dict), "assignment_capture_schema")
+            spec = row["spec"]
+            require(coverage.workflow.text(spec.get("id"), 64) and spec["id"] not in seen and coverage.workflow.text(spec.get("lane"), 256) and coverage.positive(row.get("revision")) and all(type(row.get(k)) is int and row[k] >= 0 for k in ("handoffRevision", "acknowledged")), "assignment_capture_schema")
+            seen.add(spec["id"])
+            handoff = row.get("handoff")
+            require(handoff is None or isinstance(handoff, dict) and coverage.workflow.text(handoff.get("assignment"), 64) and coverage.positive(handoff.get("assignmentRevision")) and handoff.get("outcome") in {"complete", "unfinished", "waiting", "superseded"} and isinstance(handoff.get("remainingRefs"), list) and len(handoff["remainingRefs"]) <= 32 and all(isinstance(ref, str) and bool(ref.strip()) and len(ref.encode()) <= 2048 and not any(c in ref for c in "\x00\r\n") for ref in handoff["remainingRefs"]), "assignment_capture_schema")
+
+
 def reconcile(work, work_sha, pins, context=None, assignments=None, previous=None, now=None, max_age=300):
     """Pure projection. Local findings survive unavailable runtime evidence."""
     validate(work)
     now = now or datetime.now(timezone.utc)
     rows = {r["id"]: r for r in work["items"]}
-    sources = {s["id"]: s for s in work["workSources"]}
+    sources = {s["id"]: dict(s, itemIds=set(s["itemIds"])) for s in work["workSources"]}
     findings, missing = [], []
     bindings = {"workSha256": work_sha, "registerRevision": work["revision"], "context": digest(context), "assignments": digest(assignments), "pins": digest(sorted((k[0], k[1], v) for k, v in pins.items()))}
 
@@ -172,36 +254,11 @@ def reconcile(work, work_sha, pins, context=None, assignments=None, previous=Non
         a, src = row["acceptance"], row["workSource"]
         return bool(row["state"] == "closed" and a and a["accepted"] and source_ready(row, sources, pins) and a["itemRevision"] == row["revision"] and a["workSourceRevision"] == src["revision"] and a["workSourceDigest"] == src["sha256"])
 
-    # At most 32 rows; memoize final reasons to avoid exponential DAG walks.
-    problems = {}
-    def dependency_problem(key, visiting=frozenset()):
-        if key in visiting:
-            return "dependency_cycle"
-        if key in problems:
-            return problems[key]
-        row = rows[key]
-        result = "dependency_evidence_unavailable" if row["dependsOn"] is None else None
-        edges = (row["dependsOn"] or []) + ([row["blockingObligation"]] if row["blockingObligation"] else [])
-        for edge in edges:
-            if result:
-                break
-            target = rows.get(edge["id"])
-            result = "dependency_missing" if not target else "dependency_revision_changed" if target["revision"] != edge["revision"] else dependency_problem(edge["id"], visiting | {key})
-            if result:
-                break
-        problems[key] = result
-        return result
-
-    accepted_cache = {}
-    def settled(key):
-        if key not in accepted_cache:
-            row = rows[key]
-            accepted_cache[key] = bool(not dependency_problem(key) and accepted(row) and row["personGate"]["state"] == "none" and all(settled(d["id"]) for d in row["dependsOn"]))
-        return accepted_cache[key]
+    problems, accepted_cache = dependency_projection(rows, accepted)
 
     local = []
     for key, row in rows.items():
-        problem = dependency_problem(key)
+        problem = problems[key]
         if problem:
             finding(problem, key, "reconcile_exact_dependency_revision_and_acceptance", True)
         if not source_ready(row, sources, pins):
@@ -219,10 +276,10 @@ def reconcile(work, work_sha, pins, context=None, assignments=None, previous=Non
             finding("item_acceptance_unavailable", key, "review_and_map_acceptance_to_exact_item_and_source_revision", True)
         if row["state"] == "unknown":
             finding("item_state_unavailable", key, "reconcile_declared_work_state", True)
-        if row["dependsOn"] and not problem and any(not settled(d["id"]) for d in row["dependsOn"]):
+        if row["dependsOn"] and not problem and any(not accepted_cache[d["id"]] for d in row["dependsOn"]):
             finding("dependency_unmet", key, "retain_dependency_and_review_its_acceptance")
         block = row["blockingObligation"]
-        if block and not problem and settled(block["id"]):
+        if block and not problem and accepted_cache[block["id"]]:
             finding("wait_obligation_resolved", key, "reconcile_obsolete_wait_and_next_action_without_clearing_runtime_holds")
         local.append({"id": key, "state": row["state"], "owner": row["owner"], "nextAction": row["nextAction"], "blockingObligation": block})
 
@@ -235,14 +292,17 @@ def reconcile(work, work_sha, pins, context=None, assignments=None, previous=Non
             finding("register_revision_not_advanced", "register", "retain_history_and_advance_register_revision", True)
         for prior in old["items"]:
             current = rows.get(prior["id"])
-            if current is None and prior["state"] != "closed":
+            if current is None:
                 finding("unfinished_item_removed", prior["id"], "restore_or_explicitly_reconcile_unfinished_obligation", True)
             elif current and current != prior and current["revision"] <= prior["revision"]:
                 finding("item_revision_not_advanced", current["id"], "advance_item_revision_and_reconcile_dependents_and_acceptance", True)
 
     bridge = None
     ready = work["binding"] is not None and work["assignmentRecord"] is not None and all(r["workSource"] for r in rows.values())
-    if ready and context is not None and assignments is not None:
+    bridge_supported = len(rows) <= coverage.MAX_ITEMS and all(len(src["itemIds"]) <= 32 for src in work["workSources"]) and all(row["dependsOn"] is None or len(row["dependsOn"]) <= coverage.MAX_ITEMS for row in rows.values())
+    if not bridge_supported:
+        finding("runtime_coverage_capacity_unavailable", "register", "review_all_local_obligations_and_use_existing_assignment_evidence_without_a_partial_projection", True)
+    if bridge_supported and ready and context is not None and assignments is not None:
         bridge = coverage.project(inventory(work), context, assignments, pins, now, max_age)
         findings.extend(bridge["findings"])
         missing.extend(bridge["missingInputs"])
@@ -253,7 +313,7 @@ def reconcile(work, work_sha, pins, context=None, assignments=None, previous=Non
             out = by_id[key]
             if row["assignment"] and (out["disposition"] in {"independent_open", "dependency_waiting", "person_gated", "declared_external_wait"} or out["reason"] == "item_acceptance_unavailable"):
                 finding("child_complete_follow_through_open", key, "retain_work_item_and_review_acceptance_or_remaining_next_action")
-    else:
+    elif not ready or context is None or assignments is None:
         finding("coverage_inputs_unavailable", "register", "supply_current_bound_context_and_assignment_capture_for_coverage", True)
     held = context is not None and (not context["controls"]["enabled"] or any(context["controls"][k] for k in coverage.CONTROLS - {"enabled"}))
     report = {"version": 1, "verdict": "runtime_held" if held else "reconciliation_required", "objectiveComplete": False,
@@ -293,7 +353,7 @@ def inspect(path, context_path=None, assignments_path=None, previous_path=None, 
     if "context" in captures:
         coverage.validate_context(context)
     if "assignments" in captures:
-        require(isinstance(assignments, dict), "assignment_capture_schema")
+        validate_assignment_capture(assignments)
     previous = parse_checkpoint(captures["previous"]) if "previous" in captures else None
     pins = coverage.pin_sources(work)
     report = reconcile(work, sha(raw), pins, context, assignments, previous, max_age=max_age)

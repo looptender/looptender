@@ -397,6 +397,114 @@ class ProjectWorkTests(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(Refused):
                 work.parse_checkpoint(work.markdown(value, 'looptender-handoff', '# Snapshot'))
 
+    def large_register(self, count=256, dense=False):
+        base = copy.deepcopy(self.i['items'][2])
+        rows = []
+        for n in range(count):
+            row = copy.deepcopy(base)
+            row.update(id='Work' + str(n), title='Fictional work', nextAction='Review acceptance',
+                       dependsOn=[{'id': 'Work' + str(d), 'revision': 1} for d in (range(n) if dense else [n - 1] if n else [])])
+            rows.append(row)
+        self.i['items'] = rows
+        self.i['workSources'][0]['itemIds'] = [r['id'] for r in rows]
+        raw = ('# Fictional work\n```looptender-work\n' + json.dumps(self.i, separators=(',', ':')) + '\n```\n').encode()
+        self.assertLess(len(raw), work.WORK_LIMIT)
+        self.path.write_bytes(raw); self.path.chmod(0o600)
+        return raw
+
+    def test_all_256_items_source_ids_and_late_obligation_survive_checkpoint(self):
+        raw = self.large_register()
+        self.assertEqual(len(work.parse_work(raw)['items']), 256)
+        # A fully supplied binding/capture cannot cause a prefix projection.
+        with patch.object(work.coverage, 'project', side_effect=AssertionError('no subset bridge')):
+            report = work.reconcile(self.i, work.sha(raw), work.coverage.pin_sources(self.i), self.c, self.r, now=NOW)
+        self.assertEqual(len(report['items']), 256)
+        self.assertIsNone(report['coverage'])
+        self.assertIn('runtime_coverage_capacity_unavailable', self.codes(report))
+        self.assertIn('unfinished_unowned_work', {f['class'] for f in report['findings'] if f['subject'] == 'Work255'})
+        output = self.root / 'HANDOFF.md'
+        result = self.cli('checkpoint', '--work', self.path, '--output', output, timeout=8)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        saved, saved_raw = work.parse_checkpoint(output.read_bytes())
+        self.assertEqual(saved_raw, raw)
+        self.assertEqual(saved['items'][-1]['id'], 'Work255')
+        self.assertEqual(len(saved['items']), 256)
+        # No first-32 duplicate-ID blind spot either.
+        self.i['items'][-1]['id'] = 'Work0'
+        with self.assertRaisesRegex(Refused, 'duplicate_item_id'): work.validate(self.i)
+
+    def test_dense_graph_over_32_dependencies_and_deep_iterative_projection(self):
+        raw = self.large_register(80, dense=True)
+        report = self.cli('check', '--work', self.path, '--private', timeout=8)
+        value = json.loads(report.stdout)
+        self.assertEqual(len(value['items']), 80)
+        self.assertIn('runtime_coverage_capacity_unavailable', self.codes(value))
+        self.assertEqual(self.path.read_bytes(), raw)
+        # Algorithm stress independently of the public byte limit: no Python
+        # recursion or copying an ever-growing ancestor set for every item.
+        rows = {str(n): {'revision': 1, 'dependsOn': [{'id': str(n-1), 'revision': 1}] if n else [],
+                        'blockingObligation': None, 'personGate': {'state': 'none'}} for n in range(5000)}
+        visits = []
+        def accepted(row): visits.append(row); return True
+        problems, settled = work.dependency_projection(rows, accepted)
+        self.assertEqual(len(visits), 5000)
+        self.assertTrue(all(v is None for v in problems.values()))
+        self.assertTrue(all(settled.values()))
+        rows['0']['dependsOn'] = [{'id': '4999', 'revision': 1}]
+        problems, settled = work.dependency_projection(rows, lambda _: True)
+        self.assertEqual(set(problems.values()), {'dependency_cycle'})
+        self.assertFalse(any(settled.values()))
+
+    def test_oversized_checkpoint_refuses_without_changing_work_or_history(self):
+        self.large_register()
+        output = self.root / 'HANDOFF.md'
+        result = self.cli('checkpoint', '--work', self.path, '--output', output, timeout=8)
+        self.assertEqual(result.returncode, 0)
+        prior = output.read_bytes()
+        oversized = self.path.read_bytes() + b'x' * (work.WORK_LIMIT + 1)
+        self.path.write_bytes(oversized)
+        before_files = sorted(p.name for p in self.root.iterdir())
+        result = self.cli('checkpoint', '--work', self.path, '--output', output, '--expect-previous', work.sha(prior), timeout=8)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(json.loads(result.stdout)['reason'], 'input_bound')
+        self.assertEqual(self.path.read_bytes(), oversized)
+        self.assertEqual(output.read_bytes(), prior)
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), before_files)
+
+    def test_removed_closed_item_without_acceptance_remains_explicit(self):
+        self.i['items'][0]['acceptance'] = None
+        old = copy.deepcopy(self.i); raw = self.raw()
+        self.i['revision'] += 1; self.i['items'].pop(0)
+        report = self.project(context=False, previous=(old, raw))
+        self.assertIn('unfinished_item_removed', {f['class'] for f in report['findings'] if f['subject'] == 'implementation'})
+        # Even an old accepted closure is retained for explicit removal review.
+        old['items'][0]['acceptance'] = {'accepted': True, 'itemRevision': 1, 'workSourceRevision': 1,
+                                       'workSourceDigest': old['items'][0]['workSource']['sha256'], 'evidenceRefs': ['example:accepted']}
+        report = self.project(context=False, previous=(old, self.raw(old)))
+        self.assertIn('unfinished_item_removed', {f['class'] for f in report['findings'] if f['subject'] == 'implementation'})
+
+    def test_supplied_malformed_assignment_capture_refuses_without_local_binding(self):
+        self.i.update(binding=None, assignmentRecord=None, assignmentRevision=None)
+        self.write_work()
+        capture = self.root / 'assignments.json'
+        bad = [None, {'nonsense': True}, {'version': 1, 'id': 'example', 'revisions': []}]
+        malformed = copy.deepcopy(self.r); malformed['revisions'][-1]['rows'][0]['spec'] = None; bad.append(malformed)
+        malformed = copy.deepcopy(self.r); malformed['revisions'][-1]['inventory']['lanes'][0]['archived'] = 'false'; bad.append(malformed)
+        for value in bad:
+            with self.subTest(value=value):
+                capture.write_text(json.dumps(value)); capture.chmod(0o600)
+                result = self.cli('check', '--work', self.path, '--assignments', capture)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(json.loads(result.stdout)['reason'], 'assignment_capture_schema')
+                self.assertNotIn('itemCount', json.loads(result.stdout))
+        # Genuine partial inventory is typed evidence, not schema corruption.
+        self.r['revisions'][-1]['inventory']['coverage'] = 'partial'
+        self.r['revisions'][-1]['inventory']['lanes'][0]['execution'] = 'unknown'
+        capture.write_text(json.dumps(self.r))
+        result = self.cli('check', '--work', self.path, '--assignments', capture, '--private')
+        self.assertEqual(json.loads(result.stdout)['verdict'], 'reconciliation_required')
+        self.assertEqual(len(json.loads(result.stdout)['items']), 3)
+
     def test_unsupported_platform_refuses_before_writes(self):
         target = self.root / 'unsupported.md'
         with patch.object(work.sys, 'platform', 'win32'), patch('builtins.print'):

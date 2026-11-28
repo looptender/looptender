@@ -151,15 +151,20 @@ The capture formats, 300-second default age (1–3600 seconds), exact goal/owner
 bindings, assignment revisions and acknowledged handoffs are unchanged from
 [coordinator coverage](../integrations/bb-plugin-keepgoing/skills/keepgoing/references/coordinator-coverage.md).
 The helper never obtains captures from BB or refreshes timestamps. Malformed
-provided input refuses the report; omitted metadata produces useful local
-findings plus `coverage_inputs_unavailable`. Every item remains listed, even if
+provided input refuses the report, including malformed assignment captures when
+local runtime bindings are absent. Capture validation checks the consumed structure;
+it does not replace the runtime lifecycle validator or authenticate a live host.
+Partial observations remain explicitly incomplete. Omitted metadata produces
+useful local findings plus `coverage_inputs_unavailable`. Every item remains listed, even if
 one missing source binding prevents the runtime projection. Existing source pins
 are reread and the coverage projection checks the remaining claims for drift.
 
 Findings include unfinished unowned work; missing/changed/unaccepted dependencies;
 stale assignment acknowledgement; completed child handoff with project acceptance
 or follow-through still open; stale checkpoints; changed items without revision
-increments; and unresolved obligations removed since a checkpoint. A wait linked
+increments; and items removed since a checkpoint, including rows previously
+labelled closed. Removal always requires explicit reconciliation; a prior closed
+label cannot silently erase missing acceptance. A wait linked
 to a current, accepted declared obligation produces `wait_obligation_resolved`.
 This recommends reconciling the wait only: it changes no item, permission or hold.
 All findings bind the exact register bytes/revision and relevant capture/source
@@ -207,14 +212,48 @@ filesystem isolation, atomic multi-file transaction or power-loss durability
 promise. No command clears actual holds, deadlines, budgets, questions or
 completion flags, or changes a provider/account/permission setting.
 
+## One-time adoption and recovery
+
+The coordinator first reconciles available project context, roadmap, prior handoffs
+and relevant older decisions under the existing authorization. Record each
+still-relevant unfinished obligation with a stable ID, declared owner or unassigned
+state, acceptance references and concrete next action. Keep cancelled or superseded
+decisions and their rationale in supporting context; do not silently lose their
+history or revive them as new authority. Disclose unavailable history and uncertain
+scope with `scopeComplete:false` and explicit next actions to resolve those gaps.
+This is a coordinator procedure, not automated transcript discovery.
+
+Pin the reviewed scope and existing authorization sources, run `read` and `check`,
+and review useful local findings beside unavailable runtime coverage. Preserve any
+manual handoff and choose a separate native checkpoint output. After restarting,
+repeat the read/check comparison and update the checkpoint with its exact prior
+digest. Actual adoption in each project requires its coordinator to use this
+workflow; a generated checkpoint does not establish that adoption happened or
+that the backlog is complete. Existing holds and permissions remain unchanged.
+
 ## Bounds, exit codes and verification
 
-`WORK.md` is limited to 256 KiB and 32 items; each item has at most 32 references
-per list and 32 dependencies. Titles are at most 256 UTF-8 bytes, next actions
-2048 bytes, references 256 bytes. Existing coverage bounds apply to sources and
-captures: source bytes together at most 1 MiB; work plus current captures at most
-1 MiB. Checkpoints are at most 4 MiB and never discard text to fit. Input/source
-reads use existing nonblocking no-follow descriptor opens and regular-file
+`WORK.md` is limited to 256 KiB, including all prose. There is no local item-count,
+source item-ID-count or dependency-count ceiling. All declared items are checked
+and retained in checkpoints; oversized input is refused without changing the
+register or existing checkpoint. The practical item count depends on the size of
+its text and edges. A fictional compact 256-item chain exercises the full command
+and checkpoint round-trip, including an unresolved last item. Dependency analysis
+uses an iterative O(items + edges) pass; source membership is indexed.
+
+Other field bounds remain explicit: each reference list has at most 32 entries,
+titles are at most 256 UTF-8 bytes, next actions 2048 bytes and references 256
+bytes. Existing coverage bounds apply to source records and captures: source
+bytes together at most 1 MiB; work plus current captures at most 1 MiB.
+
+The existing runtime coverage projection still accepts at most 32 items, 32 IDs
+per source and 32 dependencies per item. Exceeding any of these produces
+`runtime_coverage_capacity_unavailable` for the entire bridge. It never projects a
+prefix or claims complete runtime coverage: every local obligation and local
+finding remains present. This compatibility limit does not restrict the register
+or require splitting it into competing files.
+
+Checkpoints are at most 4 MiB and never discard text to fit. Input/source reads use existing nonblocking no-follow descriptor opens and regular-file
 validation. Files are reread to detect changes during inspection. This is not an
 atomic or live-authenticated snapshot, or a hard deadline for blocked filesystem
 syscalls; the existing source reader has a cooperative ten-second budget.
@@ -230,7 +269,9 @@ Fictional tests exercise completed-child Sessionpipe follow-through, fulfilled
 waits with independent work, current/stale source and assignment bindings,
 dependencies, person/runtime holds, missing versus empty inventory, lossless
 restart/checkpoints, overwrite/history refusal, publication failure, privacy,
-FIFO/nonregular/oversized inputs and trapped runtime commands. Run:
+FIFO/nonregular/oversized inputs, byte-bounded inventories above 32 items, dense
+and deep dependency graphs, removed closed rows, malformed captures without
+bindings, and trapped runtime commands. Run:
 
 ```sh
 python3 -B -m unittest discover -s tools/coordinator-workflow -p test_project_work.py -v
