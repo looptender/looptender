@@ -85,13 +85,13 @@ function validPaths(p: ContinuityHostPaths): boolean {
 
 /** Caller must resolve the authorized host and explicit private paths separately. Nothing binds identities here. */
 export async function inspectContinuityHost(paths: ContinuityHostPaths, signal: AbortSignal,
-  processIO: ContinuityHostProcess = nativeProcess): Promise<ContinuityInspection> {
-  if (signal.aborted || !["darwin", "linux"].includes(processIO.platform) || !validPaths(paths)) return unavailable();
+  processIO: ContinuityHostProcess = nativeProcess, settled?: (kind: "no_child_started" | "child_closed") => void): Promise<ContinuityInspection> {
+  if (signal.aborted || !["darwin", "linux"].includes(processIO.platform) || !validPaths(paths)) { settled?.("no_child_started"); return unavailable(); }
   // Freeze invocation paths before async preparation. Optional omitted captures remain unknown.
   const args = ["check", "--work", paths.work];
   for (const k of ["context", "assignments", "previous"] as const) if (paths[k] !== undefined) args.push(`--${k}`, paths[k]!);
   args.push("--max-age", "300");
-  let directory: string | undefined;
+  let directory: string | undefined, spawned = false, closed = false;
   try {
     const asset = Buffer.from(continuityHelperBase64, "base64");
     if (createHash("sha256").update(asset).digest("hex") !== continuityHelperSha256) return unavailable();
@@ -103,6 +103,7 @@ export async function inspectContinuityHost(paths: ContinuityHostPaths, signal: 
       let child: ChildProcess;
       try { child = processIO.spawn("python3", ["-I", "-B", helper, ...args], { detached: true, stdio: ["ignore", "pipe", "pipe"] }); }
       catch { resolve(unavailable()); return; }
+      spawned = true;
       let rejected = false, size = 0, stderrSize = 0, chunks: Buffer[] = [], force: ReturnType<typeof setTimeout> | undefined;
       const stop = () => {
         if (rejected) return; rejected = true; chunks = [];
@@ -115,11 +116,17 @@ export async function inspectContinuityHost(paths: ContinuityHostPaths, signal: 
       child.stderr?.on("data", (chunk: Buffer) => { stderrSize += chunk.length; if (stderrSize > 65536) stop(); });
       child.on("error", stop); // Node spawn errors are followed by close; error alone is not reaping evidence.
       child.once("close", (code, killedBy) => {
+        closed = true;
         clearTimeout(timer); if (force) clearTimeout(force); signal.removeEventListener("abort", stop);
         resolve(rejected || signal.aborted || killedBy ? unavailable() : normalizeContinuityHelper(Buffer.concat(chunks), code));
       });
       if (signal.aborted) stop();
     });
   } catch { return unavailable(); }
-  finally { if (directory) { try { await rm(directory, { recursive: true, force: true }); } catch { /* Fixed unavailable output; no private error/log. */ } } }
+  finally {
+    if (directory) { try { await rm(directory, { recursive: true, force: true }); } catch { /* No private error/log. */ } }
+    if (!spawned) settled?.("no_child_started");
+    else if (closed) settled?.("child_closed");
+    // A general catch after possible spawn is not physical settlement evidence.
+  }
 }

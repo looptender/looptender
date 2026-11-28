@@ -35,7 +35,7 @@ export type ContinuityDependencies = {
 };
 
 type Entry = { binding: ContinuityBinding; generation: number; serial: number; dirty: boolean; suspended: boolean };
-type Flight = { generation: number; serial: number; checkId: string; abort: AbortController; expired: boolean; cancel?: () => void };
+type Flight = { hostId: string; generation: number; serial: number; checkId: string; abort: AbortController; expired: boolean; cancel?: () => void };
 type Slot = { entry: Entry | null; flight: Flight | null };
 const bindingKeys = ["id", "revision", "threadId", "projectId", "environmentId", "hostId"];
 const summaryKeys = ["verdict", "objectiveComplete", "workSha256", "registerRevision", "itemCount", "findingCount", "missingInputCount"];
@@ -88,7 +88,7 @@ export function createContinuityObserver(deps: ContinuityDependencies) {
     if (disposed || slot.flight || !slot.entry || slot.entry.suspended || !slot.entry.dirty) return;
     const entry = slot.entry;
     entry.dirty = false;
-    const flight: Flight = { generation: entry.generation, serial: entry.serial, checkId: `inspection-${++attempts}`,
+    const flight: Flight = { hostId: entry.binding.hostId, generation: entry.generation, serial: entry.serial, checkId: `inspection-${++attempts}`,
       abort: new AbortController(), expired: false };
     slot.flight = flight;
     emit(entry, "checking", flight.checkId);
@@ -201,6 +201,21 @@ export function createContinuityObserver(deps: ContinuityDependencies) {
         else if (["active", "idle", "failed"].includes(event.kind)) { entry.suspended = false; invalidate(id, slot); }
         return;
       }
+    },
+    retireSettledHost(hostId: string, signal: AbortSignal | null) {
+      // Only registration's validated consumed receipt may call this. Commit invalidation
+      // for every same-host binding before abort listeners or notifications can reenter.
+      const changed: Slot[] = [], aborts: Flight[] = [];
+      for (const slot of slots.values()) {
+        if (slot.entry?.binding.hostId === hostId) {
+          slot.entry.serial = ++serial; slot.entry.dirty = false; slot.entry.suspended = true; changed.push(slot);
+        }
+        if (signal && slot.flight?.hostId === hostId && slot.flight.abort.signal === signal) {
+          const old = slot.flight; slot.flight = null; cancel(old); aborts.push(old);
+        }
+      }
+      for (const f of aborts) f.abort.abort();
+      for (const slot of changed) if (slot.entry?.suspended) emit(slot.entry, "unavailable", null, { reason: "cannot_assess" });
     },
     refresh(id: string) { const slot = slots.get(id); if (slot) invalidate(id, slot); },
     reconcileAll() { for (const [id, slot] of slots) invalidate(id, slot); },

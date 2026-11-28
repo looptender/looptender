@@ -1,0 +1,1 @@
+Unreleased BB continuity checks retain bounded host attempt reservations and terminal receipts. Explicit exact-receipt reconciliation can retire a lost-reply exclusion without redispatch or stale observation, while preserving legacy unknown attempts, unrelated state and all runtime controls. Storage and platform limits are documented.
