@@ -8,7 +8,7 @@ The plugin reports its version with `--client bb-plugin@VERSION` when it reads a
 
 ## Project continuity foundation
 
-Unreleased source includes a disconnected [continuity observation controller](../../docs/project-work.md#continuity-observation-foundation). Injected fixtures verify immediate invalidation, stale-result rejection and single pending inspection through timeout. It is not registered with BB: installing this source does not automatically read a work register, inject a session pointer or enforce a turn-end check. The explicit [project work workflow](../../docs/project-work.md) remains separate.
+Unreleased source includes a disconnected [continuity observation controller](../../docs/project-work.md#continuity-observation-foundation). Injected fixtures verify immediate invalidation, stale-result rejection and single pending inspection through timeout. It is not registered with BB: installing this source does not automatically read a work register, inject a session pointer or enforce a turn-end check. The explicit [project work workflow](../../docs/project-work.md) remains separate. A disconnected session selector validates an entire explicit enrollment list, preserves all entries within the BB storage byte bound and selects only the exact thread/project/environment/host tuple. It does not inherit a parent or project enrollment. File references are JSON data; a pointer beyond the SDK instruction bound reports unavailable without clipping a path or removing an enrollment. Registration, persistence, actual session instructions and live adoption remain unimplemented.
 
 ## Install
 
