@@ -575,3 +575,264 @@ func TestQuotaReceiptInheritedCarrierIsolation(t *testing.T) {
 		}
 	}
 }
+
+func TestQuotaPublicationRejectsCacheSignedZeroChange(t *testing.T) {
+	for _, record := range []string{"attempt", "success", "both"} {
+		t.Run(record, func(t *testing.T) {
+			raw := `{"rateLimits":{"primary":{"usedPercent":-0}}}`
+			dir, e := receiptFixture(t, `{"id":2,"result":`+raw+`}`)
+			calls := 0
+			now := func() time.Time {
+				calls++
+				if calls == 2 {
+					cache, err := accounts.LoadQuota(dir)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if math.Float64bits(cache.Entries[0].Attempt.Details.Buckets[0].Windows[0].UsedPercent) != math.Float64bits(math.Copysign(0, -1)) {
+						t.Fatal("fixture lost original negative zero")
+					}
+					// Go reflect.DeepEqual considers -0 and +0 equal. Keep original At and
+					// every other field, but change either retained record's canonical bytes.
+					if record != "success" {
+						cache.Entries[0].Attempt.Details.Buckets[0].Windows[0].UsedPercent = 0
+					}
+					if record != "attempt" {
+						cache.Entries[0].Success.Details.Buckets[0].Windows[0].UsedPercent = 0
+					}
+					data, err := json.Marshal(cache)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err = os.WriteFile(filepath.Join(dir, accounts.QuotaName), data, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return receiptPublicationTime()
+			}
+			result, err := accountQuotaRefreshReceipt(context.Background(), dir, e.ID, nil, accountQuotaRead, os.Environ(), now, normalReceiptClock())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.receipt != nil || result.receiptReason != "publication_superseded" {
+				t.Fatal("canonical mismatch minted publication receipt", record, result.receiptReason)
+			}
+		})
+	}
+}
+
+const publicationQuotaResult = `{"rateLimits":{"primary":{"usedPercent":37,"windowDurationMins":300,"resetsAt":1898859600},"secondary":{"usedPercent":100,"windowDurationMins":10080,"resetsAt":1899459600},"credits":{"hasCredits":true,"unlimited":false,"balance":"12.50"},"individualLimit":{"limit":"100.00","used":"12.50","remainingPercent":87.5,"resetsAt":1899459600},"spendControlReached":false},"ordinaryUsageAllowed":false}`
+
+func TestQuotaPublicationOriginalFakeRPCAndNestedCopies(t *testing.T) {
+	dir, e := receiptFixture(t, `{"id":2,"result":`+publicationQuotaResult+`}`)
+	runs := 0
+	run := func(c context.Context, p, cli string, env []string, wd string) ([]byte, error) {
+		runs++
+		return accountQuotaRead(c, p, cli, env, wd)
+	}
+	baseClock := normalReceiptClock()
+	var result accountQuotaRefreshResult
+	clockCalls := 0
+	clock := func() quotaReceiptTick {
+		clockCalls++
+		if clockCalls == 3 {
+			// The original canonical attempt must already be published/serialized when
+			// the final confirmation tick is stamped; this is not parse completion.
+			cache, err := accounts.LoadQuota(dir)
+			if err != nil || cache.Entries[0].Success == nil {
+				t.Fatal("confirmation before cache success", err)
+			}
+		}
+		return baseClock()
+	}
+	var err error
+	result, err = accountQuotaRefreshReceipt(context.Background(), dir, e.ID, nil, run, os.Environ(), receiptPublicationTime, clock)
+	if err != nil || result.receipt == nil {
+		t.Fatal("missing same-invocation proof", err, result.receiptReason)
+	}
+	r := result.receipt
+	proof, confirmed := r.publicationCopy()
+	if proof == nil || clockCalls != 3 || runs != 1 || !proof.At.Equal(receiptPublicationTime()) || !confirmed.Equal(receiptPublicationTime().Add(500*time.Millisecond)) || r.completedAt.After(proof.At) || proof.At.After(confirmed) || r.elapsed != 100*time.Millisecond || r.providerObservedAt() != nil {
+		t.Fatal("publication/request timing incoherent", proof, confirmed, clockCalls, runs)
+	}
+	selected, err := accountQuotaCapture(dir, e.ID, os.Environ())
+	if err != nil || !r.binding.same(selected) {
+		t.Fatal("publication binding changed", err)
+	}
+	cache, err := accounts.LoadQuota(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := json.Marshal(cache.Entries[0].Attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(original, r.publicationBytesCopy()) || len(proof.Windows) != 2 || proof.Details.Buckets[0].Individual == nil || proof.Details.Buckets[0].Credits.Balance == nil || proof.Details.Buckets[0].SpendControlReached == nil {
+		t.Fatal("full original tuple lost")
+	}
+	// Mutate every nested pointer/slice family on the returned copy, plus the
+	// separate public view and newly loaded cache. None may alias retained proof.
+	proof.At = time.Time{}
+	proof.Reason = "timeout"
+	proof.Windows[0].UsedPercent = 88
+	*proof.Windows[0].DurationMinutes = 1
+	*proof.Windows[0].ResetsAt = time.Time{}
+	b := &proof.Details.Buckets[0]
+	b.Key = "changed"
+	b.Windows[0].UsedPercent = 99
+	*b.Windows[0].DurationMinutes = 2
+	*b.Windows[0].ResetsAt = time.Time{}
+	b.Windows = append(b.Windows, accounts.QuotaMeter{Name: "injected"})
+	b.Credits.HasCredits = false
+	b.Credits.Unlimited = true
+	*b.Credits.Balance = "99"
+	b.Individual.Limit = "99"
+	b.Individual.Used = "99"
+	b.Individual.RemainingPercent = 0
+	b.Individual.ResetsAt = time.Time{}
+	*b.SpendControlReached = true
+	*proof.Details.OrdinaryUsageAllowed = true
+	proof.Details.Buckets = append(proof.Details.Buckets, accounts.QuotaBucket{Key: "injected"})
+	bytesCopy := r.publicationBytesCopy()
+	bytesCopy[0] = '!'
+	result.view.Details.Buckets[0].Windows[0].UsedPercent = 88
+	cache.Entries[0].Attempt.Details.Buckets[0].Windows[0].UsedPercent = 77
+	again, againAt := r.publicationCopy()
+	got, _ := json.Marshal(again)
+	if again == nil || !bytes.Equal(original, got) || !bytes.Equal(original, r.publicationBytesCopy()) || !againAt.Equal(confirmed) {
+		t.Fatal("publication snapshot/accessor mutated")
+	}
+	wire, _ := json.Marshal(result.view)
+	if bytes.Contains(wire, []byte("publication")) || bytes.Contains(wire, []byte("confirmedAt")) {
+		t.Fatal("public wire grew proof")
+	}
+	// A genuinely later success with identical quota data must not relabel this
+	// receipt's local publication time. Failure afterward retains the same proof.
+	late := receiptPublicationTime().Add(time.Second)
+	fresh, err := accountQuotaRefreshReceipt(context.Background(), dir, e.ID, nil, run, os.Environ(), func() time.Time { return late }, func() quotaReceiptTick { return quotaReceiptTick{late, 0} })
+	if err != nil || fresh.receipt == nil {
+		t.Fatal("later read fixture failed", err, fresh.receiptReason)
+	}
+	laterProof, _ := fresh.receipt.publicationCopy()
+	if laterProof == nil || !laterProof.At.Equal(late) {
+		t.Fatal("later proof not its own invocation")
+	}
+	failed := func(context.Context, string, string, []string, string) ([]byte, error) {
+		return nil, context.DeadlineExceeded
+	}
+	failure, err := accountQuotaRefreshReceipt(context.Background(), dir, e.ID, nil, failed, os.Environ(), func() time.Time { return late.Add(time.Second) }, normalReceiptClock())
+	if err != nil || failure.receipt != nil || !bytes.Equal(original, r.publicationBytesCopy()) {
+		t.Fatal("later failure rewrote proof", err)
+	}
+	old, _ := r.publicationCopy()
+	if old == nil || !old.At.Equal(receiptPublicationTime()) {
+		t.Fatal("old proof synthesized latest time")
+	}
+}
+
+func TestQuotaPublicationSupersededIdenticalSuccessAndFailure(t *testing.T) {
+	for _, failure := range []bool{false, true} {
+		t.Run(strconv.FormatBool(failure), func(t *testing.T) {
+			dir, e := receiptFixture(t, `{"id":2,"result":`+publicationQuotaResult+`}`)
+			calls, runs := 0, 0
+			run := func(c context.Context, p, cli string, env []string, wd string) ([]byte, error) {
+				runs++
+				return accountQuotaRead(c, p, cli, env, wd)
+			}
+			now := func() time.Time {
+				calls++
+				if calls == 2 {
+					selected, err := accountQuotaCapture(dir, e.ID, os.Environ())
+					if err != nil {
+						t.Fatal(err)
+					}
+					cache, err := accounts.LoadQuota(dir)
+					if err != nil {
+						t.Fatal(err)
+					}
+					a := cache.Entries[0].Attempt
+					a.At = a.At.Add(time.Millisecond)
+					if failure {
+						a = accounts.QuotaAttempt{At: a.At, Reason: "timeout"}
+					}
+					if err = accounts.PublishQuota(dir, e, selected.Bound, a, os.Environ(), func() error { return nil }); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return receiptPublicationTime()
+			}
+			r, err := accountQuotaRefreshReceipt(context.Background(), dir, e.ID, nil, run, os.Environ(), now, normalReceiptClock())
+			if err != nil || r.receipt != nil || r.receiptReason != "publication_superseded" || runs != 1 {
+				t.Fatal("supersession minted original proof", failure, err, r.receiptReason, runs)
+			}
+		})
+	}
+}
+
+func TestQuotaPublicationSignedZeroPositiveDefaultClockAndAbsence(t *testing.T) {
+	for _, clock := range []quotaReceiptClock{normalReceiptClock(), nil} {
+		dir, e := receiptFixture(t, `{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":-0}}}}`)
+		now := receiptPublicationTime
+		if clock == nil {
+			now = time.Now
+		}
+		result, err := accountQuotaRefreshReceipt(context.Background(), dir, e.ID, nil, accountQuotaRead, os.Environ(), now, clock)
+		if err != nil || result.receipt == nil {
+			t.Fatal("negative-zero proof absent", err, result.receiptReason)
+		}
+		p, confirmed := result.receipt.publicationCopy()
+		if p == nil || math.Float64bits(p.Details.Buckets[0].Windows[0].UsedPercent) != math.Float64bits(math.Copysign(0, -1)) || confirmed.Before(p.At) {
+			t.Fatal("zero/time bits changed")
+		}
+	}
+	for _, r := range []*accountQuotaReceipt{nil, {}, {publication: accountQuotaPublicationProof{attempt: []byte(`{}`)}}, {publication: accountQuotaPublicationProof{attempt: []byte(`bad`)}}} {
+		p, at := r.publicationCopy()
+		if p != nil || !at.IsZero() {
+			t.Fatal("missing/invalid proof manufactured")
+		}
+	}
+}
+
+// A successful cache publication alone cannot connect a changed parsed snapshot
+// to the same receipt, nor can an unrepresentable confirmation time prove it.
+func TestQuotaPublicationParsedAndConfirmationCoherence(t *testing.T) {
+	for _, kind := range []string{"parsed_changed", "confirmation_out_of_range"} {
+		t.Run(kind, func(t *testing.T) {
+			dir, e := receiptFixture(t, `{"id":2,"result":`+publicationQuotaResult+`}`)
+			var trace *quotaReceiptTrace
+			runs, calls := 0, 0
+			run := func(ctx context.Context, provider, cli string, env []string, wd string) ([]byte, error) {
+				runs++
+				trace, _ = ctx.Value(quotaReceiptContextKey{}).(*quotaReceiptTrace)
+				return accountQuotaRead(ctx, provider, cli, env, wd)
+			}
+			now := func() time.Time {
+				calls++
+				if kind == "parsed_changed" && calls == 2 {
+					trace.mu.Lock()
+					var details accounts.QuotaDetails
+					if err := json.Unmarshal(trace.parsed, &details); err != nil {
+						t.Fatal(err)
+					}
+					details.Buckets[0].Windows[0].UsedPercent++
+					trace.parsed, _ = json.Marshal(details)
+					trace.mu.Unlock()
+				}
+				return receiptPublicationTime()
+			}
+			clock := normalReceiptClock()
+			if kind == "confirmation_out_of_range" {
+				start := receiptPublicationTime().Add(-500 * time.Millisecond)
+				clock, _ = receiptClock(quotaReceiptTick{start, 0}, quotaReceiptTick{start.Add(100 * time.Millisecond), 100 * time.Millisecond}, quotaReceiptTick{time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC), time.Second})
+			}
+			result, err := accountQuotaRefreshReceipt(context.Background(), dir, e.ID, nil, run, os.Environ(), now, clock)
+			want := "publication_unconfirmed"
+			if kind == "confirmation_out_of_range" {
+				want = "clock_unavailable"
+			}
+			if err != nil || result.receipt != nil || result.receiptReason != want || runs != 1 {
+				t.Fatal("incoherent proof minted", kind, err, result.receiptReason, runs)
+			}
+		})
+	}
+}
