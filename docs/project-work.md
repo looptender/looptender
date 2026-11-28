@@ -14,6 +14,49 @@ snapshot of the full register and findings, not a second editable work store.
 There is no database, daemon, source discovery, transcript reader, automatic
 assignment, dispatch, host compaction or enforced turn-end hook.
 
+## Continuity observation foundation
+
+Unreleased source includes a disconnected controller in the BB plugin. It is
+not registered with BB and does not read files or start checks in installed
+sessions. The explicit workflow below remains necessary.
+
+The controller accepts normalized lifecycle events for a configured coordinator
+and an injected inspector. Each trigger invalidates the prior observation
+immediately. Repeated triggers coalesce while an inspection is pending; delayed
+successes and failures cannot replace a newer binding or observation. A timeout
+requests cancellation but retains the inspection slot until the inspector
+settles. An inspector that ignores cancellation leaves that binding unavailable;
+other bindings can proceed. A production adapter must guarantee bounded process
+termination before this can be wired into live use.
+
+Observations contain binding revisions, sequence numbers, counts and nullable
+supplied evidence. `available` means the injected inspection supplied an accepted
+summary. It does not establish current file contents, an agent read, complete
+runtime coverage or task completion. The helper verdict remains
+`reconciliation_required` or `runtime_held`; `cannot_assess` stays unavailable.
+Zero findings never changes `objectiveComplete:false`. No item text, private
+paths, transcript text or exception messages are published.
+
+Configuration replacement validates the entire set before changing bindings.
+Published snapshots are frozen and delivered synchronously. Asynchronous
+transport would need its own revision check when committing a result. Clock
+scheduling is injected: callbacks run after scheduling returns and cancellation
+removes future callbacks. These dependency contracts do not authenticate hosts
+or prove that an inspector read the intended register.
+
+Raw helper parsing, host packaging, resolved identity checks, lifecycle/startup
+and reconnect listeners, session instructions, and installed acceptance remain
+follow-on work. BB lifecycle notifications cannot veto a turn ending; session
+instructions apply when a provider session is constructed, not on every existing
+turn. This controller neither checkpoints on idle nor clears holds, dispatches
+work or prevents an agent from forgetting to invoke the explicit workflow.
+
+Focused fictional checks use a fake clock and injected inspections, including
+ignored cancellation, replacement during publication, stale errors, malformed
+summaries and missing evidence. From the plugin directory, run
+`node --import tsx --test continuity-observer.test.ts`. No running BB or native
+platform behavior is established by these tests.
+
 ## Start, edit, read and check
 
 Python 3.9 or later on macOS/Linux is required; there are no third-party packages.
